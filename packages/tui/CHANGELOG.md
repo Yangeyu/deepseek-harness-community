@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Refine inline tool and file-diff presentation with brighter titles, compact
+  disclosure controls, accurate wrapped changes, and a resume command on exit.
+- Add content-scoped reading padding and a dedicated conversation/composer gap,
+  render deep Markdown headings without source markers, improve Thinking
+  contrast, and make individual tool calls clickable for arguments/results.
 - Add a responsive `/trajectory` trace explorer with paired lifecycles, paged
   history, fixed duration/share visualization, bottleneck highlighting,
   collapsible hierarchy, and complete side-by-side event inspection.
