@@ -11,7 +11,8 @@ All notable changes to this project are documented in this file.
   `/memories`, quiet-learning status, per-session policy switches, and unified
   workspace/memory/conversation rewind.
 - Add application-owned conversation scrolling with pointer and PageUp/PageDown
-  navigation while preserving local Thinking and Diff viewports.
+  navigation, a header that scrolls with the conversation, and preserved local
+  Thinking and Diff viewports.
 - Render submitted prompts immediately, hand presentation to visible queue
   snapshots, and retire local state on durable user-message RPC identity.
 - Show explicit checkpoint preview, workspace restore, conversation rewind,

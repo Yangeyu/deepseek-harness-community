@@ -44,6 +44,7 @@
     "typecheck": "pnpm --filter './packages/*' run typecheck",
     "test": "node --test tests/*.test.js && pnpm --filter './packages/*' run test",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "dev": "pnpm run build && node bin/dsh-tui-dev.js",
     "pack:check": "npm pack --dry-run",
     "release": "release-it",
     "start": "node bin/dsh-tui.js"

@@ -5,9 +5,20 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
-const PROFILE = 'tui'
+const DEFAULT_PROFILE = 'tui'
 const TUI_PACKAGE = '@vascent/deepseek-harness-tui'
+const LEGACY_TUI_PACKAGES = ['@yangeyu/deepseek-harness-tui']
 const require = createRequire(import.meta.url)
+
+function readProfileManifest(profileDirectory) {
+  const manifestPath = join(profileDirectory, 'package.json')
+  if (!existsSync(manifestPath)) return undefined
+  try {
+    return JSON.parse(readFileSync(manifestPath, 'utf8'))
+  } catch {
+    return undefined
+  }
+}
 
 /** Resolve the Harness home using the same environment precedence as dsh. */
 export function resolveDshHome(env = process.env) {
@@ -15,13 +26,21 @@ export function resolveDshHome(env = process.env) {
   return resolve(configured ? configured : join(homedir(), '.dsh'))
 }
 
+/** Resolve the profile name, allowing the development launcher to stay isolated. */
+export function resolveTuiProfile(env = process.env) {
+  const profile = env.DSH_TUI_PROFILE?.trim() || DEFAULT_PROFILE
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(profile)) {
+    throw new Error(`invalid DSH_TUI_PROFILE: ${profile}`)
+  }
+  return profile
+}
+
 /** Return whether the profile's installed TUI resolves to this launcher copy. */
 export function profileUsesPlugin(profileDirectory, pluginDirectory) {
-  const manifestPath = join(profileDirectory, 'package.json')
   const installedPath = join(profileDirectory, 'node_modules', '@vascent', 'deepseek-harness-tui')
-  if (!existsSync(manifestPath) || !existsSync(installedPath)) return false
+  if (!existsSync(installedPath)) return false
   try {
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    const manifest = readProfileManifest(profileDirectory)
     const bundles = manifest.dsh?.profile?.bundles
     return Array.isArray(bundles)
       && bundles.includes(TUI_PACKAGE)
@@ -29,6 +48,43 @@ export function profileUsesPlugin(profileDirectory, pluginDirectory) {
   } catch {
     return false
   }
+}
+
+/** Return obsolete TUI package names still referenced by one profile. */
+export function profileLegacyPlugins(profileDirectory) {
+  const manifest = readProfileManifest(profileDirectory)
+  const dependencies = manifest?.dependencies ?? {}
+  const bundles = manifest?.dsh?.profile?.bundles
+  return LEGACY_TUI_PACKAGES.filter(packageName => (
+    Object.hasOwn(dependencies, packageName)
+    || (Array.isArray(bundles) && bundles.includes(packageName))
+  ))
+}
+
+/** Migrate legacy package names and ensure the profile points at this launcher copy. */
+export async function ensureProfilePlugin(profileDirectory, pluginDirectory, runPlugin) {
+  const manifest = readProfileManifest(profileDirectory)
+  const dependencies = manifest?.dependencies ?? {}
+  for (const packageName of profileLegacyPlugins(profileDirectory)) {
+    if (!Object.hasOwn(dependencies, packageName)) {
+      throw new Error(`profile still references legacy bundle ${packageName} without an installed dependency`)
+    }
+    process.stderr.write(`dsh-tui: removing legacy profile plugin ${packageName}\n`)
+    const removeCode = await runPlugin(['remove', packageName])
+    if (removeCode !== 0) return removeCode
+  }
+
+  const legacy = profileLegacyPlugins(profileDirectory)
+  if (legacy.length > 0) throw new Error(`legacy profile plugin remained after migration: ${legacy.join(', ')}`)
+  if (profileUsesPlugin(profileDirectory, pluginDirectory)) return 0
+
+  process.stderr.write('dsh-tui: configuring the profile for this installation\n')
+  const addCode = await runPlugin(['add', pluginDirectory])
+  if (addCode !== 0) return addCode
+  if (!profileUsesPlugin(profileDirectory, pluginDirectory)) {
+    throw new Error('profile configuration completed without activating this TUI bundle')
+  }
+  return 0
 }
 
 function packageBin(packageName, binName) {
@@ -55,7 +111,8 @@ function runNode(script, args, env) {
 export async function main(args) {
   const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
   const pluginDirectory = join(repositoryRoot, 'packages', 'tui')
-  const profileDirectory = join(resolveDshHome(), 'profiles', PROFILE)
+  const profile = resolveTuiProfile()
+  const profileDirectory = join(resolveDshHome(), 'profiles', profile)
   const dshBin = packageBin('@deepseek-ai/dsh', 'dsh')
   const env = {
     ...process.env,
@@ -63,12 +120,13 @@ export async function main(args) {
   }
 
   try {
-    if (!profileUsesPlugin(profileDirectory, pluginDirectory)) {
-      process.stderr.write('dsh-tui: configuring the tui profile for this installation\n')
-      const setupCode = await runNode(dshBin, ['plugin', '--profile', PROFILE, 'add', pluginDirectory], env)
-      if (setupCode !== 0) return setupCode
-    }
-    return await runNode(dshBin, ['--profile', PROFILE, ...args], env)
+    const setupCode = await ensureProfilePlugin(
+      profileDirectory,
+      pluginDirectory,
+      pluginArgs => runNode(dshBin, ['plugin', '--profile', profile, ...pluginArgs], env),
+    )
+    if (setupCode !== 0) return setupCode
+    return await runNode(dshBin, ['--profile', profile, ...args], env)
   } catch (error) {
     process.stderr.write(`dsh-tui: ${error instanceof Error ? error.message : String(error)}\n`)
     return 1

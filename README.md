@@ -39,10 +39,17 @@ Both workspaces are source modules managed in this GitHub repository. They are e
 ```sh
 pnpm install --frozen-lockfile
 pnpm run check
-pnpm run start -- --help
+pnpm dev
 ```
 
-Run `pnpm run start` from the project you want the agent to edit. The launcher uses the local workspace TUI package and the published `@deepseek-ai/dsh` CLI.
+`pnpm dev` builds the current Memory and TUI sources, then launches the local
+bundle through an isolated `tui-dev` profile. It does not use the globally
+installed `dsh-tui` package or modify the regular `tui` profile. Run it from the
+project you want the agent to edit; pass TUI arguments after `--`, for example
+`pnpm dev -- --resume <session-id>`.
+
+`pnpm start` remains the production-equivalent local launcher and uses the
+regular `tui` profile.
 
 ## Release
 

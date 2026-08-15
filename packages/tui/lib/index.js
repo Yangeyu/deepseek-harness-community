@@ -1915,7 +1915,7 @@ var TranscriptComponent = class {
 };
 //#endregion
 //#region src/layout.ts
-/** Main-screen layout with a fixed composer and an application-owned transcript viewport. */
+/** Main-screen layout with a fixed composer and a scrollable conversation viewport. */
 var ComposerAnchoredLayout = class extends Container {
 	header;
 	transcript;
@@ -1924,12 +1924,12 @@ var ComposerAnchoredLayout = class extends Container {
 	footer;
 	viewportRows;
 	composerOverride;
-	transcriptTop;
+	conversationTop;
 	renderedTranscriptTop = 0;
 	renderedTranscriptRows = 0;
 	renderedTranscriptScreenRow = 0;
-	maxTranscriptTop = 0;
-	transcriptPageRows = 1;
+	maxConversationTop = 0;
+	conversationPageRows = 1;
 	constructor(header, transcript, status, editor, footer, viewportRows) {
 		super();
 		this.header = header;
@@ -1946,27 +1946,32 @@ var ComposerAnchoredLayout = class extends Container {
 	}
 	/** Whether new transcript output remains pinned to the bottom edge. */
 	get followsTranscriptTail() {
-		return this.transcriptTop === void 0;
+		return this.conversationTop === void 0;
 	}
 	render(width) {
 		const header = this.header.render(width);
 		const transcript = this.transcript.render(width);
 		const composer = this.renderComposer(width);
-		const fixedRows = header.length + 1 + composer.length;
-		const availableRows = Math.max(0, this.viewportRows() - fixedRows);
-		this.transcriptPageRows = Math.max(1, availableRows);
-		this.maxTranscriptTop = Math.max(0, transcript.length - availableRows);
-		const requestedTop = this.transcriptTop ?? this.maxTranscriptTop;
-		const top = Math.max(0, Math.min(this.maxTranscriptTop, requestedTop));
-		if (this.transcriptTop !== void 0 && top === this.maxTranscriptTop) this.transcriptTop = void 0;
-		this.renderedTranscriptTop = top;
-		const visible = transcript.slice(top, top + availableRows);
-		this.renderedTranscriptRows = visible.length;
-		this.renderedTranscriptScreenRow = header.length + 1;
-		const gap = Math.max(0, availableRows - visible.length);
-		return [
+		const transcriptStart = header.length + 1;
+		const conversation = [
 			...header,
 			"",
+			...transcript
+		];
+		const availableRows = Math.max(0, this.viewportRows() - composer.length);
+		this.conversationPageRows = Math.max(1, availableRows);
+		this.maxConversationTop = Math.max(0, conversation.length - availableRows);
+		const requestedTop = this.conversationTop ?? this.maxConversationTop;
+		const top = Math.max(0, Math.min(this.maxConversationTop, requestedTop));
+		if (this.conversationTop !== void 0 && top === this.maxConversationTop) this.conversationTop = void 0;
+		const visible = conversation.slice(top, top + availableRows);
+		const visibleTranscriptStart = Math.max(top, transcriptStart);
+		const visibleTranscriptEnd = Math.min(top + visible.length, conversation.length);
+		this.renderedTranscriptTop = Math.max(0, visibleTranscriptStart - transcriptStart);
+		this.renderedTranscriptRows = Math.max(0, visibleTranscriptEnd - visibleTranscriptStart);
+		this.renderedTranscriptScreenRow = visibleTranscriptStart - top;
+		const gap = Math.max(0, availableRows - visible.length);
+		return [
 			...visible,
 			...Array(gap).fill(""),
 			...composer
@@ -1978,23 +1983,23 @@ var ComposerAnchoredLayout = class extends Container {
 		this.composerOverride = component;
 		if (component !== void 0) this.addChild(component);
 	}
-	/** Move the transcript viewport by rendered lines; positive values move toward newer output. */
+	/** Move the conversation viewport by rendered lines; positive values move toward newer output. */
 	scrollTranscript(delta) {
-		const current = this.transcriptTop ?? this.maxTranscriptTop;
-		const next = Math.max(0, Math.min(this.maxTranscriptTop, current + delta));
-		const normalized = next === this.maxTranscriptTop ? void 0 : next;
-		if (normalized === this.transcriptTop) return false;
-		this.transcriptTop = normalized;
+		const current = this.conversationTop ?? this.maxConversationTop;
+		const next = Math.max(0, Math.min(this.maxConversationTop, current + delta));
+		const normalized = next === this.maxConversationTop ? void 0 : next;
+		if (normalized === this.conversationTop) return false;
+		this.conversationTop = normalized;
 		return true;
 	}
-	/** Move one transcript page while keeping one context line visible. */
+	/** Move one conversation page while keeping one context line visible. */
 	pageTranscript(direction) {
-		return this.scrollTranscript(direction * Math.max(1, this.transcriptPageRows - 1));
+		return this.scrollTranscript(direction * Math.max(1, this.conversationPageRows - 1));
 	}
 	/** Resume automatic tail following after viewing older output. */
 	followTranscript() {
-		if (this.transcriptTop === void 0) return false;
-		this.transcriptTop = void 0;
+		if (this.conversationTop === void 0) return false;
+		this.conversationTop = void 0;
 		return true;
 	}
 	/** Map one terminal row to the corresponding full-transcript rendered line. */
