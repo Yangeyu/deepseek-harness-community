@@ -1,6 +1,6 @@
 {
   "name": "@yangeyu/dsh-tui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One-command DeepSeek Harness TUI launcher and community extension workspace",
   "keywords": [
     "deepseek",
@@ -38,9 +38,6 @@
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
     "build": "pnpm --filter @yangeyu/deepseek-harness-memory run build && pnpm --filter @yangeyu/deepseek-harness-tui run build",
     "lint": "pnpm --filter './packages/*' run lint",

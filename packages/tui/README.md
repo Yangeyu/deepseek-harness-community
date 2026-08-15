@@ -63,7 +63,7 @@ The package supports DeepSeek Harness `>=0.1.0-rc.5 <0.2.0`. The repository
 launcher installs Harness and configures this bundle automatically:
 
 ```sh
-npm install --global github:Yangeyu/deepseek-harness-community#v0.1.0
+npm install --global github:Yangeyu/deepseek-harness-community#v0.1.1
 dsh-tui
 ```
 

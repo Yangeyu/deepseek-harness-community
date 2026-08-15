@@ -16,7 +16,7 @@ deepseek-harness-community/
 Node.js `^22.19.0` or `>=24.0.0` is required. Install a tagged GitHub release globally:
 
 ```sh
-npm install --global github:Yangeyu/deepseek-harness-community#v0.1.0
+npm install --global github:Yangeyu/deepseek-harness-community#v0.1.1
 ```
 
 Then start the TUI from any project directory:
