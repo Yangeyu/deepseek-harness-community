@@ -20,6 +20,7 @@ export interface TuiTheme {
   success: Paint
   underline: Paint
   user: Paint
+  userBlock: Paint
   warning: Paint
   editor: EditorTheme
   markdown: MarkdownTheme
@@ -47,7 +48,8 @@ export function createTheme(enabled: boolean): TuiTheme {
   const success = ansi(enabled, 32, 39)
   const underline = ansi(enabled, 4, 24)
   const warning = ansi(enabled, 33, 39)
-  const user = (text: string): string => bold(warning(text))
+  const user = ansi(enabled, 97, 39)
+  const userBlock = ansiSequence(enabled, '48;2;36;42;58', '49')
   const reverse = ansi(enabled, 7, 27)
   const hover = (text: string): string => bold(accent(text))
   const select: SelectListTheme = {
@@ -70,6 +72,7 @@ export function createTheme(enabled: boolean): TuiTheme {
     success,
     underline,
     user,
+    userBlock,
     warning,
     select,
     editor: {

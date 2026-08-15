@@ -18,6 +18,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { MemoryMutation } from '@yangeyu/deepseek-harness-memory'
 
 const GIT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 
@@ -31,6 +32,7 @@ interface Checkpoint {
   prompt: string
   createdAt: number
   previousTurnEndSeq?: number
+  memoryMutations: MemoryMutation[]
 }
 
 interface PromptMessage {
@@ -53,6 +55,7 @@ export interface RewindCheckpointSummary {
   prompt: string
   createdAt: number
   turnChangedFiles?: number
+  memoryUpdates?: number
 }
 
 /** Immutable confirmation payload for one selected-turn rewind. */
@@ -65,6 +68,7 @@ export interface RewindPreview {
   previousTurnEndSeq?: number
   files: CheckpointFileChange[]
   currentTree: string
+  memoryMutations?: readonly MemoryMutation[]
 }
 
 function runGit(root: string, args: string[], extraEnv?: NodeJS.ProcessEnv): Promise<string> {
@@ -255,6 +259,7 @@ export class WorkspaceCheckpointStore {
       createdAt: Date.now(),
       root,
       tree,
+      memoryMutations: [],
     }]
     this.checkpoints.set(input.sessionId, next.slice(-this.historyLimit))
     this.failures.delete(input.sessionId)
@@ -273,6 +278,7 @@ export class WorkspaceCheckpointStore {
       turn: checkpoint.turn,
       prompt: checkpoint.prompt,
       createdAt: checkpoint.createdAt,
+      memoryUpdates: checkpoint.memoryMutations.length,
     }))
   }
 
@@ -308,14 +314,16 @@ export class WorkspaceCheckpointStore {
         prompt: checkpoint.prompt,
         createdAt: checkpoint.createdAt,
         turnChangedFiles: parseNulList(names).length,
+        memoryUpdates: checkpoint.memoryMutations.length,
       }
     }))
   }
 
   /** Compare the live worktree with one selected user-turn checkpoint. */
   async preview(sessionId: string, checkpointId: string): Promise<RewindPreview> {
-    const checkpoint = this.requireCheckpoints(sessionId)
-      .find(candidate => candidate.id === checkpointId)
+    const checkpoints = this.requireCheckpoints(sessionId)
+    const checkpointIndex = checkpoints.findIndex(candidate => candidate.id === checkpointId)
+    const checkpoint = checkpoints[checkpointIndex]
     if (checkpoint === undefined) throw new Error('the selected rewind checkpoint is no longer available')
     const currentTree = await captureTree(checkpoint.root)
     return {
@@ -327,7 +335,17 @@ export class WorkspaceCheckpointStore {
       ...checkpoint.previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq: checkpoint.previousTurnEndSeq },
       files: await changedFiles(checkpoint.root, checkpoint.tree, currentTree),
       currentTree,
+      memoryMutations: checkpoints.slice(checkpointIndex).flatMap(candidate => candidate.memoryMutations),
     }
+  }
+
+  /** Attach one memory mutation to the same user turn's unified checkpoint. */
+  recordMemoryMutation(mutation: MemoryMutation): void {
+    if (mutation.sourceSessionId === undefined || mutation.sourceTurn === undefined) return
+    const checkpoint = this.checkpoints.get(mutation.sourceSessionId)
+      ?.find(candidate => candidate.turn === mutation.sourceTurn)
+    if (checkpoint === undefined || checkpoint.memoryMutations.some(candidate => candidate.id === mutation.id)) return
+    checkpoint.memoryMutations.push(mutation)
   }
 
   /** Restore a confirmed preview and return a guarded rollback for later session-fork failure. */

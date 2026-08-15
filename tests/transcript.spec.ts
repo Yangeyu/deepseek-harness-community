@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { stripTerminalSequences } from '@earendil-works/pi-tui'
+import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
 import type {
   HistoryEntry,
   SessionSummary,
@@ -176,7 +176,7 @@ describe('TranscriptComponent', () => {
     expect(paused).not.toContain('stream 6')
   })
 
-  it('highlights the complete user prompt without adding a You label', () => {
+  it('renders the complete user prompt as a full-width block without adding a You label', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
@@ -194,8 +194,12 @@ describe('TranscriptComponent', () => {
       }),
     ]), createTheme(true), true, 8)
 
-    const output = transcript.render(80).join('\n')
-    expect(output).toContain('\u001b[1m\u001b[33m› explain this code\u001b[39m\u001b[22m')
+    const rendered = transcript.render(80)
+    const output = rendered.join('\n')
+    expect(rendered).toHaveLength(3)
+    expect(rendered.every(line => line.includes('\u001b[48;2;36;42;58m'))).toBe(true)
+    expect(rendered.every(line => visibleWidth(line) === 80)).toBe(true)
+    expect(output).toContain('\u001b[97m› explain this code\u001b[39m')
     expect(output).not.toContain('You')
   })
 
@@ -208,11 +212,12 @@ describe('TranscriptComponent', () => {
       intent: 'working',
     }]
     const transcript = new TranscriptComponent(pending, createTheme(true), true, 8)
-    transcript.setLoadingFrame('✦')
+    transcript.setActivity('✦', 4)
 
     const output = transcript.render(80).join('\n')
-    expect(output).toContain('\u001b[1m\u001b[33m› render before the network round trip\u001b[39m\u001b[22m')
-    expect(output).toContain('✦ Working…')
+    expect(output).toContain('\u001b[97m› render before the network round trip\u001b[39m')
+    expect(output).toContain('✦')
+    expect(output).toContain('Working (4s · esc to interrupt)')
     expect(output).not.toContain('Accepted')
     expect(output).not.toContain('Sending')
     expect(output).not.toContain('You')
@@ -245,11 +250,11 @@ describe('TranscriptComponent', () => {
     queued.queue = [{ ...queued.queue[0]!, placement: 'context' }]
     const context = new TranscriptComponent(queued, createTheme(false), true, 8).render(80).join('\n')
     expect(context).toContain('queued once')
-    expect(context).toContain('Working…')
+    expect(context).toContain('Working (0s · esc to interrupt)')
     expect(context).not.toContain('Accepted')
   })
 
-  it('replaces the working row with the first visible thinking output', () => {
+  it('keeps the working row visible after thinking output begins', () => {
     const running = state([
       entry({
         event: {
@@ -268,8 +273,8 @@ describe('TranscriptComponent', () => {
     ])
     running.running = true
     const transcript = new TranscriptComponent(running, createTheme(false), true, 8)
-    transcript.setLoadingFrame('✳')
-    expect(transcript.render(80).join('\n')).toContain('✳ Working…')
+    transcript.setActivity('✳', 2)
+    expect(transcript.render(80).join('\n')).toContain('✳ Working (2s · esc to interrupt)')
 
     running.events = [...running.events, entry({
       event: {
@@ -282,7 +287,46 @@ describe('TranscriptComponent', () => {
     transcript.setState(running)
     const output = transcript.render(80).join('\n')
     expect(output).toContain('Thinking…')
-    expect(output).not.toContain('Working…')
+    expect(output).toContain('Working (2s · esc to interrupt)')
+  })
+
+  it('keeps the activity indicator visible while waiting after a tool result', () => {
+    const running = state([
+      entry({
+        event: {
+          type: 'tool/call',
+          seq: 0,
+          time: 1,
+          data: { turn: 1, step: 1, callId: 'call-wait', name: 'shell', arguments: '{}' },
+        },
+        view: { for: 'call', view: { card: 'terminal', title: 'pnpm test', cwd: '/workspace' } },
+      }),
+      entry({
+        event: {
+          type: 'tool/result',
+          seq: 1,
+          time: 2,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'tool-result-wait',
+              role: 'user',
+              source: { kind: 'tool', callId: 'call-wait' },
+              content: [{ type: 'tool-result', callId: 'call-wait', content: [], isError: false }],
+            },
+          },
+        },
+      }),
+    ])
+    running.running = true
+    const transcript = new TranscriptComponent(running, createTheme(false), true, 8)
+    transcript.setActivity('✦', 7)
+
+    const output = transcript.render(80).join('\n')
+    expect(output).toContain('● $ pnpm test')
+    expect(output).toContain('✦ Working (7s · esc to interrupt)')
   })
 
   it('uses tool-owned presentation intent and expands bounded result output', () => {

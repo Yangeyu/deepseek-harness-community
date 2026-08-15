@@ -1,6 +1,7 @@
 import { HistoryEntry, IApiClient, ModelSelection, MuxFrame, QueuedInboxItem, RpcId, SessionModels, SessionSummary } from "@deepseek-ai/dsh-host-apiproxy";
 import { Component, EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
 import z from "@deepseek-ai/schemastery";
+import { MemoryMutation } from "@yangeyu/deepseek-harness-memory";
 import { Context } from "@deepseek-ai/cordis";
 //#region src/config.d.ts
 /** User-configurable TUI presentation and history bounds. */
@@ -69,6 +70,7 @@ interface RewindPreview {
   previousTurnEndSeq?: number;
   files: CheckpointFileChange[];
   currentTree: string;
+  memoryMutations?: readonly MemoryMutation[];
 }
 //#endregion
 //#region src/submission.d.ts
@@ -208,6 +210,7 @@ interface TuiTheme {
   success: Paint;
   underline: Paint;
   user: Paint;
+  userBlock: Paint;
   warning: Paint;
   editor: EditorTheme;
   markdown: MarkdownTheme;
@@ -231,18 +234,20 @@ declare class TranscriptComponent implements Component {
   private blockHits;
   private hoveredBlockKey;
   private diffLineStarts;
-  private loadingFrame;
+  private activityFrame;
+  private activityElapsedSeconds;
   constructor(state: Readonly<TuiState>, theme: TuiTheme, showReasoning: boolean, maxToolOutputLines: number, thinkingMaxLines?: number);
   setState(state: Readonly<TuiState>): void;
   setDetails(show: boolean): void;
-  /** Select the current application-owned loading animation frame. */
-  setLoadingFrame(frame: string): void;
+  /** Update the one application-owned activity indicator shown for a running turn. */
+  setActivity(frame: string, elapsedSeconds: number): void;
   /** Supply asynchronously resolved absolute file-line starts for diff cards. */
   setDiffLineStarts(starts: DiffLineStarts): void;
   invalidate(): void;
   /** Apply one pointer action to the block rendered at a transcript-relative row. */
   handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean;
   render(width: number): string[];
+  private renderPromptBlock;
   private pushBlock;
   private renderThinking;
   private renderDiff;

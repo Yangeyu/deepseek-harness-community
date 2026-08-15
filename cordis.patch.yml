@@ -34,6 +34,20 @@
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
 
+    - id: memory
+      name: '@yangeyu/deepseek-harness-tui/memory'
+      config:
+        root: !!js dshHomePath('memories')
+        useMemories: true
+        generateMemories: true
+        idleDelayMs: 1500
+        maxContextBytes: 25600
+        maxDocumentBytes: 262144
+        maxSummaryChars: 600
+        maxDetailsChars: 4000
+        extractionMaxInputBytes: 32768
+        minCandidateChars: 6
+
     - id: session-projection-cache
       name: '@deepseek-ai/dsh-session-projection-cache'
       config:

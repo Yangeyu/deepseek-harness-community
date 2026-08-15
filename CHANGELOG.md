@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Add the standalone file-backed Memory plugin to the TUI bundle, including
+  `/memories`, quiet-learning status, per-session policy switches, and unified
+  workspace/memory/conversation rewind.
 - Add application-owned conversation scrolling with pointer and PageUp/PageDown
   navigation while preserving local Thinking and Diff viewports.
 - Render submitted prompts immediately, hand presentation to visible queue
@@ -15,8 +18,11 @@ All notable changes to this project are documented in this file.
 - Add input history navigation and an optimistic `/clear` session transition
   with failure recovery.
 - Replace prompt `Sending`/`Accepted` phases and the duplicate running status
-  row with one animated transcript loader that yields to the first visible
-  Thinking, answer, or tool output.
+  row with one animated transcript activity line that remains visible through
+  Thinking, answers, tool execution, and between-step waits, with elapsed time
+  and an interrupt hint.
+- Render user-authored messages as full-width, padded transcript blocks with a
+  stable `›` anchor so prompts remain visually discoverable in long sessions.
 - Report checkpoint file counts per turn instead of cumulative rollback scope,
   and align confirmation with a vertical Claude Code-style choice surface.
 - Preserve checkpoints before the restored turn on the forked conversation so

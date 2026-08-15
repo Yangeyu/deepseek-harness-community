@@ -9,7 +9,8 @@ Harness checkout instead of under `deepseek-harness/packages/`:
 ```text
 Workplace/
 ├── deepseek-harness/       # upstream project
-└── deepseek-harness-tui/   # this package
+├── deepseek-harness-memory/ # file-backed Memory plugin
+└── deepseek-harness-tui/    # this package
 ```
 
 Keeping the repositories separate makes the ownership boundary explicit and
@@ -30,17 +31,20 @@ The initial terminal client supports:
   and red/green changed-line backgrounds;
 - bounded turn checkpoints with an instant keyboard selector, changed-file
   preview, workspace restore, conversation fork, and original-prompt refill;
-- Codex-style user prompts with highlighted foreground text, a `›` marker, and
-  no persistent speaker labels;
+- Codex-style full-width user-message blocks with restrained background color,
+  a stable `›` anchor, and no persistent speaker labels;
 - queueing input while a turn is running and steering the active turn;
-- immediate local prompt rendering, one animated working row that hands its
-  position directly to Thinking or answer output, authoritative queue
-  presentation, and `rpcId` reconciliation with the durable session event;
+- immediate local prompt rendering, one animated working row that remains
+  visible for the full running turn with elapsed time and an interrupt hint,
+  authoritative queue presentation, and `rpcId` reconciliation with the
+  durable session event;
 - cancelling a running turn;
 - model and reasoning-effort selection;
 - a Codex-style model surface that temporarily replaces the composer and moves
   from model selection to a separate reasoning-effort step;
 - approval and structured-question dialogs;
+- Markdown-backed global and per-project memory, explicit remember/forget
+  tools, quiet correction learning, and a `/memories` management surface;
 - reconnect and history resynchronization;
 - the same durable turn/step timing, decode throughput, cache-hit, token-usage,
   and context-pressure projections shown below the Harness Web composer;
@@ -73,8 +77,11 @@ dsh plugin --profile tui add ./yangeyu-deepseek-harness-tui-0.1.0.tgz
 dsh --profile tui
 ```
 
-The bundle's `cordis.patch.yml` layers the required Host services and terminal
-entry point over the automatically installed `dsh-base` profile.
+The bundle's `cordis.patch.yml` layers the required Host services, its
+`./memory` plugin entry, and the terminal entry point over the automatically
+installed `dsh-base` profile. The subpath keeps Cordis resolution anchored to
+the directly installed TUI package while delegating implementation to the
+standalone `@yangeyu/deepseek-harness-memory` dependency.
 
 ## Develop
 
@@ -83,7 +90,9 @@ pnpm install --frozen-lockfile
 pnpm run check
 ```
 
-For a local end-to-end run from a neighboring Harness checkout:
+For unreleased local development, clone `deepseek-harness-memory` beside this
+repository before installing dependencies. Then run the complete profile from
+a neighboring Harness checkout:
 
 ```sh
 cd ../deepseek-harness
@@ -135,27 +144,54 @@ immediately; per-turn changed-file counts fill in asynchronously rather than
 showing the cumulative rollback scope. `↑`/`↓` selects a prompt node, `Enter`
 opens a vertical confirmation with the target prompt and restore impact, and
 `Esc` returns to the list or closes it. One confirmation restores the selected
-workspace checkpoint, forks the conversation before that turn, and returns the
-selected prompt to the editor. The implementation never runs `git reset` and
-never changes the user's Git index. The history limit defaults to 20 through
+workspace checkpoint, reverts memory writes attributed to that turn and every
+later turn, forks the conversation before that turn, and returns the selected
+prompt to the editor. Workspace and memory state are compensated if the
+conversation fork fails. The implementation never runs `git reset` and never
+changes the user's Git index. The history limit defaults to 20 through
 `rewindCheckpoints`. Checkpoints before the restored turn follow the forked
 conversation, so `Esc Esc` can rewind repeatedly until the retained history is
-exhausted. Checkpoints cover Git-tracked plus non-ignored untracked
-files; ignored files and submodule contents are outside the current restore
-scope.
+exhausted. Checkpoints cover Git-tracked plus non-ignored untracked files;
+ignored files and submodule contents are outside the current restore scope.
+
+## Memory
+
+Memory is stored as ordinary Markdown under the configured Harness home:
+
+```text
+memories/
+├── global/MEMORY.md
+└── projects/<project-id>/
+    ├── MEMORY.md
+    └── preferences.md | conventions.md | decisions.md | debugging.md
+```
+
+The files are authoritative and may be edited or synchronized like other text
+files. Bounded global and project indexes enter the durable session log as a
+source-attributed snapshot when first used and whenever their effective content
+changes. Disabling memory publishes a replacement marker so earlier snapshots
+stop applying. `memory_write`, `memory_read`, and `memory_forget` handle explicit
+requests. Turns containing a likely reusable correction are reviewed after the
+main Agent becomes idle by a short-lived, logged maintenance Agent restricted
+to those memory tools.
+
+`/memories` opens a composer-anchored view for browsing the Markdown files and
+turning memory use or background learning on and off for the current session.
+The status row shows a separate animation while quiet learning is running.
 
 `/clear` removes the visible conversation synchronously and then attaches a
 fresh session; if session creation fails, the previous view is restored. Slash
 commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/details`, `/status`,
-`/rewind`, and `/exit`.
+`/memories`, `/rewind`, and `/exit`.
 
 ## Architecture
 
 ```text
 Cordis bundle entry
+  -> file-backed Memory plugin (context, tools, quiet learner, mutations)
   -> in-process ApiProxy client
      -> HarnessController (session and stream state)
-        -> pi-tui application (input, dialogs, rewind transaction feedback)
+        -> pi-tui application (input, dialogs, unified rewind transaction)
            -> ComposerAnchoredLayout (transcript viewport and tail following)
               -> TranscriptComponent (pure event/view projection)
 ```

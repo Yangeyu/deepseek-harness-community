@@ -1,6 +1,7 @@
 import {
   Markdown,
   truncateToWidth,
+  visibleWidth,
   wrapTextWithAnsi,
   type Component,
 } from '@earendil-works/pi-tui'
@@ -28,7 +29,7 @@ interface TranscriptRow {
   dim?: boolean
   prompt?: boolean
   promptStatus?: string
-  loading?: boolean
+  activity?: boolean
   thinking?: {
     key: string
     text: string
@@ -66,33 +67,6 @@ function reasoningText(content: readonly { type: string; text?: string }[]): str
     .filter(block => block.type === 'reasoning')
     .map(block => block.text ?? '')
     .join('\n')
-}
-
-function awaitingVisibleOutput(entries: readonly HistoryEntry[], showReasoning: boolean): boolean {
-  let awaiting = false
-  for (const entry of entries) {
-    const event = entry.event
-    if (event.type === 'user/message') {
-      if (event.surfaceOp === 'append' && event.data.source.kind === 'user'
-        && messageText(event.data.content, false).trim() !== '') awaiting = true
-      continue
-    }
-    if (!awaiting) continue
-    if (event.type === 'assistant/chunk') {
-      const chunk = event.data.chunk
-      if ((chunk.type === 'text-delta' || (showReasoning && chunk.type === 'reasoning-delta'))
-        && chunk.text.trim() !== '') awaiting = false
-      continue
-    }
-    if (event.type === 'assistant/message') {
-      const visible = messageText(event.data.message.content, false)
-      const reasoning = showReasoning ? reasoningText(event.data.message.content) : ''
-      if (visible.trim() !== '' || reasoning.trim() !== '') awaiting = false
-      continue
-    }
-    if (event.type === 'tool/call' || event.type === 'turn/end') awaiting = false
-  }
-  return awaiting
 }
 
 function callTitle(name: string, view: ToolCallView | undefined): string {
@@ -326,11 +300,9 @@ function rowsFromState(
           : {},
     })
   }
-  if (localWorking || (state.running && awaitingVisibleOutput(state.events, showReasoning))) {
-    rows.push({ loading: true })
-  }
   if (state.notice !== undefined) rows.push({ label: 'Notice', labelPaint: theme.accent, body: state.notice })
   if (state.error !== undefined) rows.push({ label: 'Error', labelPaint: theme.error, body: state.error })
+  if (localWorking || state.running) rows.push({ activity: true })
   return rows
 }
 
@@ -346,7 +318,8 @@ export class TranscriptComponent implements Component {
   private blockHits: BlockHit[] = []
   private hoveredBlockKey: string | undefined
   private diffLineStarts: DiffLineStarts = new Map()
-  private loadingFrame = '·'
+  private activityFrame = '·'
+  private activityElapsedSeconds = 0
 
   constructor(
     state: Readonly<TuiState>,
@@ -374,9 +347,10 @@ export class TranscriptComponent implements Component {
     this.showDetails = show
   }
 
-  /** Select the current application-owned loading animation frame. */
-  setLoadingFrame(frame: string): void {
-    this.loadingFrame = frame
+  /** Update the one application-owned activity indicator shown for a running turn. */
+  setActivity(frame: string, elapsedSeconds: number): void {
+    this.activityFrame = frame
+    this.activityElapsedSeconds = Math.max(0, Math.floor(elapsedSeconds))
   }
 
   /** Supply asynchronously resolved absolute file-line starts for diff cards. */
@@ -430,8 +404,11 @@ export class TranscriptComponent implements Component {
     this.blockHits = []
     for (const [index, row] of rows.entries()) {
       if (index > 0) lines.push('')
-      if (row.loading) {
-        lines.push(this.theme.accent(`${this.loadingFrame} Working…`))
+      if (row.activity) {
+        lines.push([
+          this.theme.accent(this.activityFrame),
+          this.theme.dim(` Working (${this.activityElapsedSeconds}s · esc to interrupt)`),
+        ].join(''))
         continue
       }
       if (row.thinking !== undefined) {
@@ -443,16 +420,7 @@ export class TranscriptComponent implements Component {
         continue
       }
       if (row.prompt && row.body !== undefined) {
-        let firstLine = true
-        for (const sourceLine of sanitizeTerminalText(row.body).split('\n')) {
-          const wrapped = wrapTextWithAnsi(sourceLine, Math.max(1, safeWidth - 2))
-          for (const wrappedLine of wrapped.length === 0 ? [''] : wrapped) {
-            const marker = firstLine ? '› ' : '  '
-            lines.push(truncateToWidth(this.theme.user(`${marker}${wrappedLine}`), safeWidth))
-            firstLine = false
-          }
-        }
-        if (row.promptStatus !== undefined) lines.push(this.theme.dim(`  ${row.promptStatus}`))
+        lines.push(...this.renderPromptBlock(row.body, row.promptStatus, safeWidth))
         continue
       }
       if (row.label !== undefined) {
@@ -471,6 +439,27 @@ export class TranscriptComponent implements Component {
     if (this.hoveredBlockKey !== undefined && !this.blockHits.some(hit => hit.key === this.hoveredBlockKey)) {
       this.hoveredBlockKey = undefined
     }
+    return lines
+  }
+
+  private renderPromptBlock(body: string, status: string | undefined, width: number): string[] {
+    const paintLine = (line: string): string => {
+      const clipped = truncateToWidth(line, width, '…')
+      const padding = ' '.repeat(Math.max(0, width - visibleWidth(clipped)))
+      return this.theme.userBlock(`${clipped}${padding}`)
+    }
+    const lines = [paintLine(' '.repeat(width))]
+    let firstLine = true
+    for (const sourceLine of sanitizeTerminalText(body).split('\n')) {
+      const wrapped = wrapTextWithAnsi(sourceLine, Math.max(1, width - 4))
+      for (const wrappedLine of wrapped.length === 0 ? [''] : wrapped) {
+        const marker = firstLine ? '› ' : '  '
+        lines.push(paintLine(` ${this.theme.user(`${marker}${wrappedLine}`)} `))
+        firstLine = false
+      }
+    }
+    if (status !== undefined) lines.push(paintLine(`   ${this.theme.dim(this.theme.user(status))} `))
+    lines.push(paintLine(' '.repeat(width)))
     return lines
   }
 

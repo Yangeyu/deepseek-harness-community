@@ -16,6 +16,11 @@ import type {
   ModelSelection,
   SessionModels,
 } from '@deepseek-ai/dsh-host-apiproxy'
+import type {
+  MemoryDocument,
+  MemoryOverview,
+  MemorySessionPolicy,
+} from '@yangeyu/deepseek-harness-memory'
 import { sanitizeTerminalText } from './text.ts'
 import type { TuiTheme } from './theme.ts'
 import type { RewindCheckpointSummary, RewindPreview } from './checkpoint.ts'
@@ -228,6 +233,137 @@ export class ModelDialog implements Component {
   }
 }
 
+/** Composer-anchored memory policy and Markdown document browser. */
+export class MemoryDialog implements Component {
+  private index = 0
+  private document: MemoryDocument | undefined
+  private documentOffset = 0
+  private policy: MemorySessionPolicy
+  private readonly documents: MemoryDocument[]
+
+  constructor(
+    private readonly overview: MemoryOverview,
+    private readonly visibleRows: () => number,
+    private readonly theme: TuiTheme,
+    private readonly onPolicy: (policy: MemorySessionPolicy) => void,
+    private readonly onCancel: () => void,
+  ) {
+    this.policy = overview.policy
+    const byPath = new Map<string, MemoryDocument>()
+    for (const document of [overview.projectMemory, overview.global, ...overview.documents]) {
+      byPath.set(document.path, document)
+    }
+    this.documents = [...byPath.values()]
+  }
+
+  handleInput(data: string): void {
+    if (this.document !== undefined) {
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))) {
+        this.document = undefined
+        this.documentOffset = 0
+        return
+      }
+      const page = this.documentPageRows()
+      if (matchesKey(data, Key.up)) this.moveDocument(-1)
+      if (matchesKey(data, Key.down)) this.moveDocument(1)
+      if (matchesKey(data, Key.pageUp)) this.moveDocument(-page)
+      if (matchesKey(data, Key.pageDown)) this.moveDocument(page)
+      return
+    }
+    if (matchesKey(data, Key.up)) {
+      this.index = Math.max(0, this.index - 1)
+      return
+    }
+    if (matchesKey(data, Key.down)) {
+      this.index = Math.min(this.documents.length + 1, this.index + 1)
+      return
+    }
+    if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
+      if (this.index === 0) {
+        this.policy = { ...this.policy, useMemories: !this.policy.useMemories }
+        this.onPolicy(this.policy)
+        return
+      }
+      if (this.index === 1) {
+        this.policy = { ...this.policy, generateMemories: !this.policy.generateMemories }
+        this.onPolicy(this.policy)
+        return
+      }
+      this.document = this.documents[this.index - 2]
+      this.documentOffset = 0
+      return
+    }
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))) this.onCancel()
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    return this.document === undefined ? this.renderList(width) : this.renderDocument(width, this.document)
+  }
+
+  private renderList(width: number): string[] {
+    const lines = [
+      this.theme.bold('Memories'),
+      this.theme.dim(`Project · ${this.overview.project.id}`),
+      '',
+      this.toggleLine(0, 'Use memories in this session', this.policy.useMemories),
+      this.toggleLine(1, 'Learn from this session', this.policy.generateMemories),
+      '',
+    ]
+    for (const [offset, document] of this.documents.entries()) {
+      const index = offset + 2
+      const cursor = index === this.index ? this.theme.accent('›') : ' '
+      const label = document.scope === 'project'
+        ? document.topic === undefined ? 'Project memory' : `Project · ${document.topic}`
+        : document.topic === undefined ? 'Global memory' : `Global · ${document.topic}`
+      const status = document.exists ? `${document.bytes} bytes` : 'not created'
+      lines.push(truncateToWidth(
+        `${cursor} ${index === this.index ? this.theme.bold(label) : label}  ${this.theme.dim(status)}`,
+        width,
+      ))
+    }
+    lines.push('', this.theme.dim('↑/↓ select · Enter toggle/open · Esc close'))
+    return lines
+  }
+
+  private renderDocument(width: number, document: MemoryDocument): string[] {
+    const body = document.exists && document.content.trim() !== ''
+      ? sanitizeTerminalText(document.content).split('\n')
+      : ['(empty memory document)']
+    const page = this.documentPageRows()
+    const maximum = Math.max(0, body.length - page)
+    this.documentOffset = Math.max(0, Math.min(maximum, this.documentOffset))
+    const visible = body.slice(this.documentOffset, this.documentOffset + page)
+    const range = body.length <= page
+      ? ''
+      : ` · ${this.documentOffset + 1}-${Math.min(body.length, this.documentOffset + page)}/${body.length}`
+    return [
+      this.theme.bold(document.scope === 'project' ? 'Project memory' : 'Global memory'),
+      truncateToWidth(this.theme.dim(document.path), width),
+      '',
+      ...visible.flatMap(line => wrapTextWithAnsi(line, width)),
+      '',
+      this.theme.dim(`↑/↓ scroll · PageUp/PageDown page · Esc back${range}`),
+    ]
+  }
+
+  private toggleLine(index: number, label: string, enabled: boolean): string {
+    const cursor = this.index === index ? this.theme.accent('›') : ' '
+    const name = this.index === index ? this.theme.bold(label) : label
+    return `${cursor} ${name}  ${enabled ? this.theme.success('on') : this.theme.dim('off')}`
+  }
+
+  private moveDocument(offset: number): void {
+    const lines = this.document?.content.split('\n').length ?? 1
+    this.documentOffset = Math.max(0, Math.min(Math.max(0, lines - this.documentPageRows()), this.documentOffset + offset))
+  }
+
+  private documentPageRows(): number {
+    return Math.max(3, this.visibleRows() - 8)
+  }
+}
+
 /** Bounded keyboard selector for process-local turn checkpoints. */
 export class RewindCheckpointDialog implements Component {
   private summaries: RewindCheckpointSummary[]
@@ -316,11 +452,14 @@ export class RewindCheckpointDialog implements Component {
         : summary.turnChangedFiles === 0
           ? 'No code changes'
           : `${summary.turnChangedFiles} changed file${summary.turnChangedFiles === 1 ? '' : 's'} this turn`
+      const memoryStatus = (summary.memoryUpdates ?? 0) === 0
+        ? ''
+        : ` · ${summary.memoryUpdates} memory update${summary.memoryUpdates === 1 ? '' : 's'}`
       lines.push(truncateToWidth(
         `${cursor} ${selected ? this.theme.bold(prompt) : prompt}`,
         width,
       ))
-      lines.push(truncateToWidth(`    ${this.theme.dim(fileStatus)}`, width), '')
+      lines.push(truncateToWidth(`    ${this.theme.dim(`${fileStatus}${memoryStatus}`)}`, width), '')
     }
     if (end < this.summaries.length) lines.push(this.theme.dim(`  ↓ ${this.summaries.length - end} more below`), '')
     if (this.inspectionError !== undefined) {
@@ -386,14 +525,18 @@ export class RewindDialog implements Component {
   render(width: number): string[] {
     const prompt = sanitizeTerminalText(this.preview.prompt).replaceAll('\n', ' ')
     const changed = this.preview.files.length
+    const memoryUpdates = this.preview.memoryMutations?.length ?? 0
     const confirmation = wrapTextWithAnsi(
-      this.theme.dim('Confirm you want to restore the workspace and conversation to the point before you sent this message:'),
+      this.theme.dim('Confirm you want to restore the workspace, memory, and conversation to the point before you sent this message:'),
       width,
     )
     const promptLines = wrapTextWithAnsi(prompt, Math.max(1, width - 2))
     const impact = wrapTextWithAnsi(this.theme.dim(changed === 0
       ? 'The code will be unchanged.'
       : `${changed} changed file${changed === 1 ? '' : 's'} will be restored.`), width)
+    const memoryImpact = memoryUpdates === 0
+      ? []
+      : wrapTextWithAnsi(this.theme.dim(`${memoryUpdates} memory update${memoryUpdates === 1 ? '' : 's'} will be reverted.`), width)
     const lines = [
       this.theme.bold('Rewind'),
       '',
@@ -404,9 +547,10 @@ export class RewindDialog implements Component {
       '',
       this.theme.dim('The conversation will be forked.'),
       ...impact,
+      ...memoryImpact,
       '',
     ]
-    const restore = `${this.selected === 0 ? '›' : ' '} 1. Restore workspace and conversation`
+    const restore = `${this.selected === 0 ? '›' : ' '} 1. Restore workspace, memory, and conversation`
     const cancel = `${this.selected === 1 ? '›' : ' '} 2. Never mind`
     lines.push(
       this.selected === 0 ? this.theme.accent(restore) : restore,

@@ -19,13 +19,24 @@ describe('RewindDialog', () => {
         { path: 'fixtures/input.bin' },
       ],
       currentTree: 'tree-1',
+      memoryMutations: [{
+        id: 'memory-1',
+        sourceSessionId: 'session-1',
+        sourceTurn: 2,
+        scope: 'project',
+        summary: 'Use focused checks.',
+        operation: 'write',
+        files: [],
+        createdAt: Date.now(),
+      }],
     }, createTheme(false), confirm, cancel)
 
     const output = dialog.render(80).join('\n')
     expect(output).toContain('Confirm you want to restore')
     expect(output).toContain('fix the parser')
     expect(output).toContain('2 changed files will be restored')
-    expect(output).toContain('1. Restore workspace and conversation')
+    expect(output).toContain('1 memory update will be reverted')
+    expect(output).toContain('1. Restore workspace, memory, and conversation')
 
     dialog.handleInput('\u001b[B')
     dialog.handleInput('\r')
@@ -42,13 +53,14 @@ describe('RewindCheckpointDialog', () => {
     const cancel = vi.fn()
     const summaries = [
       { checkpointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', createdAt: 1, turnChangedFiles: 0 },
-      { checkpointId: 'two', sessionId: 'session-1', turn: 2, prompt: 'second', createdAt: 2, turnChangedFiles: 2 },
+      { checkpointId: 'two', sessionId: 'session-1', turn: 2, prompt: 'second', createdAt: 2, turnChangedFiles: 2, memoryUpdates: 1 },
       { checkpointId: 'three', sessionId: 'session-1', turn: 3, prompt: 'third', createdAt: 3 },
     ]
     const dialog = new RewindCheckpointDialog(summaries, undefined, () => 20, createTheme(false), select, cancel)
 
     expect(dialog.render(80).join('\n')).toContain('› third')
     dialog.handleInput('\u001b[A')
+    expect(dialog.render(80).join('\n')).toContain('1 memory update')
     dialog.handleInput('\r')
     expect(select).toHaveBeenCalledWith(summaries[1])
 

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { MemoryMutation } from '@yangeyu/deepseek-harness-memory'
 import { WorkspaceCheckpointStore } from '../src/checkpoint.ts'
 
 const temporaryDirectories: string[] = []
@@ -121,5 +122,32 @@ describe('WorkspaceCheckpointStore', () => {
     store.fail('session-failure', new Error('later capture failed'))
 
     expect(store.list('session-failure')).toHaveLength(1)
+  })
+
+  it('attributes memory mutations to their source turn and includes later updates in an older rewind', async () => {
+    const root = await repository()
+    const store = new WorkspaceCheckpointStore(10)
+    await store.capture({ sessionId: 'session-memory', turn: 1, cwd: root, prompt: 'remember the rule' })
+    await store.capture({ sessionId: 'session-memory', turn: 2, cwd: root, prompt: 'continue working' })
+    const mutation = (id: string, turn: number): MemoryMutation => ({
+      id,
+      sourceSessionId: 'session-memory',
+      sourceTurn: turn,
+      scope: 'project',
+      summary: `Rule from turn ${String(turn)}`,
+      operation: 'write',
+      files: [],
+      createdAt: turn,
+    })
+    store.recordMemoryMutation(mutation('memory-1', 1))
+    store.recordMemoryMutation(mutation('memory-1', 1))
+    store.recordMemoryMutation(mutation('memory-2', 2))
+
+    const summaries = store.list('session-memory')
+    expect(summaries.map(summary => summary.memoryUpdates)).toEqual([1, 1])
+    const first = await store.preview('session-memory', summaries[0]?.checkpointId ?? '')
+    const second = await store.preview('session-memory', summaries[1]?.checkpointId ?? '')
+    expect(first.memoryMutations?.map(candidate => candidate.id)).toEqual(['memory-1', 'memory-2'])
+    expect(second.memoryMutations?.map(candidate => candidate.id)).toEqual(['memory-2'])
   })
 })

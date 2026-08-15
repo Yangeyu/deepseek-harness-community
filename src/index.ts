@@ -42,7 +42,7 @@ declare module '@deepseek-ai/cordis' {
 export const name = 'community-tui'
 
 /** The in-process API gateway must exist before the terminal can activate. */
-export const inject = ['apiProxy', 'agents']
+export const inject = ['apiProxy', 'agents', 'memory']
 
 interface ParsedArgs {
   help: boolean
@@ -110,9 +110,12 @@ export function apply(ctx: Context, config: TuiConfig): void {
   const resolved = resolveConfig(parsed.config)
   const checkpoints = new WorkspaceCheckpointStore(resolved.rewindCheckpoints)
   installCheckpointCapture(ctx, checkpoints)
-  const app = new TuiApplication(api, resolved, runtime, checkpoints)
+  const app = new TuiApplication(api, resolved, runtime, checkpoints, ctx.memory)
   ctx.effect(() => {
     let active = true
+    const removeMemoryMutation = ctx.memory.onMutation(mutation => {
+      checkpoints.recordMemoryMutation(mutation)
+    })
     void (async () => {
       await ctx.get('loader')?.await()
       if (!active) return
@@ -124,6 +127,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
     })
     return async () => {
       active = false
+      removeMemoryMutation()
       await app.dispose()
     }
   })

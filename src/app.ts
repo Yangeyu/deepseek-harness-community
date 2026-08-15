@@ -14,6 +14,11 @@ import type {
   ModelSelection,
   SessionSummary,
 } from '@deepseek-ai/dsh-host-apiproxy'
+import type {
+  MemoryActivity,
+  MemoryMutation,
+  ProjectMemoryService,
+} from '@yangeyu/deepseek-harness-memory'
 import type { ResolvedConfig } from './config.ts'
 import {
   HarnessController,
@@ -24,6 +29,7 @@ import {
 } from './controller.ts'
 import {
   ChoiceDialog,
+  MemoryDialog,
   ModelDialog,
   MultiSelectDialog,
   RewindCheckpointDialog,
@@ -58,6 +64,7 @@ const COMMANDS: SlashCommand[] = [
   { name: 'model', description: 'Select model and provider', argumentHint: '[provider/model]' },
   { name: 'details', description: 'Toggle expanded tool output' },
   { name: 'status', description: 'Show current session status' },
+  { name: 'memories', description: 'Manage project memory and session learning' },
   { name: 'rewind', description: 'Open the workspace and conversation checkpoint history' },
   { name: 'exit', description: 'Exit the terminal client' },
 ]
@@ -94,6 +101,8 @@ export class TuiApplication implements TuiControllerSink {
   private removeInputListener?: () => void
   private spinner: ReturnType<typeof setInterval> | undefined
   private spinnerFrame = 0
+  private workingStartedAt: number | undefined
+  private workingSessionId: TuiState['sessionId'] = undefined
   private showDetails = false
   private lastEscapeAt = 0
   private rewindArmTimer: ReturnType<typeof setTimeout> | undefined
@@ -105,6 +114,8 @@ export class TuiApplication implements TuiControllerSink {
   private rewindSummaries: RewindCheckpointSummary[] | undefined
   private rewindCheckpointDialog: RewindCheckpointDialog | undefined
   private rewindSurfaceGeneration = 0
+  private memoryActivity: MemoryActivity = { state: 'idle' }
+  private readonly removeMemoryActivity: () => void
   private readonly interactionQueue: Array<() => void> = []
   private autocompleteCwd: string
 
@@ -113,6 +124,7 @@ export class TuiApplication implements TuiControllerSink {
     private readonly config: ResolvedConfig,
     private readonly runtime: TuiRuntime,
     private readonly checkpoints: WorkspaceCheckpointStore,
+    private readonly memory: ProjectMemoryService,
   ) {
     this.theme = createTheme(config.color)
     this.tui = new TuiMainScreen(this.terminal, config.showHardwareCursor)
@@ -155,6 +167,12 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.tui.addChild(this.layout)
     this.tui.setFocus(this.editor)
+    this.removeMemoryActivity = this.memory.onActivity((activity) => {
+      if (this.disposed) return
+      this.memoryActivity = activity
+      this.updateStatus(this.controller.current)
+      this.tui.requestRender()
+    })
   }
 
   /** Start raw-mode rendering and bind or resume the configured session. */
@@ -176,6 +194,7 @@ export class TuiApplication implements TuiControllerSink {
     this.controller.dispose()
     if (this.spinner !== undefined) clearInterval(this.spinner)
     if (this.rewindArmTimer !== undefined) clearTimeout(this.rewindArmTimer)
+    this.removeMemoryActivity()
     this.terminal.write(DISABLE_MOUSE_TRACKING)
     this.removeInputListener?.()
     this.tui.stop()
@@ -228,6 +247,10 @@ export class TuiApplication implements TuiControllerSink {
     const history = this.layout.followsTranscriptTail ? '' : ' · Viewing history · PageDown to follow'
     const working = state.running || state.pendingSubmissions.some(submission => submission.intent === 'working')
     if (working) {
+      if (this.workingStartedAt === undefined || this.workingSessionId !== state.sessionId) {
+        this.workingStartedAt = Date.now()
+        this.workingSessionId = state.sessionId
+      }
       if (this.spinner === undefined) {
         this.spinner = setInterval(() => {
           this.spinnerFrame += 1
@@ -237,8 +260,23 @@ export class TuiApplication implements TuiControllerSink {
       }
       const frames = ['·', '✢', '✳', '✦']
       const glyph = frames[this.spinnerFrame % frames.length] ?? '·'
-      this.transcript.setLoadingFrame(glyph)
+      this.transcript.setActivity(glyph, (Date.now() - this.workingStartedAt) / 1_000)
       this.status.setText(history === '' ? '' : this.theme.dim(history.slice(3)))
+      return
+    }
+    this.workingStartedAt = undefined
+    this.workingSessionId = undefined
+    if (this.memoryActivity.state === 'learning') {
+      if (this.spinner === undefined) {
+        this.spinner = setInterval(() => {
+          this.spinnerFrame += 1
+          this.updateStatus(this.controller.current)
+          this.tui.requestRender()
+        }, 160)
+      }
+      const frames = ['·', '✢', '✳', '✦']
+      const glyph = frames[this.spinnerFrame % frames.length] ?? '·'
+      this.status.setText(this.theme.accent(`${glyph} Learning project memory…${history}`))
       return
     }
     if (this.spinner !== undefined) {
@@ -247,6 +285,10 @@ export class TuiApplication implements TuiControllerSink {
     }
     if (this.lastEscapeAt !== 0) {
       this.status.setText(this.theme.warning(`Press Esc again to open rewind checkpoints${history}`))
+      return
+    }
+    if (this.memoryActivity.state === 'error') {
+      this.status.setText(this.theme.warning(`Memory learning failed: ${this.memoryActivity.message}${history}`))
       return
     }
     this.status.setText(state.connected
@@ -375,6 +417,7 @@ export class TuiApplication implements TuiControllerSink {
           '/model [provider/model] · select model',
           '/details · expand or collapse tool output',
           '/status · current session details',
+          '/memories · manage memory and session learning',
           '/rewind · select a workspace and conversation checkpoint',
           '/exit · leave the TUI',
         ].join('\n'))
@@ -410,6 +453,10 @@ export class TuiApplication implements TuiControllerSink {
         ].join('\n'))
         return true
       }
+      case 'memories':
+      case 'memory':
+        await this.openMemoryDialog()
+        return true
       case 'rewind':
         this.requestRewind()
         return true
@@ -501,19 +548,35 @@ export class TuiApplication implements TuiControllerSink {
   private async performRewind(preview: RewindPreview): Promise<void> {
     try {
       const rollback = await this.checkpoints.restore(preview)
+      const revertedMemories: MemoryMutation[] = []
       let targetSessionId: string
       try {
+        for (const mutation of [...preview.memoryMutations ?? []].reverse()) {
+          await this.memory.restore(mutation, 'before')
+          revertedMemories.push(mutation)
+        }
         targetSessionId = String(await this.controller.rewind(preview, phase => {
           this.showRewindProgress(phase === 'forking'
             ? 'Rewinding conversation…'
             : 'Reloading rewound session…')
         }))
       } catch (error: unknown) {
-        this.showRewindProgress('Rewind failed; restoring the current workspace…')
+        this.showRewindProgress('Rewind failed; restoring the current workspace and memory…')
+        const rollbackFailures: unknown[] = []
+        for (const mutation of [...revertedMemories].reverse()) {
+          try {
+            await this.memory.restore(mutation, 'after')
+          } catch (rollbackError: unknown) {
+            rollbackFailures.push(rollbackError)
+          }
+        }
         try {
           await rollback()
         } catch (rollbackError: unknown) {
-          throw new Error(`rewind failed (${String(error)}) and workspace rollback also failed (${String(rollbackError)})`)
+          rollbackFailures.push(rollbackError)
+        }
+        if (rollbackFailures.length > 0) {
+          throw new Error(`rewind failed (${String(error)}) and rollback also failed (${rollbackFailures.map(String).join('; ')})`)
         }
         throw error
       }
@@ -537,7 +600,7 @@ export class TuiApplication implements TuiControllerSink {
     this.rewindProgress.setText([
       this.theme.bold('Rewind'),
       this.theme.accent(`✦ ${message}`),
-      this.theme.dim('Workspace and conversation rollback are applied as one operation.'),
+      this.theme.dim('Workspace, memory, and conversation rollback are applied as one operation.'),
     ].join('\n'))
     this.tui.requestRender()
   }
@@ -623,6 +686,31 @@ export class TuiApplication implements TuiControllerSink {
         close()
         void this.runAction(() => this.controller.selectModel(selected))
       },
+      close,
+    )
+    this.composerModalActive = true
+    this.layout.setComposerOverride(dialog)
+    this.tui.setFocus(dialog)
+    this.tui.requestRender()
+  }
+
+  private async openMemoryDialog(): Promise<void> {
+    if (this.tui.hasOverlay() || this.composerModalActive) return
+    const state = this.controller.current
+    if (state.sessionId === undefined) throw new Error('no terminal session is active')
+    const sessionId = String(state.sessionId)
+    const overview = await this.memory.overview(state.cwd, sessionId)
+    const close = (): void => {
+      this.layout.setComposerOverride(undefined)
+      this.composerModalActive = false
+      this.tui.setFocus(this.editor)
+      this.tui.requestRender()
+    }
+    const dialog = new MemoryDialog(
+      overview,
+      () => this.terminal.rows,
+      this.theme,
+      policy => { this.memory.setPolicy(sessionId, policy) },
       close,
     )
     this.composerModalActive = true
