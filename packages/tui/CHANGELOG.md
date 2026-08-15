@@ -14,6 +14,8 @@ All notable changes to this project are documented in this file.
   toolkit-neutral, linear-time `TrajectoryModel` with focused unit coverage.
 - Document Host, terminal-runtime, and presentation ownership plus the staged
   route toward semantic event assembly and durable Host checkpoints.
+- Organize sources and tests by application, runtime, trajectory, and
+  presentation ownership while preserving the package entry point and exports.
 
 ## 0.1.4 - 2026-08-15
 

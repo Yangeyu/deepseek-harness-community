@@ -4,7 +4,7 @@ import { Component, EditorTheme, MarkdownTheme, SelectListTheme } from "@earendi
 import z from "@deepseek-ai/schemastery";
 import { Context } from "@deepseek-ai/cordis";
 import { SessionProjectionMap } from "@deepseek-ai/dsh-session-projection/types";
-//#region src/config.d.ts
+//#region src/application/config.d.ts
 /** User-configurable TUI presentation and history bounds. */
 interface Config {
   historyMessages?: number;
@@ -56,7 +56,7 @@ interface RewindPreview {
   memoryMutations?: readonly MemoryMutation[];
 }
 //#endregion
-//#region src/submission.d.ts
+//#region src/runtime/submission.d.ts
 /** Locally visible prompt retained until its durable user-message event is observed. */
 interface PendingSubmission {
   key: number;
@@ -66,7 +66,7 @@ interface PendingSubmission {
   rpcId?: RpcId;
 }
 //#endregion
-//#region src/controller.d.ts
+//#region src/runtime/controller.d.ts
 type SessionId$1 = SessionSummary['sessionId'];
 /** Answerable approval request delivered by the mux stream. */
 type ApprovalPrompt = Extract<MuxFrame, {
@@ -167,7 +167,7 @@ declare class HarnessController {
   private emit;
 }
 //#endregion
-//#region src/commands.d.ts
+//#region src/runtime/commands.d.ts
 type SessionId = SessionSummary['sessionId'];
 /** Toolkit-neutral command metadata used by help and autocomplete surfaces. */
 interface TerminalCommandDescriptor {
@@ -212,7 +212,7 @@ declare class TerminalCommandDirectory {
   private refreshHost;
 }
 //#endregion
-//#region src/app.d.ts
+//#region src/application/app.d.ts
 /** Launcher-owned exit function used instead of calling process.exit from raw mode. */
 interface TuiRuntime {
   exit(code: number): void;
@@ -221,11 +221,11 @@ interface TuiRuntime {
   stderr: NodeJS.WriteStream;
 }
 //#endregion
-//#region src/diff-location.d.ts
+//#region src/presentation/diff-location.d.ts
 /** Per-card, per-hunk starting line numbers. */
 type DiffLineStarts = ReadonlyMap<string, readonly (number | undefined)[]>;
 //#endregion
-//#region src/theme.d.ts
+//#region src/presentation/theme.d.ts
 type Paint = (text: string) => string;
 /** Terminal presentation roles used by the renderer and dialogs. */
 interface TuiTheme {
@@ -248,7 +248,7 @@ interface TuiTheme {
   select: SelectListTheme;
 }
 //#endregion
-//#region src/transcript.d.ts
+//#region src/presentation/transcript.d.ts
 /** Scrollback-first transcript component rebuilt from the current API event window. */
 declare class TranscriptComponent implements Component {
   private readonly theme;
@@ -290,7 +290,7 @@ declare class TranscriptComponent implements Component {
   private scrollBlock;
 }
 //#endregion
-//#region src/trajectory.d.ts
+//#region src/trajectory/records.d.ts
 type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'command' | 'context' | 'event';
 type TrajectoryStatus = 'pending' | 'completed' | 'warning' | 'failed' | 'info';
 /** One semantic execution record assembled from the durable session event log. */
@@ -317,6 +317,8 @@ interface TrajectoryRecord {
 }
 /** Pair lifecycle boundaries and tool call/results into an ordered diagnostic ledger. */
 declare function buildTrajectoryRecords(entries: readonly HistoryEntry[]): TrajectoryRecord[];
+//#endregion
+//#region src/trajectory/view.d.ts
 /** Full-screen, keyboard-first execution ledger and event detail surface. */
 declare class TrajectoryView implements Component {
   private readonly visibleRows;
@@ -366,7 +368,7 @@ declare class TrajectoryView implements Component {
   private fit;
 }
 //#endregion
-//#region src/trajectory-model.d.ts
+//#region src/trajectory/model.d.ts
 /** Minimal semantic shape required to index and measure a trace record. */
 interface TrajectoryNode {
   key: string;

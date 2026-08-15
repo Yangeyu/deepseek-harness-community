@@ -9,7 +9,7 @@ import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import z from "@deepseek-ai/schemastery";
-//#region src/submission.ts
+//#region src/runtime/submission.ts
 function userMessageRpcId(entry) {
 	const event = entry.event;
 	if (event.type !== "user/message" || event.data.source.kind !== "user") return void 0;
@@ -78,7 +78,7 @@ var SubmissionTracker = class {
 	}
 };
 //#endregion
-//#region src/controller.ts
+//#region src/runtime/controller.ts
 function valueOf(response) {
 	if (response.result.ok) return response.result.value;
 	throw new Error(response.result.error.message);
@@ -565,7 +565,7 @@ function displayUnknown(value) {
 	}
 }
 //#endregion
-//#region src/dialogs.ts
+//#region src/presentation/dialogs.ts
 /** Keyboard selector with a title and optional explanatory line. */
 var ChoiceDialog = class {
 	title;
@@ -1109,7 +1109,7 @@ var TextInputDialog = class {
 	}
 };
 //#endregion
-//#region src/theme.ts
+//#region src/presentation/theme.ts
 function ansi(enabled, open, close) {
 	return enabled ? (text) => `\u001b[${open}m${text}\u001b[${close}m` : (text) => text;
 }
@@ -1182,7 +1182,7 @@ function createTheme(enabled) {
 	};
 }
 //#endregion
-//#region src/stats.ts
+//#region src/presentation/stats.ts
 /** Compact token count using the same thresholds as the Harness Web composer. */
 function formatTokens(value) {
 	const scaled = (number) => number >= 100 ? String(Math.round(number)) : String(Math.round(number * 10) / 10);
@@ -1248,7 +1248,7 @@ function composerStats(projections) {
 	return groups.join(" | ");
 }
 //#endregion
-//#region src/diff-location.ts
+//#region src/presentation/diff-location.ts
 /** Resolve absolute line numbers for applied diff hunks against the live workspace. */
 /** Find a unique hunk after-image and return its one-based file line. */
 function locateHunkStart(fileText, newText) {
@@ -1304,8 +1304,8 @@ var DiffLineLocator = class {
 	}
 };
 //#endregion
-//#region src/diff.ts
-/** Terminal-friendly projection for Harness file-diff render intent. */
+//#region src/presentation/diff.ts
+/** Presentation-only projection for Harness file-diff render intent. */
 const CONTEXT_RADIUS = 2;
 function contentLines(text) {
 	if (text === "") return [];
@@ -1503,11 +1503,11 @@ function diffSummary(added, removed) {
 	return parts.length === 0 ? "No textual changes" : parts.join(", ");
 }
 //#endregion
-//#region src/transcript.ts
+//#region src/presentation/transcript.ts
 const DIFF_CONTENT_INDENT = "  ";
 const DISCLOSURE_COLLAPSED = "›";
 const DISCLOSURE_EXPANDED = "⌄";
-function stepKey$2(turn, step) {
+function stepKey$3(turn, step) {
 	return `${turn}:${step}`;
 }
 function messageText$1(content, reasoning) {
@@ -1591,7 +1591,7 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 	const commandResults = /* @__PURE__ */ new Map();
 	for (const entry of state.events) {
 		const event = entry.event;
-		if (event.type === "assistant/message") finalSteps.add(stepKey$2(event.data.turn, event.data.step));
+		if (event.type === "assistant/message") finalSteps.add(stepKey$3(event.data.turn, event.data.step));
 		if (event.type === "tool/result") results.set(String(event.data.message.source.callId), entry);
 		if (event.type === "command/run") commandRuns.add(String(event.data.commandId));
 		if (event.type === "command/done") commandResults.set(String(event.data.commandId), entry);
@@ -1618,7 +1618,7 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 				break;
 			}
 			case "assistant/chunk": {
-				const key = stepKey$2(event.data.turn, event.data.step);
+				const key = stepKey$3(event.data.turn, event.data.step);
 				if (finalSteps.has(key)) break;
 				const chunk = event.data.chunk;
 				if (chunk.type !== "text-delta" && chunk.type !== "reasoning-delta") break;
@@ -1669,7 +1669,7 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 				}
 				const reasoning = reasoningText(event.data.message.content);
 				if (showReasoning && reasoning.trim() !== "") rows.push({ thinking: {
-					key: `${stepKey$2(event.data.turn, event.data.step)}:thinking`,
+					key: `${stepKey$3(event.data.turn, event.data.step)}:thinking`,
 					text: reasoning,
 					streaming: false
 				} });
@@ -2061,7 +2061,8 @@ var TranscriptComponent = class {
 	}
 };
 //#endregion
-//#region src/layout.ts
+//#region src/presentation/layout.ts
+/** Composer-anchored layout primitives for the terminal presentation layer. */
 /** Main-screen layout with a fixed composer and a scrollable conversation viewport. */
 var ComposerAnchoredLayout = class extends Container {
 	header;
@@ -2167,8 +2168,8 @@ var ComposerAnchoredLayout = class extends Container {
 	}
 };
 //#endregion
-//#region src/trajectory-model.ts
-function stepKey$1(turn, step) {
+//#region src/trajectory/model.ts
+function stepKey$2(turn, step) {
 	return `${String(turn)}:${String(step)}`;
 }
 function effectiveDuration(record, now) {
@@ -2188,11 +2189,11 @@ var TrajectoryModel = class {
 		const steps = /* @__PURE__ */ new Map();
 		for (const record of records) {
 			if (record.kind === "turn" && record.turn !== void 0) turns.set(record.turn, record);
-			if (record.kind === "step" && record.turn !== void 0 && record.step !== void 0) steps.set(stepKey$1(record.turn, record.step), record);
+			if (record.kind === "step" && record.turn !== void 0 && record.step !== void 0) steps.set(stepKey$2(record.turn, record.step), record);
 		}
 		for (const record of records) {
 			if (record.kind === "turn" || record.turn === void 0) continue;
-			const parent = record.kind === "step" ? turns.get(record.turn) : record.step === void 0 ? turns.get(record.turn) : steps.get(stepKey$1(record.turn, record.step)) ?? turns.get(record.turn);
+			const parent = record.kind === "step" ? turns.get(record.turn) : record.step === void 0 ? turns.get(record.turn) : steps.get(stepKey$2(record.turn, record.step)) ?? turns.get(record.turn);
 			if (parent !== void 0) this.parents.set(record.key, parent);
 		}
 	}
@@ -2242,31 +2243,7 @@ var TrajectoryModel = class {
 	}
 };
 //#endregion
-//#region src/trajectory.ts
-const TABS = [
-	{
-		id: "summary",
-		label: "Summary"
-	},
-	{
-		id: "payload",
-		label: "Input"
-	},
-	{
-		id: "result",
-		label: "Output"
-	},
-	{
-		id: "schema",
-		label: "Schema"
-	},
-	{
-		id: "timing",
-		label: "Timing"
-	}
-];
-const SPLIT_MIN_WIDTH = 120;
-const SHARE_BAR_WIDTH = 7;
+//#region src/trajectory/records.ts
 function recordValue(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
 }
@@ -2291,7 +2268,7 @@ function locatedPosition(entry, activeTurn, activeStep) {
 		...step === void 0 ? {} : { step }
 	};
 }
-function stepKey(turn, step) {
+function stepKey$1(turn, step) {
 	return `${String(turn)}:${String(step)}`;
 }
 function contentText(value) {
@@ -2368,8 +2345,8 @@ function buildTrajectoryRecords(entries) {
 	for (const entry of entries) {
 		const event = entry.event;
 		if (event.type === "turn/end") turnEnds.set(event.data.turn, entry);
-		if (event.type === "step/start") stepStarts.set(stepKey(event.data.turn, event.data.step), entry);
-		if (event.type === "step/end") stepEnds.set(stepKey(event.data.turn, event.data.step), entry);
+		if (event.type === "step/start") stepStarts.set(stepKey$1(event.data.turn, event.data.step), entry);
+		if (event.type === "step/end") stepEnds.set(stepKey$1(event.data.turn, event.data.step), entry);
 		if (event.type === "tool/result") toolResults.set(String(event.data.message.source.callId), entry);
 		if (event.type === "command/run") commandRuns.add(String(event.data.commandId));
 		if (event.type === "command/done") commandResults.set(String(event.data.commandId), entry);
@@ -2434,7 +2411,7 @@ function buildTrajectoryRecords(entries) {
 				break;
 			}
 			case "step/start": {
-				const completed = stepEnds.get(stepKey(event.data.turn, event.data.step));
+				const completed = stepEnds.get(stepKey$1(event.data.turn, event.data.step));
 				records.push({
 					key: `step:${String(event.data.turn)}:${String(event.data.step)}:${String(event.seq)}`,
 					kind: "step",
@@ -2478,7 +2455,7 @@ function buildTrajectoryRecords(entries) {
 				break;
 			}
 			case "assistant/message": {
-				const start = stepStarts.get(stepKey(event.data.turn, event.data.step));
+				const start = stepStarts.get(stepKey$1(event.data.turn, event.data.step));
 				const text = messageText(event.data.message);
 				const detail = text === "" ? "(empty response)" : text;
 				records.push({
@@ -2625,6 +2602,35 @@ function buildTrajectoryRecords(entries) {
 		}
 	}
 	return records;
+}
+//#endregion
+//#region src/trajectory/view.ts
+const TABS = [
+	{
+		id: "summary",
+		label: "Summary"
+	},
+	{
+		id: "payload",
+		label: "Input"
+	},
+	{
+		id: "result",
+		label: "Output"
+	},
+	{
+		id: "schema",
+		label: "Schema"
+	},
+	{
+		id: "timing",
+		label: "Timing"
+	}
+];
+const SPLIT_MIN_WIDTH = 120;
+const SHARE_BAR_WIDTH = 7;
+function stepKey(turn, step) {
+	return `${String(turn)}:${String(step)}`;
 }
 function formatDuration(milliseconds) {
 	if (milliseconds < 1e3) return `${String(Math.max(0, Math.round(milliseconds)))} ms`;
@@ -3077,8 +3083,8 @@ var TrajectoryView = class {
 	}
 };
 //#endregion
-//#region src/mouse.ts
-/** Enable SGR mouse coordinates and pointer-motion reports on the main screen. */
+//#region src/presentation/mouse.ts
+/** Enable SGR mouse coordinates and pointer-motion reports for the presentation layer. */
 const ENABLE_MOUSE_TRACKING = "\x1B[?1000h\x1B[?1003h\x1B[?1006h";
 /** Restore normal terminal-owned pointer behavior. */
 const DISABLE_MOUSE_TRACKING = "\x1B[?1006l\x1B[?1003l\x1B[?1000l";
@@ -3094,7 +3100,7 @@ function parseMouseReport(data) {
 	};
 }
 //#endregion
-//#region src/commands.ts
+//#region src/runtime/commands.ts
 function parseCommand(text) {
 	const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text);
 	if (match === null || match[1] === void 0) return void 0;
@@ -3185,7 +3191,7 @@ var TerminalCommandDirectory = class {
 	}
 };
 //#endregion
-//#region src/app.ts
+//#region src/application/app.ts
 const DOUBLE_ESCAPE_MS = 600;
 function sessionDescription(session) {
 	return session.cwd ?? String(session.sessionId);
@@ -4302,7 +4308,8 @@ function installCheckpointCapture(ctx, store) {
 	});
 }
 //#endregion
-//#region src/config.ts
+//#region src/application/config.ts
+/** Application-level configuration materialized before runtime construction. */
 /** Loader schema for the public plugin configuration. */
 const Config = z.object({
 	historyMessages: z.natural().min(10).max(2e3).default(200),

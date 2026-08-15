@@ -25,6 +25,23 @@ The Host owns durable domain facts. The terminal runtime owns connection,
 paging, semantic indexing, and interaction state. Presentation code owns only
 layout, colors, focus, keyboard handling, pointer handling, and scrolling.
 
+## Source layout
+
+```text
+src/
+├── application/   # composition, configuration, and top-level UI orchestration
+├── runtime/       # transport-neutral session, submission, and command state
+├── trajectory/    # trace records, hierarchy, timing, and interaction view
+├── presentation/  # pi-tui components, dialogs, diffs, layout, and theme
+├── checkpoint.ts  # process-local compatibility domain awaiting Host ownership
+├── text.ts        # terminal-safety boundary shared across presentation modules
+└── index.ts       # stable public and Cordis plugin entry point
+```
+
+Tests mirror these directories. A module stays at the root when it is both
+small and cross-cutting; directories express ownership rather than merely
+reducing the number of visible files.
+
 ## Invariants
 
 1. The session event log is the durable source of truth. Reconnect and history
@@ -56,6 +73,8 @@ layout, colors, focus, keyboard handling, pointer handling, and scrolling.
 - `TrajectoryModel` indexes semantic parents once per event snapshot and
   computes offsets, durations, parent share, sibling bottlenecks, and the global
   bottleneck in linear time.
+- `buildTrajectoryRecords` in `trajectory/records.ts` pairs durable lifecycle
+  events without importing the terminal rendering toolkit.
 - `TranscriptComponent` and `TrajectoryView` render different views of the
   event window. Neither owns persistence.
 - `WorkspaceCheckpointStore` remains a process-local compatibility subsystem;
@@ -65,8 +84,8 @@ layout, colors, focus, keyboard handling, pointer handling, and scrolling.
 
 ### Near term
 
-- Extract event-to-record assembly from `trajectory.ts` into a toolkit-neutral
-  semantic builder shared by Transcript and Trajectory.
+- Reuse `trajectory/records.ts` from Transcript when richer inline trace
+  summaries need semantic records, avoiding a second event fold.
 - Replace central event switches with small registered event definitions when a
   second independent consumer exists.
 - Add width, color, PTY, history-gap, and event-replacement golden tests.

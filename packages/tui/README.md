@@ -203,12 +203,10 @@ commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/details`, `/status`,
 Cordis bundle entry
   -> file-backed Memory plugin (context, tools, quiet learner, mutations)
   -> in-process ApiProxy client
-     -> HarnessController (session and stream state)
-        -> pi-tui application (input, dialogs, unified rewind transaction)
-           -> ComposerAnchoredLayout (transcript viewport and tail following)
-              -> TranscriptComponent (pure event/view projection)
-              -> TrajectoryModel (indexed hierarchy and timing semantics)
-                 -> TrajectoryView (paged execution ledger and event inspection)
+     -> application/ (bootstrap orchestration and local interactions)
+        ├─ runtime/ (controller, submissions, merged command directory)
+        ├─ trajectory/ (semantic hierarchy, timing, and trace view)
+        └─ presentation/ (transcript, dialogs, diffs, layout, and theme)
 ```
 
 The detailed ownership rules and staged design are recorded in

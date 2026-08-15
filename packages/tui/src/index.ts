@@ -11,32 +11,33 @@ import {
   InProcessApiClient,
   toFetchHandler,
 } from '@deepseek-ai/dsh-host-apiproxy'
-import { TuiApplication, type TuiRuntime } from './app.ts'
+import { TuiApplication, type TuiRuntime } from './application/app.ts'
 import { installCheckpointCapture, WorkspaceCheckpointStore } from './checkpoint.ts'
-import type { HostCommandSource } from './commands.ts'
-import { Config, resolveConfig, type Config as TuiConfig } from './config.ts'
+import type { HostCommandSource } from './runtime/commands.ts'
+import { Config, resolveConfig, type Config as TuiConfig } from './application/config.ts'
 
 export { Config, resolveConfig }
 export type { TuiConfig, TuiRuntime }
-export { HarnessController } from './controller.ts'
-export { TerminalCommandDirectory } from './commands.ts'
+export { HarnessController } from './runtime/controller.ts'
+export { TerminalCommandDirectory } from './runtime/commands.ts'
 export type {
   HostCommandSource,
   TerminalCommandDefinition,
   TerminalCommandDescriptor,
-} from './commands.ts'
+} from './runtime/commands.ts'
 export type {
   ApprovalPrompt,
   PendingSubmission,
   QuestionPrompt,
   TuiControllerSink,
   TuiState,
-} from './controller.ts'
-export { TranscriptComponent } from './transcript.ts'
-export { buildTrajectoryRecords, TrajectoryView } from './trajectory.ts'
-export type { TrajectoryRecord } from './trajectory.ts'
-export { TrajectoryModel } from './trajectory-model.ts'
-export type { TrajectoryMeasurement, TrajectoryMetrics, TrajectoryNode } from './trajectory-model.ts'
+} from './runtime/controller.ts'
+export { TranscriptComponent } from './presentation/transcript.ts'
+export { buildTrajectoryRecords } from './trajectory/records.ts'
+export type { TrajectoryRecord } from './trajectory/records.ts'
+export { TrajectoryView } from './trajectory/view.ts'
+export { TrajectoryModel } from './trajectory/model.ts'
+export type { TrajectoryMeasurement, TrajectoryMetrics, TrajectoryNode } from './trajectory/model.ts'
 export { sanitizeTerminalText } from './text.ts'
 
 declare module '@deepseek-ai/cordis' {

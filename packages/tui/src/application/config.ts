@@ -1,0 +1,60 @@
+/** Application-level configuration materialized before runtime construction. */
+import z from '@deepseek-ai/schemastery'
+
+/** User-configurable TUI presentation and history bounds. */
+export interface Config {
+  historyMessages?: number
+  rewindCheckpoints?: number
+  maxToolOutputLines?: number
+  thinkingMaxLines?: number
+  showReasoning?: boolean
+  showHardwareCursor?: boolean
+  color?: boolean
+  title?: string
+  cwd?: string
+  sessionId?: string
+}
+
+/** Loader schema for the public plugin configuration. */
+export const Config: z<Config> = z.object({
+  historyMessages: z.natural().min(10).max(2000).default(200),
+  rewindCheckpoints: z.natural().min(2).max(100).default(20),
+  maxToolOutputLines: z.natural().min(2).max(200).default(12),
+  thinkingMaxLines: z.natural().min(3).max(30).default(8),
+  showReasoning: z.boolean().default(true),
+  showHardwareCursor: z.boolean().default(false),
+  color: z.boolean().default(true),
+  title: z.string().default('DeepSeek Harness'),
+  cwd: z.string(),
+  sessionId: z.string(),
+})
+
+/** Fully materialized settings consumed by the application. */
+export interface ResolvedConfig {
+  historyMessages: number
+  rewindCheckpoints: number
+  maxToolOutputLines: number
+  thinkingMaxLines: number
+  showReasoning: boolean
+  showHardwareCursor: boolean
+  color: boolean
+  title: string
+  cwd: string
+  sessionId?: string
+}
+
+/** Resolve optional loader fields once at application startup. */
+export function resolveConfig(config: Config): ResolvedConfig {
+  return {
+    historyMessages: config.historyMessages ?? 200,
+    rewindCheckpoints: config.rewindCheckpoints ?? 20,
+    maxToolOutputLines: config.maxToolOutputLines ?? 12,
+    thinkingMaxLines: config.thinkingMaxLines ?? 8,
+    showReasoning: config.showReasoning ?? true,
+    showHardwareCursor: config.showHardwareCursor ?? false,
+    color: config.color ?? true,
+    title: config.title ?? 'DeepSeek Harness',
+    cwd: config.cwd ?? process.cwd(),
+    ...config.sessionId === undefined ? {} : { sessionId: config.sessionId },
+  }
+}
