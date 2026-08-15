@@ -203,7 +203,7 @@ describe('TranscriptComponent', () => {
     expect(output).not.toContain('You')
   })
 
-  it('joins an animated working row to a local prompt without an accepted phase', () => {
+  it('renders a local prompt block without transport phases', () => {
     const pending = state([])
     pending.pendingSubmissions = [{
       key: 1,
@@ -212,12 +212,9 @@ describe('TranscriptComponent', () => {
       intent: 'working',
     }]
     const transcript = new TranscriptComponent(pending, createTheme(true), true, 8)
-    transcript.setActivity('✦', 4)
 
     const output = transcript.render(80).join('\n')
     expect(output).toContain('\u001b[97m› render before the network round trip\u001b[39m')
-    expect(output).toContain('✦')
-    expect(output).toContain('Working (4s · esc to interrupt)')
     expect(output).not.toContain('Accepted')
     expect(output).not.toContain('Sending')
     expect(output).not.toContain('You')
@@ -250,83 +247,7 @@ describe('TranscriptComponent', () => {
     queued.queue = [{ ...queued.queue[0]!, placement: 'context' }]
     const context = new TranscriptComponent(queued, createTheme(false), true, 8).render(80).join('\n')
     expect(context).toContain('queued once')
-    expect(context).toContain('Working (0s · esc to interrupt)')
     expect(context).not.toContain('Accepted')
-  })
-
-  it('keeps the working row visible after thinking output begins', () => {
-    const running = state([
-      entry({
-        event: {
-          type: 'user/message',
-          seq: 0,
-          time: 1,
-          surfaceOp: 'append',
-          data: {
-            id: 'm-user-loading',
-            role: 'user',
-            source: { kind: 'user' },
-            content: [{ type: 'text', text: 'work on this' }],
-          },
-        },
-      }),
-    ])
-    running.running = true
-    const transcript = new TranscriptComponent(running, createTheme(false), true, 8)
-    transcript.setActivity('✳', 2)
-    expect(transcript.render(80).join('\n')).toContain('✳ Working (2s · esc to interrupt)')
-
-    running.events = [...running.events, entry({
-      event: {
-        type: 'assistant/chunk',
-        seq: 1,
-        time: 2,
-        data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'checking' } },
-      },
-    })]
-    transcript.setState(running)
-    const output = transcript.render(80).join('\n')
-    expect(output).toContain('Thinking…')
-    expect(output).toContain('Working (2s · esc to interrupt)')
-  })
-
-  it('keeps the activity indicator visible while waiting after a tool result', () => {
-    const running = state([
-      entry({
-        event: {
-          type: 'tool/call',
-          seq: 0,
-          time: 1,
-          data: { turn: 1, step: 1, callId: 'call-wait', name: 'shell', arguments: '{}' },
-        },
-        view: { for: 'call', view: { card: 'terminal', title: 'pnpm test', cwd: '/workspace' } },
-      }),
-      entry({
-        event: {
-          type: 'tool/result',
-          seq: 1,
-          time: 2,
-          surfaceOp: 'append',
-          data: {
-            turn: 1,
-            step: 1,
-            message: {
-              id: 'tool-result-wait',
-              role: 'user',
-              source: { kind: 'tool', callId: 'call-wait' },
-              content: [{ type: 'tool-result', callId: 'call-wait', content: [], isError: false }],
-            },
-          },
-        },
-      }),
-    ])
-    running.running = true
-    const transcript = new TranscriptComponent(running, createTheme(false), true, 8)
-    transcript.setActivity('✦', 7)
-
-    const output = transcript.render(80).join('\n')
-    expect(output).toContain('● $ pnpm test')
-    expect(output).toContain('✦ Working (7s · esc to interrupt)')
   })
 
   it('uses tool-owned presentation intent and expands bounded result output', () => {

@@ -34,8 +34,8 @@ The initial terminal client supports:
 - Codex-style full-width user-message blocks with restrained background color,
   a stable `›` anchor, and no persistent speaker labels;
 - queueing input while a turn is running and steering the active turn;
-- immediate local prompt rendering, one animated working row that remains
-  visible for the full running turn with elapsed time and an interrupt hint,
+- immediate local prompt rendering, one animated working row fixed directly
+  above the editor for the full running turn with elapsed time and an interrupt hint,
   authoritative queue presentation, and `rpcId` reconciliation with the
   durable session event;
 - cancelling a running turn;

@@ -260,8 +260,11 @@ export class TuiApplication implements TuiControllerSink {
       }
       const frames = ['·', '✢', '✳', '✦']
       const glyph = frames[this.spinnerFrame % frames.length] ?? '·'
-      this.transcript.setActivity(glyph, (Date.now() - this.workingStartedAt) / 1_000)
-      this.status.setText(history === '' ? '' : this.theme.dim(history.slice(3)))
+      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - this.workingStartedAt) / 1_000))
+      this.status.setText([
+        this.theme.accent(glyph),
+        this.theme.dim(` Working (${elapsedSeconds}s · esc to interrupt${history})`),
+      ].join(''))
       return
     }
     this.workingStartedAt = undefined

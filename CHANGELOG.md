@@ -17,10 +17,9 @@ All notable changes to this project are documented in this file.
   keyboard navigation, asynchronous file counts, and selected-node restore.
 - Add input history navigation and an optimistic `/clear` session transition
   with failure recovery.
-- Replace prompt `Sending`/`Accepted` phases and the duplicate running status
-  row with one animated transcript activity line that remains visible through
-  Thinking, answers, tool execution, and between-step waits, with elapsed time
-  and an interrupt hint.
+- Replace prompt `Sending`/`Accepted` phases with one animated composer status
+  line fixed directly above the editor through Thinking, answers, tool
+  execution, and between-step waits, with elapsed time and an interrupt hint.
 - Render user-authored messages as full-width, padded transcript blocks with a
   stable `›` anchor so prompts remain visually discoverable in long sessions.
 - Report checkpoint file counts per turn instead of cumulative rollback scope,

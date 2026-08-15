@@ -29,7 +29,6 @@ interface TranscriptRow {
   dim?: boolean
   prompt?: boolean
   promptStatus?: string
-  activity?: boolean
   thinking?: {
     key: string
     text: string
@@ -286,10 +285,8 @@ function rowsFromState(
       promptStatus: item.placement === 'steering' ? 'Steering next step…' : 'Queued',
     })
   }
-  let localWorking = false
   for (const submission of state.pendingSubmissions) {
     if (submission.rpcId !== undefined && visibleQueueRpcIds.has(String(submission.rpcId))) continue
-    if (submission.intent === 'working') localWorking = true
     rows.push({
       prompt: true,
       body: submission.text,
@@ -302,7 +299,6 @@ function rowsFromState(
   }
   if (state.notice !== undefined) rows.push({ label: 'Notice', labelPaint: theme.accent, body: state.notice })
   if (state.error !== undefined) rows.push({ label: 'Error', labelPaint: theme.error, body: state.error })
-  if (localWorking || state.running) rows.push({ activity: true })
   return rows
 }
 
@@ -318,8 +314,6 @@ export class TranscriptComponent implements Component {
   private blockHits: BlockHit[] = []
   private hoveredBlockKey: string | undefined
   private diffLineStarts: DiffLineStarts = new Map()
-  private activityFrame = '·'
-  private activityElapsedSeconds = 0
 
   constructor(
     state: Readonly<TuiState>,
@@ -345,12 +339,6 @@ export class TranscriptComponent implements Component {
 
   setDetails(show: boolean): void {
     this.showDetails = show
-  }
-
-  /** Update the one application-owned activity indicator shown for a running turn. */
-  setActivity(frame: string, elapsedSeconds: number): void {
-    this.activityFrame = frame
-    this.activityElapsedSeconds = Math.max(0, Math.floor(elapsedSeconds))
   }
 
   /** Supply asynchronously resolved absolute file-line starts for diff cards. */
@@ -404,13 +392,6 @@ export class TranscriptComponent implements Component {
     this.blockHits = []
     for (const [index, row] of rows.entries()) {
       if (index > 0) lines.push('')
-      if (row.activity) {
-        lines.push([
-          this.theme.accent(this.activityFrame),
-          this.theme.dim(` Working (${this.activityElapsedSeconds}s · esc to interrupt)`),
-        ].join(''))
-        continue
-      }
       if (row.thinking !== undefined) {
         this.pushBlock(lines, this.renderThinking(row.thinking, safeWidth), row.thinking.key, 'thinking')
         continue

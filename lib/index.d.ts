@@ -234,13 +234,9 @@ declare class TranscriptComponent implements Component {
   private blockHits;
   private hoveredBlockKey;
   private diffLineStarts;
-  private activityFrame;
-  private activityElapsedSeconds;
   constructor(state: Readonly<TuiState>, theme: TuiTheme, showReasoning: boolean, maxToolOutputLines: number, thinkingMaxLines?: number);
   setState(state: Readonly<TuiState>): void;
   setDetails(show: boolean): void;
-  /** Update the one application-owned activity indicator shown for a running turn. */
-  setActivity(frame: string, elapsedSeconds: number): void;
   /** Supply asynchronously resolved absolute file-line starts for diff cards. */
   setDiffLineStarts(starts: DiffLineStarts): void;
   invalidate(): void;

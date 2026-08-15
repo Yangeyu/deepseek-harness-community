@@ -89,7 +89,7 @@ describe('TuiApplication input routing', () => {
     expect(requestRewind).toHaveBeenCalledOnce()
   })
 
-  it('moves the running animation into the transcript without a duplicate status row', () => {
+  it('keeps the running animation in the fixed status row above the editor', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
     const app = application()
@@ -107,13 +107,39 @@ describe('TuiApplication input routing', () => {
     } satisfies TuiState
     app.render(running)
 
-    expect(internals.status.render(80)).toEqual([])
-    expect(internals.transcript.render(80).join('\n')).toContain('Working (0s · esc to interrupt)')
+    expect(internals.status.render(80).join('\n')).toContain('Working (0s · esc to interrupt)')
+    expect(internals.transcript.render(80).join('\n')).not.toContain('Working')
     expect(internals.footer.render(80).join('\n')).toContain('Esc cancel')
 
     vi.setSystemTime(5_000)
-    app.render(running)
-    expect(internals.transcript.render(80).join('\n')).toContain('Working (4s · esc to interrupt)')
+    app.render({
+      ...running,
+      pendingSubmissions: [],
+      events: [{
+        event: {
+          type: 'tool/result',
+          seq: 1,
+          time: 2,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'tool-result-wait',
+              role: 'user',
+              source: { kind: 'tool', callId: 'call-wait' },
+              content: [{
+                type: 'tool-result',
+                toolCallId: 'call-wait',
+                content: [{ type: 'text', text: 'done' }],
+              }],
+            },
+          },
+        },
+      }] as TuiState['events'],
+    })
+    expect(internals.status.render(80).join('\n')).toContain('Working (4s · esc to interrupt)')
+    expect(internals.transcript.render(80).join('\n')).not.toContain('Working')
   })
 
   it('restores workspace, memory mutations, and conversation as one rewind transaction', async () => {
