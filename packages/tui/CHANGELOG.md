@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.1.5 - 2026-08-15
+
 - Merge TUI-local interactions with the effective agent-scoped Harness command
   catalog so autocomplete and `/help` share one source while Host commands
   continue through ApiProxy and never reach the model.
