@@ -22,7 +22,7 @@
     "dsh-tui": "bin/dsh-tui.js"
   },
   "files": [
-    "bin",
+    "bin/dsh-tui.js",
     "src",
     "packages/tui/CHANGELOG.md",
     "packages/tui/cordis.patch.yml",

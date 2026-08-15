@@ -1399,7 +1399,7 @@ function pushHunk(lines, diff, start) {
 		removed
 	};
 }
-/** Build exact changed rows while retaining the contextual lines supplied by Harness. */
+/** Build changed rows while folding unchanged context far from each edit. */
 function buildDiffDisplay(title, diffs, starts = []) {
 	const paths = new Set(diffs.map((diff) => diff.path));
 	const lines = [];

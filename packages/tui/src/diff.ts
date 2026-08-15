@@ -108,7 +108,7 @@ function pushHunk(
   return { added, removed }
 }
 
-/** Build exact changed rows while retaining the contextual lines supplied by Harness. */
+/** Build changed rows while folding unchanged context far from each edit. */
 export function buildDiffDisplay(
   title: string,
   diffs: readonly FileDiff[],

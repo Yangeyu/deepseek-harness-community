@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.1.4 - 2026-08-15
+
 - Refine inline tool and file-diff presentation with brighter titles, compact
   disclosure controls, accurate wrapped changes, and a resume command on exit.
 - Add content-scoped reading padding and a dedicated conversation/composer gap,
@@ -14,12 +16,16 @@ All notable changes to this project are documented in this file.
   collapsible hierarchy, and complete side-by-side event inspection.
 - Share project memory across linked Git Worktrees and differently named clones,
   including migration of existing local-directory-based memory.
+- Keep the header inside the scrollable conversation viewport and add an
+  isolated development launcher that cannot modify the production profile.
+
+## 0.1.3 - 2026-08-15
+
 - Add the standalone file-backed Memory plugin to the TUI bundle, including
   `/memories`, quiet-learning status, per-session policy switches, and unified
   workspace/memory/conversation rewind.
 - Add application-owned conversation scrolling with pointer and PageUp/PageDown
-  navigation, a header that scrolls with the conversation, and preserved local
-  Thinking and Diff viewports.
+  navigation while preserving local Thinking and Diff viewports.
 - Render submitted prompts immediately, hand presentation to visible queue
   snapshots, and retire local state on durable user-message RPC identity.
 - Show explicit checkpoint preview, workspace restore, conversation rewind,
