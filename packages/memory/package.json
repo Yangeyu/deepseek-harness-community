@@ -1,6 +1,7 @@
 {
   "name": "@vascent/deepseek-harness-memory",
   "version": "0.1.0",
+  "private": true,
   "description": "File-backed project memory plugin for DeepSeek Harness",
   "keywords": [
     "deepseek",
@@ -73,8 +74,5 @@
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }

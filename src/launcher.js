@@ -18,7 +18,7 @@ export function resolveDshHome(env = process.env) {
 /** Return whether the profile's installed TUI resolves to this launcher copy. */
 export function profileUsesPlugin(profileDirectory, pluginDirectory) {
   const manifestPath = join(profileDirectory, 'package.json')
-  const installedPath = join(profileDirectory, 'node_modules', '@yangeyu', 'deepseek-harness-tui')
+  const installedPath = join(profileDirectory, 'node_modules', '@vascent', 'deepseek-harness-tui')
   if (!existsSync(manifestPath) || !existsSync(installedPath)) return false
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))

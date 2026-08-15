@@ -1,10 +1,10 @@
-# @vascent/deepseek-harness-tui
+# DeepSeek Harness Community TUI
 
 A keyboard-first terminal client bundle for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-This is a third-party integration package maintained in the community
-extension monorepo, outside the upstream Harness `packages/` tree:
+This is a private source workspace maintained in the community extension
+repository, outside the upstream Harness `packages/` tree:
 
 ```text
 Workplace/
@@ -59,28 +59,19 @@ session logic into UI components.
 
 ## Install
 
-The package supports DeepSeek Harness `>=0.1.0-rc.5 <0.2.0`. The repository
-launcher installs Harness and configures this bundle automatically:
+The TUI supports DeepSeek Harness `>=0.1.0-rc.5 <0.2.0`. Install the repository's
+single public package; its launcher installs Harness and configures this workspace automatically:
 
 ```sh
-npm install --global https://github.com/Yangeyu/deepseek-harness-community/releases/download/v0.1.1/yangeyu-dsh-tui-0.1.1.tgz
+npm install --global @vascent/dsh-tui
 dsh-tui
 ```
 
-The repository commits verified `lib/` artifacts, so installing from a tag
-does not build this package on the target machine. Advanced users may still
-install the TUI package tarball into an existing Harness profile:
-
-```sh
-dsh plugin --profile tui add ./yangeyu-deepseek-harness-tui-0.1.0.tgz
-dsh --profile tui
-```
-
-The bundle's `cordis.patch.yml` layers the required Host services, its
-`./memory` plugin entry, and the terminal entry point over the automatically
-installed `dsh-base` profile. The subpath embeds the separately maintained
-Memory package runtime so GitHub installs do not depend on an unpublished npm
-package.
+The repository commits verified `lib/` artifacts, so installation does not build
+this workspace on the target machine. The bundle's `cordis.patch.yml` layers the
+required Host services, its `./memory` plugin entry, and the terminal entry point
+over the automatically installed `dsh-base` profile. The subpath embeds the
+private Memory workspace runtime, so installation has no standalone plugin dependency.
 
 ## Develop
 

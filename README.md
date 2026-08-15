@@ -29,10 +29,10 @@ The first launch creates or updates the `tui` Harness profile under `~/.dsh`; la
 
 ## Packages
 
-- [`@vascent/deepseek-harness-tui`](packages/tui) provides the terminal client, profile patch, streaming transcript, diffs, rewind checkpoints, model selection, and memory UI.
-- [`@vascent/deepseek-harness-memory`](packages/memory) provides file-backed global and per-project memory with explicit remember/forget tools and correction learning.
+- [`packages/tui`](packages/tui) is the private terminal-client workspace with the profile patch, streaming transcript, diffs, rewind checkpoints, model selection, and memory UI.
+- [`packages/memory`](packages/memory) is the private file-backed memory workspace with explicit remember/forget tools and correction learning.
 
-The TUI bundle embeds the Memory runtime in its `./memory` entry so a GitHub installation has no unpublished registry dependency. The standalone Memory package remains available for other Harness profiles.
+Both workspaces are source modules managed in this GitHub repository. They are embedded in `@vascent/dsh-tui` and are not published as standalone npm packages.
 
 ## Develop
 
@@ -52,7 +52,7 @@ Create a patch, minor, or major release from any authenticated development machi
 pnpm release patch
 ```
 
-`release-it` verifies the branch and worktree, runs the complete checks, updates the root version, creates the release commit and `v*` tag, and pushes them. GitHub Actions then builds clean tarballs, publishes the installable root package to npm through Trusted Publishing (OIDC), and creates the GitHub Release. Local npm credentials and repository `NPM_TOKEN` secrets are not used. The plugin workspaces are embedded in the root distribution; their tarballs remain attached to the GitHub Release for integration development.
+`release-it` verifies the branch and worktree, runs the complete checks, updates the root version, creates the release commit and `v*` tag, and pushes them. GitHub Actions then builds the single installable package, publishes it to npm through Trusted Publishing (OIDC), and creates the GitHub Release. Local npm credentials and repository `NPM_TOKEN` secrets are not used. All source code stays in this GitHub repository; the private plugin workspaces are embedded in the root distribution.
 
 Each npm package needs a one-time bootstrap publish before its Trusted Publisher can be configured. See [npm's Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/) when applying this release pattern to another repository.
 

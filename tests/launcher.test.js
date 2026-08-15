@@ -14,12 +14,12 @@ test('profileUsesPlugin requires the active bundle to resolve to this package', 
   const root = await mkdtemp(join(tmpdir(), 'dsh-tui-launcher-'))
   const profile = join(root, 'profile')
   const plugin = join(root, 'plugin')
-  await mkdir(join(profile, 'node_modules', '@yangeyu'), { recursive: true })
+  await mkdir(join(profile, 'node_modules', '@vascent'), { recursive: true })
   await mkdir(plugin)
   await writeFile(join(profile, 'package.json'), JSON.stringify({
     dsh: { profile: { bundles: ['@vascent/deepseek-harness-tui'] } },
   }))
-  await symlink(plugin, join(profile, 'node_modules', '@yangeyu', 'deepseek-harness-tui'), 'dir')
+  await symlink(plugin, join(profile, 'node_modules', '@vascent', 'deepseek-harness-tui'), 'dir')
 
   assert.equal(profileUsesPlugin(profile, plugin), true)
   assert.equal(profileUsesPlugin(profile, join(root, 'other-plugin')), false)
