@@ -1,0 +1,20 @@
+import { defineConfig } from 'tsdown'
+
+export default defineConfig({
+  entry: ['src/index.ts', 'src/memory.ts'],
+  outDir: 'lib',
+  format: ['esm'],
+  platform: 'node',
+  target: 'node22',
+  dts: true,
+  clean: true,
+  fixedExtension: false,
+  deps: {
+    onlyBundle: false,
+    neverBundle: [
+      '@deepseek-ai/cordis',
+      '@deepseek-ai/dsh-host-apiproxy',
+      '@earendil-works/pi-tui',
+    ],
+  },
+})

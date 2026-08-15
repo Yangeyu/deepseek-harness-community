@@ -1,0 +1,78 @@
+# Host capabilities required by the transport-neutral ApiProxy used by this
+# terminal surface. The base bundle is installed automatically for a new
+# profile; this patch adds only the TUI-specific host plane and entry point.
+
+- id: system-prompt
+  config:
+    persona: >-
+      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
+
+- id: hmr
+  disabled: true
+
+- id: tools
+  config:
+    mode: !!js process.env.DSH_TOOLS_MODE
+
+- insert:
+    - id: code-runtime
+      name: '@deepseek-ai/dsh-code-runtime-worker-thread'
+
+    - id: storage
+      name: '@deepseek-ai/dsh-storage'
+
+    - id: storage-json
+      name: '@deepseek-ai/dsh-storage-json'
+      config:
+        root: !!js dshHomePath('storages')
+
+    - id: storage-domain
+      name: '@deepseek-ai/dsh-storage-domain'
+      config:
+        backend: json
+
+    - id: workspace
+      name: '@deepseek-ai/dsh-workspace'
+
+    - id: memory
+      name: '@yangeyu/deepseek-harness-tui/memory'
+      config:
+        root: !!js dshHomePath('memories')
+        useMemories: true
+        generateMemories: true
+        idleDelayMs: 1500
+        maxContextBytes: 25600
+        maxDocumentBytes: 262144
+        maxSummaryChars: 600
+        maxDetailsChars: 4000
+        extractionMaxInputBytes: 32768
+        minCandidateChars: 6
+
+    - id: session-projection-cache
+      name: '@deepseek-ai/dsh-session-projection-cache'
+      config:
+        writeEveryEvents: 200
+        writeIntervalMs: 5000
+
+    # Web's composer statistics read this whole-log projection. Keep the TUI
+    # on the same counts and timing source instead of folding its history page.
+    - id: session-stats
+      name: '@deepseek-ai/dsh-session-stats'
+
+    - id: directory-picker
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+
+    - id: api-gateway
+      name: '@deepseek-ai/dsh-host-apiproxy'
+
+    - id: cordis-host-runner
+      name: '@deepseek-ai/dsh-cordis-host-runner'
+
+    - id: terminal
+      name: '@yangeyu/deepseek-harness-tui'
+      config:
+        historyMessages: 200
+        rewindCheckpoints: 20
+        showReasoning: true
+        thinkingMaxLines: 8
+        color: true
