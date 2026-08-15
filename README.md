@@ -52,7 +52,7 @@ Create a patch, minor, or major release from any authenticated development machi
 pnpm release patch
 ```
 
-`release-it` verifies the branch and worktree, runs the complete checks, updates the root version, creates the release commit and `v*` tag, and pushes them. GitHub Actions then builds clean tarballs, publishes every new workspace version to npm through Trusted Publishing (OIDC), and creates the GitHub Release. Local npm credentials and repository `NPM_TOKEN` secrets are not used.
+`release-it` verifies the branch and worktree, runs the complete checks, updates the root version, creates the release commit and `v*` tag, and pushes them. GitHub Actions then builds clean tarballs, publishes the installable root package to npm through Trusted Publishing (OIDC), and creates the GitHub Release. Local npm credentials and repository `NPM_TOKEN` secrets are not used. The plugin workspaces are embedded in the root distribution; their tarballs remain attached to the GitHub Release for integration development.
 
 Each npm package needs a one-time bootstrap publish before its Trusted Publisher can be configured. See [npm's Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/) when applying this release pattern to another repository.
 

@@ -30,26 +30,18 @@ jobs:
       - run: pnpm pack --pack-destination dist
       - run: pnpm --dir packages/memory pack --pack-destination "$GITHUB_WORKSPACE/dist"
       - run: pnpm --dir packages/tui pack --pack-destination "$GITHUB_WORKSPACE/dist"
-      - name: Publish new package versions to npm
+      - name: Publish the installable package to npm
         shell: bash
         run: |
-          publish_if_missing() {
-            local directory="$1"
-            local package_name package_version archive_name
-            package_name=$(node --print "require('./${directory}/package.json').name")
-            package_version=$(node --print "require('./${directory}/package.json').version")
-            archive_name="${package_name#@}"
-            archive_name="${archive_name//\//-}-${package_version}.tgz"
-            if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
-              echo "${package_name}@${package_version} is already published"
-              return
-            fi
+          package_name=$(node --print "require('./package.json').name")
+          package_version=$(node --print "require('./package.json').version")
+          archive_name="${package_name#@}"
+          archive_name="${archive_name//\//-}-${package_version}.tgz"
+          if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
+            echo "${package_name}@${package_version} is already published"
+          else
             npm publish "./dist/${archive_name}" --access public
-          }
-
-          publish_if_missing packages/memory
-          publish_if_missing packages/tui
-          publish_if_missing .
+          fi
       - run: gh release create "$GITHUB_REF_NAME" dist/*.tgz --generate-notes --title "$GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ github.token }}
