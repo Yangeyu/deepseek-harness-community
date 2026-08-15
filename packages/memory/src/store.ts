@@ -10,6 +10,7 @@ import {
   readdir,
   realpath,
   rename,
+  rmdir,
   rm,
   stat,
   writeFile,
@@ -117,6 +118,28 @@ function normalizeRemote(value: string): string {
   } catch {
     return trimmed.replace(/^[^@\s]+@/u, '')
   }
+}
+
+function memoryDocumentName(name: string): boolean {
+  return name === 'MEMORY.md'
+    || (name.endsWith('.md') && (MEMORY_TOPICS as readonly string[]).includes(name.slice(0, -3)))
+}
+
+function mergeMemoryDocuments(current: string | null, legacy: string): string {
+  if (current === null || current.trim() === '') return ensureTrailingNewline(legacy)
+  if (current === legacy) return current
+
+  const existing = new Set(current.split('\n').map(normalizedLine).filter(Boolean))
+  const legacyLines = legacy.split('\n')
+  if (legacyLines[0]?.startsWith('# ')) legacyLines.shift()
+  const additions = legacyLines.filter((line) => {
+    const normalized = normalizedLine(line)
+    if (normalized === '' || existing.has(normalized)) return false
+    existing.add(normalized)
+    return true
+  })
+  if (additions.length === 0) return ensureTrailingNewline(current)
+  return `${current.replaceAll(/\n+$/gu, '')}\n\n${additions.join('\n')}\n`
 }
 
 function runGit(cwd: string, args: readonly string[]): Promise<string | undefined> {
@@ -227,11 +250,27 @@ export class MemoryFileStore {
   async project(cwd: string): Promise<MemoryProject> {
     const gitRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'])
     const root = await realpath(gitRoot === undefined || gitRoot === '' ? cwd : gitRoot)
-    const remote = await runGit(root, ['config', '--get', 'remote.origin.url'])
-    const identity = remote === undefined || remote === '' ? root : normalizeRemote(remote)
+    const remoteValue = await runGit(root, ['config', '--get', 'remote.origin.url'])
+    const remote = remoteValue === undefined || remoteValue === '' ? undefined : normalizeRemote(remoteValue)
+    const commonDirectoryValue = remote === undefined
+      ? await runGit(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+      : undefined
+    const commonDirectory = commonDirectoryValue === undefined || commonDirectoryValue === ''
+      ? undefined
+      : await realpath(resolve(root, commonDirectoryValue))
+    const repositoryRoot = commonDirectory !== undefined && basename(commonDirectory) === '.git'
+      ? await realpath(dirname(commonDirectory))
+      : commonDirectory
+    const identity = remote ?? repositoryRoot ?? root
     const digest = createHash('sha256').update(identity).digest('hex').slice(0, 12)
-    const id = `${safeSlug(basename(root))}-${digest}`
-    return { id, root, directory: join(this.root, 'projects', id) }
+    const id = `${safeSlug(basename(identity))}-${digest}`
+    const directory = join(this.root, 'projects', id)
+
+    const legacyIdentity = remote ?? root
+    const legacyDigest = createHash('sha256').update(legacyIdentity).digest('hex').slice(0, 12)
+    const legacyDirectory = join(this.root, 'projects', `${safeSlug(basename(root))}-${legacyDigest}`)
+    await this.migrateLegacyProjectDirectories(directory, legacyDirectory, remote === undefined ? undefined : digest)
+    return { id, root, directory }
   }
 
   /** Read one bounded Markdown memory document without creating it. */
@@ -408,6 +447,77 @@ export class MemoryFileStore {
   private isOwnedPath(path: string): boolean {
     const absolute = resolve(path)
     return absolute === path && absolute.startsWith(`${this.root}${sep}`)
+  }
+
+  private async migrateLegacyProjectDirectories(
+    directory: string,
+    legacyDirectory: string,
+    remoteDigest: string | undefined,
+  ): Promise<void> {
+    const candidates = new Set<string>()
+    if (legacyDirectory !== directory) candidates.add(legacyDirectory)
+    if (remoteDigest !== undefined) {
+      const projectsDirectory = join(this.root, 'projects')
+      try {
+        const entries = await readdir(projectsDirectory, { withFileTypes: true })
+        for (const entry of entries) {
+          const candidate = join(projectsDirectory, entry.name)
+          if (entry.isDirectory() && candidate !== directory && entry.name.endsWith(`-${remoteDigest}`)) {
+            candidates.add(candidate)
+          }
+        }
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+    if (candidates.size === 0) return
+
+    await this.enqueue(directory, async () => {
+      for (const candidate of candidates) await this.migrateLegacyProjectDirectory(candidate, directory)
+    })
+  }
+
+  private async migrateLegacyProjectDirectory(source: string, destination: string): Promise<void> {
+    let sourceEntries: string[]
+    try {
+      sourceEntries = await readdir(source)
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+
+    try {
+      await stat(destination)
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+      try {
+        await rename(source, destination)
+        return
+      } catch (renameError: unknown) {
+        if (!['EEXIST', 'ENOENT', 'ENOTEMPTY'].includes((renameError as NodeJS.ErrnoException).code ?? '')) {
+          throw renameError
+        }
+      }
+    }
+
+    const documents = sourceEntries.filter(memoryDocumentName)
+    for (const name of documents) {
+      const sourcePath = join(source, name)
+      const destinationPath = join(destination, name)
+      const legacy = await readableFile(sourcePath, this.options.maxDocumentBytes)
+      if (legacy === null) continue
+      const current = await readableFile(destinationPath, this.options.maxDocumentBytes)
+      const merged = mergeMemoryDocuments(current, legacy)
+      this.assertDocumentSize(merged)
+      if (merged !== current) await atomicWrite(destinationPath, merged)
+    }
+    for (const name of documents) await rm(join(source, name), { force: true })
+    try {
+      await rmdir(source)
+    } catch (error: unknown) {
+      if (!['ENOENT', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+    }
   }
 
   private enqueue<T>(key: string, operation: () => Promise<T>): Promise<T> {

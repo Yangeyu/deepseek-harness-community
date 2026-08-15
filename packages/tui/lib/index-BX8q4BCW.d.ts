@@ -78,6 +78,8 @@ declare class MemoryFileStore {
   private cleanText;
   private assertDocumentSize;
   private isOwnedPath;
+  private migrateLegacyProjectDirectories;
+  private migrateLegacyProjectDirectory;
   private enqueue;
 }
 /** Public topic vocabulary shared by tools and UI consumers. */
@@ -193,4 +195,4 @@ declare class ProjectMemoryService extends Service {
 }
 //#endregion
 export { MemorySessionPolicy as a, MemoryFileMutation as c, MemoryProject as d, MemoryScope as f, memoryTopics as h, MemoryOverview as i, MemoryFileStore as l, MemoryWriteInput as m, MemoryActivity as n, ProjectMemoryService as o, MemoryTopic as p, MemoryMutation as r, MemoryDocument as s, Config as t, MemoryForgetInput as u };
-//# sourceMappingURL=index-CbzrvIlp.d.ts.map
+//# sourceMappingURL=index-BX8q4BCW.d.ts.map

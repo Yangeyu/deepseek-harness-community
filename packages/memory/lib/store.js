@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 //#region src/store.ts
 /** Markdown file storage for global and project-scoped agent memory. */
 const MEMORY_TOPICS = [
@@ -42,6 +42,24 @@ function normalizeRemote(value) {
 	} catch {
 		return trimmed.replace(/^[^@\s]+@/u, "");
 	}
+}
+function memoryDocumentName(name) {
+	return name === "MEMORY.md" || name.endsWith(".md") && MEMORY_TOPICS.includes(name.slice(0, -3));
+}
+function mergeMemoryDocuments(current, legacy) {
+	if (current === null || current.trim() === "") return ensureTrailingNewline(legacy);
+	if (current === legacy) return current;
+	const existing = new Set(current.split("\n").map(normalizedLine).filter(Boolean));
+	const legacyLines = legacy.split("\n");
+	if (legacyLines[0]?.startsWith("# ")) legacyLines.shift();
+	const additions = legacyLines.filter((line) => {
+		const normalized = normalizedLine(line);
+		if (normalized === "" || existing.has(normalized)) return false;
+		existing.add(normalized);
+		return true;
+	});
+	if (additions.length === 0) return ensureTrailingNewline(current);
+	return `${current.replaceAll(/\n+$/gu, "")}\n\n${additions.join("\n")}\n`;
 }
 function runGit(cwd, args) {
 	return new Promise((resolveOutput) => {
@@ -136,18 +154,31 @@ var MemoryFileStore = class {
 	async project(cwd) {
 		const gitRoot = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
 		const root = await realpath(gitRoot === void 0 || gitRoot === "" ? cwd : gitRoot);
-		const remote = await runGit(root, [
+		const remoteValue = await runGit(root, [
 			"config",
 			"--get",
 			"remote.origin.url"
 		]);
-		const identity = remote === void 0 || remote === "" ? root : normalizeRemote(remote);
+		const remote = remoteValue === void 0 || remoteValue === "" ? void 0 : normalizeRemote(remoteValue);
+		const commonDirectoryValue = remote === void 0 ? await runGit(root, [
+			"rev-parse",
+			"--path-format=absolute",
+			"--git-common-dir"
+		]) : void 0;
+		const commonDirectory = commonDirectoryValue === void 0 || commonDirectoryValue === "" ? void 0 : await realpath(resolve(root, commonDirectoryValue));
+		const repositoryRoot = commonDirectory !== void 0 && basename(commonDirectory) === ".git" ? await realpath(dirname(commonDirectory)) : commonDirectory;
+		const identity = remote ?? repositoryRoot ?? root;
 		const digest = createHash("sha256").update(identity).digest("hex").slice(0, 12);
-		const id = `${safeSlug(basename(root))}-${digest}`;
+		const id = `${safeSlug(basename(identity))}-${digest}`;
+		const directory = join(this.root, "projects", id);
+		const legacyIdentity = remote ?? root;
+		const legacyDigest = createHash("sha256").update(legacyIdentity).digest("hex").slice(0, 12);
+		const legacyDirectory = join(this.root, "projects", `${safeSlug(basename(root))}-${legacyDigest}`);
+		await this.migrateLegacyProjectDirectories(directory, legacyDirectory, remote === void 0 ? void 0 : digest);
 		return {
 			id,
 			root,
-			directory: join(this.root, "projects", id)
+			directory
 		};
 	}
 	/** Read one bounded Markdown memory document without creating it. */
@@ -305,6 +336,71 @@ var MemoryFileStore = class {
 	isOwnedPath(path) {
 		const absolute = resolve(path);
 		return absolute === path && absolute.startsWith(`${this.root}${sep}`);
+	}
+	async migrateLegacyProjectDirectories(directory, legacyDirectory, remoteDigest) {
+		const candidates = /* @__PURE__ */ new Set();
+		if (legacyDirectory !== directory) candidates.add(legacyDirectory);
+		if (remoteDigest !== void 0) {
+			const projectsDirectory = join(this.root, "projects");
+			try {
+				const entries = await readdir(projectsDirectory, { withFileTypes: true });
+				for (const entry of entries) {
+					const candidate = join(projectsDirectory, entry.name);
+					if (entry.isDirectory() && candidate !== directory && entry.name.endsWith(`-${remoteDigest}`)) candidates.add(candidate);
+				}
+			} catch (error) {
+				if (error.code !== "ENOENT") throw error;
+			}
+		}
+		if (candidates.size === 0) return;
+		await this.enqueue(directory, async () => {
+			for (const candidate of candidates) await this.migrateLegacyProjectDirectory(candidate, directory);
+		});
+	}
+	async migrateLegacyProjectDirectory(source, destination) {
+		let sourceEntries;
+		try {
+			sourceEntries = await readdir(source);
+		} catch (error) {
+			if (error.code === "ENOENT") return;
+			throw error;
+		}
+		try {
+			await stat(destination);
+		} catch (error) {
+			if (error.code !== "ENOENT") throw error;
+			await mkdir(dirname(destination), {
+				recursive: true,
+				mode: 448
+			});
+			try {
+				await rename(source, destination);
+				return;
+			} catch (renameError) {
+				if (![
+					"EEXIST",
+					"ENOENT",
+					"ENOTEMPTY"
+				].includes(renameError.code ?? "")) throw renameError;
+			}
+		}
+		const documents = sourceEntries.filter(memoryDocumentName);
+		for (const name of documents) {
+			const sourcePath = join(source, name);
+			const destinationPath = join(destination, name);
+			const legacy = await readableFile(sourcePath, this.options.maxDocumentBytes);
+			if (legacy === null) continue;
+			const current = await readableFile(destinationPath, this.options.maxDocumentBytes);
+			const merged = mergeMemoryDocuments(current, legacy);
+			this.assertDocumentSize(merged);
+			if (merged !== current) await atomicWrite(destinationPath, merged);
+		}
+		for (const name of documents) await rm(join(source, name), { force: true });
+		try {
+			await rmdir(source);
+		} catch (error) {
+			if (!["ENOENT", "ENOTEMPTY"].includes(error.code ?? "")) throw error;
+		}
 	}
 	enqueue(key, operation) {
 		const current = (this.queues.get(key) ?? Promise.resolve()).then(operation, operation);

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Share project memory across linked Git Worktrees and differently named clones.
+- Migrate existing local-directory-based memory into the stable repository directory.
+
 ## 0.1.0
 
 - Add Markdown-backed global and project memory.

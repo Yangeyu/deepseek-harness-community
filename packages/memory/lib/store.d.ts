@@ -75,6 +75,8 @@ declare class MemoryFileStore {
   private cleanText;
   private assertDocumentSize;
   private isOwnedPath;
+  private migrateLegacyProjectDirectories;
+  private migrateLegacyProjectDirectory;
   private enqueue;
 }
 /** Public topic vocabulary shared by tools and UI consumers. */

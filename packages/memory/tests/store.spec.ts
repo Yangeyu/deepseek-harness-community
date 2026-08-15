@@ -20,6 +20,8 @@ async function fixture(): Promise<{ cwd: string; memoryRoot: string; store: Memo
   git(cwd, 'init', '--quiet')
   git(cwd, 'remote', 'add', 'origin', 'git@github.com:Yangeyu/example.git')
   await writeFile(join(cwd, 'README.md'), '# Fixture\n')
+  git(cwd, 'add', 'README.md')
+  git(cwd, '-c', 'user.name=Memory Test', '-c', 'user.email=memory@example.test', 'commit', '--quiet', '-m', 'fixture')
   return {
     cwd,
     memoryRoot,
@@ -74,6 +76,55 @@ describe('MemoryFileStore', () => {
     expect((await store.read(cwd, 'global')).content).toContain('Prefer concise Chinese responses.')
     expect((await store.read(cwd, 'project')).content).toContain('Use pnpm for this repository.')
     expect((await store.list(cwd)).map(document => document.scope).sort()).toEqual(['global', 'project'])
+  })
+
+  it('shares remote-backed project memory across linked worktrees and differently named clones', async () => {
+    const { cwd, store } = await fixture()
+    const parent = join(cwd, '..')
+    const worktree = join(parent, 'feature-worktree')
+    const clone = join(parent, 'renamed-clone')
+    git(cwd, 'worktree', 'add', '--quiet', '--detach', worktree)
+    await mkdir(clone)
+    git(clone, 'init', '--quiet')
+    git(clone, 'remote', 'add', 'origin', 'git@github.com:Yangeyu/example.git')
+
+    const projects = await Promise.all([store.project(cwd), store.project(worktree), store.project(clone)])
+    expect(new Set(projects.map(project => project.id)).size).toBe(1)
+    expect(new Set(projects.map(project => project.directory)).size).toBe(1)
+
+    await store.write({ cwd: worktree, scope: 'project', summary: 'Share this rule across worktrees.' })
+    expect((await store.read(clone, 'project')).content).toContain('Share this rule across worktrees.')
+  })
+
+  it('uses the Git common directory for originless linked worktrees', async () => {
+    const { cwd, store } = await fixture()
+    git(cwd, 'remote', 'remove', 'origin')
+    const worktree = join(cwd, '..', 'local-feature')
+    git(cwd, 'worktree', 'add', '--quiet', '--detach', worktree)
+
+    const primary = await store.project(cwd)
+    const linked = await store.project(worktree)
+    expect(linked.id).toBe(primary.id)
+    expect(linked.directory).toBe(primary.directory)
+
+    await store.write({ cwd: worktree, scope: 'project', summary: 'Share local repository memory.' })
+    expect((await store.read(cwd, 'project')).content).toContain('Share local repository memory.')
+  })
+
+  it('merges legacy local-name directories into the canonical remote-backed directory', async () => {
+    const { cwd, memoryRoot, store } = await fixture()
+    const project = await store.project(cwd)
+    await store.write({ cwd, scope: 'project', summary: 'Canonical rule.' })
+    const digest = project.id.slice(-12)
+    const legacyDirectory = join(memoryRoot, 'projects', `project-${digest}`)
+    const legacyPath = join(legacyDirectory, 'MEMORY.md')
+    await mkdir(legacyDirectory, { recursive: true })
+    await writeFile(legacyPath, '# Project memory\n\n- Legacy worktree rule.\n')
+
+    const migrated = await store.read(cwd, 'project')
+    expect(migrated.content).toContain('Canonical rule.')
+    expect(migrated.content).toContain('Legacy worktree rule.')
+    await expect(readFile(legacyPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('forgets an exact summary and can reverse and reapply the mutation', async () => {
