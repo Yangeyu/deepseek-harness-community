@@ -58,6 +58,41 @@ import {
   type HostCommandSource,
   type TerminalCommandDefinition,
 } from '../runtime/commands.ts'
+import {
+  configurationSnapshot,
+  sessionControlSummary,
+  taskSnapshot,
+} from '../runtime/session-controls.ts'
+import {
+  ConfigView,
+  type ConfigEntryStage,
+} from '../presentation/config/config-view.ts'
+import {
+  TaskView,
+  type GoalAction,
+} from '../presentation/task/task-view.ts'
+import {
+  SkillCatalog,
+  apiSkillCatalogSource,
+  type SkillCatalogSnapshot,
+} from '../runtime/skill-catalog.ts'
+import {
+  mergeSlashCatalog,
+  resolveLeadingSlash,
+  slashAutocompleteRows,
+  slashHelpText,
+} from '../runtime/slash-catalog.ts'
+import { SkillsView } from '../presentation/skills.ts'
+import {
+  LocalSkillAuthoring,
+  type LocalSkillDocument,
+} from './skill-authoring.ts'
+import { SkillAuthoringCoordinator } from './skill-authoring-coordinator.ts'
+import { SkillAuthoringWizard } from '../presentation/skill-authoring.ts'
+import {
+  externalEditorCommand,
+  runExternalEditor,
+} from './external-editor.ts'
 
 const DOUBLE_ESCAPE_MS = 600
 
@@ -101,6 +136,9 @@ export class TuiApplication implements TuiControllerSink {
   private readonly diffLineLocator = new DiffLineLocator()
   private readonly layout: ComposerAnchoredLayout
   private trajectoryView: TrajectoryView | undefined
+  private configView: ConfigView | undefined
+  private taskView: TaskView | undefined
+  private skillsView: SkillsView | undefined
   private removeInputListener?: () => void
   private spinner: ReturnType<typeof setInterval> | undefined
   private spinnerFrame = 0
@@ -121,6 +159,8 @@ export class TuiApplication implements TuiControllerSink {
   private readonly removeMemoryActivity: () => void
   private readonly interactionQueue: Array<() => void> = []
   private readonly commands: TerminalCommandDirectory
+  private readonly skillCatalog: SkillCatalog
+  private readonly skillAuthoring: SkillAuthoringCoordinator
   private autocompleteCwd: string
 
   constructor(
@@ -161,8 +201,22 @@ export class TuiApplication implements TuiControllerSink {
       this.localCommands(),
       commandSource,
       () => this.refreshAutocomplete(),
+      [{ name: 'permission', handler: () => this.openPermissionConfig() }],
     )
-    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...this.commands.descriptors], config.cwd))
+    this.skillCatalog = new SkillCatalog(
+      apiSkillCatalogSource(api),
+      snapshot => this.handleSkillCatalogChange(snapshot),
+    )
+    this.skillAuthoring = new SkillAuthoringCoordinator(
+      new LocalSkillAuthoring(),
+      this.skillCatalog,
+      { open: (document, created) => this.openSkillDocument(document, created) },
+      message => this.controller.notice(message),
+    )
+    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(
+      slashAutocompleteRows(this.slashCandidates()),
+      config.cwd,
+    ))
     this.autocompleteCwd = config.cwd
     this.editor.onSubmit = text => {
       this.editor.addToHistory(text)
@@ -206,6 +260,7 @@ export class TuiApplication implements TuiControllerSink {
     if (this.spinner !== undefined) clearInterval(this.spinner)
     if (this.rewindArmTimer !== undefined) clearTimeout(this.rewindArmTimer)
     this.commands.dispose()
+    this.skillCatalog.dispose()
     this.removeMemoryActivity()
     this.terminal.write(DISABLE_MOUSE_TRACKING)
     this.removeInputListener?.()
@@ -216,8 +271,12 @@ export class TuiApplication implements TuiControllerSink {
   render(state: Readonly<TuiState>): void {
     if (this.disposed) return
     const commandsChanged = this.commands.setSession(state.sessionId)
+    this.skillCatalog.setSession(state.sessionId)
     this.transcript.setState(state)
     this.trajectoryView?.setState(state)
+    this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails))
+    this.taskView?.setSnapshot(taskSnapshot(state.projections, state.running, state.queue.length))
+    this.skillsView?.setSnapshot(this.skillCatalog.current)
     this.diffLineLocator.resolve(state, () => {
       if (this.disposed || this.controller.current.sessionId !== state.sessionId) return
       this.transcript.setDiffLineStarts(this.diffLineLocator.current)
@@ -258,6 +317,8 @@ export class TuiApplication implements TuiControllerSink {
 
   private updateStatus(state: Readonly<TuiState>): void {
     const history = this.layout.followsTranscriptTail ? '' : ' · Viewing history · PageDown to follow'
+    const task = sessionControlSummary(state.projections)
+    const taskStatus = task === '' ? '' : ` · ${task}`
     const working = state.running || state.pendingSubmissions.some(submission => submission.intent === 'working')
     if (working) {
       if (this.workingStartedAt === undefined || this.workingSessionId !== state.sessionId) {
@@ -308,7 +369,7 @@ export class TuiApplication implements TuiControllerSink {
       return
     }
     this.status.setText(state.connected
-      ? this.theme.dim(`Ready · Enter send · ↑/↓ history · Esc Esc rewind${history}`)
+      ? this.theme.dim(`Ready${taskStatus}${history}`)
       : this.theme.warning(`Connecting…${history}`))
   }
 
@@ -345,9 +406,7 @@ export class TuiApplication implements TuiControllerSink {
       return { consume: true }
     }
     if (matchesKey(data, Key.ctrl('o'))) {
-      this.showDetails = !this.showDetails
-      this.transcript.setDetails(this.showDetails)
-      this.tui.requestRender()
+      this.setDetailsExpanded(!this.showDetails)
       return { consume: true }
     }
     if (matchesKey(data, Key.shift(Key.tab))) {
@@ -409,7 +468,19 @@ export class TuiApplication implements TuiControllerSink {
     const text = value.trim()
     if (text === '') return
     try {
-      if (text.startsWith('/') && await this.handleCommand(text)) return
+      if (text.startsWith('/')) {
+        if (await this.handleCommand(text)) return
+        let resolution = resolveLeadingSlash(text, this.slashCandidates())
+        if (resolution.kind === 'unknown' && this.controller.current.sessionId !== undefined) {
+          await this.skillCatalog.refresh(true)
+          resolution = resolveLeadingSlash(text, this.slashCandidates())
+        }
+        const catalogSettled = this.skillCatalog.current.status === 'ready'
+          || this.skillCatalog.current.status === 'stale'
+        if (resolution.kind === 'unknown' && catalogSettled) {
+          throw new Error(`Unknown command or Skill "/${resolution.name}". Use /help or /skills to discover available entries.`)
+        }
+      }
       const mode = forcedMode ?? (this.controller.current.running ? 'steer' : 'queue')
       this.layout.followTranscript()
       await this.controller.prompt(value, mode)
@@ -427,7 +498,7 @@ export class TuiApplication implements TuiControllerSink {
     return [{
       name: 'help',
       description: 'Show terminal and Harness commands',
-      handler: () => { this.controller.notice(this.commands.helpText()) },
+      handler: () => { this.controller.notice(slashHelpText(this.slashCandidates())) },
     }, {
       name: 'clear',
       description: 'Clear the conversation and start a new session',
@@ -458,11 +529,20 @@ export class TuiApplication implements TuiControllerSink {
     }, {
       name: 'details',
       description: 'Toggle expanded tool output',
-      handler: () => {
-        this.showDetails = !this.showDetails
-        this.transcript.setDetails(this.showDetails)
-        this.tui.requestRender()
-      },
+      handler: () => { this.setDetailsExpanded(!this.showDetails) },
+    }, {
+      name: 'skills',
+      description: 'Browse and author reusable Skills',
+      handler: () => { this.openSkills() },
+    }, {
+      name: 'config',
+      description: 'Configure model, policy, and terminal preferences',
+      argumentHint: '[model|reasoning|permission|plan|interface]',
+      handler: argument => this.openConfigRoute(argument),
+    }, {
+      name: 'task',
+      description: 'Inspect and control the current task',
+      handler: () => { this.openTask() },
     }, {
       name: 'trajectory',
       aliases: ['trace'],
@@ -500,9 +580,27 @@ export class TuiApplication implements TuiControllerSink {
 
   private refreshAutocomplete(cwd = this.controller.current.cwd, requestRender = true): void {
     if (this.disposed) return
-    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...this.commands.descriptors], cwd))
+    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(
+      slashAutocompleteRows(this.slashCandidates()),
+      cwd,
+    ))
     this.autocompleteCwd = cwd
     if (requestRender) this.tui.requestRender()
+  }
+
+  private slashCandidates() {
+    return mergeSlashCatalog(
+      this.commands.descriptors,
+      this.skillCatalog.current.entries,
+      this.commands.resolutionNames,
+    )
+  }
+
+  private handleSkillCatalogChange(snapshot: Readonly<SkillCatalogSnapshot>): void {
+    if (this.disposed) return
+    this.skillsView?.setSnapshot(snapshot)
+    this.refreshAutocomplete(this.controller.current.cwd, false)
+    this.tui.requestRender()
   }
 
   private requestRewind(): void {
@@ -534,6 +632,295 @@ export class TuiApplication implements TuiControllerSink {
     this.layout.setComposerOverride(trajectory)
     this.tui.setFocus(trajectory)
     this.tui.requestRender()
+  }
+
+  private openPermissionConfig(): void {
+    const state = this.controller.current
+    const permissions = configurationSnapshot(state.models, state.projections, this.showDetails).permissions
+    if (permissions === undefined) {
+      this.controller.notice('Permission configuration is unavailable in this profile.')
+      return
+    }
+    this.openConfig('permissions')
+  }
+
+  private openConfigRoute(argument: string): void | Promise<void> {
+    const route = argument.trim().toLowerCase()
+    if (route === '') return this.openConfig()
+    if (route === 'model') return this.openModelSelector()
+    if (route === 'reasoning' || route === 'effort') return this.openConfig('reasoning')
+    if (route === 'permission' || route === 'permissions') return this.openPermissionConfig()
+    if (route === 'plan') return this.openConfig('plan')
+    if (route === 'interface' || route === 'details') return this.openConfig()
+    throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, or interface.`)
+  }
+
+  private openConfig(initialStage: ConfigEntryStage = 'root'): void {
+    if (this.tui.hasOverlay() || this.composerModalActive) return
+    const close = (): void => {
+      if (this.configView === undefined) return
+      this.configView = undefined
+      this.layout.setComposerOverride(undefined)
+      this.composerModalActive = false
+      this.tui.setFocus(this.editor)
+      this.tui.requestRender()
+    }
+    const state = this.controller.current
+    const view = new ConfigView(
+      configurationSnapshot(state.models, state.projections, this.showDetails),
+      this.theme,
+      () => {
+        close()
+        void this.runAction(() => this.openModelSelector())
+      },
+      effort => { void this.runAction(() => this.selectReasoningEffort(effort)) },
+      (value) => {
+        if (initialStage === 'permissions') close()
+        void this.runAction(() => this.commands.dispatchHost(`/permission ${value}`))
+      },
+      active => { void this.runAction(() => this.commands.dispatchHost(active ? '/plan' : '/plan off')) },
+      expanded => { this.setDetailsExpanded(expanded) },
+      close,
+      initialStage,
+    )
+    this.configView = view
+    this.composerModalActive = true
+    this.layout.setComposerOverride(view)
+    this.tui.setFocus(view)
+    this.tui.requestRender()
+    if ((initialStage === 'root' || initialStage === 'reasoning')
+      && state.models === undefined
+      && state.sessionId !== undefined) {
+      void this.runAction(async () => { await this.controller.refreshModels() })
+    }
+  }
+
+  private openTask(): void {
+    if (this.tui.hasOverlay() || this.composerModalActive) return
+    const close = (): void => {
+      if (this.taskView === undefined) return
+      this.taskView = undefined
+      this.layout.setComposerOverride(undefined)
+      this.composerModalActive = false
+      this.tui.setFocus(this.editor)
+      this.tui.requestRender()
+    }
+    const state = this.controller.current
+    const view = new TaskView(
+      taskSnapshot(state.projections, state.running, state.queue.length),
+      this.theme,
+      () => this.terminal.rows,
+      action => { this.handleGoalAction(action) },
+      () => { void this.runAction(() => this.controller.cancel()) },
+      close,
+    )
+    this.taskView = view
+    this.composerModalActive = true
+    this.layout.setComposerOverride(view)
+    this.tui.setFocus(view)
+    this.tui.requestRender()
+  }
+
+  private openSkills(): void {
+    if (this.tui.hasOverlay() || this.composerModalActive) return
+    const close = (): void => {
+      if (this.skillsView === undefined) return
+      this.skillsView = undefined
+      this.layout.setComposerOverride(undefined)
+      this.composerModalActive = false
+      this.tui.setFocus(this.editor)
+      this.tui.requestRender()
+    }
+    const view = new SkillsView(
+      this.skillCatalog.current,
+      this.theme,
+      () => this.terminal.rows,
+      (name) => {
+        close()
+        this.editor.setText(`/${name} `)
+      },
+      query => this.openSkillSearch(query),
+      () => { this.beginSkillCreation() },
+      name => { void this.runAction(() => this.skillAuthoring.edit(this.controller.current.cwd, name)) },
+      () => { void this.skillCatalog.refresh(true) },
+      close,
+    )
+    this.skillsView = view
+    this.composerModalActive = true
+    this.layout.setComposerOverride(view)
+    this.tui.setFocus(view)
+    this.tui.requestRender()
+    void this.skillCatalog.refresh()
+  }
+
+  private openSkillSearch(initial: string): void {
+    let handle: OverlayHandle
+    const close = (): void => { handle.hide() }
+    const dialog = new TextInputDialog(
+      this.tui,
+      'Filter Skills',
+      this.theme,
+      (query) => {
+        close()
+        this.skillsView?.setQuery(query)
+        this.tui.requestRender()
+      },
+      close,
+      initial,
+    )
+    handle = this.tui.showOverlay(dialog, { width: '80%', maxHeight: '60%', margin: 1 })
+  }
+
+  private beginSkillCreation(): void {
+    void this.runAction(async () => {
+      const targets = await this.skillAuthoring.targets(this.controller.current.cwd)
+      new SkillAuthoringWizard(
+        this.tui,
+        this.theme,
+        targets,
+        (name) => {
+          if (this.commands.has(name)) {
+            return `/${name} is already a Command or alias and would shadow the Skill. Choose another name.`
+          }
+          const collision = this.slashCandidates().find(candidate => candidate.name === name)
+          if (collision === undefined) return undefined
+          return `/${name} is already an effective Skill. Use e in /skills to edit a local definition.`
+        },
+        request => { void this.runAction(() => this.skillAuthoring.create(request)) },
+        message => this.controller.notice(message),
+      ).start()
+    })
+  }
+
+  private async openSkillDocument(document: LocalSkillDocument, created: boolean): Promise<void> {
+    const editor = externalEditorCommand()
+    if (editor === undefined) {
+      const abort = new AbortController()
+      try {
+        await this.controller.openPath(document.path, abort.signal)
+        this.controller.notice(`${created ? 'Created' : 'Opened'} /${document.name} at ${document.path}`)
+      } catch (error: unknown) {
+        throw new Error([
+          `${created ? 'Created' : 'Edit'} /${document.name} at:`,
+          document.path,
+          `No terminal editor is configured and the Host opener failed: ${error instanceof Error ? error.message : String(error)}`,
+        ].join('\n'))
+      }
+      return
+    }
+
+    this.terminal.write(DISABLE_MOUSE_TRACKING)
+    this.tui.stop()
+    try {
+      await runExternalEditor(editor, document.path, [
+        this.runtime.stdin,
+        this.runtime.stdout,
+        this.runtime.stderr,
+      ])
+    } finally {
+      await this.terminal.drainInput(100, 20)
+      if (!this.disposed) {
+        this.tui.start()
+        this.terminal.write(ENABLE_MOUSE_TRACKING)
+        this.tui.requestRender()
+      }
+    }
+  }
+
+  private handleGoalAction(action: GoalAction): void {
+    const state = this.controller.current
+    const projection = taskSnapshot(state.projections, state.running, state.queue.length).goal
+    if (action === 'create') {
+      this.openGoalObjectiveInput('Create Goal', '', async (objective) => {
+        this.openGoalRoundInput(
+          'Goal round limit (blank uses profile default)',
+          '',
+          rounds => this.controller.createGoal(objective, rounds),
+          true,
+        )
+      })
+      return
+    }
+    if (projection === undefined || projection === null) {
+      this.controller.notice('The current Goal changed; reopen /task and try again.')
+      return
+    }
+    if (action === 'edit') {
+      this.openGoalObjectiveInput(
+        'Edit Goal',
+        projection.goal.objective,
+        objective => this.controller.editGoal(projection.goal, objective),
+      )
+      return
+    }
+    if (action === 'rounds') {
+      this.openGoalRoundInput(
+        'Edit Goal round limit',
+        String(projection.goal.maxGoalRounds),
+        rounds => this.controller.editGoal(projection.goal, undefined, rounds),
+        false,
+      )
+      return
+    }
+    const mutation = action === 'pause'
+      ? () => this.controller.pauseGoal(projection.goal)
+      : action === 'resume'
+        ? () => this.controller.resumeGoal(projection.goal)
+        : action === 'complete'
+          ? () => this.controller.completeGoal(projection.goal)
+          : () => this.controller.clearGoal(projection.goal)
+    void this.runAction(async () => { await mutation() })
+  }
+
+  private openGoalObjectiveInput(
+    title: string,
+    initial: string,
+    submit: (objective: string) => Promise<unknown>,
+  ): void {
+    let handle: OverlayHandle
+    const close = (): void => { handle.hide() }
+    const dialog = new TextInputDialog(
+      this.tui,
+      title,
+      this.theme,
+      (objective) => {
+        if (objective.trim() === '') return
+        close()
+        void this.runAction(async () => { await submit(objective.trim()) })
+      },
+      close,
+      initial,
+    )
+    handle = this.tui.showOverlay(dialog, { width: '85%', maxHeight: '70%', margin: 1 })
+  }
+
+  private openGoalRoundInput(
+    title: string,
+    initial: string,
+    submit: (rounds: number | undefined) => Promise<unknown>,
+    optional: boolean,
+  ): void {
+    let handle: OverlayHandle
+    const close = (): void => { handle.hide() }
+    const dialog = new TextInputDialog(
+      this.tui,
+      title,
+      this.theme,
+      (value) => {
+        const normalized = value.trim()
+        const rounds = normalized === '' && optional ? undefined : Number(normalized)
+        close()
+        void this.runAction(async () => {
+          if (rounds !== undefined && (!Number.isSafeInteger(rounds) || rounds <= 0)) {
+            throw new Error('Goal round limit must be a positive integer')
+          }
+          await submit(rounds)
+        })
+      },
+      close,
+      initial,
+    )
+    handle = this.tui.showOverlay(dialog, { width: '75%', maxHeight: '60%', margin: 1 })
   }
 
   private async openRewind(): Promise<void> {
@@ -792,6 +1179,24 @@ export class TuiApplication implements TuiControllerSink {
     await this.controller.selectModel(matches[0] as ModelSelection)
   }
 
+  private setDetailsExpanded(expanded: boolean): void {
+    this.showDetails = expanded
+    this.transcript.setDetails(expanded)
+    const state = this.controller.current
+    this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, expanded))
+    this.tui.requestRender()
+  }
+
+  private async selectReasoningEffort(reasoningEffort: string | undefined): Promise<void> {
+    const models = this.controller.current.models ?? await this.controller.refreshModels()
+    const current = models.current
+    await this.controller.selectModel({
+      provider: current.provider,
+      model: current.model,
+      ...reasoningEffort === undefined ? {} : { reasoningEffort },
+    })
+  }
+
   private async cycleReasoningEffort(): Promise<void> {
     const models = this.controller.current.models ?? await this.controller.refreshModels()
     const current = models.current
@@ -805,11 +1210,7 @@ export class TuiApplication implements TuiControllerSink {
     const values: Array<string | undefined> = [undefined, ...efforts.map(effort => effort.id)]
     const index = values.indexOf(current.reasoningEffort)
     const next = values[(index + 1) % values.length]
-    await this.controller.selectModel({
-      provider: current.provider,
-      model: current.model,
-      ...next === undefined ? {} : { reasoningEffort: next },
-    })
+    await this.selectReasoningEffort(next)
   }
 
   private enqueueInteraction(job: () => void): void {

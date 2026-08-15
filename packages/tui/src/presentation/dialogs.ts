@@ -47,7 +47,7 @@ export class ChoiceDialog implements Component {
   }
 
   handleInput(data: string): void {
-    this.list.handleInput(data)
+    this.list.handleInput(data === 'j' ? Key.down : data === 'k' ? Key.up : data)
   }
 
   invalidate(): void {
@@ -638,8 +638,10 @@ export class TextInputDialog implements Component, Focusable {
     private readonly theme: TuiTheme,
     onSubmit: (text: string) => void,
     private readonly onCancel: () => void,
+    initial = '',
   ) {
     this.editor = new Editor(tui, theme.editor, { paddingX: 0, autocompleteMaxVisible: 5 })
+    if (initial !== '') this.editor.setText(initial)
     this.editor.onSubmit = onSubmit
   }
 

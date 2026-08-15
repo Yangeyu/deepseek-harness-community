@@ -1,0 +1,116 @@
+# TUI Product Roadmap
+
+The community TUI should evolve from a single-session chat client into a
+keyboard-first execution console for DeepSeek Harness. It should make the
+Host's durable state easier to control and inspect without creating a second
+agent loop, permission system, task model, or plugin format.
+
+## Product principles
+
+1. **Control before chrome.** Add capabilities that improve task intent,
+   safety, recovery, review, and reuse before adding decorative surfaces.
+2. **Host facts remain authoritative.** Plans, goals, permissions, todos,
+   commands, jobs, subagents, sessions, and skills come from Harness services,
+   commands, events, or projections.
+3. **Keyboard-first, progressively disclosed.** The normal conversation stays
+   compact. Rich controls open only when requested and remain usable in narrow
+   terminals.
+4. **One concept per job.** Skills are reusable model instructions. Commands
+   are deterministic human actions. The TUI must not introduce a third prompt
+   macro format that overlaps both.
+5. **Optional capabilities degrade cleanly.** A missing projection or RPC means
+   that feature is unavailable in the active composition, not that the session
+   is corrupt.
+6. **Developer preview is a compatibility constraint.** Harness is still
+   evolving below `0.2.0`; new integrations need narrow ports, capability
+   checks, and contract tests rather than direct UI-to-plugin coupling.
+
+## Product flow
+
+```text
+Prepare                 Execute                  Review                 Reuse
+permissions · plan  ->  goal · todos · agents -> changes · trace   -> skills · sessions
+```
+
+The TUI is already strong in the middle of one session: streaming output,
+tool and diff rendering, memory, rewind, and trajectory inspection. The next
+milestones complete the control, parallel-work, review, and reuse loops around
+that execution core.
+
+## Milestones
+
+### v0.1.6 — Configuration, Task, and User Extensions
+
+- Show the effective permission preset, plan state, goal lifecycle, and current
+  todo progress without refolding Host-owned whole-log state.
+- Add a scoped `/config` center for model, reasoning, permission, Plan Mode,
+  and terminal preferences, plus a separate `/task` surface for Goal, Todo,
+  and runtime actions while preserving canonical Host commands.
+- Merge TUI commands, Host commands, and user-invocable skills into one grouped
+  slash catalog with deterministic collision handling.
+- Add `/skills` discovery plus safe local project/user skill creation and
+  editing through a dedicated authoring capability.
+- Keep real command authoring plugin-owned; reusable prompt workflows are
+  authored as Skills.
+
+Detailed decisions and acceptance criteria are in
+[`tui-v0.1.6-design.md`](tui-v0.1.6-design.md).
+
+### v0.1.7 — Session Center
+
+- Upgrade resume selection with durable titles, workspace and activity
+  metadata, running state, and parent/child lineage.
+- Add cross-session and within-session search with direct navigation to the
+  matching event.
+- Support rename, archive, and explicit export without hiding whether a session
+  is live, persisted, blank, or unavailable.
+- Preserve stable navigation across search, history paging, resume, fork, and
+  rewind.
+
+### v0.2.0 — Parallel Execution Console
+
+- Add a parent/child Agent tree with status, depth, task label, elapsed time,
+  latest activity, and durable lineage.
+- Add background Job inspection, output reading, cancellation, and completion
+  notification.
+- Enter an inspectable child session without conflating one-shot and
+  continuable subagents.
+- Keep ownership and authorization in the Host; the terminal is a client of
+  subagent and job capabilities.
+
+### v0.2.x — Review and Handoff
+
+- Add a workspace-wide `/changes` review surface with file navigation, aggregate
+  line counts, full diffs, and test results.
+- Produce a copyable task handoff containing changed files, validation, open
+  risks, session id, and resume command.
+- Export bounded conversation and trajectory diagnostics for issue reports
+  without exposing secrets or uncontrolled raw payloads.
+
+### Later — Capability Inventory and Remote Work
+
+- Add read-only Skill and plugin inventory diagnostics before attempting
+  configuration editing in the terminal.
+- Support detached work, remote execution worlds, and multiple workspaces only
+  through documented Harness capabilities.
+- Add command-plugin scaffolding only when a concrete developer workflow needs
+  deterministic non-model commands; do not execute arbitrary saved shell text
+  as a shortcut format.
+
+## Deliberate non-directions
+
+- Do not reproduce the complete Web settings UI in a terminal.
+- Do not create a TUI-specific agent, plan, goal, permission, session, or skill
+  persistence format.
+- Do not add a generic renderer/plugin API before an independent extension
+  requires one.
+- Do not turn every feature into a permanent pane; the conversation remains the
+  primary surface.
+- Do not treat file length or directory count as product progress.
+
+## Milestone gate
+
+A milestone is ready to release only when its user-visible state survives
+resume and history replacement, its unavailable-capability behavior is
+explicit, keyboard and narrow-terminal flows are tested, and the published
+package remains compatible with the declared Harness range.

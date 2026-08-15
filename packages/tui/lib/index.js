@@ -1,10 +1,12 @@
 import { InProcessApiClient, toFetchHandler } from "@deepseek-ai/dsh-host-apiproxy";
 import { CombinedAutocompleteProvider, Container, Editor, Key, Markdown, ProcessTerminal, SelectList, Text, TuiMainScreen, matchesKey, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, rmdir, symlink } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, rmdir, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { highlight, supportsLanguage } from "cli-highlight";
 import { diffLines } from "diff";
-import { execFile } from "node:child_process";
+import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
+import { parse } from "yaml";
+import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -254,6 +256,52 @@ var HarnessController = class {
 		}
 		this.submissions.accept(pending.key, response.rpcId);
 		this.patch({ pendingSubmissions: this.submissions.snapshot });
+	}
+	/** Create a durable Goal; the read side remains the goal projection. */
+	async createGoal(objective, maxGoalRounds) {
+		const sessionId = this.requireSession();
+		return valueOf(await this.api.goals.create({
+			sessionId,
+			objective,
+			...maxGoalRounds === void 0 ? {} : { maxGoalRounds }
+		})).ref;
+	}
+	/** Edit the exact projected Goal revision with Host compare-and-set semantics. */
+	async editGoal(ref, objective, maxGoalRounds) {
+		return valueOf(await this.api.goals.edit({
+			sessionId: this.requireSession(),
+			ref,
+			...objective === void 0 ? {} : { objective },
+			...maxGoalRounds === void 0 ? {} : { maxGoalRounds }
+		})).ref;
+	}
+	async pauseGoal(ref) {
+		return valueOf(await this.api.goals.pause({
+			sessionId: this.requireSession(),
+			ref
+		})).ref;
+	}
+	async resumeGoal(ref) {
+		return valueOf(await this.api.goals.resume({
+			sessionId: this.requireSession(),
+			ref
+		})).ref;
+	}
+	async completeGoal(ref) {
+		return valueOf(await this.api.goals.complete({
+			sessionId: this.requireSession(),
+			ref
+		})).ref;
+	}
+	async clearGoal(ref) {
+		valueOf(await this.api.goals.clear({
+			sessionId: this.requireSession(),
+			ref
+		}));
+	}
+	/** Hand a local authoring file to the Host platform opener when available. */
+	async openPath(path, signal) {
+		valueOf(await this.api.host.openPath({ path }, signal));
 	}
 	/** Cancel the active turn while preserving pending queued work. */
 	async cancel() {
@@ -579,7 +627,7 @@ var ChoiceDialog = class {
 		this.list.onCancel = onCancel;
 	}
 	handleInput(data) {
-		this.list.handleInput(data);
+		this.list.handleInput(data === "j" ? Key.down : data === "k" ? Key.up : data);
 	}
 	invalidate() {
 		this.title.invalidate();
@@ -1074,7 +1122,7 @@ var TextInputDialog = class {
 	theme;
 	onCancel;
 	editor;
-	constructor(tui, title, theme, onSubmit, onCancel) {
+	constructor(tui, title, theme, onSubmit, onCancel, initial = "") {
 		this.title = title;
 		this.theme = theme;
 		this.onCancel = onCancel;
@@ -1082,6 +1130,7 @@ var TextInputDialog = class {
 			paddingX: 0,
 			autocompleteMaxVisible: 5
 		});
+		if (initial !== "") this.editor.setText(initial);
 		this.editor.onSubmit = onSubmit;
 	}
 	get focused() {
@@ -3118,19 +3167,21 @@ function descriptorKey(descriptor) {
 }
 /**
 * One command directory for local interaction commands and agent-scoped Host
-* commands. Rendering libraries consume its plain descriptors; only local
-* definitions execute here, while unresolved slash input continues to Host.
+* commands. Rendering libraries consume its plain descriptors; resolved Host
+* commands execute through the Host port and never fall through to the model.
 */
 var TerminalCommandDirectory = class {
 	local;
 	source;
 	onChange;
 	localByName = /* @__PURE__ */ new Map();
+	decorations = /* @__PURE__ */ new Map();
+	executions = /* @__PURE__ */ new Set();
 	removeHostListener;
 	sessionId;
 	host = [];
 	signature = "";
-	constructor(local, source, onChange = () => {}) {
+	constructor(local, source, onChange = () => {}, decorations = []) {
 		this.local = local;
 		this.source = source;
 		this.onChange = onChange;
@@ -3138,6 +3189,7 @@ var TerminalCommandDirectory = class {
 			this.localByName.set(definition.name, definition);
 			for (const alias of definition.aliases ?? []) this.localByName.set(alias, definition);
 		}
+		for (const decoration of decorations) this.decorations.set(decoration.name.toLowerCase(), decoration);
 		this.removeHostListener = source?.subscribe(() => {
 			if (this.refreshHost()) this.onChange();
 		}) ?? (() => {});
@@ -3152,20 +3204,55 @@ var TerminalCommandDirectory = class {
 			...command.argumentHint === void 0 ? {} : { argumentHint: command.argumentHint }
 		})), ...this.host.filter((command) => !localNames.has(command.name))];
 	}
+	/** Every effective dispatch name, including local aliases hidden from discovery rows. */
+	get resolutionNames() {
+		return [.../* @__PURE__ */ new Set([...this.localByName.keys(), ...this.host.map((command) => command.name)])];
+	}
+	has(name) {
+		return this.resolutionNames.includes(name.toLowerCase());
+	}
 	/** Refresh the agent-scoped Host view when the active session changes. */
 	setSession(sessionId) {
 		if (sessionId === this.sessionId) return false;
+		this.abortExecutions();
 		this.sessionId = sessionId;
 		return this.refreshHost();
 	}
-	/** Dispatch a TUI-local command; return false so Host can resolve the rest. */
+	/** Dispatch a local interaction or a resolved Host command. */
 	async dispatch(text) {
 		const parsed = parseCommand(text);
 		if (parsed === void 0) return false;
 		const command = this.localByName.get(parsed.name);
-		if (command === void 0) return false;
-		await command.handler(parsed.argument);
+		if (command !== void 0) {
+			await command.handler(parsed.argument);
+			return true;
+		}
+		if (!this.host.some((candidate) => candidate.name === parsed.name)) return false;
+		const decoration = this.decorations.get(parsed.name);
+		if (parsed.argument === "" && decoration !== void 0) {
+			await decoration.handler();
+			return true;
+		}
+		await this.dispatchHost(text);
 		return true;
+	}
+	/** Execute an already selected Host command without re-entering local dispatch. */
+	async dispatchHost(text) {
+		const parsed = parseCommand(text);
+		if (parsed === void 0) throw new Error("Host command must be one complete slash-command line");
+		if (!this.host.some((candidate) => candidate.name === parsed.name)) throw new Error(`Host command "/${parsed.name}" is unavailable in this session`);
+		const sessionId = this.sessionId;
+		if (sessionId === void 0 || this.source === void 0) throw new Error(`Host command "/${parsed.name}" cannot execute without an active session`);
+		const abort = new AbortController();
+		this.executions.add(abort);
+		let result;
+		try {
+			result = await this.source.execute(sessionId, text, abort.signal);
+		} finally {
+			this.executions.delete(abort);
+		}
+		if (result === void 0) throw new Error(`Host command "/${parsed.name}" changed before it could execute`);
+		if (result.kind === "error") throw new Error(result.text ?? `Host command "/${parsed.name}" failed`);
 	}
 	/** Complete help content generated from the same effective discovery rows. */
 	helpText() {
@@ -3175,7 +3262,12 @@ var TerminalCommandDirectory = class {
 		}).join("\n");
 	}
 	dispose() {
+		this.abortExecutions();
 		this.removeHostListener();
+	}
+	abortExecutions() {
+		for (const execution of this.executions) execution.abort(/* @__PURE__ */ new Error("Host command session changed"));
+		this.executions.clear();
 	}
 	refreshHost() {
 		const next = [...this.source?.list(this.sessionId) ?? []].map((command) => ({
@@ -3190,6 +3282,1267 @@ var TerminalCommandDirectory = class {
 		return true;
 	}
 };
+//#endregion
+//#region src/runtime/session-controls.ts
+function hasProjection(projections, key) {
+	return Object.hasOwn(projections, key);
+}
+/** Read current configuration values without introducing a second state store. */
+function configurationSnapshot(models, projections, detailsExpanded) {
+	return {
+		models,
+		...hasProjection(projections, "permissions") ? { permissions: projections.permissions } : {},
+		...hasProjection(projections, "plan") ? { plan: projections.plan } : {},
+		detailsExpanded
+	};
+}
+/** Read task lifecycle and progress from the active Host state. */
+function taskSnapshot(projections, running, queued) {
+	return {
+		...hasProjection(projections, "goal") ? { goal: projections.goal } : {},
+		...hasProjection(projections, "todos") ? { todos: projections.todos } : {},
+		running,
+		queued
+	};
+}
+function reasoningEfforts(snapshot) {
+	const current = snapshot.models?.current;
+	if (current === void 0) return [];
+	return snapshot.models?.groups.find((group) => group.id === current.provider)?.models.find((model) => model.id === current.model)?.reasoning?.efforts ?? [];
+}
+function reasoningValue(snapshot) {
+	const current = snapshot.models?.current;
+	if (current === void 0) return "Loading model state…";
+	const efforts = reasoningEfforts(snapshot);
+	if (efforts.length === 0) return "Unavailable for this model";
+	if (current.reasoningEffort === void 0) return "Provider default";
+	return efforts.find((effort) => effort.id === current.reasoningEffort)?.name ?? current.reasoningEffort;
+}
+/** Stable rows for the unified configuration center. */
+function configurationRows(snapshot) {
+	const current = snapshot.models?.current;
+	return [
+		{
+			kind: "model",
+			label: "Model",
+			value: current === void 0 ? "Loading model state…" : `${current.provider}/${current.model}`,
+			scope: "Session",
+			available: current !== void 0
+		},
+		{
+			kind: "reasoning",
+			label: "Reasoning",
+			value: reasoningValue(snapshot),
+			scope: "Session",
+			available: reasoningEfforts(snapshot).length > 0
+		},
+		{
+			kind: "permissions",
+			label: "Permission",
+			value: snapshot.permissions?.currentValue ?? "Unavailable in this profile",
+			scope: "Session",
+			available: snapshot.permissions !== void 0
+		},
+		{
+			kind: "plan",
+			label: "Plan Mode",
+			value: snapshot.plan === void 0 ? "Unavailable in this profile" : `${snapshot.plan.active ? "active" : "off"}${snapshot.plan.pending ? " · pending transition" : ""}`,
+			scope: "Session",
+			available: snapshot.plan !== void 0
+		},
+		{
+			kind: "details",
+			label: "Details",
+			value: snapshot.detailsExpanded ? "expanded" : "compact",
+			scope: "TUI",
+			available: true
+		}
+	];
+}
+function goalValue(projection) {
+	if (projection === void 0) return "Unavailable in this profile";
+	if (projection === null) return "No goal";
+	const { goal, roundsStarted } = projection;
+	const rounds = `${roundsStarted}/${goal.maxGoalRounds} rounds`;
+	if (goal.phase === "blocked") return `blocked · ${rounds} · ${goal.blockedReason?.message ?? "reason unavailable"}`;
+	return `${goal.phase} · ${rounds}`;
+}
+function todoValue(todos) {
+	if (todos === void 0) return "Unavailable in this profile";
+	if (todos === null || todos.length === 0) return "No tasks";
+	const completed = todos.filter((item) => item.status === "completed").length;
+	const active = todos.filter((item) => item.status === "in_progress").length;
+	return `${completed}/${todos.length} completed${active === 0 ? "" : ` · ${active} in progress`}`;
+}
+/** Stable rows for current task state and lifecycle. */
+function taskRows(snapshot) {
+	return [
+		{
+			kind: "goal",
+			label: "Goal",
+			value: goalValue(snapshot.goal),
+			scope: "Session",
+			available: snapshot.goal !== void 0
+		},
+		{
+			kind: "todos",
+			label: "Tasks",
+			value: todoValue(snapshot.todos),
+			scope: "Session",
+			available: snapshot.todos !== void 0
+		},
+		{
+			kind: "runtime",
+			label: "Runtime",
+			value: `${snapshot.running ? "running" : "idle"}${snapshot.queued === 0 ? "" : ` · ${snapshot.queued} queued`}`,
+			scope: "Session",
+			available: true
+		}
+	];
+}
+/** Compact status for the fixed composer row; unavailable capabilities disappear. */
+function sessionControlSummary(projections) {
+	const config = configurationSnapshot(void 0, projections, false);
+	const task = taskSnapshot(projections, false, 0);
+	const parts = [];
+	if (config.permissions !== void 0) parts.push(config.permissions.currentValue);
+	if (config.plan !== void 0 && (config.plan.active || config.plan.pending)) parts.push(config.plan.pending ? `Plan ${config.plan.active ? "active" : "off"} → pending` : "Plan active");
+	if (task.goal !== void 0 && task.goal !== null) parts.push(`Goal ${task.goal.goal.phase} ${task.goal.roundsStarted}/${task.goal.goal.maxGoalRounds}`);
+	if (task.todos !== void 0 && task.todos !== null && task.todos.length > 0) {
+		const completed = task.todos.filter((item) => item.status === "completed").length;
+		parts.push(`Tasks ${completed}/${task.todos.length}`);
+	}
+	return parts.join(" · ");
+}
+//#endregion
+//#region src/presentation/config/config-view.ts
+/** Unified keyboard-first configuration surface over authoritative session state. */
+var ConfigView = class {
+	snapshot;
+	theme;
+	onModel;
+	onReasoning;
+	onPermission;
+	onPlan;
+	onDetails;
+	onClose;
+	stage;
+	entryStage;
+	index = 0;
+	pendingPermission;
+	constructor(snapshot, theme, onModel, onReasoning, onPermission, onPlan, onDetails, onClose, initialStage = "root") {
+		this.snapshot = snapshot;
+		this.theme = theme;
+		this.onModel = onModel;
+		this.onReasoning = onReasoning;
+		this.onPermission = onPermission;
+		this.onPlan = onPlan;
+		this.onDetails = onDetails;
+		this.onClose = onClose;
+		this.stage = initialStage;
+		this.entryStage = initialStage;
+	}
+	setSnapshot(snapshot) {
+		this.snapshot = snapshot;
+		this.index = Math.min(this.index, Math.max(0, this.rowCount() - 1));
+	}
+	handleInput(data) {
+		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+			if (this.stage === this.entryStage) this.onClose();
+			else if (this.stage === "permission-confirm") {
+				this.stage = "permissions";
+				this.pendingPermission = void 0;
+			} else {
+				this.stage = "root";
+				this.index = 0;
+			}
+			return;
+		}
+		if (matchesKey(data, Key.up) || data === "k") {
+			this.move(-1);
+			return;
+		}
+		if (matchesKey(data, Key.down) || data === "j") {
+			this.move(1);
+			return;
+		}
+		if (data === "g") {
+			this.index = 0;
+			return;
+		}
+		if (data === "G") {
+			this.index = Math.max(0, this.rowCount() - 1);
+			return;
+		}
+		if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) this.select();
+	}
+	invalidate() {}
+	render(width) {
+		const lines = this.stage === "permission-confirm" ? this.renderPermissionConfirmation(width) : this.stage === "root" ? this.renderRoot(width) : this.renderActions(width);
+		const safeWidth = Math.max(1, width);
+		return lines.map((line) => truncateToWidth(line, safeWidth));
+	}
+	renderRoot(width) {
+		const lines = [
+			this.theme.bold("Config"),
+			this.theme.dim("Session settings and terminal preferences"),
+			""
+		];
+		for (const [index, row] of configurationRows(this.snapshot).entries()) {
+			const cursor = index === this.index ? this.theme.accent("›") : " ";
+			const label = index === this.index ? this.theme.bold(row.label.padEnd(13)) : row.label.padEnd(13);
+			const value = row.available ? sanitizeTerminalText(row.value) : this.theme.dim(sanitizeTerminalText(row.value));
+			const scope = this.theme.dim(`  ${row.scope}`);
+			lines.push(truncateToWidth(`${cursor} ${label}${value}${scope}`, width));
+		}
+		lines.push("", this.theme.dim("j/k move · enter configure · g/G first/last · esc close"));
+		return lines;
+	}
+	renderActions(width) {
+		const title = this.stage === "reasoning" ? "Reasoning Effort" : this.stage === "permissions" ? "Permission" : "Plan Mode";
+		const actions = this.actions();
+		const lines = [
+			this.theme.bold(title),
+			this.theme.dim(this.stageDetail()),
+			""
+		];
+		if (actions.length === 0) lines.push(this.theme.dim("No options are currently available."));
+		for (const [index, action] of actions.entries()) {
+			const cursor = index === this.index ? this.theme.accent("›") : " ";
+			const marker = this.isCurrentAction(action.value) ? this.theme.dim(" (current)") : "";
+			const label = index === this.index ? this.theme.bold(action.label) : action.label;
+			lines.push(truncateToWidth(`${cursor} ${label}${marker}`, width));
+			if (action.description !== void 0 && index === this.index) lines.push(...wrapTextWithAnsi(this.theme.dim(sanitizeTerminalText(action.description)), Math.max(1, width - 4)).map((line) => `    ${line}`));
+		}
+		lines.push("", this.theme.dim("j/k move · enter apply · esc back"));
+		return lines;
+	}
+	renderPermissionConfirmation(width) {
+		const option = this.pendingPermission;
+		const description = option?.description ?? "This preset grants unrestricted filesystem and process access.";
+		return [
+			this.theme.bold(this.theme.warning("Confirm unrestricted access")),
+			"",
+			...wrapTextWithAnsi(sanitizeTerminalText(description), Math.max(1, width)),
+			"",
+			this.theme.warning(`Switch to ${sanitizeTerminalText(option?.name ?? "danger-full-access")}?`),
+			this.theme.dim("enter confirm · esc cancel")
+		];
+	}
+	select() {
+		if (this.stage === "permission-confirm") {
+			const value = this.pendingPermission?.value;
+			this.pendingPermission = void 0;
+			this.stage = this.entryStage;
+			this.index = 0;
+			if (value !== void 0) this.onPermission(value);
+			return;
+		}
+		if (this.stage === "root") {
+			const row = configurationRows(this.snapshot)[this.index];
+			if (row === void 0 || !row.available) return;
+			if (row.kind === "model") {
+				this.onModel();
+				return;
+			}
+			if (row.kind === "details") {
+				this.onDetails(!this.snapshot.detailsExpanded);
+				return;
+			}
+			this.stage = row.kind;
+			this.index = 0;
+			return;
+		}
+		const action = this.actions()[this.index];
+		if (action === void 0) return;
+		if (this.stage === "reasoning") {
+			if (this.isCurrentAction(action.value)) return;
+			this.onReasoning(action.value === "provider-default" ? void 0 : action.value);
+			return;
+		}
+		if (this.stage === "permissions") {
+			const option = this.permissionOptions().find((candidate) => candidate.value === action.value);
+			if (option === void 0 || this.isCurrentAction(option.value)) return;
+			if (action.dangerous) {
+				this.pendingPermission = option;
+				this.stage = "permission-confirm";
+				return;
+			}
+			this.onPermission(option.value);
+			return;
+		}
+		if (this.snapshot.plan?.pending || this.isCurrentAction(action.value)) return;
+		this.onPlan(action.value === "on");
+	}
+	move(offset) {
+		this.index = Math.max(0, Math.min(Math.max(0, this.rowCount() - 1), this.index + offset));
+	}
+	rowCount() {
+		if (this.stage === "root") return configurationRows(this.snapshot).length;
+		if (this.stage === "permission-confirm") return 1;
+		return this.actions().length;
+	}
+	permissionOptions() {
+		return (this.snapshot.permissions?.options ?? []).filter((option) => option.value !== "custom");
+	}
+	actions() {
+		if (this.stage === "reasoning") return [{
+			value: "provider-default",
+			label: "Provider default",
+			description: "Let the selected model adapter choose its default reasoning effort."
+		}, ...reasoningEfforts(this.snapshot).map((effort) => ({
+			value: effort.id,
+			label: effort.name,
+			...effort.description === void 0 ? {} : { description: effort.description }
+		}))];
+		if (this.stage === "permissions") return this.permissionOptions().map((option) => ({
+			value: option.value,
+			label: option.name,
+			...option.description === void 0 ? {} : { description: option.description },
+			dangerous: option.value === "danger-full-access"
+		}));
+		if (this.stage === "plan") return [{
+			value: "on",
+			label: "On",
+			description: "Plan before implementation."
+		}, {
+			value: "off",
+			label: "Off",
+			description: "Return to normal implementation mode."
+		}];
+		return [];
+	}
+	stageDetail() {
+		if (this.stage === "reasoning") return `Session · Effective: ${this.snapshot.models?.current.reasoningEffort ?? "provider default"}`;
+		if (this.stage === "permissions") return `Session · Effective: ${this.snapshot.permissions?.currentValue ?? "unavailable"}`;
+		const plan = this.snapshot.plan;
+		return plan === void 0 ? "Session · Unavailable" : `Session · Effective: ${plan.active ? "active" : "off"}${plan.pending ? " · transition pending" : ""}`;
+	}
+	isCurrentAction(value) {
+		if (this.stage === "reasoning") return value === (this.snapshot.models?.current.reasoningEffort ?? "provider-default");
+		if (this.stage === "permissions") return value === this.snapshot.permissions?.currentValue;
+		if (this.stage === "plan") return value === "on" === this.snapshot.plan?.active;
+		return false;
+	}
+};
+//#endregion
+//#region src/presentation/task/task-view.ts
+/** Keyboard-first task lifecycle and progress surface. */
+var TaskView = class {
+	snapshot;
+	theme;
+	visibleRows;
+	onGoal;
+	onRuntime;
+	onClose;
+	stage = "root";
+	index = 0;
+	pendingGoalAction;
+	constructor(snapshot, theme, visibleRows, onGoal, onRuntime, onClose) {
+		this.snapshot = snapshot;
+		this.theme = theme;
+		this.visibleRows = visibleRows;
+		this.onGoal = onGoal;
+		this.onRuntime = onRuntime;
+		this.onClose = onClose;
+	}
+	setSnapshot(snapshot) {
+		this.snapshot = snapshot;
+		this.index = Math.min(this.index, Math.max(0, this.rowCount() - 1));
+	}
+	handleInput(data) {
+		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+			if (this.stage === "root") this.onClose();
+			else if (this.stage === "goal-confirm") {
+				this.stage = "goal";
+				this.pendingGoalAction = void 0;
+			} else {
+				this.stage = "root";
+				this.index = 0;
+			}
+			return;
+		}
+		if (matchesKey(data, Key.up) || data === "k") {
+			this.move(-1);
+			return;
+		}
+		if (matchesKey(data, Key.down) || data === "j") {
+			this.move(1);
+			return;
+		}
+		if (data === "g") {
+			this.index = 0;
+			return;
+		}
+		if (data === "G") {
+			this.index = Math.max(0, this.rowCount() - 1);
+			return;
+		}
+		if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) this.select();
+	}
+	invalidate() {}
+	render(width) {
+		const lines = this.stage === "goal-confirm" ? this.renderGoalConfirmation(width) : this.stage === "todos" ? this.renderTodos(width) : this.stage === "root" ? this.renderRoot(width) : this.renderActions(width);
+		const safeWidth = Math.max(1, width);
+		return lines.map((line) => truncateToWidth(line, safeWidth));
+	}
+	renderRoot(width) {
+		const lines = [
+			this.theme.bold("Task"),
+			this.theme.dim("Current objective, execution progress, and runtime"),
+			""
+		];
+		for (const [index, row] of taskRows(this.snapshot).entries()) {
+			const cursor = index === this.index ? this.theme.accent("›") : " ";
+			const label = index === this.index ? this.theme.bold(row.label.padEnd(12)) : row.label.padEnd(12);
+			const value = row.available ? sanitizeTerminalText(row.value) : this.theme.dim(sanitizeTerminalText(row.value));
+			lines.push(truncateToWidth(`${cursor} ${label}${value}${this.theme.dim(`  ${row.scope}`)}`, width));
+		}
+		lines.push("", this.theme.dim("j/k move · enter inspect · g/G first/last · esc close"));
+		return lines;
+	}
+	renderActions(width) {
+		const title = this.stage === "goal" ? "Goal" : "Runtime";
+		const actions = this.actions();
+		const lines = [
+			this.theme.bold(title),
+			this.theme.dim(this.stageDetail()),
+			""
+		];
+		if (actions.length === 0) lines.push(this.theme.dim("No actions are currently available."));
+		for (const [index, action] of actions.entries()) {
+			const cursor = index === this.index ? this.theme.accent("›") : " ";
+			const label = index === this.index ? this.theme.bold(action.label) : action.label;
+			lines.push(truncateToWidth(`${cursor} ${label}`, width));
+			if (action.description !== void 0 && index === this.index) lines.push(...wrapTextWithAnsi(this.theme.dim(sanitizeTerminalText(action.description)), Math.max(1, width - 4)).map((line) => `    ${line}`));
+		}
+		lines.push("", this.theme.dim("j/k move · enter apply · esc back"));
+		return lines;
+	}
+	renderGoalConfirmation(width) {
+		return [
+			this.theme.bold(this.theme.warning("Clear durable Goal?")),
+			"",
+			...wrapTextWithAnsi(sanitizeTerminalText(this.snapshot.goal?.goal.objective ?? "The current Goal changed."), Math.max(1, width)),
+			"",
+			this.theme.warning("The Goal is removed from the current task; its durable history remains."),
+			this.theme.dim("enter confirm · esc cancel")
+		];
+	}
+	renderTodos(width) {
+		const todos = this.snapshot.todos ?? [];
+		const lines = [
+			this.theme.bold("Tasks"),
+			this.theme.dim("Read-only Host execution checklist"),
+			""
+		];
+		if (todos.length === 0) lines.push(this.theme.dim("No tasks are currently available."));
+		const maxVisible = Math.max(1, this.visibleRows() - 7);
+		const start = Math.max(0, Math.min(todos.length - maxVisible, this.index - Math.floor(maxVisible / 2)));
+		const end = Math.min(todos.length, start + maxVisible);
+		if (start > 0) lines.push(this.theme.dim(`  ↑ ${start} more above`));
+		for (let index = start; index < end; index += 1) {
+			const todo = todos[index];
+			if (todo === void 0) continue;
+			const cursor = index === this.index ? this.theme.accent("›") : " ";
+			const marker = todo.status === "completed" ? this.theme.success("✓") : todo.status === "in_progress" ? this.theme.accent("◆") : this.theme.dim("○");
+			const content = sanitizeTerminalText(todo.content);
+			lines.push(truncateToWidth(`${cursor} ${marker} ${index === this.index ? this.theme.bold(content) : content}`, width));
+		}
+		if (end < todos.length) lines.push(this.theme.dim(`  ↓ ${todos.length - end} more below`));
+		lines.push("", this.theme.dim("j/k move · g/G first/last · esc back"));
+		return lines;
+	}
+	select() {
+		if (this.stage === "goal-confirm") {
+			const action = this.pendingGoalAction;
+			this.pendingGoalAction = void 0;
+			this.stage = "goal";
+			this.index = 0;
+			if (action !== void 0) this.onGoal(action);
+			return;
+		}
+		if (this.stage === "root") {
+			const row = taskRows(this.snapshot)[this.index];
+			if (row === void 0 || !row.available) return;
+			this.stage = row.kind;
+			this.index = 0;
+			return;
+		}
+		if (this.stage === "todos") return;
+		const action = this.actions()[this.index];
+		if (action === void 0) return;
+		if (this.stage === "runtime") {
+			this.onRuntime(action.value);
+			return;
+		}
+		if (action.dangerous) {
+			this.pendingGoalAction = action.value;
+			this.stage = "goal-confirm";
+			return;
+		}
+		this.onGoal(action.value);
+	}
+	move(offset) {
+		this.index = Math.max(0, Math.min(Math.max(0, this.rowCount() - 1), this.index + offset));
+	}
+	rowCount() {
+		if (this.stage === "root") return taskRows(this.snapshot).length;
+		if (this.stage === "todos") return this.snapshot.todos?.length ?? 0;
+		if (this.stage === "goal-confirm") return 1;
+		return this.actions().length;
+	}
+	actions() {
+		if (this.stage === "runtime") return this.snapshot.running ? [{
+			value: "cancel",
+			label: "Cancel current turn",
+			description: "Stop the active turn and preserve queued work."
+		}] : [];
+		if (this.stage !== "goal") return [];
+		const phase = this.snapshot.goal?.goal.phase;
+		if (this.snapshot.goal === null) return [{
+			value: "create",
+			label: "Create goal"
+		}];
+		if (phase === "active") return [
+			{
+				value: "edit",
+				label: "Edit objective"
+			},
+			{
+				value: "rounds",
+				label: "Edit round limit"
+			},
+			{
+				value: "pause",
+				label: "Pause"
+			},
+			{
+				value: "complete",
+				label: "Complete"
+			},
+			{
+				value: "clear",
+				label: "Clear",
+				dangerous: true
+			}
+		];
+		if (phase === "paused" || phase === "blocked") return [
+			{
+				value: "edit",
+				label: "Edit objective"
+			},
+			{
+				value: "rounds",
+				label: "Edit round limit"
+			},
+			{
+				value: "resume",
+				label: "Resume"
+			},
+			{
+				value: "complete",
+				label: "Complete"
+			},
+			{
+				value: "clear",
+				label: "Clear",
+				dangerous: true
+			}
+		];
+		if (phase === "complete") return [{
+			value: "clear",
+			label: "Clear",
+			dangerous: true
+		}];
+		return [];
+	}
+	stageDetail() {
+		if (this.stage === "runtime") return `Session · ${this.snapshot.running ? "running" : "idle"} · ${this.snapshot.queued} queued`;
+		const goal = this.snapshot.goal;
+		if (goal === null) return "Session · No durable goal";
+		if (goal === void 0) return "Session · Unavailable";
+		return sanitizeTerminalText(`Session · ${goal.goal.phase} · ${goal.goal.objective}`);
+	}
+};
+//#endregion
+//#region src/runtime/skill-catalog.ts
+function errorMessage(error) {
+	return error instanceof Error ? error.message : String(error);
+}
+/** ApiProxy adapter kept narrow so cache/concurrency behavior remains unit-testable. */
+function apiSkillCatalogSource(api) {
+	return { async list(sessionId, signal) {
+		if (signal.aborted) return [];
+		const response = await api.skills.list({ sessionId });
+		if (!response.result.ok) throw new Error(response.result.error.message);
+		return signal.aborted ? [] : response.result.value.skills;
+	} };
+}
+/** Generation-bound, same-session stale-while-refresh Skill catalog. */
+var SkillCatalog = class {
+	source;
+	onChange;
+	now;
+	staleAfterMs;
+	snapshot = {
+		entries: [],
+		status: "idle"
+	};
+	generation = 0;
+	request;
+	requestAbort;
+	constructor(source, onChange = () => {}, now = Date.now, staleAfterMs = 1e4) {
+		this.source = source;
+		this.onChange = onChange;
+		this.now = now;
+		this.staleAfterMs = staleAfterMs;
+	}
+	get current() {
+		return this.snapshot;
+	}
+	/** Switch catalogs without carrying provider rows across sessions. */
+	setSession(sessionId) {
+		if (sessionId === this.snapshot.sessionId) return;
+		this.generation += 1;
+		this.requestAbort?.abort();
+		this.requestAbort = void 0;
+		this.request = void 0;
+		this.publish({
+			...sessionId === void 0 ? {} : { sessionId },
+			entries: [],
+			status: sessionId === void 0 ? "idle" : "loading"
+		});
+		if (sessionId !== void 0) this.refresh(true);
+	}
+	/** Refresh once per freshness window unless the caller explicitly forces it. */
+	async refresh(force = false) {
+		const sessionId = this.snapshot.sessionId;
+		if (sessionId === void 0) return [];
+		if (this.request !== void 0) return this.request;
+		const fetchedAt = this.snapshot.fetchedAt;
+		if (!force && fetchedAt !== void 0 && this.now() - fetchedAt < this.staleAfterMs) return this.snapshot.entries;
+		const generation = this.generation;
+		const abort = new AbortController();
+		this.requestAbort = abort;
+		const loading = {
+			...this.snapshot,
+			status: "loading"
+		};
+		delete loading.error;
+		this.publish(loading);
+		const request = this.source.list(sessionId, abort.signal).then((entries) => {
+			if (generation !== this.generation || sessionId !== this.snapshot.sessionId || abort.signal.aborted) return [];
+			const ordered = [...entries].sort((left, right) => left.name.localeCompare(right.name));
+			this.publish({
+				sessionId,
+				entries: ordered,
+				status: "ready",
+				fetchedAt: this.now()
+			});
+			return ordered;
+		}).catch((error) => {
+			if (generation !== this.generation || sessionId !== this.snapshot.sessionId || abort.signal.aborted) return [];
+			const unavailable = /not found|unsupported|unavailable/i.test(errorMessage(error));
+			this.publish({
+				...this.snapshot,
+				status: unavailable ? "unavailable" : this.snapshot.entries.length > 0 ? "stale" : "error",
+				error: errorMessage(error)
+			});
+			return this.snapshot.entries;
+		}).finally(() => {
+			if (this.request === request) this.request = void 0;
+			if (this.requestAbort === abort) this.requestAbort = void 0;
+		});
+		this.request = request;
+		return request;
+	}
+	dispose() {
+		this.generation += 1;
+		this.requestAbort?.abort();
+		this.requestAbort = void 0;
+		this.request = void 0;
+	}
+	publish(snapshot) {
+		this.snapshot = snapshot;
+		this.onChange(this.snapshot);
+	}
+};
+//#endregion
+//#region src/runtime/slash-catalog.ts
+function normalizedName(name) {
+	return name.trim().replace(/^\//, "").toLowerCase();
+}
+/** Merge discovery rows while preserving Harness command-over-Skill precedence. */
+function mergeSlashCatalog(commands, skills, commandResolutionNames = commands.map((command) => command.name)) {
+	const commandNames = new Set(commandResolutionNames.map(normalizedName));
+	const commandRows = commands.map((command) => ({
+		kind: "command",
+		...command,
+		name: normalizedName(command.name)
+	}));
+	const skillRows = skills.filter((skill) => !commandNames.has(normalizedName(skill.name))).map((skill) => ({
+		kind: "skill",
+		...skill,
+		name: normalizedName(skill.name)
+	})).sort((left, right) => left.name.localeCompare(right.name));
+	return [...commandRows, ...skillRows];
+}
+/** Resolve only a leading slash gesture; ordinary prompt text is untouched. */
+function resolveLeadingSlash(text, candidates) {
+	const token = /^\s*\/(\S+)/.exec(text)?.[1];
+	if (token === void 0) return { kind: "none" };
+	const name = normalizedName(token);
+	const candidate = candidates.find((row) => row.name === name);
+	if (candidate === void 0) return {
+		kind: "unknown",
+		name
+	};
+	return candidate.kind === "command" ? {
+		kind: "command",
+		candidate
+	} : {
+		kind: "skill",
+		candidate
+	};
+}
+/** Plain command rows consumed by pi-tui's autocomplete provider. */
+function slashAutocompleteRows(candidates) {
+	return candidates.map((candidate) => candidate.kind === "command" ? {
+		name: candidate.name,
+		description: candidate.description,
+		...candidate.argumentHint === void 0 ? {} : { argumentHint: candidate.argumentHint }
+	} : {
+		name: candidate.name,
+		description: `Skill · ${candidate.description}`,
+		argumentHint: "[request]"
+	});
+}
+/** Grouped help generated from the same effective Slash candidates as autocomplete. */
+function slashHelpText(candidates) {
+	const commands = candidates.filter((candidate) => candidate.kind === "command");
+	const skills = candidates.filter((candidate) => candidate.kind === "skill");
+	return [
+		"Commands",
+		...commands.map((command) => {
+			const argument = command.argumentHint === void 0 ? "" : ` ${command.argumentHint}`;
+			return `/${command.name}${argument} · ${command.description}`;
+		}),
+		...skills.length === 0 ? [] : [
+			"",
+			"Skills",
+			...skills.map((skill) => `/${skill.name} [request] · ${skill.description}`)
+		]
+	].join("\n");
+}
+//#endregion
+//#region src/presentation/skills.ts
+/** Searchable keyboard surface for effective user-invocable Skills. */
+var SkillsView = class {
+	snapshot;
+	theme;
+	visibleRows;
+	onInvoke;
+	onSearch;
+	onCreate;
+	onEdit;
+	onRefresh;
+	onCancel;
+	index = 0;
+	detail = false;
+	query = "";
+	constructor(snapshot, theme, visibleRows, onInvoke, onSearch, onCreate, onEdit, onRefresh, onCancel) {
+		this.snapshot = snapshot;
+		this.theme = theme;
+		this.visibleRows = visibleRows;
+		this.onInvoke = onInvoke;
+		this.onSearch = onSearch;
+		this.onCreate = onCreate;
+		this.onEdit = onEdit;
+		this.onRefresh = onRefresh;
+		this.onCancel = onCancel;
+	}
+	setSnapshot(snapshot) {
+		this.snapshot = snapshot;
+		this.boundIndex();
+	}
+	setQuery(query) {
+		this.query = query.trim().toLowerCase();
+		this.index = 0;
+		this.detail = false;
+	}
+	handleInput(data) {
+		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "h") {
+			if (this.detail) this.detail = false;
+			else this.onCancel();
+			return;
+		}
+		if (matchesKey(data, Key.up) || data === "k") {
+			this.move(-1);
+			return;
+		}
+		if (matchesKey(data, Key.down) || data === "j") {
+			this.move(1);
+			return;
+		}
+		if (data === "g") {
+			this.index = 0;
+			return;
+		}
+		if (data === "G") {
+			this.index = Math.max(0, this.entries().length - 1);
+			return;
+		}
+		if (data === "/" || data === "s") {
+			this.onSearch(this.query);
+			return;
+		}
+		if (data === "n") {
+			this.onCreate();
+			return;
+		}
+		if (data === "e") {
+			const selected = this.entries()[this.index];
+			if (selected !== void 0) this.onEdit(selected.name);
+			return;
+		}
+		if (data === "r") {
+			this.onRefresh();
+			return;
+		}
+		if (data === "l" || matchesKey(data, Key.right)) {
+			if (this.entries()[this.index] !== void 0) this.detail = true;
+			return;
+		}
+		if (matchesKey(data, Key.enter)) {
+			const selected = this.entries()[this.index];
+			if (selected !== void 0) this.onInvoke(selected.name);
+		}
+	}
+	invalidate() {}
+	render(width) {
+		const selected = this.entries()[this.index];
+		if (this.detail && selected !== void 0) return this.fit(this.renderDetail(width, selected), width);
+		const status = this.statusLine();
+		const lines = [
+			this.theme.bold("Skills"),
+			this.theme.dim(`Effective user-invocable workflows${this.query === "" ? "" : ` · filter: ${sanitizeTerminalText(this.query)}`}`),
+			...status === void 0 ? [] : [status],
+			""
+		];
+		const entries = this.entries();
+		if (entries.length === 0 && this.snapshot.status === "loading") lines.push(this.theme.accent("✦ Loading Skills…"));
+		else if (entries.length === 0) lines.push(this.theme.dim(this.query === "" ? "No Skills are available." : "No Skills match this filter."));
+		const maxVisible = Math.max(1, Math.floor((this.visibleRows() - 8) / 2));
+		const start = Math.max(0, Math.min(entries.length - maxVisible, this.index - Math.floor(maxVisible / 2)));
+		const end = Math.min(entries.length, start + maxVisible);
+		if (start > 0) lines.push(this.theme.dim(`  ↑ ${start} more above`));
+		for (let index = start; index < end; index += 1) {
+			const entry = entries[index];
+			if (entry === void 0) continue;
+			const cursor = index === this.index ? this.theme.accent("›") : " ";
+			const label = `/${sanitizeTerminalText(entry.name)}`;
+			const name = index === this.index ? this.theme.bold(label) : label;
+			const userOnly = entry.modelInvocable ? "" : this.theme.dim(" · user only");
+			lines.push(truncateToWidth(`${cursor} ${name}${userOnly}`, width));
+			lines.push(truncateToWidth(`    ${this.theme.dim(sanitizeTerminalText(entry.description))}`, width));
+		}
+		if (end < entries.length) lines.push(this.theme.dim(`  ↓ ${entries.length - end} more below`));
+		lines.push("", this.theme.dim("j/k move · enter insert · l details · / search · n new · e edit · r refresh · esc close"));
+		return this.fit(lines, width);
+	}
+	renderDetail(width, entry) {
+		const lines = [
+			this.theme.bold(`/${sanitizeTerminalText(entry.name)}`),
+			this.theme.dim(entry.modelInvocable ? "User and model invocable" : "User invocable only"),
+			"",
+			...wrapTextWithAnsi(sanitizeTerminalText(entry.description), Math.max(1, width))
+		];
+		if (entry.whenToUse !== void 0) lines.push("", this.theme.bold("When to use"), ...wrapTextWithAnsi(sanitizeTerminalText(entry.whenToUse), Math.max(1, width)));
+		lines.push("", this.theme.dim("enter insert · h/esc back · e edit"));
+		return lines;
+	}
+	entries() {
+		if (this.query === "") return this.snapshot.entries;
+		return this.snapshot.entries.filter((entry) => [
+			entry.name,
+			entry.description,
+			entry.whenToUse ?? ""
+		].some((value) => value.toLowerCase().includes(this.query)));
+	}
+	statusLine() {
+		if (this.snapshot.status === "stale") return this.theme.warning(`Showing cached Skills · ${this.snapshot.error ?? "refresh failed"}`);
+		if (this.snapshot.status === "error" || this.snapshot.status === "unavailable") return this.theme.warning(`Skill catalog unavailable · ${this.snapshot.error ?? "unsupported by this profile"}`);
+		if (this.snapshot.status === "loading" && this.snapshot.entries.length > 0) return this.theme.dim("Refreshing…");
+	}
+	move(offset) {
+		this.index = Math.max(0, Math.min(Math.max(0, this.entries().length - 1), this.index + offset));
+	}
+	boundIndex() {
+		this.index = Math.max(0, Math.min(Math.max(0, this.entries().length - 1), this.index));
+	}
+	/** pi-tui requires every custom-component row to fit the current viewport. */
+	fit(lines, width) {
+		const safeWidth = Math.max(1, width);
+		return lines.map((line) => truncateToWidth(line, safeWidth));
+	}
+};
+//#endregion
+//#region src/application/skill-authoring.ts
+function isSkillName(name) {
+	return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name);
+}
+async function exists(path) {
+	try {
+		await access(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+/** Match the filesystem provider's nearest-.git behavior, falling back to cwd. */
+async function projectRoot(cwd) {
+	let current = resolve(cwd);
+	while (true) {
+		if (await exists(join(current, ".git"))) return current;
+		const parent = dirname(current);
+		if (parent === current) return resolve(cwd);
+		current = parent;
+	}
+}
+function assertInside(root, destination) {
+	const child = relative(resolve(root), resolve(destination));
+	if (child === "" || child === ".." || child.startsWith(`..${sep}`)) throw new Error("Skill destination escapes the selected root");
+}
+function yamlString(value) {
+	return JSON.stringify(value);
+}
+function renderSkill(request) {
+	return [
+		"---",
+		`name: ${yamlString(request.name)}`,
+		`description: ${yamlString(request.description.trim())}`,
+		...request.whenToUse?.trim() ? [`whenToUse: ${yamlString(request.whenToUse.trim())}`] : [],
+		`disable-model-invocation: ${request.modelInvocable ? "false" : "true"}`,
+		`user-invocable: ${request.userInvocable ? "true" : "false"}`,
+		"---",
+		"",
+		`# ${request.name.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ")}`,
+		"",
+		"Describe the workflow here.",
+		""
+	].join("\n");
+}
+function frontmatter(raw) {
+	const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(raw);
+	if (match?.[1] === void 0) return void 0;
+	const value = parse(match[1]);
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+/** Local filesystem adapter for the public project/user SKILL.md format. */
+var LocalSkillAuthoring = class {
+	environment;
+	constructor(environment = process.env) {
+		this.environment = environment;
+	}
+	async targets(cwd) {
+		const project = await projectRoot(cwd);
+		return [{
+			scope: "project",
+			label: "Project",
+			root: join(project, ".dsh", "skills")
+		}, {
+			scope: "user",
+			label: "User",
+			root: join(resolveDshHome(void 0, this.environment), "skills")
+		}];
+	}
+	async create(request) {
+		const name = request.name.trim().toLowerCase();
+		if (!isSkillName(name)) throw new Error("Skill name must use lowercase kebab-case");
+		if (request.description.trim() === "") throw new Error("Skill description cannot be empty");
+		const directory = join(request.target.root, name);
+		const path = join(directory, "SKILL.md");
+		assertInside(request.target.root, path);
+		await mkdir(request.target.root, { recursive: true });
+		try {
+			await mkdir(directory);
+		} catch (error) {
+			if ((error instanceof Error && "code" in error ? error.code : void 0) === "EEXIST") throw new Error(`Skill "${name}" already exists in ${request.target.label}`);
+			throw error;
+		}
+		try {
+			await writeFile(path, renderSkill({
+				...request,
+				name
+			}), {
+				encoding: "utf8",
+				flag: "wx"
+			});
+		} catch (error) {
+			await rmdir(directory).catch(() => void 0);
+			throw error;
+		}
+		return {
+			scope: request.target.scope,
+			root: request.target.root,
+			name,
+			path
+		};
+	}
+	async resolveEditable(cwd, name) {
+		if (!isSkillName(name)) return void 0;
+		for (const target of await this.targets(cwd)) for (const path of [join(target.root, name, "SKILL.md"), join(target.root, `${name}.md`)]) {
+			assertInside(target.root, path);
+			try {
+				if ((await stat(path)).isFile()) return {
+					scope: target.scope,
+					root: target.root,
+					name,
+					path
+				};
+			} catch {}
+		}
+	}
+	async validate(document) {
+		const errors = [];
+		let raw;
+		try {
+			raw = await readFile(document.path, "utf8");
+		} catch (error) {
+			return {
+				ok: false,
+				errors: [`Cannot read Skill: ${String(error)}`]
+			};
+		}
+		let data;
+		try {
+			data = frontmatter(raw);
+		} catch (error) {
+			return {
+				ok: false,
+				errors: [`Invalid YAML frontmatter: ${String(error)}`]
+			};
+		}
+		if (data === void 0) return {
+			ok: false,
+			errors: ["SKILL.md must begin with YAML frontmatter"]
+		};
+		if (typeof data.name !== "string" || !isSkillName(data.name)) errors.push("name must use lowercase kebab-case");
+		else if (data.name !== document.name) errors.push(`name must match the local entry "${document.name}"`);
+		if (typeof data.description !== "string" || data.description.trim() === "") errors.push("description must be a non-empty string");
+		if (data.whenToUse !== void 0 && (typeof data.whenToUse !== "string" || data.whenToUse.trim() === "")) errors.push("whenToUse must be a non-empty string when present");
+		for (const key of ["disable-model-invocation", "user-invocable"]) if (data[key] !== void 0 && typeof data[key] !== "boolean") errors.push(`${key} must be a boolean`);
+		for (const legacy of [
+			"disableModelInvocation",
+			"modelInvocable",
+			"userInvocable"
+		]) if (Object.hasOwn(data, legacy)) errors.push(`${legacy} is unsupported; use canonical kebab-case invocation fields`);
+		return {
+			ok: errors.length === 0,
+			errors
+		};
+	}
+};
+//#endregion
+//#region src/application/skill-authoring-coordinator.ts
+/** Coordinates local file, editor, validation, and effective-catalog settlement. */
+var SkillAuthoringCoordinator = class {
+	authoring;
+	catalog;
+	editor;
+	notice;
+	delay;
+	constructor(authoring, catalog, editor, notice, delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))) {
+		this.authoring = authoring;
+		this.catalog = catalog;
+		this.editor = editor;
+		this.notice = notice;
+		this.delay = delay;
+	}
+	targets(cwd) {
+		return this.authoring.targets(cwd);
+	}
+	async create(request) {
+		const document = await this.authoring.create(request);
+		await this.editAndSettle(document, true);
+	}
+	async edit(cwd, name) {
+		const document = await this.authoring.resolveEditable(cwd, name);
+		if (document === void 0) {
+			this.notice(`/${name} is invocable but is not an editable project or user Skill.`);
+			return;
+		}
+		await this.editAndSettle(document, false);
+	}
+	async editAndSettle(document, created) {
+		let editorError;
+		try {
+			await this.editor.open(document, created);
+		} catch (error) {
+			editorError = error;
+		}
+		const validation = await this.authoring.validate(document);
+		const effective = await this.refreshUntilEffective(document.name);
+		if (!validation.ok) throw new Error(`Skill validation failed:\n${validation.errors.map((error) => `- ${error}`).join("\n")}`);
+		if (editorError !== void 0) throw editorError;
+		this.notice(effective ? `${created ? "Created" : "Updated"} /${document.name}` : `Skill file is valid, but /${document.name} is not effective in this session (it may be shadowed by another provider).`);
+	}
+	async refreshUntilEffective(name) {
+		for (const milliseconds of [
+			0,
+			250,
+			500
+		]) {
+			if (milliseconds > 0) await this.delay(milliseconds);
+			await this.catalog.refresh(true);
+			if (this.catalog.current.entries.some((entry) => entry.name === name)) return true;
+		}
+		return false;
+	}
+};
+//#endregion
+//#region src/presentation/skill-authoring.ts
+/** Presentation-only multi-step wizard that produces one validated request shape. */
+var SkillAuthoringWizard = class {
+	tui;
+	theme;
+	targets;
+	nameConflict;
+	onCreate;
+	onNotice;
+	constructor(tui, theme, targets, nameConflict, onCreate, onNotice) {
+		this.tui = tui;
+		this.theme = theme;
+		this.targets = targets;
+		this.nameConflict = nameConflict;
+		this.onCreate = onCreate;
+		this.onNotice = onNotice;
+	}
+	start() {
+		let handle;
+		const close = () => {
+			handle.hide();
+		};
+		const dialog = new ChoiceDialog("Create Skill", this.targets.map((target) => ({
+			value: target.scope,
+			label: target.label,
+			description: target.root
+		})), this.theme, (item) => {
+			close();
+			const target = this.targets.find((candidate) => candidate.scope === item.value);
+			if (target !== void 0) this.requestName(target);
+		}, close, "Choose whether this workflow belongs to the project or your user profile.");
+		handle = this.tui.showOverlay(dialog, {
+			width: "85%",
+			maxHeight: "70%",
+			margin: 1
+		});
+	}
+	requestName(target) {
+		this.openInput("Skill name (lowercase kebab-case)", "", (name) => {
+			const normalized = name.trim().toLowerCase();
+			const conflict = this.nameConflict(normalized);
+			if (conflict !== void 0) {
+				this.onNotice(conflict);
+				return;
+			}
+			this.requestDescription(target, normalized);
+		});
+	}
+	requestDescription(target, name) {
+		this.openInput("Skill description", "", (description) => {
+			if (description.trim() === "") {
+				this.onNotice("Skill description cannot be empty.");
+				return;
+			}
+			this.requestWhenToUse(target, name, description.trim());
+		});
+	}
+	requestWhenToUse(target, name, description) {
+		this.openInput("When to use (optional)", "", (whenToUse) => {
+			this.requestInvocation(target, name, description, whenToUse.trim());
+		});
+	}
+	requestInvocation(target, name, description, whenToUse) {
+		let handle;
+		const close = () => {
+			handle.hide();
+		};
+		const create = (modelInvocable) => {
+			close();
+			this.onCreate({
+				target,
+				name,
+				description,
+				...whenToUse === "" ? {} : { whenToUse },
+				modelInvocable,
+				userInvocable: true
+			});
+		};
+		const dialog = new ChoiceDialog("Skill invocation", [{
+			value: "model",
+			label: "User and model",
+			description: "The model may also discover and invoke this Skill."
+		}, {
+			value: "user",
+			label: "User only",
+			description: "Only an explicit /name gesture invokes this Skill."
+		}], this.theme, (item) => create(item.value === "model"), close);
+		handle = this.tui.showOverlay(dialog, {
+			width: "85%",
+			maxHeight: "70%",
+			margin: 1
+		});
+	}
+	openInput(title, initial, onSubmit) {
+		let handle;
+		const close = () => {
+			handle.hide();
+		};
+		const dialog = new TextInputDialog(this.tui, title, this.theme, (value) => {
+			close();
+			onSubmit(value);
+		}, close, initial);
+		handle = this.tui.showOverlay(dialog, {
+			width: "85%",
+			maxHeight: "65%",
+			margin: 1
+		});
+	}
+};
+//#endregion
+//#region src/application/external-editor.ts
+function externalEditorCommand(environment = process.env) {
+	const visual = environment.VISUAL?.trim();
+	if (visual !== void 0 && visual !== "") return {
+		command: visual,
+		source: "VISUAL"
+	};
+	const editor = environment.EDITOR?.trim();
+	return editor === void 0 || editor === "" ? void 0 : {
+		command: editor,
+		source: "EDITOR"
+	};
+}
+function shellArgument$1(value) {
+	if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
+	return `'${value.replaceAll("'", "'\\''")}'`;
+}
+/** Run the user's trusted editor command and wait for terminal ownership to return. */
+function runExternalEditor(editor, path, stdio) {
+	return new Promise((resolve, reject) => {
+		const child = spawn(`${editor.command} ${shellArgument$1(path)}`, {
+			shell: true,
+			stdio
+		});
+		child.once("error", reject);
+		child.once("exit", (code, signal) => {
+			if (code === 0) resolve();
+			else reject(/* @__PURE__ */ new Error(`${editor.source} exited ${signal === null ? `with code ${code ?? "unknown"}` : `from signal ${signal}`}`));
+		});
+	});
+}
 //#endregion
 //#region src/application/app.ts
 const DOUBLE_ESCAPE_MS = 600;
@@ -3225,6 +4578,9 @@ var TuiApplication = class {
 	diffLineLocator = new DiffLineLocator();
 	layout;
 	trajectoryView;
+	configView;
+	taskView;
+	skillsView;
 	removeInputListener;
 	spinner;
 	spinnerFrame = 0;
@@ -3245,6 +4601,8 @@ var TuiApplication = class {
 	removeMemoryActivity;
 	interactionQueue = [];
 	commands;
+	skillCatalog;
+	skillAuthoring;
 	autocompleteCwd;
 	constructor(api, config, runtime, checkpoints, memory, commandSource) {
 		this.config = config;
@@ -3274,8 +4632,13 @@ var TuiApplication = class {
 			paddingX: 1,
 			autocompleteMaxVisible: 10
 		});
-		this.commands = new TerminalCommandDirectory(this.localCommands(), commandSource, () => this.refreshAutocomplete());
-		this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...this.commands.descriptors], config.cwd));
+		this.commands = new TerminalCommandDirectory(this.localCommands(), commandSource, () => this.refreshAutocomplete(), [{
+			name: "permission",
+			handler: () => this.openPermissionConfig()
+		}]);
+		this.skillCatalog = new SkillCatalog(apiSkillCatalogSource(api), (snapshot) => this.handleSkillCatalogChange(snapshot));
+		this.skillAuthoring = new SkillAuthoringCoordinator(new LocalSkillAuthoring(), this.skillCatalog, { open: (document, created) => this.openSkillDocument(document, created) }, (message) => this.controller.notice(message));
+		this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashAutocompleteRows(this.slashCandidates()), config.cwd));
 		this.autocompleteCwd = config.cwd;
 		this.editor.onSubmit = (text) => {
 			this.editor.addToHistory(text);
@@ -3308,6 +4671,7 @@ var TuiApplication = class {
 		if (this.spinner !== void 0) clearInterval(this.spinner);
 		if (this.rewindArmTimer !== void 0) clearTimeout(this.rewindArmTimer);
 		this.commands.dispose();
+		this.skillCatalog.dispose();
 		this.removeMemoryActivity();
 		this.terminal.write(DISABLE_MOUSE_TRACKING);
 		this.removeInputListener?.();
@@ -3317,8 +4681,12 @@ var TuiApplication = class {
 	render(state) {
 		if (this.disposed) return;
 		const commandsChanged = this.commands.setSession(state.sessionId);
+		this.skillCatalog.setSession(state.sessionId);
 		this.transcript.setState(state);
 		this.trajectoryView?.setState(state);
+		this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails));
+		this.taskView?.setSnapshot(taskSnapshot(state.projections, state.running, state.queue.length));
+		this.skillsView?.setSnapshot(this.skillCatalog.current);
 		this.diffLineLocator.resolve(state, () => {
 			if (this.disposed || this.controller.current.sessionId !== state.sessionId) return;
 			this.transcript.setDiffLineStarts(this.diffLineLocator.current);
@@ -3343,6 +4711,8 @@ var TuiApplication = class {
 	}
 	updateStatus(state) {
 		const history = this.layout.followsTranscriptTail ? "" : " · Viewing history · PageDown to follow";
+		const task = sessionControlSummary(state.projections);
+		const taskStatus = task === "" ? "" : ` · ${task}`;
 		if (state.running || state.pendingSubmissions.some((submission) => submission.intent === "working")) {
 			if (this.workingStartedAt === void 0 || this.workingSessionId !== state.sessionId) {
 				this.workingStartedAt = Date.now();
@@ -3394,7 +4764,7 @@ var TuiApplication = class {
 			this.status.setText(this.theme.warning(`Memory learning failed: ${this.memoryActivity.message}${history}`));
 			return;
 		}
-		this.status.setText(state.connected ? this.theme.dim(`Ready · Enter send · ↑/↓ history · Esc Esc rewind${history}`) : this.theme.warning(`Connecting…${history}`));
+		this.status.setText(state.connected ? this.theme.dim(`Ready${taskStatus}${history}`) : this.theme.warning(`Connecting…${history}`));
 	}
 	handleGlobalInput(data) {
 		const mouse = parseMouseReport(data);
@@ -3429,9 +4799,7 @@ var TuiApplication = class {
 			return { consume: true };
 		}
 		if (matchesKey(data, Key.ctrl("o"))) {
-			this.showDetails = !this.showDetails;
-			this.transcript.setDetails(this.showDetails);
-			this.tui.requestRender();
+			this.setDetailsExpanded(!this.showDetails);
 			return { consume: true };
 		}
 		if (matchesKey(data, Key.shift(Key.tab))) {
@@ -3480,7 +4848,16 @@ var TuiApplication = class {
 		const text = value.trim();
 		if (text === "") return;
 		try {
-			if (text.startsWith("/") && await this.handleCommand(text)) return;
+			if (text.startsWith("/")) {
+				if (await this.handleCommand(text)) return;
+				let resolution = resolveLeadingSlash(text, this.slashCandidates());
+				if (resolution.kind === "unknown" && this.controller.current.sessionId !== void 0) {
+					await this.skillCatalog.refresh(true);
+					resolution = resolveLeadingSlash(text, this.slashCandidates());
+				}
+				const catalogSettled = this.skillCatalog.current.status === "ready" || this.skillCatalog.current.status === "stale";
+				if (resolution.kind === "unknown" && catalogSettled) throw new Error(`Unknown command or Skill "/${resolution.name}". Use /help or /skills to discover available entries.`);
+			}
 			const mode = forcedMode ?? (this.controller.current.running ? "steer" : "queue");
 			this.layout.followTranscript();
 			await this.controller.prompt(value, mode);
@@ -3498,7 +4875,7 @@ var TuiApplication = class {
 				name: "help",
 				description: "Show terminal and Harness commands",
 				handler: () => {
-					this.controller.notice(this.commands.helpText());
+					this.controller.notice(slashHelpText(this.slashCandidates()));
 				}
 			},
 			{
@@ -3536,9 +4913,27 @@ var TuiApplication = class {
 				name: "details",
 				description: "Toggle expanded tool output",
 				handler: () => {
-					this.showDetails = !this.showDetails;
-					this.transcript.setDetails(this.showDetails);
-					this.tui.requestRender();
+					this.setDetailsExpanded(!this.showDetails);
+				}
+			},
+			{
+				name: "skills",
+				description: "Browse and author reusable Skills",
+				handler: () => {
+					this.openSkills();
+				}
+			},
+			{
+				name: "config",
+				description: "Configure model, policy, and terminal preferences",
+				argumentHint: "[model|reasoning|permission|plan|interface]",
+				handler: (argument) => this.openConfigRoute(argument)
+			},
+			{
+				name: "task",
+				description: "Inspect and control the current task",
+				handler: () => {
+					this.openTask();
 				}
 			},
 			{
@@ -3586,9 +4981,18 @@ var TuiApplication = class {
 	}
 	refreshAutocomplete(cwd = this.controller.current.cwd, requestRender = true) {
 		if (this.disposed) return;
-		this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...this.commands.descriptors], cwd));
+		this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashAutocompleteRows(this.slashCandidates()), cwd));
 		this.autocompleteCwd = cwd;
 		if (requestRender) this.tui.requestRender();
+	}
+	slashCandidates() {
+		return mergeSlashCatalog(this.commands.descriptors, this.skillCatalog.current.entries, this.commands.resolutionNames);
+	}
+	handleSkillCatalogChange(snapshot) {
+		if (this.disposed) return;
+		this.skillsView?.setSnapshot(snapshot);
+		this.refreshAutocomplete(this.controller.current.cwd, false);
+		this.tui.requestRender();
 	}
 	requestRewind() {
 		this.disarmRewind();
@@ -3612,6 +5016,231 @@ var TuiApplication = class {
 		this.layout.setComposerOverride(trajectory);
 		this.tui.setFocus(trajectory);
 		this.tui.requestRender();
+	}
+	openPermissionConfig() {
+		const state = this.controller.current;
+		if (configurationSnapshot(state.models, state.projections, this.showDetails).permissions === void 0) {
+			this.controller.notice("Permission configuration is unavailable in this profile.");
+			return;
+		}
+		this.openConfig("permissions");
+	}
+	openConfigRoute(argument) {
+		const route = argument.trim().toLowerCase();
+		if (route === "") return this.openConfig();
+		if (route === "model") return this.openModelSelector();
+		if (route === "reasoning" || route === "effort") return this.openConfig("reasoning");
+		if (route === "permission" || route === "permissions") return this.openPermissionConfig();
+		if (route === "plan") return this.openConfig("plan");
+		if (route === "interface" || route === "details") return this.openConfig();
+		throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, or interface.`);
+	}
+	openConfig(initialStage = "root") {
+		if (this.tui.hasOverlay() || this.composerModalActive) return;
+		const close = () => {
+			if (this.configView === void 0) return;
+			this.configView = void 0;
+			this.layout.setComposerOverride(void 0);
+			this.composerModalActive = false;
+			this.tui.setFocus(this.editor);
+			this.tui.requestRender();
+		};
+		const state = this.controller.current;
+		const view = new ConfigView(configurationSnapshot(state.models, state.projections, this.showDetails), this.theme, () => {
+			close();
+			this.runAction(() => this.openModelSelector());
+		}, (effort) => {
+			this.runAction(() => this.selectReasoningEffort(effort));
+		}, (value) => {
+			if (initialStage === "permissions") close();
+			this.runAction(() => this.commands.dispatchHost(`/permission ${value}`));
+		}, (active) => {
+			this.runAction(() => this.commands.dispatchHost(active ? "/plan" : "/plan off"));
+		}, (expanded) => {
+			this.setDetailsExpanded(expanded);
+		}, close, initialStage);
+		this.configView = view;
+		this.composerModalActive = true;
+		this.layout.setComposerOverride(view);
+		this.tui.setFocus(view);
+		this.tui.requestRender();
+		if ((initialStage === "root" || initialStage === "reasoning") && state.models === void 0 && state.sessionId !== void 0) this.runAction(async () => {
+			await this.controller.refreshModels();
+		});
+	}
+	openTask() {
+		if (this.tui.hasOverlay() || this.composerModalActive) return;
+		const close = () => {
+			if (this.taskView === void 0) return;
+			this.taskView = void 0;
+			this.layout.setComposerOverride(void 0);
+			this.composerModalActive = false;
+			this.tui.setFocus(this.editor);
+			this.tui.requestRender();
+		};
+		const state = this.controller.current;
+		const view = new TaskView(taskSnapshot(state.projections, state.running, state.queue.length), this.theme, () => this.terminal.rows, (action) => {
+			this.handleGoalAction(action);
+		}, () => {
+			this.runAction(() => this.controller.cancel());
+		}, close);
+		this.taskView = view;
+		this.composerModalActive = true;
+		this.layout.setComposerOverride(view);
+		this.tui.setFocus(view);
+		this.tui.requestRender();
+	}
+	openSkills() {
+		if (this.tui.hasOverlay() || this.composerModalActive) return;
+		const close = () => {
+			if (this.skillsView === void 0) return;
+			this.skillsView = void 0;
+			this.layout.setComposerOverride(void 0);
+			this.composerModalActive = false;
+			this.tui.setFocus(this.editor);
+			this.tui.requestRender();
+		};
+		const view = new SkillsView(this.skillCatalog.current, this.theme, () => this.terminal.rows, (name) => {
+			close();
+			this.editor.setText(`/${name} `);
+		}, (query) => this.openSkillSearch(query), () => {
+			this.beginSkillCreation();
+		}, (name) => {
+			this.runAction(() => this.skillAuthoring.edit(this.controller.current.cwd, name));
+		}, () => {
+			this.skillCatalog.refresh(true);
+		}, close);
+		this.skillsView = view;
+		this.composerModalActive = true;
+		this.layout.setComposerOverride(view);
+		this.tui.setFocus(view);
+		this.tui.requestRender();
+		this.skillCatalog.refresh();
+	}
+	openSkillSearch(initial) {
+		let handle;
+		const close = () => {
+			handle.hide();
+		};
+		const dialog = new TextInputDialog(this.tui, "Filter Skills", this.theme, (query) => {
+			close();
+			this.skillsView?.setQuery(query);
+			this.tui.requestRender();
+		}, close, initial);
+		handle = this.tui.showOverlay(dialog, {
+			width: "80%",
+			maxHeight: "60%",
+			margin: 1
+		});
+	}
+	beginSkillCreation() {
+		this.runAction(async () => {
+			const targets = await this.skillAuthoring.targets(this.controller.current.cwd);
+			new SkillAuthoringWizard(this.tui, this.theme, targets, (name) => {
+				if (this.commands.has(name)) return `/${name} is already a Command or alias and would shadow the Skill. Choose another name.`;
+				if (this.slashCandidates().find((candidate) => candidate.name === name) === void 0) return void 0;
+				return `/${name} is already an effective Skill. Use e in /skills to edit a local definition.`;
+			}, (request) => {
+				this.runAction(() => this.skillAuthoring.create(request));
+			}, (message) => this.controller.notice(message)).start();
+		});
+	}
+	async openSkillDocument(document, created) {
+		const editor = externalEditorCommand();
+		if (editor === void 0) {
+			const abort = new AbortController();
+			try {
+				await this.controller.openPath(document.path, abort.signal);
+				this.controller.notice(`${created ? "Created" : "Opened"} /${document.name} at ${document.path}`);
+			} catch (error) {
+				throw new Error([
+					`${created ? "Created" : "Edit"} /${document.name} at:`,
+					document.path,
+					`No terminal editor is configured and the Host opener failed: ${error instanceof Error ? error.message : String(error)}`
+				].join("\n"));
+			}
+			return;
+		}
+		this.terminal.write(DISABLE_MOUSE_TRACKING);
+		this.tui.stop();
+		try {
+			await runExternalEditor(editor, document.path, [
+				this.runtime.stdin,
+				this.runtime.stdout,
+				this.runtime.stderr
+			]);
+		} finally {
+			await this.terminal.drainInput(100, 20);
+			if (!this.disposed) {
+				this.tui.start();
+				this.terminal.write(ENABLE_MOUSE_TRACKING);
+				this.tui.requestRender();
+			}
+		}
+	}
+	handleGoalAction(action) {
+		const state = this.controller.current;
+		const projection = taskSnapshot(state.projections, state.running, state.queue.length).goal;
+		if (action === "create") {
+			this.openGoalObjectiveInput("Create Goal", "", async (objective) => {
+				this.openGoalRoundInput("Goal round limit (blank uses profile default)", "", (rounds) => this.controller.createGoal(objective, rounds), true);
+			});
+			return;
+		}
+		if (projection === void 0 || projection === null) {
+			this.controller.notice("The current Goal changed; reopen /task and try again.");
+			return;
+		}
+		if (action === "edit") {
+			this.openGoalObjectiveInput("Edit Goal", projection.goal.objective, (objective) => this.controller.editGoal(projection.goal, objective));
+			return;
+		}
+		if (action === "rounds") {
+			this.openGoalRoundInput("Edit Goal round limit", String(projection.goal.maxGoalRounds), (rounds) => this.controller.editGoal(projection.goal, void 0, rounds), false);
+			return;
+		}
+		const mutation = action === "pause" ? () => this.controller.pauseGoal(projection.goal) : action === "resume" ? () => this.controller.resumeGoal(projection.goal) : action === "complete" ? () => this.controller.completeGoal(projection.goal) : () => this.controller.clearGoal(projection.goal);
+		this.runAction(async () => {
+			await mutation();
+		});
+	}
+	openGoalObjectiveInput(title, initial, submit) {
+		let handle;
+		const close = () => {
+			handle.hide();
+		};
+		const dialog = new TextInputDialog(this.tui, title, this.theme, (objective) => {
+			if (objective.trim() === "") return;
+			close();
+			this.runAction(async () => {
+				await submit(objective.trim());
+			});
+		}, close, initial);
+		handle = this.tui.showOverlay(dialog, {
+			width: "85%",
+			maxHeight: "70%",
+			margin: 1
+		});
+	}
+	openGoalRoundInput(title, initial, submit, optional) {
+		let handle;
+		const close = () => {
+			handle.hide();
+		};
+		const dialog = new TextInputDialog(this.tui, title, this.theme, (value) => {
+			const normalized = value.trim();
+			const rounds = normalized === "" && optional ? void 0 : Number(normalized);
+			close();
+			this.runAction(async () => {
+				if (rounds !== void 0 && (!Number.isSafeInteger(rounds) || rounds <= 0)) throw new Error("Goal round limit must be a positive integer");
+				await submit(rounds);
+			});
+		}, close, initial);
+		handle = this.tui.showOverlay(dialog, {
+			width: "75%",
+			maxHeight: "60%",
+			margin: 1
+		});
 	}
 	async openRewind() {
 		if (this.tui.hasOverlay() || this.composerModalActive) return;
@@ -3824,6 +5453,21 @@ var TuiApplication = class {
 		if (matches.length !== 1) throw new Error(matches.length === 0 ? `model "${name}" was not found` : `model "${name}" is ambiguous; use provider/model`);
 		await this.controller.selectModel(matches[0]);
 	}
+	setDetailsExpanded(expanded) {
+		this.showDetails = expanded;
+		this.transcript.setDetails(expanded);
+		const state = this.controller.current;
+		this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, expanded));
+		this.tui.requestRender();
+	}
+	async selectReasoningEffort(reasoningEffort) {
+		const current = (this.controller.current.models ?? await this.controller.refreshModels()).current;
+		await this.controller.selectModel({
+			provider: current.provider,
+			model: current.model,
+			...reasoningEffort === void 0 ? {} : { reasoningEffort }
+		});
+	}
 	async cycleReasoningEffort() {
 		const models = this.controller.current.models ?? await this.controller.refreshModels();
 		const current = models.current;
@@ -3834,11 +5478,7 @@ var TuiApplication = class {
 		}
 		const values = [void 0, ...efforts.map((effort) => effort.id)];
 		const next = values[(values.indexOf(current.reasoningEffort) + 1) % values.length];
-		await this.controller.selectModel({
-			provider: current.provider,
-			model: current.model,
-			...next === void 0 ? {} : { reasoningEffort: next }
-		});
+		await this.selectReasoningEffort(next);
 	}
 	enqueueInteraction(job) {
 		this.interactionQueue.push(job);
@@ -4421,6 +6061,11 @@ function apply(ctx, config) {
 				description: command.description,
 				...command.input === void 0 ? {} : { argumentHint: command.input.hint }
 			}));
+		},
+		execute: async (sessionId, line, signal) => {
+			const agent = ctx.agents.get(sessionId);
+			if (agent === void 0) return void 0;
+			return (await ctx.commands.execute(agent, line, signal))?.result;
 		},
 		subscribe: (listener) => ctx.on("commands/change", listener)
 	});

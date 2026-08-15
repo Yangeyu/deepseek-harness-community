@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
   IApiClient,
+  GoalRef,
   MuxFrame,
   SessionProjectionsBlock,
   RpcId,
@@ -404,5 +405,42 @@ describe('HarnessController', () => {
     expect(phases).toEqual(['forking', 'opening'])
     expect(rewoundSessionId).toBe(child)
     expect(controller.current.sessionId).toBe(child)
+  })
+
+  it('routes Goal mutations through structured CAS RPCs', async () => {
+    const { api } = fakeApi()
+    const nextRef = { id: 'goal-next', revision: 4 } as GoalRef
+    const create = vi.fn(async () => ok({ ref: nextRef }))
+    const edit = vi.fn(async () => ok({ ref: nextRef }))
+    api.goals = {
+      create,
+      edit,
+      pause: async () => ok({ ref: nextRef }),
+      resume: async () => ok({ ref: nextRef }),
+      complete: async () => ok({ ref: nextRef }),
+      clear: async () => ok({ cleared: true as const }),
+    }
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+
+    const created = await controller.createGoal('Ship it', 8)
+    await controller.editGoal(created, 'Ship safely', 10)
+
+    expect(create).toHaveBeenCalledWith({
+      sessionId: 'session-test',
+      objective: 'Ship it',
+      maxGoalRounds: 8,
+    })
+    expect(edit).toHaveBeenCalledWith({
+      sessionId: 'session-test',
+      ref: nextRef,
+      objective: 'Ship safely',
+      maxGoalRounds: 10,
+    })
+    controller.dispose()
   })
 })

@@ -1,6 +1,7 @@
 import type {
   ClientResponse,
   HistoryEntry,
+  GoalRef,
   HostFrame,
   IApiClient,
   ModelSelection,
@@ -243,6 +244,49 @@ export class HarnessController {
     }
     this.submissions.accept(pending.key, response.rpcId)
     this.patch({ pendingSubmissions: this.submissions.snapshot })
+  }
+
+  /** Create a durable Goal; the read side remains the goal projection. */
+  async createGoal(objective: string, maxGoalRounds?: number): Promise<GoalRef> {
+    const sessionId = this.requireSession()
+    const response = await this.api.goals.create({
+      sessionId,
+      objective,
+      ...maxGoalRounds === undefined ? {} : { maxGoalRounds },
+    })
+    return valueOf(response).ref
+  }
+
+  /** Edit the exact projected Goal revision with Host compare-and-set semantics. */
+  async editGoal(ref: GoalRef, objective?: string, maxGoalRounds?: number): Promise<GoalRef> {
+    const response = await this.api.goals.edit({
+      sessionId: this.requireSession(),
+      ref,
+      ...objective === undefined ? {} : { objective },
+      ...maxGoalRounds === undefined ? {} : { maxGoalRounds },
+    })
+    return valueOf(response).ref
+  }
+
+  async pauseGoal(ref: GoalRef): Promise<GoalRef> {
+    return valueOf(await this.api.goals.pause({ sessionId: this.requireSession(), ref })).ref
+  }
+
+  async resumeGoal(ref: GoalRef): Promise<GoalRef> {
+    return valueOf(await this.api.goals.resume({ sessionId: this.requireSession(), ref })).ref
+  }
+
+  async completeGoal(ref: GoalRef): Promise<GoalRef> {
+    return valueOf(await this.api.goals.complete({ sessionId: this.requireSession(), ref })).ref
+  }
+
+  async clearGoal(ref: GoalRef): Promise<void> {
+    valueOf(await this.api.goals.clear({ sessionId: this.requireSession(), ref }))
+  }
+
+  /** Hand a local authoring file to the Host platform opener when available. */
+  async openPath(path: string, signal: AbortSignal): Promise<void> {
+    valueOf(await this.api.host.openPath({ path }, signal))
   }
 
   /** Cancel the active turn while preserving pending queued work. */

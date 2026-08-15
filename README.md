@@ -29,12 +29,16 @@ The first launch creates or updates the `tui` Harness profile under `~/.dsh`; la
 
 ## Packages
 
-- [`packages/tui`](packages/tui) is the private terminal-client workspace with the profile patch, streaming transcript, diffs, rewind checkpoints, model selection, and memory UI.
+- [`packages/tui`](packages/tui) is the private terminal-client workspace with the profile patch, streaming transcript, diffs, scoped Config and Task surfaces, Skills, rewind checkpoints, model selection, and memory UI.
 - [`packages/memory`](packages/memory) is the private file-backed memory workspace with explicit remember/forget tools and correction learning.
 
 Both workspaces are source modules managed in this GitHub repository. They are embedded in `@vascent/dsh-tui` and are not published as standalone npm packages.
 The long-term ownership boundaries and staged design are documented in
 [`docs/tui-architecture.md`](docs/tui-architecture.md).
+Functional milestones are tracked in
+[`docs/tui-product-roadmap.md`](docs/tui-product-roadmap.md), with the next
+version specified in
+[`docs/tui-v0.1.6-design.md`](docs/tui-v0.1.6-design.md).
 
 ## Develop
 

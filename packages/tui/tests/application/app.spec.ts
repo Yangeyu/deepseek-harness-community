@@ -6,17 +6,29 @@ import { TuiApplication, type TuiRuntime } from '../../src/application/app.ts'
 import { WorkspaceCheckpointStore, type RewindPreview } from '../../src/checkpoint.ts'
 import { resolveConfig } from '../../src/application/config.ts'
 import type { TuiState } from '../../src/runtime/controller.ts'
+import type { HostCommandSource } from '../../src/runtime/commands.ts'
 
 interface AppInternals {
   controller: {
     current: Readonly<TuiState>
+    prompt(text: string, mode: 'queue' | 'steer'): Promise<void>
     rewind(preview: RewindPreview, onProgress?: (phase: 'forking' | 'reloading') => void): Promise<string>
+  }
+  skillCatalog: {
+    current: {
+      status: 'ready'
+      entries: Array<{ name: string; description: string; modelInvocable: boolean }>
+    }
+    refresh(force?: boolean): Promise<readonly unknown[]>
   }
   editor: Editor
   footer: { render(width: number): string[] }
   status: { render(width: number): string[] }
   transcript: { render(width: number): string[] }
   trajectoryView?: { handleInput(data: string): void; render(width: number): string[] }
+  configView?: { handleInput(data: string): void; render(width: number): string[] }
+  taskView?: { handleInput(data: string): void; render(width: number): string[] }
+  skillsView?: { handleInput(data: string): void; render(width: number): string[] }
   composerModalActive: boolean
   tui: { requestRender(): void }
   handleGlobalInput(data: string): { consume?: boolean } | undefined
@@ -37,6 +49,7 @@ function application(
   checkpoints: WorkspaceCheckpointStore = new WorkspaceCheckpointStore(10),
   memory: ProjectMemoryService = memoryService(),
   runtimeOverrides: Partial<TuiRuntime> = {},
+  commandSource?: HostCommandSource,
 ): TuiApplication {
   const runtime: TuiRuntime = {
     stdin: process.stdin,
@@ -51,6 +64,7 @@ function application(
     runtime,
     checkpoints,
     memory,
+    commandSource,
   )
   ;(app as unknown as AppInternals).tui.requestRender = vi.fn()
   return app
@@ -147,6 +161,27 @@ describe('TuiApplication input routing', () => {
     expect(internals.transcript.render(80).join('\n')).not.toContain('Working')
   })
 
+  it('shows compact Host task projections in the fixed ready status', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    app.render({
+      ...internals.controller.current,
+      connected: true,
+      projections: {
+        permissions: {
+          currentValue: 'workspace-write',
+          options: [{ value: 'workspace-write', name: 'Workspace write' }],
+        },
+        plan: { active: true, pending: false },
+        todos: [{ content: 'Implement', status: 'in_progress' }],
+      },
+    } as TuiState)
+
+    expect(internals.status.render(80).join('\n')).toContain(
+      'Ready · workspace-write · Plan active · Tasks 0/1',
+    )
+  })
+
   it('opens /trajectory in the current TUI and returns to the composer on Escape', async () => {
     const app = application()
     const internals = app as unknown as AppInternals
@@ -158,6 +193,131 @@ describe('TuiApplication input routing', () => {
     internals.trajectoryView?.handleInput('\u001b')
     expect(internals.trajectoryView).toBeUndefined()
     expect(internals.composerModalActive).toBe(false)
+  })
+
+  it('opens Config, Task, and Skill discovery as separate composer-anchored surfaces', async () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+
+    await internals.submit('/config')
+    expect(internals.configView?.render(80).join('\n')).toContain('Config')
+    expect(internals.configView?.render(80).join('\n')).not.toContain('Goal')
+    internals.configView?.handleInput('\u001b')
+    expect(internals.configView).toBeUndefined()
+
+    await internals.submit('/task')
+    expect(internals.taskView?.render(80).join('\n')).toContain('Task')
+    expect(internals.taskView?.render(80).join('\n')).not.toContain('Permission')
+    internals.taskView?.handleInput('\u001b')
+    expect(internals.taskView).toBeUndefined()
+
+    await internals.submit('/skills')
+    expect(internals.skillsView?.render(80).join('\n')).toContain('Skills')
+    internals.skillsView?.handleInput('\u001b')
+    expect(internals.skillsView).toBeUndefined()
+  })
+
+  it('opens bare /permission as a picker and executes selections outside model input', async () => {
+    const execute = vi.fn(async () => ({ kind: 'success' as const, text: 'preset read-only' }))
+    const source: HostCommandSource = {
+      list: sessionId => sessionId === undefined ? [] : [{
+        name: 'permission',
+        description: 'Switch permission',
+        argumentHint: '<preset>',
+      }, {
+        name: 'compact',
+        description: 'Compact context',
+      }, {
+        name: 'plan',
+        description: 'Enter or leave Plan Mode',
+      }],
+      execute,
+      subscribe: () => () => {},
+    }
+    const app = application(undefined, undefined, undefined, source)
+    const internals = app as unknown as AppInternals
+    const state = {
+      ...internals.controller.current,
+      sessionId: 'session-permission' as TuiState['sessionId'],
+      projections: {
+        permissions: {
+          currentValue: 'workspace-write',
+          options: [{ value: 'workspace-write', name: 'Workspace write' }, {
+            value: 'read-only',
+            name: 'Read only',
+          }],
+        },
+        plan: { active: false, pending: false },
+      },
+    } as TuiState
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue(state)
+    const prompt = vi.spyOn(internals.controller, 'prompt').mockResolvedValue()
+    app.render(state)
+
+    await internals.submit('/permission')
+    expect(internals.configView?.render(80).join('\n')).toContain('Permission')
+    expect(execute).not.toHaveBeenCalled()
+    expect(prompt).not.toHaveBeenCalled()
+
+    internals.configView?.handleInput('j')
+    internals.configView?.handleInput('\r')
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(1)
+      expect(execute).toHaveBeenCalledWith(
+        state.sessionId,
+        '/permission read-only',
+        expect.any(AbortSignal),
+      )
+    })
+    expect(internals.configView).toBeUndefined()
+    expect(prompt).not.toHaveBeenCalled()
+
+    await internals.submit('/compact')
+    expect(execute).toHaveBeenCalledWith(state.sessionId, '/compact', expect.any(AbortSignal))
+    expect(prompt).not.toHaveBeenCalled()
+
+    await internals.submit('/config permission')
+    internals.configView?.handleInput('j')
+    internals.configView?.handleInput('\r')
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(3)
+      expect(execute).toHaveBeenCalledWith(
+        state.sessionId,
+        '/permission read-only',
+        expect.any(AbortSignal),
+      )
+    })
+    expect(internals.configView).toBeUndefined()
+
+    await internals.submit('/config plan')
+    internals.configView?.handleInput('\r')
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(4)
+      expect(execute).toHaveBeenCalledWith(state.sessionId, '/plan', expect.any(AbortSignal))
+    })
+    expect(prompt).not.toHaveBeenCalled()
+  })
+
+  it('preserves exact Skill prompt text and rejects removed or unknown slash gestures', async () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue({
+      ...internals.controller.current,
+      sessionId: 'session-skills' as TuiState['sessionId'],
+    })
+    vi.spyOn(internals.skillCatalog, 'current', 'get').mockReturnValue({
+      status: 'ready',
+      entries: [{ name: 'review', description: 'Review changes', modelInvocable: true }],
+    })
+    vi.spyOn(internals.skillCatalog, 'refresh').mockResolvedValue([])
+    const prompt = vi.spyOn(internals.controller, 'prompt').mockResolvedValue()
+
+    await internals.submit('/review focus on races')
+    await internals.submit('/control')
+
+    expect(prompt).toHaveBeenCalledOnce()
+    expect(prompt).toHaveBeenCalledWith('/review focus on races', 'queue')
+    expect(internals.editor.getExpandedText()).toBe('/control')
   })
 
   it('prints a copyable session resume command after restoring the terminal', async () => {

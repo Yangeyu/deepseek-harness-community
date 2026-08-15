@@ -1,5 +1,5 @@
 import { r as MemoryMutation } from "./index-BX8q4BCW.js";
-import { HistoryEntry, IApiClient, ModelSelection, MuxFrame, QueuedInboxItem, RpcId, SessionModels, SessionSummary } from "@deepseek-ai/dsh-host-apiproxy";
+import { GoalRef, HistoryEntry, IApiClient, ModelSelection, MuxFrame, QueuedInboxItem, RpcId, SessionModels, SessionSummary } from "@deepseek-ai/dsh-host-apiproxy";
 import { Component, EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
 import z from "@deepseek-ai/schemastery";
 import { Context } from "@deepseek-ai/cordis";
@@ -135,6 +135,16 @@ declare class HarnessController {
   rewind(preview: RewindPreview, onPhase?: (phase: 'forking' | 'opening') => void): Promise<SessionId$1>;
   /** Submit ordinary text using the caller-selected queue placement. */
   prompt(text: string, mode: 'queue' | 'steer'): Promise<void>;
+  /** Create a durable Goal; the read side remains the goal projection. */
+  createGoal(objective: string, maxGoalRounds?: number): Promise<GoalRef>;
+  /** Edit the exact projected Goal revision with Host compare-and-set semantics. */
+  editGoal(ref: GoalRef, objective?: string, maxGoalRounds?: number): Promise<GoalRef>;
+  pauseGoal(ref: GoalRef): Promise<GoalRef>;
+  resumeGoal(ref: GoalRef): Promise<GoalRef>;
+  completeGoal(ref: GoalRef): Promise<GoalRef>;
+  clearGoal(ref: GoalRef): Promise<void>;
+  /** Hand a local authoring file to the Host platform opener when available. */
+  openPath(path: string, signal: AbortSignal): Promise<void>;
   /** Cancel the active turn while preserving pending queued work. */
   cancel(): Promise<void>;
   /** Refresh the model directory used by the selector and status line. */
@@ -180,35 +190,54 @@ interface TerminalCommandDefinition extends TerminalCommandDescriptor {
   aliases?: readonly string[];
   handler(argument: string): void | Promise<void>;
 }
-/** Host-backed command discovery without coupling the TUI to Cordis. */
+interface HostCommandResult {
+  kind: 'success' | 'error';
+  text?: string;
+  sourceEventSeq?: number;
+}
+/** Bare-invocation UI attached to an existing Host command. */
+interface TerminalCommandDecoration {
+  name: string;
+  handler(): void | Promise<void>;
+}
+/** Host-backed command discovery and execution without leaking Cordis into the application. */
 interface HostCommandSource {
   list(sessionId: SessionId | undefined): readonly TerminalCommandDescriptor[];
+  execute(sessionId: SessionId, line: string, signal: AbortSignal): Promise<HostCommandResult | undefined>;
   subscribe(listener: () => void): () => void;
 }
 /**
  * One command directory for local interaction commands and agent-scoped Host
- * commands. Rendering libraries consume its plain descriptors; only local
- * definitions execute here, while unresolved slash input continues to Host.
+ * commands. Rendering libraries consume its plain descriptors; resolved Host
+ * commands execute through the Host port and never fall through to the model.
  */
 declare class TerminalCommandDirectory {
   private readonly local;
   private readonly source?;
   private readonly onChange;
   private readonly localByName;
+  private readonly decorations;
+  private readonly executions;
   private readonly removeHostListener;
   private sessionId;
   private host;
   private signature;
-  constructor(local: readonly TerminalCommandDefinition[], source?: HostCommandSource | undefined, onChange?: () => void);
+  constructor(local: readonly TerminalCommandDefinition[], source?: HostCommandSource | undefined, onChange?: () => void, decorations?: readonly TerminalCommandDecoration[]);
   /** Effective discovery rows, with TUI-local commands shadowing Host names. */
   get descriptors(): readonly TerminalCommandDescriptor[];
+  /** Every effective dispatch name, including local aliases hidden from discovery rows. */
+  get resolutionNames(): readonly string[];
+  has(name: string): boolean;
   /** Refresh the agent-scoped Host view when the active session changes. */
   setSession(sessionId: SessionId | undefined): boolean;
-  /** Dispatch a TUI-local command; return false so Host can resolve the rest. */
+  /** Dispatch a local interaction or a resolved Host command. */
   dispatch(text: string): Promise<boolean>;
+  /** Execute an already selected Host command without re-entering local dispatch. */
+  dispatchHost(text: string): Promise<void>;
   /** Complete help content generated from the same effective discovery rows. */
   helpText(): string;
   dispose(): void;
+  private abortExecutions;
   private refreshHost;
 }
 //#endregion

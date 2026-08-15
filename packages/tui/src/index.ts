@@ -134,6 +134,11 @@ export function apply(ctx: Context, config: TuiConfig): void {
         ...command.input === undefined ? {} : { argumentHint: command.input.hint },
       }))
     },
+    execute: async (sessionId, line, signal) => {
+      const agent = ctx.agents.get(sessionId)
+      if (agent === undefined) return undefined
+      return (await ctx.commands.execute(agent, line, signal))?.result
+    },
     subscribe: listener => ctx.on('commands/change', listener),
   }
   const app = new TuiApplication(api, resolved, runtime, checkpoints, ctx.memory, commandSource)

@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Define the `v0.1.6` Configuration, Task, and User Extensions product roadmap,
+  interaction contracts, module boundaries, compatibility behavior, delivery
+  slices, and release acceptance criteria.
+- Add a scoped `/config` center for model, reasoning, effective permissions,
+  Plan Mode, and terminal details, plus a separate `/task` surface for CAS-safe
+  Goal operations, read-only Todo progress, and runtime cancellation.
+- Preserve `/permission` as a direct deep link into the shared Config flow.
+- Merge effective Host Commands and user-invocable Skills into autocomplete
+  with deterministic Command precedence, exact Host-owned Skill invocation,
+  stale-safe per-session discovery, and local rejection of unknown slash input.
+- Add a searchable `/skills` browser plus safe project/user Skill creation and
+  editing with canonical frontmatter, collision protection, external-editor
+  terminal restoration, post-edit validation, and effective-catalog refresh.
+- Split session-control selectors, Config/Task presentation, Slash resolution,
+  Skill caching, local authoring, and authoring coordination into independently
+  tested modules rather than adding feature state to the main application.
+- Execute every discovered Host Command through `ctx.commands.execute` instead
+  of allowing it to fall through to model prompting, and decorate bare
+  `/permission` with the projection-backed TUI selector while preserving
+  canonical argued execution and full-access confirmation.
+
 ## 0.1.5 - 2026-08-15
 
 - Merge TUI-local interactions with the effective agent-scoped Harness command

@@ -47,6 +47,11 @@ The initial terminal client supports:
 - reconnect and history resynchronization;
 - merged discovery of TUI-local interactions and agent-scoped Harness commands,
   with one catalog driving both autocomplete and `/help`;
+- a scoped `/config` center for model, reasoning, permissions, Plan Mode, and
+  terminal display preferences, plus a separate `/task` surface for durable
+  Goals, read-only Todos, and runtime actions;
+- effective Skill discovery and canonical `/name` invocation through the Slash
+  catalog, plus a searchable `/skills` browser and safe project/user authoring;
 - the same durable turn/step timing, decode throughput, cache-hit, token-usage,
   and context-pressure projections shown below the Harness Web composer;
 - individually clickable tool calls with bounded Arguments and Result details;
@@ -136,6 +141,29 @@ location, and sequence information. `PageUp` at the earliest loaded record fetch
 an older, message-aligned history page without losing live tail events. `Ctrl+C`
 remains an interrupt while the session is running.
 
+`/config` is the unified configuration entry for the active session and TUI.
+It shows Model, Reasoning, Permission, Plan Mode, and Details with an explicit
+`Session` or `TUI` scope. `/task` owns the current Goal, read-only Todo progress,
+and runtime cancellation. Both surfaces use `j`/`k`, arrows, `g`/`G`, `Enter`,
+and `Esc`, and neither retains a second copy of Host state.
+
+Permission widening to `danger-full-access` requires an explicit confirmation,
+pending Plan state is distinct from effective state, and Goal mutations use the
+projected compare-and-set revision.
+
+Bare `/permission` opens the same Permission selector directly. An argued
+`/permission <preset>`, Plan actions, and every other discovered Host Command
+execute through the Host command registry rather than model prompting. Known
+Commands therefore never appear as user/assistant conversation messages.
+
+`/skills` lists effective user-invocable Skills for the current session. Use
+`j`/`k` to navigate, `Enter` to insert the canonical `/name ` gesture, `l` for
+details, `/` to filter, `n` to create, `e` to edit a local definition, and `r`
+to refresh. New Skills use either `<project>/.dsh/skills/<name>/SKILL.md` or
+`$DSH_HOME/skills/<name>/SKILL.md`. `$VISUAL` and `$EDITOR` are preferred for
+editing; terminal ownership is restored after exit, and the resulting file is
+validated before its effective catalog status is reported.
+
 The model selector uses `↑`/`↓` (or `1`–`9`) in both the model and reasoning
 effort steps. `Enter` advances or applies the complete selection to the current session;
 the Harness Host also saves it as the default for new sessions, matching the
@@ -195,7 +223,8 @@ The status row shows a separate animation while quiet learning is running.
 `/clear` removes the visible conversation synchronously and then attaches a
 fresh session; if session creation fails, the previous view is restored. Slash
 commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/details`, `/status`,
-`/trajectory`, `/memories`, `/rewind`, and `/exit`.
+`/config`, `/task`, `/skills`, `/trajectory`, `/memories`, `/rewind`, and
+`/exit`.
 
 ## Architecture
 
@@ -204,13 +233,16 @@ Cordis bundle entry
   -> file-backed Memory plugin (context, tools, quiet learner, mutations)
   -> in-process ApiProxy client
      -> application/ (bootstrap orchestration and local interactions)
-        ├─ runtime/ (controller, submissions, merged command directory)
+        ├─ runtime/ (controller, scoped session selectors, Slash and Skill catalogs)
         ├─ trajectory/ (semantic hierarchy, timing, and trace view)
-        └─ presentation/ (transcript, dialogs, diffs, layout, and theme)
+        └─ presentation/ (config/task/skill surfaces, transcript, diffs, and dialogs)
 ```
 
 The detailed ownership rules and staged design are recorded in
 [`docs/tui-architecture.md`](../../docs/tui-architecture.md).
+The product sequence and next-version interaction contracts are recorded in
+[`docs/tui-product-roadmap.md`](../../docs/tui-product-roadmap.md) and
+[`docs/tui-v0.1.6-design.md`](../../docs/tui-v0.1.6-design.md).
 
 The TUI consumes tool-provided presentation intent (`generic`, `terminal`,
 `diff`, and related cards) rather than branching on tool names. New tools can
