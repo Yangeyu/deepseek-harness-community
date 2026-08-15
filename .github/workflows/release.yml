@@ -23,8 +23,8 @@ jobs:
       - run: pnpm run check
       - run: mkdir dist
       - run: pnpm pack --pack-destination dist
-      - run: pnpm --filter @yangeyu/deepseek-harness-memory pack --pack-destination ../../dist
-      - run: pnpm --filter @yangeyu/deepseek-harness-tui pack --pack-destination ../../dist
+      - run: pnpm --dir packages/memory pack --pack-destination "$GITHUB_WORKSPACE/dist"
+      - run: pnpm --dir packages/tui pack --pack-destination "$GITHUB_WORKSPACE/dist"
       - run: gh release create "$GITHUB_REF_NAME" dist/*.tgz --generate-notes --title "$GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ github.token }}
