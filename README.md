@@ -16,7 +16,7 @@ deepseek-harness-community/
 Node.js `^22.19.0` or `>=24.0.0` is required. Install a tagged GitHub release globally:
 
 ```sh
-npm install --global github:Yangeyu/deepseek-harness-community#v0.1.1
+npm install --global https://github.com/Yangeyu/deepseek-harness-community/releases/download/v0.1.1/yangeyu-dsh-tui-0.1.1.tgz
 ```
 
 Then start the TUI from any project directory:
@@ -25,7 +25,7 @@ Then start the TUI from any project directory:
 dsh-tui
 ```
 
-The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DEEPSEEK_API_KEY` before beginning a model-backed session. `DSH_HOME` continues to override the Harness data directory.
+The release tarball avoids npm's unreliable lifecycle handling for large Git-source dependency trees. The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DEEPSEEK_API_KEY` before beginning a model-backed session. `DSH_HOME` continues to override the Harness data directory.
 
 ## Packages
 
