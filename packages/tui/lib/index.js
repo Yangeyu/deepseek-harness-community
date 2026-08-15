@@ -46,6 +46,10 @@ var SubmissionTracker = class {
 	}
 	/** Remove a prompt whose Host request failed. */
 	reject(key) {
+		this.settle(key);
+	}
+	/** Retire input settled without a durable user-message event, such as a command. */
+	settle(key) {
 		this.pending = this.pending.filter((item) => item.key !== key);
 		this.pruneObservedRpcIds();
 	}
@@ -243,10 +247,13 @@ var HarnessController = class {
 			throw new Error(response.result.error.message);
 		}
 		if (generation !== this.generation || sessionId !== this.state.sessionId) return;
+		if (response.result.value.command !== void 0) {
+			this.submissions.settle(pending.key);
+			this.patch({ pendingSubmissions: this.submissions.snapshot });
+			return;
+		}
 		this.submissions.accept(pending.key, response.rpcId);
 		this.patch({ pendingSubmissions: this.submissions.snapshot });
-		const accepted = response.result.value;
-		if (accepted.command?.text !== void 0) this.notice(accepted.command.text);
 	}
 	/** Cancel the active turn while preserving pending queued work. */
 	async cancel() {
@@ -1500,7 +1507,7 @@ function diffSummary(added, removed) {
 const DIFF_CONTENT_INDENT = "  ";
 const DISCLOSURE_COLLAPSED = "›";
 const DISCLOSURE_EXPANDED = "⌄";
-function stepKey$1(turn, step) {
+function stepKey$2(turn, step) {
 	return `${turn}:${step}`;
 }
 function messageText$1(content, reasoning) {
@@ -1580,10 +1587,14 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 	const rows = [];
 	const finalSteps = /* @__PURE__ */ new Set();
 	const results = /* @__PURE__ */ new Map();
+	const commandRuns = /* @__PURE__ */ new Set();
+	const commandResults = /* @__PURE__ */ new Map();
 	for (const entry of state.events) {
 		const event = entry.event;
-		if (event.type === "assistant/message") finalSteps.add(stepKey$1(event.data.turn, event.data.step));
+		if (event.type === "assistant/message") finalSteps.add(stepKey$2(event.data.turn, event.data.step));
 		if (event.type === "tool/result") results.set(String(event.data.message.source.callId), entry);
+		if (event.type === "command/run") commandRuns.add(String(event.data.commandId));
+		if (event.type === "command/done") commandResults.set(String(event.data.commandId), entry);
 	}
 	const partials = /* @__PURE__ */ new Map();
 	for (const entry of state.events) {
@@ -1607,7 +1618,7 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 				break;
 			}
 			case "assistant/chunk": {
-				const key = stepKey$1(event.data.turn, event.data.step);
+				const key = stepKey$2(event.data.turn, event.data.step);
 				if (finalSteps.has(key)) break;
 				const chunk = event.data.chunk;
 				if (chunk.type !== "text-delta" && chunk.type !== "reasoning-delta") break;
@@ -1658,7 +1669,7 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 				}
 				const reasoning = reasoningText(event.data.message.content);
 				if (showReasoning && reasoning.trim() !== "") rows.push({ thinking: {
-					key: `${stepKey$1(event.data.turn, event.data.step)}:thinking`,
+					key: `${stepKey$2(event.data.turn, event.data.step)}:thinking`,
 					text: reasoning,
 					streaming: false
 				} });
@@ -1695,6 +1706,24 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 				} });
 				break;
 			}
+			case "command/run": {
+				const completed = commandResults.get(String(event.data.commandId));
+				const result = completed?.event.type === "command/done" ? completed.event.data : void 0;
+				const failed = result?.kind === "error";
+				rows.push({
+					label: failed ? "Command failed" : result === void 0 ? "Command running" : "Command",
+					labelPaint: failed ? theme.error : result === void 0 ? theme.warning : theme.accent,
+					body: [`/${event.data.name}${event.data.args ?? ""}`, result?.text].filter((value) => value !== void 0 && value !== "").join("\n")
+				});
+				break;
+			}
+			case "command/done":
+				if (!commandRuns.has(String(event.data.commandId))) rows.push({
+					label: event.data.kind === "error" ? "Command failed" : "Command",
+					labelPaint: event.data.kind === "error" ? theme.error : theme.accent,
+					body: event.data.text ?? `${event.data.kind} command completion`
+				});
+				break;
 			case "turn/end": if (event.data.reason.kind === "error") rows.push({
 				label: "Error",
 				labelPaint: theme.error,
@@ -2138,6 +2167,81 @@ var ComposerAnchoredLayout = class extends Container {
 	}
 };
 //#endregion
+//#region src/trajectory-model.ts
+function stepKey$1(turn, step) {
+	return `${String(turn)}:${String(step)}`;
+}
+function effectiveDuration(record, now) {
+	if (record.completedAt !== void 0) return Math.max(0, record.completedAt - record.startedAt);
+	return record.status === "pending" ? Math.max(0, now - record.startedAt) : void 0;
+}
+/**
+* Immutable relationship index for one trace snapshot. Parent lookup is O(1),
+* and a complete timing measurement is O(n) even for long paged sessions.
+*/
+var TrajectoryModel = class {
+	records;
+	parents = /* @__PURE__ */ new Map();
+	constructor(records) {
+		this.records = records;
+		const turns = /* @__PURE__ */ new Map();
+		const steps = /* @__PURE__ */ new Map();
+		for (const record of records) {
+			if (record.kind === "turn" && record.turn !== void 0) turns.set(record.turn, record);
+			if (record.kind === "step" && record.turn !== void 0 && record.step !== void 0) steps.set(stepKey$1(record.turn, record.step), record);
+		}
+		for (const record of records) {
+			if (record.kind === "turn" || record.turn === void 0) continue;
+			const parent = record.kind === "step" ? turns.get(record.turn) : record.step === void 0 ? turns.get(record.turn) : steps.get(stepKey$1(record.turn, record.step)) ?? turns.get(record.turn);
+			if (parent !== void 0) this.parents.set(record.key, parent);
+		}
+	}
+	parentOf(record) {
+		return this.parents.get(record.key);
+	}
+	measure(now) {
+		const metrics = /* @__PURE__ */ new Map();
+		const firstStart = this.records.reduce((minimum, record) => Math.min(minimum, record.startedAt), Number.POSITIVE_INFINITY);
+		const turnStarts = /* @__PURE__ */ new Map();
+		const groups = /* @__PURE__ */ new Map();
+		for (const record of this.records) if (record.kind === "turn" && record.turn !== void 0) turnStarts.set(record.turn, record.startedAt);
+		for (const record of this.records) {
+			const parent = this.parentOf(record);
+			const durationMs = effectiveDuration(record, now);
+			const parentDurationMs = parent === void 0 ? void 0 : effectiveDuration(parent, now);
+			const baseline = record.turn === void 0 ? Number.isFinite(firstStart) ? firstStart : record.startedAt : turnStarts.get(record.turn) ?? (Number.isFinite(firstStart) ? firstStart : record.startedAt);
+			metrics.set(record.key, {
+				...durationMs === void 0 ? {} : { durationMs },
+				offsetMs: Math.max(0, record.startedAt - baseline),
+				...durationMs === void 0 || parentDurationMs === void 0 || parentDurationMs <= 0 ? {} : { shareOfParent: Math.max(0, Math.min(1, durationMs / parentDurationMs)) },
+				slowest: false,
+				...parent === void 0 ? {} : { parentTitle: parent.title }
+			});
+			if (record.kind === "turn" || durationMs === void 0) continue;
+			const group = parent?.key ?? "root";
+			const siblings = groups.get(group) ?? [];
+			siblings.push({
+				record,
+				durationMs
+			});
+			groups.set(group, siblings);
+		}
+		for (const siblings of groups.values()) {
+			const slowest = siblings.reduce((current, candidate) => candidate.durationMs > current.durationMs ? candidate : current);
+			const metric = metrics.get(slowest.record.key);
+			if (metric !== void 0) metric.slowest = true;
+		}
+		const timedLeaves = this.records.filter((record) => record.kind !== "turn" && record.kind !== "step" && metrics.get(record.key)?.durationMs !== void 0);
+		return {
+			metrics,
+			bottleneck: (timedLeaves.length === 0 ? this.records.filter((record) => record.kind === "step" && metrics.get(record.key)?.durationMs !== void 0) : timedLeaves).reduce((slowest, candidate) => {
+				if (slowest === void 0) return candidate;
+				return (metrics.get(candidate.key)?.durationMs ?? 0) > (metrics.get(slowest.key)?.durationMs ?? 0) ? candidate : slowest;
+			}, void 0)
+		};
+	}
+};
+//#endregion
 //#region src/trajectory.ts
 const TABS = [
 	{
@@ -2259,12 +2363,16 @@ function buildTrajectoryRecords(entries) {
 	const stepEnds = /* @__PURE__ */ new Map();
 	const stepStarts = /* @__PURE__ */ new Map();
 	const toolResults = /* @__PURE__ */ new Map();
+	const commandRuns = /* @__PURE__ */ new Set();
+	const commandResults = /* @__PURE__ */ new Map();
 	for (const entry of entries) {
 		const event = entry.event;
 		if (event.type === "turn/end") turnEnds.set(event.data.turn, entry);
 		if (event.type === "step/start") stepStarts.set(stepKey(event.data.turn, event.data.step), entry);
 		if (event.type === "step/end") stepEnds.set(stepKey(event.data.turn, event.data.step), entry);
 		if (event.type === "tool/result") toolResults.set(String(event.data.message.source.callId), entry);
+		if (event.type === "command/run") commandRuns.add(String(event.data.commandId));
+		if (event.type === "command/done") commandResults.set(String(event.data.commandId), entry);
 	}
 	let schemas = /* @__PURE__ */ new Map();
 	let activeTurn;
@@ -2282,6 +2390,23 @@ function buildTrajectoryRecords(entries) {
 			case "turn/end":
 			case "step/end":
 			case "tool/result": break;
+			case "command/done": {
+				if (commandRuns.has(String(event.data.commandId))) break;
+				const detail = event.data.text ?? `${event.data.kind} command completion`;
+				records.push({
+					key: `command:${String(event.data.commandId)}:${String(event.seq)}`,
+					kind: "command",
+					type: event.type,
+					seq: event.seq,
+					title: "Command completion",
+					summary: oneLine(detail),
+					detail,
+					status: event.data.kind === "error" ? "failed" : "completed",
+					startedAt: event.time,
+					result: event.data
+				});
+				break;
+			}
 			case "turn/start": {
 				const completed = turnEnds.get(event.data.turn);
 				const reason = completed?.event.type === "turn/end" ? completed.event.data.reason : void 0;
@@ -2410,6 +2535,39 @@ function buildTrajectoryRecords(entries) {
 				});
 				break;
 			}
+			case "command/run": {
+				const completed = commandResults.get(String(event.data.commandId));
+				const failed = completed?.event.type === "command/done" && completed.event.data.kind === "error";
+				const result = completed?.event.type === "command/done" ? completed.event.data : void 0;
+				const commandLine = `/${event.data.name}${event.data.args ?? ""}`;
+				const detail = result?.text ?? commandLine;
+				records.push({
+					key: `command:${String(event.data.commandId)}:${String(event.seq)}`,
+					kind: "command",
+					type: event.type,
+					...completed === void 0 ? {} : {
+						completionType: completed.event.type,
+						completionSeq: completed.event.seq
+					},
+					seq: event.seq,
+					title: `/${event.data.name}`,
+					summary: completed === void 0 ? "Running" : failed ? `Failed${result?.text === void 0 ? "" : ` · ${oneLine(result.text)}`}` : `Completed${result?.text === void 0 ? "" : ` · ${oneLine(result.text)}`}`,
+					detail,
+					status: completed === void 0 ? "pending" : failed ? "failed" : "completed",
+					startedAt: event.time,
+					...completed === void 0 ? {} : {
+						completedAt: completed.event.time,
+						result
+					},
+					payload: {
+						commandId: event.data.commandId,
+						name: event.data.name,
+						...event.data.args === void 0 ? {} : { arguments: event.data.args },
+						source: event.data.source
+					}
+				});
+				break;
+			}
 			case "request/header": {
 				const config = event.data.header.config;
 				records.push({
@@ -2475,58 +2633,6 @@ function formatDuration(milliseconds) {
 	const seconds = Math.floor(milliseconds % 6e4 / 1e3);
 	return `${String(minutes)}m ${String(seconds)}s`;
 }
-function effectiveDuration(record, now) {
-	if (record.completedAt !== void 0) return Math.max(0, record.completedAt - record.startedAt);
-	return record.status === "pending" ? Math.max(0, now - record.startedAt) : void 0;
-}
-function parentRecord(record, records) {
-	if (record.kind === "turn") return void 0;
-	if (record.kind === "step") return records.find((candidate) => candidate.kind === "turn" && candidate.turn === record.turn);
-	if (record.step !== void 0) {
-		const step = records.find((candidate) => candidate.kind === "step" && candidate.turn === record.turn && candidate.step === record.step);
-		if (step !== void 0) return step;
-	}
-	return records.find((candidate) => candidate.kind === "turn" && candidate.turn === record.turn);
-}
-function trajectoryMetrics(records, now) {
-	const metrics = /* @__PURE__ */ new Map();
-	const firstStart = records.reduce((minimum, record) => Math.min(minimum, record.startedAt), Number.POSITIVE_INFINITY);
-	const groups = /* @__PURE__ */ new Map();
-	for (const record of records) {
-		const parent = parentRecord(record, records);
-		const durationMs = effectiveDuration(record, now);
-		const parentDurationMs = parent === void 0 ? void 0 : effectiveDuration(parent, now);
-		const baseline = records.find((candidate) => candidate.kind === "turn" && candidate.turn === record.turn)?.startedAt ?? (Number.isFinite(firstStart) ? firstStart : record.startedAt);
-		metrics.set(record.key, {
-			...durationMs === void 0 ? {} : { durationMs },
-			offsetMs: Math.max(0, record.startedAt - baseline),
-			...durationMs === void 0 || parentDurationMs === void 0 || parentDurationMs <= 0 ? {} : { shareOfParent: Math.max(0, Math.min(1, durationMs / parentDurationMs)) },
-			slowest: false,
-			...parent === void 0 ? {} : { parentTitle: parent.title }
-		});
-		if (record.kind === "turn" || durationMs === void 0) continue;
-		const group = parent?.key ?? "root";
-		const siblings = groups.get(group) ?? [];
-		siblings.push({
-			record,
-			durationMs
-		});
-		groups.set(group, siblings);
-	}
-	for (const siblings of groups.values()) {
-		const slowest = siblings.reduce((current, candidate) => candidate.durationMs > current.durationMs ? candidate : current);
-		const current = metrics.get(slowest.record.key);
-		if (current !== void 0) current.slowest = true;
-	}
-	return metrics;
-}
-function bottleneckRecord(records, metrics) {
-	const timedLeaves = records.filter((record) => record.kind !== "turn" && record.kind !== "step" && metrics.get(record.key)?.durationMs !== void 0);
-	return (timedLeaves.length === 0 ? records.filter((record) => record.kind === "step" && metrics.get(record.key)?.durationMs !== void 0) : timedLeaves).reduce((slowest, candidate) => {
-		if (slowest === void 0) return candidate;
-		return (metrics.get(candidate.key)?.durationMs ?? 0) > (metrics.get(slowest.key)?.durationMs ?? 0) ? candidate : slowest;
-	}, void 0);
-}
 function tabValue(record, tab, metrics) {
 	switch (tab) {
 		case "summary": return [
@@ -2574,6 +2680,7 @@ function kindLabel(kind) {
 		case "request": return "REQUEST";
 		case "assistant": return "ASSISTANT";
 		case "tool": return "TOOL";
+		case "command": return "COMMAND";
 		case "context": return "CONTEXT";
 		case "event": return "EVENT";
 	}
@@ -2600,6 +2707,7 @@ var TrajectoryView = class {
 	onChange;
 	state;
 	records;
+	model;
 	index;
 	mode = "list";
 	tabIndex = 0;
@@ -2622,6 +2730,7 @@ var TrajectoryView = class {
 		this.onChange = onChange;
 		this.state = state;
 		this.records = buildTrajectoryRecords(state.events);
+		this.model = new TrajectoryModel(this.records);
 		this.index = Math.max(0, this.records.length - 1);
 	}
 	/** Rebuild from the latest live event window while preserving the selected semantic record. */
@@ -2630,6 +2739,7 @@ var TrajectoryView = class {
 		const selectedKey = this.records[this.index]?.key;
 		this.state = state;
 		this.records = buildTrajectoryRecords(state.events);
+		this.model = new TrajectoryModel(this.records);
 		if (sessionChanged) {
 			this.mode = "list";
 			this.followTail = true;
@@ -2735,14 +2845,14 @@ var TrajectoryView = class {
 	invalidate() {}
 	render(width) {
 		const now = Date.now();
-		const metrics = trajectoryMetrics(this.records, now);
+		const { metrics, bottleneck } = this.model.measure(now);
 		this.splitLayout = width >= SPLIT_MIN_WIDTH && this.records[this.index] !== void 0;
-		if (this.splitLayout) return this.renderSplit(width, metrics);
-		return this.mode === "detail" ? this.renderDetail(width, metrics) : this.renderList(width, metrics);
+		if (this.splitLayout) return this.renderSplit(width, metrics, bottleneck);
+		return this.mode === "detail" ? this.renderDetail(width, metrics) : this.renderList(width, metrics, bottleneck);
 	}
-	renderList(width, metrics) {
+	renderList(width, metrics, bottleneck) {
 		const height = Math.max(1, this.visibleRows());
-		const header = this.renderOverviewHeader(width, metrics);
+		const header = this.renderOverviewHeader(width, metrics, bottleneck);
 		const footerText = this.loadingEarlier ? "Loading earlier history…" : this.loadError === void 0 ? "j/k select · h/l fold · Enter inspect · g/G ends · Esc chat" : `History load failed: ${this.loadError}`;
 		const footer = [truncateToWidth(this.loadError === void 0 ? this.theme.dim(footerText) : this.theme.warning(footerText), width)];
 		const available = Math.max(0, height - header.length - footer.length - 1);
@@ -2755,9 +2865,9 @@ var TrajectoryView = class {
 			...footer
 		], height);
 	}
-	renderSplit(width, metrics) {
+	renderSplit(width, metrics, bottleneck) {
 		const height = Math.max(1, this.visibleRows());
-		const header = this.renderOverviewHeader(width, metrics);
+		const header = this.renderOverviewHeader(width, metrics, bottleneck);
 		const footerText = this.mode === "detail" ? "Detail focus · j/k scroll · Tab/←/→ section · Esc events" : "Ledger focus · j/k select · h/l fold · Enter/Tab inspect · Esc chat";
 		const footer = [truncateToWidth(this.theme.dim(footerText), width)];
 		const available = Math.max(0, height - header.length - footer.length);
@@ -2765,7 +2875,7 @@ var TrajectoryView = class {
 		const leftWidth = Math.max(58, Math.min(innerWidth - 42, Math.floor(innerWidth * .58)));
 		const rightWidth = Math.max(1, innerWidth - leftWidth);
 		const record = this.records[this.index];
-		if (record === void 0) return this.renderList(width, metrics);
+		if (record === void 0) return this.renderList(width, metrics, bottleneck);
 		const leftBodyRows = Math.max(0, available - 1);
 		const left = [this.renderColumnHeader(leftWidth), ...this.renderListRows(leftWidth, leftBodyRows, metrics)];
 		const right = this.renderDetailPanel(rightWidth, available, record, metrics.get(record.key) ?? {
@@ -2788,7 +2898,7 @@ var TrajectoryView = class {
 		const record = this.records[this.index];
 		if (record === void 0) {
 			this.mode = "list";
-			return this.renderList(width, metrics);
+			return this.renderList(width, metrics, void 0);
 		}
 		return this.renderDetailPanel(width, Math.max(1, this.visibleRows()), record, metrics.get(record.key) ?? {
 			offsetMs: 0,
@@ -2829,7 +2939,7 @@ var TrajectoryView = class {
 			...footer
 		], height);
 	}
-	renderOverviewHeader(width, metrics) {
+	renderOverviewHeader(width, metrics, bottleneck) {
 		const activeTurn = this.records.filter((record) => record.kind === "turn").at(-1);
 		const total = activeTurn === void 0 ? void 0 : metrics.get(activeTurn.key)?.durationMs;
 		const visibleCount = this.visibleRecordIndexes().length;
@@ -2841,7 +2951,6 @@ var TrajectoryView = class {
 			total === void 0 ? void 0 : formatDuration(total),
 			recordCount
 		].filter((value) => value !== void 0).join(" · ");
-		const bottleneck = bottleneckRecord(this.records, metrics);
 		const bottleneckMetrics = bottleneck === void 0 ? void 0 : metrics.get(bottleneck.key);
 		const bottleneckLine = bottleneck === void 0 || bottleneckMetrics?.durationMs === void 0 ? "Bottleneck · no timed operation available yet" : `Bottleneck · ${bottleneck.title} · ${formatDuration(bottleneckMetrics.durationMs)}${bottleneckMetrics.shareOfParent === void 0 ? "" : ` · ${(bottleneckMetrics.shareOfParent * 100).toFixed(1)}% of ${bottleneckMetrics.parentTitle ?? "parent"}`}`;
 		return [
@@ -2914,7 +3023,7 @@ var TrajectoryView = class {
 		if (record?.kind === "turn" && record.turn !== void 0) this.collapsedTurns.add(record.turn);
 		else if (record?.kind === "step" && record.turn !== void 0 && record.step !== void 0) this.collapsedSteps.add(stepKey(record.turn, record.step));
 		else if (record !== void 0) {
-			const parent = parentRecord(record, this.records);
+			const parent = this.model.parentOf(record);
 			const parentIndex = parent === void 0 ? -1 : this.records.findIndex((candidate) => candidate.key === parent.key);
 			if (parentIndex >= 0) this.index = parentIndex;
 		}
@@ -2985,56 +3094,99 @@ function parseMouseReport(data) {
 	};
 }
 //#endregion
+//#region src/commands.ts
+function parseCommand(text) {
+	const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text);
+	if (match === null || match[1] === void 0) return void 0;
+	return {
+		name: match[1].toLowerCase(),
+		argument: match[2]?.trim() ?? ""
+	};
+}
+function descriptorKey(descriptor) {
+	return [
+		descriptor.name,
+		descriptor.description,
+		descriptor.argumentHint ?? ""
+	].join("\0");
+}
+/**
+* One command directory for local interaction commands and agent-scoped Host
+* commands. Rendering libraries consume its plain descriptors; only local
+* definitions execute here, while unresolved slash input continues to Host.
+*/
+var TerminalCommandDirectory = class {
+	local;
+	source;
+	onChange;
+	localByName = /* @__PURE__ */ new Map();
+	removeHostListener;
+	sessionId;
+	host = [];
+	signature = "";
+	constructor(local, source, onChange = () => {}) {
+		this.local = local;
+		this.source = source;
+		this.onChange = onChange;
+		for (const definition of local) {
+			this.localByName.set(definition.name, definition);
+			for (const alias of definition.aliases ?? []) this.localByName.set(alias, definition);
+		}
+		this.removeHostListener = source?.subscribe(() => {
+			if (this.refreshHost()) this.onChange();
+		}) ?? (() => {});
+		this.refreshHost();
+	}
+	/** Effective discovery rows, with TUI-local commands shadowing Host names. */
+	get descriptors() {
+		const localNames = new Set(this.localByName.keys());
+		return [...this.local.map((command) => ({
+			name: command.name,
+			description: command.description,
+			...command.argumentHint === void 0 ? {} : { argumentHint: command.argumentHint }
+		})), ...this.host.filter((command) => !localNames.has(command.name))];
+	}
+	/** Refresh the agent-scoped Host view when the active session changes. */
+	setSession(sessionId) {
+		if (sessionId === this.sessionId) return false;
+		this.sessionId = sessionId;
+		return this.refreshHost();
+	}
+	/** Dispatch a TUI-local command; return false so Host can resolve the rest. */
+	async dispatch(text) {
+		const parsed = parseCommand(text);
+		if (parsed === void 0) return false;
+		const command = this.localByName.get(parsed.name);
+		if (command === void 0) return false;
+		await command.handler(parsed.argument);
+		return true;
+	}
+	/** Complete help content generated from the same effective discovery rows. */
+	helpText() {
+		return this.descriptors.map((command) => {
+			const argument = command.argumentHint === void 0 ? "" : ` ${command.argumentHint}`;
+			return `/${command.name}${argument} · ${command.description}`;
+		}).join("\n");
+	}
+	dispose() {
+		this.removeHostListener();
+	}
+	refreshHost() {
+		const next = [...this.source?.list(this.sessionId) ?? []].map((command) => ({
+			name: command.name.toLowerCase(),
+			description: command.description,
+			...command.argumentHint === void 0 ? {} : { argumentHint: command.argumentHint }
+		})).sort((left, right) => left.name.localeCompare(right.name));
+		const signature = next.map(descriptorKey).join("");
+		if (signature === this.signature) return false;
+		this.host = next;
+		this.signature = signature;
+		return true;
+	}
+};
+//#endregion
 //#region src/app.ts
 const DOUBLE_ESCAPE_MS = 600;
-const COMMANDS = [
-	{
-		name: "help",
-		description: "Show terminal commands"
-	},
-	{
-		name: "clear",
-		description: "Clear the conversation and start a new session"
-	},
-	{
-		name: "new",
-		description: "Create a new session"
-	},
-	{
-		name: "resume",
-		description: "Switch to another session",
-		argumentHint: "[session-id]"
-	},
-	{
-		name: "model",
-		description: "Select model and provider",
-		argumentHint: "[provider/model]"
-	},
-	{
-		name: "details",
-		description: "Toggle expanded tool output"
-	},
-	{
-		name: "trajectory",
-		description: "Inspect the session execution chain"
-	},
-	{
-		name: "status",
-		description: "Show current session status"
-	},
-	{
-		name: "memories",
-		description: "Manage project memory and session learning"
-	},
-	{
-		name: "rewind",
-		description: "Open the workspace and conversation checkpoint history"
-	},
-	{
-		name: "exit",
-		description: "Exit the terminal client"
-	}
-];
 function sessionDescription(session) {
 	return session.cwd ?? String(session.sessionId);
 }
@@ -3086,8 +3238,9 @@ var TuiApplication = class {
 	memoryActivity = { state: "idle" };
 	removeMemoryActivity;
 	interactionQueue = [];
+	commands;
 	autocompleteCwd;
-	constructor(api, config, runtime, checkpoints, memory) {
+	constructor(api, config, runtime, checkpoints, memory, commandSource) {
 		this.config = config;
 		this.runtime = runtime;
 		this.checkpoints = checkpoints;
@@ -3115,7 +3268,8 @@ var TuiApplication = class {
 			paddingX: 1,
 			autocompleteMaxVisible: 10
 		});
-		this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(COMMANDS, config.cwd));
+		this.commands = new TerminalCommandDirectory(this.localCommands(), commandSource, () => this.refreshAutocomplete());
+		this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...this.commands.descriptors], config.cwd));
 		this.autocompleteCwd = config.cwd;
 		this.editor.onSubmit = (text) => {
 			this.editor.addToHistory(text);
@@ -3147,6 +3301,7 @@ var TuiApplication = class {
 		this.controller.dispose();
 		if (this.spinner !== void 0) clearInterval(this.spinner);
 		if (this.rewindArmTimer !== void 0) clearTimeout(this.rewindArmTimer);
+		this.commands.dispose();
 		this.removeMemoryActivity();
 		this.terminal.write(DISABLE_MOUSE_TRACKING);
 		this.removeInputListener?.();
@@ -3155,6 +3310,7 @@ var TuiApplication = class {
 	}
 	render(state) {
 		if (this.disposed) return;
+		const commandsChanged = this.commands.setSession(state.sessionId);
 		this.transcript.setState(state);
 		this.trajectoryView?.setState(state);
 		this.diffLineLocator.resolve(state, () => {
@@ -3170,10 +3326,7 @@ var TuiApplication = class {
 		const stats = composerStats(state.projections);
 		const controls = state.running || state.pendingSubmissions.some((submission) => submission.intent === "working") ? "Enter steer · Alt+Enter queue · Esc cancel" : "Ctrl+O details · Shift+Tab effort · /help";
 		this.footer.setText([this.theme.dim(`${model} · ${controls}`), ...stats === "" ? [] : [this.theme.dim(stats)]].join("\n"));
-		if (state.cwd !== this.autocompleteCwd) {
-			this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(COMMANDS, state.cwd));
-			this.autocompleteCwd = state.cwd;
-		}
+		if (state.cwd !== this.autocompleteCwd || commandsChanged) this.refreshAutocomplete(state.cwd, false);
 		this.tui.requestRender();
 	}
 	requestApproval(prompt) {
@@ -3331,73 +3484,105 @@ var TuiApplication = class {
 		}
 	}
 	async handleCommand(text) {
-		const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text);
-		if (match === null) return false;
-		const command = match[1]?.toLowerCase();
-		const argument = match[2]?.trim() ?? "";
-		switch (command) {
-			case "help":
-				this.controller.notice([
-					"/clear · clear conversation and start a new session",
-					"/new · new session",
-					"/resume [id] · switch session",
-					"/model [provider/model] · select model",
-					"/details · expand or collapse tool output",
-					"/trajectory · inspect the session execution chain",
-					"/status · current session details",
-					"/memories · manage memory and session learning",
-					"/rewind · select a workspace and conversation checkpoint",
-					"/exit · leave the TUI"
-				].join("\n"));
-				return true;
-			case "clear":
-				this.layout.followTranscript();
-				await this.controller.clearSession();
-				return true;
-			case "new":
-				await this.controller.newSession();
-				return true;
-			case "resume":
-				if (argument !== "") await this.controller.resume(argument);
-				else await this.openSessionSelector();
-				return true;
-			case "model":
-				if (argument !== "") await this.selectNamedModel(argument);
-				else await this.openModelSelector();
-				return true;
-			case "details":
-				this.showDetails = !this.showDetails;
-				this.transcript.setDetails(this.showDetails);
-				this.tui.requestRender();
-				return true;
-			case "trajectory":
-			case "trace":
-				this.openTrajectory();
-				return true;
-			case "status": {
-				const state = this.controller.current;
-				this.controller.notice([
-					`Session: ${state.sessionId === void 0 ? "none" : String(state.sessionId)}`,
-					`Directory: ${state.cwd}`,
-					`State: ${state.running ? "running" : "idle"}`,
-					`Stream: ${state.connected ? "connected" : "reconnecting"}`,
-					`Queued: ${state.queue.length}`
-				].join("\n"));
-				return true;
+		return this.commands.dispatch(text);
+	}
+	localCommands() {
+		return [
+			{
+				name: "help",
+				description: "Show terminal and Harness commands",
+				handler: () => {
+					this.controller.notice(this.commands.helpText());
+				}
+			},
+			{
+				name: "clear",
+				description: "Clear the conversation and start a new session",
+				handler: async () => {
+					this.layout.followTranscript();
+					await this.controller.clearSession();
+				}
+			},
+			{
+				name: "new",
+				description: "Create a new session",
+				handler: () => this.controller.newSession()
+			},
+			{
+				name: "resume",
+				description: "Switch to another session",
+				argumentHint: "[session-id]",
+				handler: async (argument) => {
+					if (argument !== "") await this.controller.resume(argument);
+					else await this.openSessionSelector();
+				}
+			},
+			{
+				name: "model",
+				description: "Select model and provider",
+				argumentHint: "[provider/model]",
+				handler: async (argument) => {
+					if (argument !== "") await this.selectNamedModel(argument);
+					else await this.openModelSelector();
+				}
+			},
+			{
+				name: "details",
+				description: "Toggle expanded tool output",
+				handler: () => {
+					this.showDetails = !this.showDetails;
+					this.transcript.setDetails(this.showDetails);
+					this.tui.requestRender();
+				}
+			},
+			{
+				name: "trajectory",
+				aliases: ["trace"],
+				description: "Inspect the session execution chain",
+				handler: () => {
+					this.openTrajectory();
+				}
+			},
+			{
+				name: "status",
+				description: "Show current session status",
+				handler: () => {
+					const state = this.controller.current;
+					this.controller.notice([
+						`Session: ${state.sessionId === void 0 ? "none" : String(state.sessionId)}`,
+						`Directory: ${state.cwd}`,
+						`State: ${state.running ? "running" : "idle"}`,
+						`Stream: ${state.connected ? "connected" : "reconnecting"}`,
+						`Queued: ${state.queue.length}`
+					].join("\n"));
+				}
+			},
+			{
+				name: "memories",
+				aliases: ["memory"],
+				description: "Manage project memory and session learning",
+				handler: () => this.openMemoryDialog()
+			},
+			{
+				name: "rewind",
+				description: "Open workspace and conversation checkpoints",
+				handler: () => {
+					this.requestRewind();
+				}
+			},
+			{
+				name: "exit",
+				aliases: ["quit"],
+				description: "Exit the terminal client",
+				handler: () => this.requestExit(0)
 			}
-			case "memories":
-			case "memory":
-				await this.openMemoryDialog();
-				return true;
-			case "rewind":
-				this.requestRewind();
-				return true;
-			case "exit":
-			case "quit":
-				await this.requestExit(0);
-				return true;
-			default: return false;
-		}
+		];
+	}
+	refreshAutocomplete(cwd = this.controller.current.cwd, requestRender = true) {
+		if (this.disposed) return;
+		this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...this.commands.descriptors], cwd));
+		this.autocompleteCwd = cwd;
+		if (requestRender) this.tui.requestRender();
 	}
 	requestRewind() {
 		this.disarmRewind();
@@ -4154,6 +4339,7 @@ const name = "community-tui";
 const inject = [
 	"apiProxy",
 	"agents",
+	"commands",
 	"memory"
 ];
 function parseArgs(args, base) {
@@ -4218,7 +4404,19 @@ function apply(ctx, config) {
 	const resolved = resolveConfig(parsed.config);
 	const checkpoints = new WorkspaceCheckpointStore(resolved.rewindCheckpoints);
 	installCheckpointCapture(ctx, checkpoints);
-	const app = new TuiApplication(api, resolved, runtime, checkpoints, ctx.memory);
+	const app = new TuiApplication(api, resolved, runtime, checkpoints, ctx.memory, {
+		list: (sessionId) => {
+			if (sessionId === void 0) return [];
+			const agent = ctx.agents.get(sessionId);
+			if (agent === void 0) return [];
+			return ctx.commands.list(agent).map((command) => ({
+				name: command.name,
+				description: command.description,
+				...command.input === void 0 ? {} : { argumentHint: command.input.hint }
+			}));
+		},
+		subscribe: (listener) => ctx.on("commands/change", listener)
+	});
 	ctx.effect(() => {
 		let active = true;
 		const removeMemoryMutation = ctx.memory.onMutation((mutation) => {
@@ -4241,6 +4439,6 @@ function apply(ctx, config) {
 	});
 }
 //#endregion
-export { Config, HarnessController, TrajectoryView, TranscriptComponent, apply, buildTrajectoryRecords, inject, name, resolveConfig, sanitizeTerminalText };
+export { Config, HarnessController, TerminalCommandDirectory, TrajectoryModel, TrajectoryView, TranscriptComponent, apply, buildTrajectoryRecords, inject, name, resolveConfig, sanitizeTerminalText };
 
 //# sourceMappingURL=index.js.map

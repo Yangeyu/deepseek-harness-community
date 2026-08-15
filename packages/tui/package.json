@@ -60,6 +60,7 @@
     "prepack": "pnpm run check"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-commands": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-code-runtime-worker-thread": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-cordis-host-runner": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-host-apiproxy": ">=0.1.0-rc.5 <0.2.0",

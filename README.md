@@ -33,6 +33,8 @@ The first launch creates or updates the `tui` Harness profile under `~/.dsh`; la
 - [`packages/memory`](packages/memory) is the private file-backed memory workspace with explicit remember/forget tools and correction learning.
 
 Both workspaces are source modules managed in this GitHub repository. They are embedded in `@vascent/dsh-tui` and are not published as standalone npm packages.
+The long-term ownership boundaries and staged design are documented in
+[`docs/tui-architecture.md`](docs/tui-architecture.md).
 
 ## Develop
 

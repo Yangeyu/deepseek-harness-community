@@ -53,4 +53,13 @@ describe('SubmissionTracker', () => {
 
     expect(tracker.start('later', 'queue', true).intent).toBe('queueing')
   })
+
+  it('retires command input that has no durable user-message event', () => {
+    const tracker = new SubmissionTracker()
+    const pending = tracker.start('/compact', 'queue', false)
+
+    tracker.settle(pending.key)
+
+    expect(tracker.snapshot).toEqual([])
+  })
 })

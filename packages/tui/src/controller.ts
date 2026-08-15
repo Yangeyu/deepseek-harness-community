@@ -236,10 +236,13 @@ export class HarnessController {
       throw new Error(response.result.error.message)
     }
     if (generation !== this.generation || sessionId !== this.state.sessionId) return
+    if (response.result.value.command !== undefined) {
+      this.submissions.settle(pending.key)
+      this.patch({ pendingSubmissions: this.submissions.snapshot })
+      return
+    }
     this.submissions.accept(pending.key, response.rpcId)
     this.patch({ pendingSubmissions: this.submissions.snapshot })
-    const accepted = response.result.value
-    if (accepted.command?.text !== undefined) this.notice(accepted.command.text)
   }
 
   /** Cancel the active turn while preserving pending queued work. */

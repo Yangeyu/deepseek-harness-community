@@ -7,11 +7,13 @@ import {
   type Component,
 } from '@earendil-works/pi-tui'
 import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type {} from '@deepseek-ai/dsh-commands/types'
 import type { TuiState } from './controller.ts'
 import { displayUnknown, sanitizeTerminalText } from './text.ts'
 import type { TuiTheme } from './theme.ts'
+import { TrajectoryModel, type TrajectoryMetrics } from './trajectory-model.ts'
 
-type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'context' | 'event'
+type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'command' | 'context' | 'event'
 type TrajectoryStatus = 'pending' | 'completed' | 'warning' | 'failed' | 'info'
 type TrajectoryTab = 'summary' | 'payload' | 'result' | 'schema' | 'timing'
 
@@ -166,12 +168,16 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
   const stepEnds = new Map<string, HistoryEntry>()
   const stepStarts = new Map<string, HistoryEntry>()
   const toolResults = new Map<string, HistoryEntry>()
+  const commandRuns = new Set<string>()
+  const commandResults = new Map<string, HistoryEntry>()
   for (const entry of entries) {
     const event = entry.event
     if (event.type === 'turn/end') turnEnds.set(event.data.turn, entry)
     if (event.type === 'step/start') stepStarts.set(stepKey(event.data.turn, event.data.step), entry)
     if (event.type === 'step/end') stepEnds.set(stepKey(event.data.turn, event.data.step), entry)
     if (event.type === 'tool/result') toolResults.set(String(event.data.message.source.callId), entry)
+    if (event.type === 'command/run') commandRuns.add(String(event.data.commandId))
+    if (event.type === 'command/done') commandResults.set(String(event.data.commandId), entry)
   }
 
   let schemas = new Map<string, unknown>()
@@ -191,6 +197,23 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
       case 'step/end':
       case 'tool/result':
         break
+      case 'command/done': {
+        if (commandRuns.has(String(event.data.commandId))) break
+        const detail = event.data.text ?? `${event.data.kind} command completion`
+        records.push({
+          key: `command:${String(event.data.commandId)}:${String(event.seq)}`,
+          kind: 'command',
+          type: event.type,
+          seq: event.seq,
+          title: 'Command completion',
+          summary: oneLine(detail),
+          detail,
+          status: event.data.kind === 'error' ? 'failed' : 'completed',
+          startedAt: event.time,
+          result: event.data,
+        })
+        break
+      }
       case 'turn/start': {
         const completed = turnEnds.get(event.data.turn)
         const reason = completed?.event.type === 'turn/end' ? completed.event.data.reason : undefined
@@ -301,6 +324,36 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
         })
         break
       }
+      case 'command/run': {
+        const completed = commandResults.get(String(event.data.commandId))
+        const failed = completed?.event.type === 'command/done' && completed.event.data.kind === 'error'
+        const result = completed?.event.type === 'command/done' ? completed.event.data : undefined
+        const commandLine = `/${event.data.name}${event.data.args ?? ''}`
+        const detail = result?.text ?? commandLine
+        records.push({
+          key: `command:${String(event.data.commandId)}:${String(event.seq)}`,
+          kind: 'command',
+          type: event.type,
+          ...completed === undefined ? {} : { completionType: completed.event.type, completionSeq: completed.event.seq },
+          seq: event.seq,
+          title: `/${event.data.name}`,
+          summary: completed === undefined
+            ? 'Running'
+            : failed ? `Failed${result?.text === undefined ? '' : ` · ${oneLine(result.text)}`}`
+              : `Completed${result?.text === undefined ? '' : ` · ${oneLine(result.text)}`}`,
+          detail,
+          status: completed === undefined ? 'pending' : failed ? 'failed' : 'completed',
+          startedAt: event.time,
+          ...completed === undefined ? {} : { completedAt: completed.event.time, result },
+          payload: {
+            commandId: event.data.commandId,
+            name: event.data.name,
+            ...event.data.args === undefined ? {} : { arguments: event.data.args },
+            source: event.data.source,
+          },
+        })
+        break
+      }
       case 'request/header': {
         const config = event.data.header.config
         records.push({
@@ -368,86 +421,6 @@ function formatDuration(milliseconds: number): string {
   return `${String(minutes)}m ${String(seconds)}s`
 }
 
-interface TrajectoryMetrics {
-  durationMs?: number
-  offsetMs: number
-  shareOfParent?: number
-  slowest: boolean
-  parentTitle?: string
-}
-
-function effectiveDuration(record: TrajectoryRecord, now: number): number | undefined {
-  if (record.completedAt !== undefined) return Math.max(0, record.completedAt - record.startedAt)
-  return record.status === 'pending' ? Math.max(0, now - record.startedAt) : undefined
-}
-
-function parentRecord(record: TrajectoryRecord, records: readonly TrajectoryRecord[]): TrajectoryRecord | undefined {
-  if (record.kind === 'turn') return undefined
-  if (record.kind === 'step') {
-    return records.find(candidate => candidate.kind === 'turn' && candidate.turn === record.turn)
-  }
-  if (record.step !== undefined) {
-    const step = records.find(candidate => candidate.kind === 'step'
-      && candidate.turn === record.turn
-      && candidate.step === record.step)
-    if (step !== undefined) return step
-  }
-  return records.find(candidate => candidate.kind === 'turn' && candidate.turn === record.turn)
-}
-
-function trajectoryMetrics(records: readonly TrajectoryRecord[], now: number): Map<string, TrajectoryMetrics> {
-  const metrics = new Map<string, TrajectoryMetrics>()
-  const firstStart = records.reduce((minimum, record) => Math.min(minimum, record.startedAt), Number.POSITIVE_INFINITY)
-  const groups = new Map<string, Array<{ record: TrajectoryRecord; durationMs: number }>>()
-
-  for (const record of records) {
-    const parent = parentRecord(record, records)
-    const durationMs = effectiveDuration(record, now)
-    const parentDurationMs = parent === undefined ? undefined : effectiveDuration(parent, now)
-    const turn = records.find(candidate => candidate.kind === 'turn' && candidate.turn === record.turn)
-    const baseline = turn?.startedAt ?? (Number.isFinite(firstStart) ? firstStart : record.startedAt)
-    metrics.set(record.key, {
-      ...durationMs === undefined ? {} : { durationMs },
-      offsetMs: Math.max(0, record.startedAt - baseline),
-      ...durationMs === undefined || parentDurationMs === undefined || parentDurationMs <= 0
-        ? {}
-        : { shareOfParent: Math.max(0, Math.min(1, durationMs / parentDurationMs)) },
-      slowest: false,
-      ...parent === undefined ? {} : { parentTitle: parent.title },
-    })
-    if (record.kind === 'turn' || durationMs === undefined) continue
-    const group = parent?.key ?? 'root'
-    const siblings = groups.get(group) ?? []
-    siblings.push({ record, durationMs })
-    groups.set(group, siblings)
-  }
-
-  for (const siblings of groups.values()) {
-    const slowest = siblings.reduce((current, candidate) => candidate.durationMs > current.durationMs ? candidate : current)
-    const current = metrics.get(slowest.record.key)
-    if (current !== undefined) current.slowest = true
-  }
-  return metrics
-}
-
-function bottleneckRecord(
-  records: readonly TrajectoryRecord[],
-  metrics: ReadonlyMap<string, TrajectoryMetrics>,
-): TrajectoryRecord | undefined {
-  const timedLeaves = records.filter(record => record.kind !== 'turn'
-    && record.kind !== 'step'
-    && metrics.get(record.key)?.durationMs !== undefined)
-  const candidates = timedLeaves.length === 0
-    ? records.filter(record => record.kind === 'step' && metrics.get(record.key)?.durationMs !== undefined)
-    : timedLeaves
-  return candidates.reduce<TrajectoryRecord | undefined>((slowest, candidate) => {
-    if (slowest === undefined) return candidate
-    return (metrics.get(candidate.key)?.durationMs ?? 0) > (metrics.get(slowest.key)?.durationMs ?? 0)
-      ? candidate
-      : slowest
-  }, undefined)
-}
-
 function tabValue(record: TrajectoryRecord, tab: TrajectoryTab, metrics: TrajectoryMetrics): string[] {
   switch (tab) {
     case 'summary':
@@ -511,6 +484,7 @@ function kindLabel(kind: TrajectoryKind): string {
     case 'request': return 'REQUEST'
     case 'assistant': return 'ASSISTANT'
     case 'tool': return 'TOOL'
+    case 'command': return 'COMMAND'
     case 'context': return 'CONTEXT'
     case 'event': return 'EVENT'
   }
@@ -534,6 +508,7 @@ function compactDuration(milliseconds: number | undefined): string {
 export class TrajectoryView implements Component {
   private state: Readonly<TuiState>
   private records: TrajectoryRecord[]
+  private model: TrajectoryModel<TrajectoryRecord>
   private index: number
   private mode: 'list' | 'detail' = 'list'
   private tabIndex = 0
@@ -559,6 +534,7 @@ export class TrajectoryView implements Component {
   ) {
     this.state = state
     this.records = buildTrajectoryRecords(state.events)
+    this.model = new TrajectoryModel(this.records)
     this.index = Math.max(0, this.records.length - 1)
   }
 
@@ -568,6 +544,7 @@ export class TrajectoryView implements Component {
     const selectedKey = this.records[this.index]?.key
     this.state = state
     this.records = buildTrajectoryRecords(state.events)
+    this.model = new TrajectoryModel(this.records)
     if (sessionChanged) {
       this.mode = 'list'
       this.followTail = true
@@ -682,20 +659,21 @@ export class TrajectoryView implements Component {
 
   render(width: number): string[] {
     const now = Date.now()
-    const metrics = trajectoryMetrics(this.records, now)
+    const { metrics, bottleneck } = this.model.measure(now)
     this.splitLayout = width >= SPLIT_MIN_WIDTH && this.records[this.index] !== undefined
-    if (this.splitLayout) return this.renderSplit(width, metrics)
+    if (this.splitLayout) return this.renderSplit(width, metrics, bottleneck)
     return this.mode === 'detail'
       ? this.renderDetail(width, metrics)
-      : this.renderList(width, metrics)
+      : this.renderList(width, metrics, bottleneck)
   }
 
   private renderList(
     width: number,
     metrics: ReadonlyMap<string, TrajectoryMetrics>,
+    bottleneck: TrajectoryRecord | undefined,
   ): string[] {
     const height = Math.max(1, this.visibleRows())
-    const header = this.renderOverviewHeader(width, metrics)
+    const header = this.renderOverviewHeader(width, metrics, bottleneck)
     const footerText = this.loadingEarlier
       ? 'Loading earlier history…'
       : this.loadError === undefined
@@ -719,9 +697,10 @@ export class TrajectoryView implements Component {
   private renderSplit(
     width: number,
     metrics: ReadonlyMap<string, TrajectoryMetrics>,
+    bottleneck: TrajectoryRecord | undefined,
   ): string[] {
     const height = Math.max(1, this.visibleRows())
-    const header = this.renderOverviewHeader(width, metrics)
+    const header = this.renderOverviewHeader(width, metrics, bottleneck)
     const footerText = this.mode === 'detail'
       ? 'Detail focus · j/k scroll · Tab/←/→ section · Esc events'
       : 'Ledger focus · j/k select · h/l fold · Enter/Tab inspect · Esc chat'
@@ -731,7 +710,7 @@ export class TrajectoryView implements Component {
     const leftWidth = Math.max(58, Math.min(innerWidth - 42, Math.floor(innerWidth * 0.58)))
     const rightWidth = Math.max(1, innerWidth - leftWidth)
     const record = this.records[this.index]
-    if (record === undefined) return this.renderList(width, metrics)
+    if (record === undefined) return this.renderList(width, metrics, bottleneck)
 
     const leftBodyRows = Math.max(0, available - 1)
     const left = [
@@ -761,7 +740,7 @@ export class TrajectoryView implements Component {
     const record = this.records[this.index]
     if (record === undefined) {
       this.mode = 'list'
-      return this.renderList(width, metrics)
+      return this.renderList(width, metrics, undefined)
     }
     return this.renderDetailPanel(
       width,
@@ -820,6 +799,7 @@ export class TrajectoryView implements Component {
   private renderOverviewHeader(
     width: number,
     metrics: ReadonlyMap<string, TrajectoryMetrics>,
+    bottleneck: TrajectoryRecord | undefined,
   ): string[] {
     const activeTurn = this.records.filter(record => record.kind === 'turn').at(-1)
     const total = activeTurn === undefined ? undefined : metrics.get(activeTurn.key)?.durationMs
@@ -834,7 +814,6 @@ export class TrajectoryView implements Component {
       total === undefined ? undefined : formatDuration(total),
       recordCount,
     ].filter(value => value !== undefined).join(' · ')
-    const bottleneck = bottleneckRecord(this.records, metrics)
     const bottleneckMetrics = bottleneck === undefined ? undefined : metrics.get(bottleneck.key)
     const bottleneckLine = bottleneck === undefined || bottleneckMetrics?.durationMs === undefined
       ? 'Bottleneck · no timed operation available yet'
@@ -970,7 +949,7 @@ export class TrajectoryView implements Component {
     } else if (record?.kind === 'step' && record.turn !== undefined && record.step !== undefined) {
       this.collapsedSteps.add(stepKey(record.turn, record.step))
     } else if (record !== undefined) {
-      const parent = parentRecord(record, this.records)
+      const parent = this.model.parentOf(record)
       const parentIndex = parent === undefined ? -1 : this.records.findIndex(candidate => candidate.key === parent.key)
       if (parentIndex >= 0) this.index = parentIndex
     }

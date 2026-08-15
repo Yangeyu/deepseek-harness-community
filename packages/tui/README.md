@@ -45,6 +45,8 @@ The initial terminal client supports:
 - Markdown-backed global and per-project memory, explicit remember/forget
   tools, quiet correction learning, and a `/memories` management surface;
 - reconnect and history resynchronization;
+- merged discovery of TUI-local interactions and agent-scoped Harness commands,
+  with one catalog driving both autocomplete and `/help`;
 - the same durable turn/step timing, decode throughput, cache-hit, token-usage,
   and context-pressure projections shown below the Harness Web composer;
 - individually clickable tool calls with bounded Arguments and Result details;
@@ -62,7 +64,7 @@ session logic into UI components.
 
 ## Install
 
-The TUI supports DeepSeek Harness `>=0.1.0-rc.5 <0.2.0`. Install the repository's
+The TUI supports DeepSeek Harness `>=0.1.0-rc.6 <0.2.0`. Install the repository's
 single public package; its launcher installs Harness and configures this workspace automatically:
 
 ```sh
@@ -205,8 +207,12 @@ Cordis bundle entry
         -> pi-tui application (input, dialogs, unified rewind transaction)
            -> ComposerAnchoredLayout (transcript viewport and tail following)
               -> TranscriptComponent (pure event/view projection)
-              -> TrajectoryView (paged execution ledger and event inspection)
+              -> TrajectoryModel (indexed hierarchy and timing semantics)
+                 -> TrajectoryView (paged execution ledger and event inspection)
 ```
+
+The detailed ownership rules and staged design are recorded in
+[`docs/tui-architecture.md`](../../docs/tui-architecture.md).
 
 The TUI consumes tool-provided presentation intent (`generic`, `terminal`,
 `diff`, and related cards) rather than branching on tool names. New tools can

@@ -10,6 +10,7 @@ import type {
   ToolCallView,
   ToolResultView,
 } from '@deepseek-ai/dsh-host-apiproxy'
+import type {} from '@deepseek-ai/dsh-commands/types'
 import type { TuiState } from './controller.ts'
 import type { DiffLineStarts } from './diff-location.ts'
 import {
@@ -176,10 +177,14 @@ function rowsFromState(
   const rows: TranscriptRow[] = []
   const finalSteps = new Set<string>()
   const results = new Map<string, HistoryEntry>()
+  const commandRuns = new Set<string>()
+  const commandResults = new Map<string, HistoryEntry>()
   for (const entry of state.events) {
     const event = entry.event
     if (event.type === 'assistant/message') finalSteps.add(stepKey(event.data.turn, event.data.step))
     if (event.type === 'tool/result') results.set(String(event.data.message.source.callId), entry)
+    if (event.type === 'command/run') commandRuns.add(String(event.data.commandId))
+    if (event.type === 'command/done') commandResults.set(String(event.data.commandId), entry)
   }
 
   const partials = new Map<string, {
@@ -286,6 +291,29 @@ function rowsFromState(
         })
         break
       }
+      case 'command/run': {
+        const completed = commandResults.get(String(event.data.commandId))
+        const result = completed?.event.type === 'command/done' ? completed.event.data : undefined
+        const failed = result?.kind === 'error'
+        rows.push({
+          label: failed ? 'Command failed' : result === undefined ? 'Command running' : 'Command',
+          labelPaint: failed ? theme.error : result === undefined ? theme.warning : theme.accent,
+          body: [
+            `/${event.data.name}${event.data.args ?? ''}`,
+            result?.text,
+          ].filter(value => value !== undefined && value !== '').join('\n'),
+        })
+        break
+      }
+      case 'command/done':
+        if (!commandRuns.has(String(event.data.commandId))) {
+          rows.push({
+            label: event.data.kind === 'error' ? 'Command failed' : 'Command',
+            labelPaint: event.data.kind === 'error' ? theme.error : theme.accent,
+            body: event.data.text ?? `${event.data.kind} command completion`,
+          })
+        }
+        break
       case 'turn/end':
         if (event.data.reason.kind === 'error') {
           rows.push({

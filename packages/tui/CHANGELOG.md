@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Merge TUI-local interactions with the effective agent-scoped Harness command
+  catalog so autocomplete and `/help` share one source while Host commands
+  continue through ApiProxy and never reach the model.
+- Render durable `command/run` and `command/done` pairs as one settled command
+  node in both the conversation and `/trajectory` inspector without duplicating
+  the result as a terminal-only notice.
+- Extract indexed trajectory relationships and timing analysis into a
+  toolkit-neutral, linear-time `TrajectoryModel` with focused unit coverage.
+- Document Host, terminal-runtime, and presentation ownership plus the staged
+  route toward semantic event assembly and durable Host checkpoints.
+
 ## 0.1.4 - 2026-08-15
 
 - Refine inline tool and file-diff presentation with brighter titles, compact

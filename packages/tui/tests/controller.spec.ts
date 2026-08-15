@@ -86,6 +86,26 @@ describe('HarnessController', () => {
     }))
   })
 
+  it('leaves Host command feedback to the durable command lifecycle', async () => {
+    const { api, prompt } = fakeApi()
+    prompt.mockResolvedValue(ok({
+      accepted: true as const,
+      command: { kind: 'success' as const, text: 'Context compacted' },
+    }))
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+
+    await controller.prompt('/compact', 'queue')
+
+    expect(controller.current.notice).toBeUndefined()
+    expect(controller.current.pendingSubmissions).toEqual([])
+    controller.dispose()
+  })
+
   it('clears the visible conversation before fresh-session creation completes', async () => {
     const { api } = fakeApi()
     api.sessions.history = async () => ok({

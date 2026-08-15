@@ -4,6 +4,7 @@ import type {
   HistoryEntry,
   SessionSummary,
 } from '@deepseek-ai/dsh-host-apiproxy'
+import type {} from '@deepseek-ai/dsh-commands/types'
 import type { TuiState } from '../src/controller.ts'
 import { sanitizeTerminalText } from '../src/text.ts'
 import { createTheme } from '../src/theme.ts'
@@ -512,6 +513,42 @@ describe('TranscriptComponent', () => {
     expect(plain).toContain('VISIBLE_TAIL')
     expect(addedRows.length).toBeGreaterThan(1)
     expect(output.every(line => visibleWidth(line) === 32)).toBe(true)
+  })
+
+  it('renders one durable command lifecycle row with its settled result', () => {
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'command/run',
+          seq: 1,
+          time: 1_000,
+          data: {
+            commandId: 'command-1',
+            name: 'compact',
+            args: ' focus on tests',
+            source: { kind: 'user' },
+          },
+        },
+      }),
+      entry({
+        event: {
+          type: 'command/done',
+          seq: 2,
+          time: 1_250,
+          data: {
+            commandId: 'command-1',
+            kind: 'success',
+            text: 'Context compacted',
+          },
+        },
+      }),
+    ]), createTheme(false), true, 8)
+
+    const output = transcript.render(80).join('\n')
+    expect(output).toContain('Command')
+    expect(output).toContain('/compact focus on tests')
+    expect(output).toContain('Context compacted')
+    expect(output.match(/Context compacted/gu)).toHaveLength(1)
   })
 })
 

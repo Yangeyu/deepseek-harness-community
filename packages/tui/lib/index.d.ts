@@ -67,7 +67,7 @@ interface PendingSubmission {
 }
 //#endregion
 //#region src/controller.d.ts
-type SessionId = SessionSummary['sessionId'];
+type SessionId$1 = SessionSummary['sessionId'];
 /** Answerable approval request delivered by the mux stream. */
 type ApprovalPrompt = Extract<MuxFrame, {
   type: 'approval/requested';
@@ -82,7 +82,7 @@ type QuestionPrompt = Extract<MuxFrame, {
 };
 /** Renderer-facing state for the one active terminal session. */
 interface TuiState {
-  sessionId: SessionId | undefined;
+  sessionId: SessionId$1 | undefined;
   cwd: string;
   running: boolean;
   connected: boolean;
@@ -132,7 +132,7 @@ declare class HarnessController {
   /** Switch the terminal to an existing persisted or live session. */
   resume(sessionId: string): Promise<void>;
   /** Fork to the boundary before the checkpointed turn, then open and return the replacement session. */
-  rewind(preview: RewindPreview, onPhase?: (phase: 'forking' | 'opening') => void): Promise<SessionId>;
+  rewind(preview: RewindPreview, onPhase?: (phase: 'forking' | 'opening') => void): Promise<SessionId$1>;
   /** Submit ordinary text using the caller-selected queue placement. */
   prompt(text: string, mode: 'queue' | 'steer'): Promise<void>;
   /** Cancel the active turn while preserving pending queued work. */
@@ -165,6 +165,51 @@ declare class HarnessController {
   private emptySessionState;
   private patch;
   private emit;
+}
+//#endregion
+//#region src/commands.d.ts
+type SessionId = SessionSummary['sessionId'];
+/** Toolkit-neutral command metadata used by help and autocomplete surfaces. */
+interface TerminalCommandDescriptor {
+  name: string;
+  description: string;
+  argumentHint?: string;
+}
+/** TUI-owned command with aliases and a local interaction handler. */
+interface TerminalCommandDefinition extends TerminalCommandDescriptor {
+  aliases?: readonly string[];
+  handler(argument: string): void | Promise<void>;
+}
+/** Host-backed command discovery without coupling the TUI to Cordis. */
+interface HostCommandSource {
+  list(sessionId: SessionId | undefined): readonly TerminalCommandDescriptor[];
+  subscribe(listener: () => void): () => void;
+}
+/**
+ * One command directory for local interaction commands and agent-scoped Host
+ * commands. Rendering libraries consume its plain descriptors; only local
+ * definitions execute here, while unresolved slash input continues to Host.
+ */
+declare class TerminalCommandDirectory {
+  private readonly local;
+  private readonly source?;
+  private readonly onChange;
+  private readonly localByName;
+  private readonly removeHostListener;
+  private sessionId;
+  private host;
+  private signature;
+  constructor(local: readonly TerminalCommandDefinition[], source?: HostCommandSource | undefined, onChange?: () => void);
+  /** Effective discovery rows, with TUI-local commands shadowing Host names. */
+  get descriptors(): readonly TerminalCommandDescriptor[];
+  /** Refresh the agent-scoped Host view when the active session changes. */
+  setSession(sessionId: SessionId | undefined): boolean;
+  /** Dispatch a TUI-local command; return false so Host can resolve the rest. */
+  dispatch(text: string): Promise<boolean>;
+  /** Complete help content generated from the same effective discovery rows. */
+  helpText(): string;
+  dispose(): void;
+  private refreshHost;
 }
 //#endregion
 //#region src/app.d.ts
@@ -246,7 +291,7 @@ declare class TranscriptComponent implements Component {
 }
 //#endregion
 //#region src/trajectory.d.ts
-type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'context' | 'event';
+type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'command' | 'context' | 'event';
 type TrajectoryStatus = 'pending' | 'completed' | 'warning' | 'failed' | 'info';
 /** One semantic execution record assembled from the durable session event log. */
 interface TrajectoryRecord {
@@ -282,6 +327,7 @@ declare class TrajectoryView implements Component {
   private readonly onChange;
   private state;
   private records;
+  private model;
   private index;
   private mode;
   private tabIndex;
@@ -320,6 +366,41 @@ declare class TrajectoryView implements Component {
   private fit;
 }
 //#endregion
+//#region src/trajectory-model.d.ts
+/** Minimal semantic shape required to index and measure a trace record. */
+interface TrajectoryNode {
+  key: string;
+  kind: string;
+  turn?: number;
+  step?: number;
+  title: string;
+  status: string;
+  startedAt: number;
+  completedAt?: number;
+}
+interface TrajectoryMetrics {
+  durationMs?: number;
+  offsetMs: number;
+  shareOfParent?: number;
+  slowest: boolean;
+  parentTitle?: string;
+}
+interface TrajectoryMeasurement<T extends TrajectoryNode> {
+  metrics: ReadonlyMap<string, TrajectoryMetrics>;
+  bottleneck: T | undefined;
+}
+/**
+ * Immutable relationship index for one trace snapshot. Parent lookup is O(1),
+ * and a complete timing measurement is O(n) even for long paged sessions.
+ */
+declare class TrajectoryModel<T extends TrajectoryNode> {
+  private readonly records;
+  private readonly parents;
+  constructor(records: readonly T[]);
+  parentOf(record: T): T | undefined;
+  measure(now: number): TrajectoryMeasurement<T>;
+}
+//#endregion
 //#region src/text.d.ts
 /** Remove terminal control sequences from untrusted model, tool, and user text. */
 declare function sanitizeTerminalText(value: string): string;
@@ -346,5 +427,5 @@ declare const inject: string[];
 /** Mount the terminal application and bind its lifetime to the plugin effect. */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { type ApprovalPrompt, Config, type Config as TuiConfig, HarnessController, type PendingSubmission, type QuestionPrompt, type TrajectoryRecord, TrajectoryView, TranscriptComponent, type TuiControllerSink, type TuiRuntime, type TuiState, apply, buildTrajectoryRecords, inject, name, resolveConfig, sanitizeTerminalText };
+export { type ApprovalPrompt, Config, type Config as TuiConfig, HarnessController, type HostCommandSource, type PendingSubmission, type QuestionPrompt, type TerminalCommandDefinition, type TerminalCommandDescriptor, TerminalCommandDirectory, type TrajectoryMeasurement, type TrajectoryMetrics, TrajectoryModel, type TrajectoryNode, type TrajectoryRecord, TrajectoryView, TranscriptComponent, type TuiControllerSink, type TuiRuntime, type TuiState, apply, buildTrajectoryRecords, inject, name, resolveConfig, sanitizeTerminalText };
 //# sourceMappingURL=index.d.ts.map

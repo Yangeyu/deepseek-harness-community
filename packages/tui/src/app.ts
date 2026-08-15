@@ -7,7 +7,6 @@ import {
   TuiMainScreen,
   matchesKey,
   type OverlayHandle,
-  type SlashCommand,
 } from '@earendil-works/pi-tui'
 import type {
   IApiClient,
@@ -54,22 +53,13 @@ import {
   parseMouseReport,
   type MouseReport,
 } from './mouse.ts'
+import {
+  TerminalCommandDirectory,
+  type HostCommandSource,
+  type TerminalCommandDefinition,
+} from './commands.ts'
 
 const DOUBLE_ESCAPE_MS = 600
-
-const COMMANDS: SlashCommand[] = [
-  { name: 'help', description: 'Show terminal commands' },
-  { name: 'clear', description: 'Clear the conversation and start a new session' },
-  { name: 'new', description: 'Create a new session' },
-  { name: 'resume', description: 'Switch to another session', argumentHint: '[session-id]' },
-  { name: 'model', description: 'Select model and provider', argumentHint: '[provider/model]' },
-  { name: 'details', description: 'Toggle expanded tool output' },
-  { name: 'trajectory', description: 'Inspect the session execution chain' },
-  { name: 'status', description: 'Show current session status' },
-  { name: 'memories', description: 'Manage project memory and session learning' },
-  { name: 'rewind', description: 'Open the workspace and conversation checkpoint history' },
-  { name: 'exit', description: 'Exit the terminal client' },
-]
 
 /** Launcher-owned exit function used instead of calling process.exit from raw mode. */
 export interface TuiRuntime {
@@ -130,6 +120,7 @@ export class TuiApplication implements TuiControllerSink {
   private memoryActivity: MemoryActivity = { state: 'idle' }
   private readonly removeMemoryActivity: () => void
   private readonly interactionQueue: Array<() => void> = []
+  private readonly commands: TerminalCommandDirectory
   private autocompleteCwd: string
 
   constructor(
@@ -138,6 +129,7 @@ export class TuiApplication implements TuiControllerSink {
     private readonly runtime: TuiRuntime,
     private readonly checkpoints: WorkspaceCheckpointStore,
     private readonly memory: ProjectMemoryService,
+    commandSource?: HostCommandSource,
   ) {
     this.theme = createTheme(config.color)
     this.tui = new TuiMainScreen(this.terminal, config.showHardwareCursor)
@@ -165,7 +157,12 @@ export class TuiApplication implements TuiControllerSink {
       config.thinkingMaxLines,
     )
     this.editor = new Editor(this.tui, this.theme.editor, { paddingX: 1, autocompleteMaxVisible: 10 })
-    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(COMMANDS, config.cwd))
+    this.commands = new TerminalCommandDirectory(
+      this.localCommands(),
+      commandSource,
+      () => this.refreshAutocomplete(),
+    )
+    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...this.commands.descriptors], config.cwd))
     this.autocompleteCwd = config.cwd
     this.editor.onSubmit = text => {
       this.editor.addToHistory(text)
@@ -208,6 +205,7 @@ export class TuiApplication implements TuiControllerSink {
     this.controller.dispose()
     if (this.spinner !== undefined) clearInterval(this.spinner)
     if (this.rewindArmTimer !== undefined) clearTimeout(this.rewindArmTimer)
+    this.commands.dispose()
     this.removeMemoryActivity()
     this.terminal.write(DISABLE_MOUSE_TRACKING)
     this.removeInputListener?.()
@@ -217,6 +215,7 @@ export class TuiApplication implements TuiControllerSink {
 
   render(state: Readonly<TuiState>): void {
     if (this.disposed) return
+    const commandsChanged = this.commands.setSession(state.sessionId)
     this.transcript.setState(state)
     this.trajectoryView?.setState(state)
     this.diffLineLocator.resolve(state, () => {
@@ -243,9 +242,8 @@ export class TuiApplication implements TuiControllerSink {
       this.theme.dim(`${model} · ${controls}`),
       ...stats === '' ? [] : [this.theme.dim(stats)],
     ].join('\n'))
-    if (state.cwd !== this.autocompleteCwd) {
-      this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(COMMANDS, state.cwd))
-      this.autocompleteCwd = state.cwd
+    if (state.cwd !== this.autocompleteCwd || commandsChanged) {
+      this.refreshAutocomplete(state.cwd, false)
     }
     this.tui.requestRender()
   }
@@ -422,50 +420,58 @@ export class TuiApplication implements TuiControllerSink {
   }
 
   private async handleCommand(text: string): Promise<boolean> {
-    const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text)
-    if (match === null) return false
-    const command = match[1]?.toLowerCase()
-    const argument = match[2]?.trim() ?? ''
-    switch (command) {
-      case 'help':
-        this.controller.notice([
-          '/clear · clear conversation and start a new session',
-          '/new · new session',
-          '/resume [id] · switch session',
-          '/model [provider/model] · select model',
-          '/details · expand or collapse tool output',
-          '/trajectory · inspect the session execution chain',
-          '/status · current session details',
-          '/memories · manage memory and session learning',
-          '/rewind · select a workspace and conversation checkpoint',
-          '/exit · leave the TUI',
-        ].join('\n'))
-        return true
-      case 'clear':
+    return this.commands.dispatch(text)
+  }
+
+  private localCommands(): TerminalCommandDefinition[] {
+    return [{
+      name: 'help',
+      description: 'Show terminal and Harness commands',
+      handler: () => { this.controller.notice(this.commands.helpText()) },
+    }, {
+      name: 'clear',
+      description: 'Clear the conversation and start a new session',
+      handler: async () => {
         this.layout.followTranscript()
         await this.controller.clearSession()
-        return true
-      case 'new':
-        await this.controller.newSession()
-        return true
-      case 'resume':
+      },
+    }, {
+      name: 'new',
+      description: 'Create a new session',
+      handler: () => this.controller.newSession(),
+    }, {
+      name: 'resume',
+      description: 'Switch to another session',
+      argumentHint: '[session-id]',
+      handler: async (argument) => {
         if (argument !== '') await this.controller.resume(argument)
         else await this.openSessionSelector()
-        return true
-      case 'model':
+      },
+    }, {
+      name: 'model',
+      description: 'Select model and provider',
+      argumentHint: '[provider/model]',
+      handler: async (argument) => {
         if (argument !== '') await this.selectNamedModel(argument)
         else await this.openModelSelector()
-        return true
-      case 'details':
+      },
+    }, {
+      name: 'details',
+      description: 'Toggle expanded tool output',
+      handler: () => {
         this.showDetails = !this.showDetails
         this.transcript.setDetails(this.showDetails)
         this.tui.requestRender()
-        return true
-      case 'trajectory':
-      case 'trace':
-        this.openTrajectory()
-        return true
-      case 'status': {
+      },
+    }, {
+      name: 'trajectory',
+      aliases: ['trace'],
+      description: 'Inspect the session execution chain',
+      handler: () => { this.openTrajectory() },
+    }, {
+      name: 'status',
+      description: 'Show current session status',
+      handler: () => {
         const state = this.controller.current
         this.controller.notice([
           `Session: ${state.sessionId === undefined ? 'none' : String(state.sessionId)}`,
@@ -474,22 +480,29 @@ export class TuiApplication implements TuiControllerSink {
           `Stream: ${state.connected ? 'connected' : 'reconnecting'}`,
           `Queued: ${state.queue.length}`,
         ].join('\n'))
-        return true
-      }
-      case 'memories':
-      case 'memory':
-        await this.openMemoryDialog()
-        return true
-      case 'rewind':
-        this.requestRewind()
-        return true
-      case 'exit':
-      case 'quit':
-        await this.requestExit(0)
-        return true
-      default:
-        return false
-    }
+      },
+    }, {
+      name: 'memories',
+      aliases: ['memory'],
+      description: 'Manage project memory and session learning',
+      handler: () => this.openMemoryDialog(),
+    }, {
+      name: 'rewind',
+      description: 'Open workspace and conversation checkpoints',
+      handler: () => { this.requestRewind() },
+    }, {
+      name: 'exit',
+      aliases: ['quit'],
+      description: 'Exit the terminal client',
+      handler: () => this.requestExit(0),
+    }]
+  }
+
+  private refreshAutocomplete(cwd = this.controller.current.cwd, requestRender = true): void {
+    if (this.disposed) return
+    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...this.commands.descriptors], cwd))
+    this.autocompleteCwd = cwd
+    if (requestRender) this.tui.requestRender()
   }
 
   private requestRewind(): void {

@@ -47,6 +47,11 @@ export class SubmissionTracker {
 
   /** Remove a prompt whose Host request failed. */
   reject(key: number): void {
+    this.settle(key)
+  }
+
+  /** Retire input settled without a durable user-message event, such as a command. */
+  settle(key: number): void {
     this.pending = this.pending.filter(item => item.key !== key)
     this.pruneObservedRpcIds()
   }

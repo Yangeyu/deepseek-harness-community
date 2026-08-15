@@ -6,17 +6,25 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { CommandDescriptor } from '@deepseek-ai/dsh-commands'
 import {
   InProcessApiClient,
   toFetchHandler,
 } from '@deepseek-ai/dsh-host-apiproxy'
 import { TuiApplication, type TuiRuntime } from './app.ts'
 import { installCheckpointCapture, WorkspaceCheckpointStore } from './checkpoint.ts'
+import type { HostCommandSource } from './commands.ts'
 import { Config, resolveConfig, type Config as TuiConfig } from './config.ts'
 
 export { Config, resolveConfig }
 export type { TuiConfig, TuiRuntime }
 export { HarnessController } from './controller.ts'
+export { TerminalCommandDirectory } from './commands.ts'
+export type {
+  HostCommandSource,
+  TerminalCommandDefinition,
+  TerminalCommandDescriptor,
+} from './commands.ts'
 export type {
   ApprovalPrompt,
   PendingSubmission,
@@ -27,6 +35,8 @@ export type {
 export { TranscriptComponent } from './transcript.ts'
 export { buildTrajectoryRecords, TrajectoryView } from './trajectory.ts'
 export type { TrajectoryRecord } from './trajectory.ts'
+export { TrajectoryModel } from './trajectory-model.ts'
+export type { TrajectoryMeasurement, TrajectoryMetrics, TrajectoryNode } from './trajectory-model.ts'
 export { sanitizeTerminalText } from './text.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -44,7 +54,7 @@ declare module '@deepseek-ai/cordis' {
 export const name = 'community-tui'
 
 /** The in-process API gateway must exist before the terminal can activate. */
-export const inject = ['apiProxy', 'agents', 'memory']
+export const inject = ['apiProxy', 'agents', 'commands', 'memory']
 
 interface ParsedArgs {
   help: boolean
@@ -112,7 +122,20 @@ export function apply(ctx: Context, config: TuiConfig): void {
   const resolved = resolveConfig(parsed.config)
   const checkpoints = new WorkspaceCheckpointStore(resolved.rewindCheckpoints)
   installCheckpointCapture(ctx, checkpoints)
-  const app = new TuiApplication(api, resolved, runtime, checkpoints, ctx.memory)
+  const commandSource: HostCommandSource = {
+    list: (sessionId) => {
+      if (sessionId === undefined) return []
+      const agent = ctx.agents.get(sessionId)
+      if (agent === undefined) return []
+      return ctx.commands.list(agent).map((command: CommandDescriptor) => ({
+        name: command.name,
+        description: command.description,
+        ...command.input === undefined ? {} : { argumentHint: command.input.hint },
+      }))
+    },
+    subscribe: listener => ctx.on('commands/change', listener),
+  }
+  const app = new TuiApplication(api, resolved, runtime, checkpoints, ctx.memory, commandSource)
   ctx.effect(() => {
     let active = true
     const removeMemoryMutation = ctx.memory.onMutation(mutation => {

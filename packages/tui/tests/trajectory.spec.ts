@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { HistoryEntry, SessionSummary } from '@deepseek-ai/dsh-host-apiproxy'
+import type {} from '@deepseek-ai/dsh-commands/types'
 import type { TuiState } from '../src/controller.ts'
 import { buildTrajectoryRecords, TrajectoryView } from '../src/trajectory.ts'
 import { createTheme } from '../src/theme.ts'
@@ -207,6 +208,49 @@ describe('trajectory records', () => {
     expect(record?.summary.endsWith('…')).toBe(true)
     expect(record?.detail).toBe(detail)
     expect(record?.detail).toContain('VISIBLE_TAIL')
+  })
+
+  it('pairs durable command lifecycle events into one semantic record', () => {
+    const records = buildTrajectoryRecords([{
+      event: { type: 'turn/start', seq: 0, time: 900, data: { turn: 1 } },
+    }, {
+      event: { type: 'step/start', seq: 1, time: 950, data: { turn: 1, step: 1 } },
+    }, {
+      event: {
+        type: 'command/run',
+        seq: 2,
+        time: 1_000,
+        data: {
+          commandId: 'command-1',
+          name: 'compact',
+          args: ' focus on tests',
+          source: { kind: 'user' },
+        },
+      },
+    }, {
+      event: {
+        type: 'command/done',
+        seq: 3,
+        time: 1_250,
+        data: {
+          commandId: 'command-1',
+          kind: 'success',
+          text: 'Context compacted',
+        },
+      },
+    }] as TuiState['events'])
+
+    const command = records.find(record => record.kind === 'command')
+    expect(command).toMatchObject({
+      kind: 'command',
+      title: '/compact',
+      status: 'completed',
+      completionType: 'command/done',
+      completedAt: 1_250,
+      detail: 'Context compacted',
+    })
+    expect(command).not.toHaveProperty('turn')
+    expect(command).not.toHaveProperty('step')
   })
 })
 
