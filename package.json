@@ -1,0 +1,83 @@
+{
+  "name": "@yangeyu/dsh-tui",
+  "version": "0.1.0",
+  "description": "One-command DeepSeek Harness TUI launcher and community extension workspace",
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "tui",
+    "coding-agent",
+    "terminal"
+  ],
+  "homepage": "https://github.com/Yangeyu/deepseek-harness-community#readme",
+  "bugs": {
+    "url": "https://github.com/Yangeyu/deepseek-harness-community/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Yangeyu/deepseek-harness-community.git"
+  },
+  "type": "module",
+  "bin": {
+    "dsh-tui": "bin/dsh-tui.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "packages/tui/CHANGELOG.md",
+    "packages/tui/cordis.patch.yml",
+    "packages/tui/lib",
+    "packages/tui/LICENSE",
+    "packages/tui/package.json",
+    "packages/tui/README.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @yangeyu/deepseek-harness-memory run build && pnpm --filter @yangeyu/deepseek-harness-tui run build",
+    "lint": "pnpm --filter './packages/*' run lint",
+    "typecheck": "pnpm --filter './packages/*' run typecheck",
+    "test": "node --test tests/*.test.js && pnpm --filter './packages/*' run test",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "pack:check": "npm pack --dry-run",
+    "start": "node bin/dsh-tui.js"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-base": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-code-runtime-worker-thread": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-cordis-host-runner": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-apiproxy": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-directory-picker-browse": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-projection": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-projection-cache": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-stats": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-storage": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-storage-domain": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-storage-json": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-token-meter": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-workspace": "0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@earendil-works/pi-tui": "^0.84.2",
+    "cli-highlight": "^2.1.11",
+    "diff": "^9.0.0",
+    "pnpm": "11.7.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

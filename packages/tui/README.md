@@ -3,18 +3,17 @@
 A keyboard-first terminal client bundle for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-This is a third-party integration package. It deliberately lives beside the
-Harness checkout instead of under `deepseek-harness/packages/`:
+This is a third-party integration package maintained in the community
+extension monorepo, outside the upstream Harness `packages/` tree:
 
 ```text
 Workplace/
-├── deepseek-harness/       # upstream project
-├── deepseek-harness-memory/ # file-backed Memory plugin
-└── deepseek-harness-tui/    # this package
+├── deepseek-harness/            # upstream project
+└── deepseek-harness-community/  # launcher, Memory, and TUI
 ```
 
-Keeping the repositories separate makes the ownership boundary explicit and
-lets the TUI follow Harness through its public plugin and ApiProxy interfaces.
+Keeping upstream and community code separate makes ownership explicit while
+the monorepo gives the launcher and both plugins one tested release unit.
 
 ## Current status
 
@@ -60,17 +59,17 @@ session logic into UI components.
 
 ## Install
 
-The package supports DeepSeek Harness `>=0.1.0-rc.5 <0.2.0`. Install the tagged
-GitHub release directly into a `tui` profile, then start it:
+The package supports DeepSeek Harness `>=0.1.0-rc.5 <0.2.0`. The repository
+launcher installs Harness and configures this bundle automatically:
 
 ```sh
-dsh plugin --profile tui add github:Yangeyu/deepseek-harness-tui#v0.1.0
-dsh --profile tui
+npm install --global github:Yangeyu/deepseek-harness-community#v0.1.0
+dsh-tui
 ```
 
-The repository commits its verified `lib/` artifacts, so installing from a tag
-does not run a package build on the target machine. To install the downloadable
-release tarball instead:
+The repository commits verified `lib/` artifacts, so installing from a tag
+does not build this package on the target machine. Advanced users may still
+install the TUI package tarball into an existing Harness profile:
 
 ```sh
 dsh plugin --profile tui add ./yangeyu-deepseek-harness-tui-0.1.0.tgz
@@ -79,25 +78,23 @@ dsh --profile tui
 
 The bundle's `cordis.patch.yml` layers the required Host services, its
 `./memory` plugin entry, and the terminal entry point over the automatically
-installed `dsh-base` profile. The subpath keeps Cordis resolution anchored to
-the directly installed TUI package while delegating implementation to the
-standalone `@yangeyu/deepseek-harness-memory` dependency.
+installed `dsh-base` profile. The subpath embeds the separately maintained
+Memory package runtime so GitHub installs do not depend on an unpublished npm
+package.
 
 ## Develop
 
 ```sh
+cd ../..
 pnpm install --frozen-lockfile
 pnpm run check
 ```
 
-For unreleased local development, clone `deepseek-harness-memory` beside this
-repository before installing dependencies. Then run the complete profile from
-a neighboring Harness checkout:
+Run the complete profile through the monorepo launcher from the project the
+agent should edit:
 
 ```sh
-cd ../deepseek-harness
-pnpm dsh plugin --profile tui add ../deepseek-harness-tui
-pnpm dsh --profile tui
+pnpm run start
 ```
 
 ## Command-line options

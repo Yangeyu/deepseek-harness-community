@@ -8,13 +8,14 @@
     "memory",
     "coding-agent"
   ],
-  "homepage": "https://github.com/Yangeyu/deepseek-harness-memory#readme",
+  "homepage": "https://github.com/Yangeyu/deepseek-harness-community/tree/main/packages/memory#readme",
   "bugs": {
-    "url": "https://github.com/Yangeyu/deepseek-harness-memory/issues"
+    "url": "https://github.com/Yangeyu/deepseek-harness-community/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Yangeyu/deepseek-harness-memory.git"
+    "url": "git+https://github.com/Yangeyu/deepseek-harness-community.git",
+    "directory": "packages/memory"
   },
   "type": "module",
   "main": "lib/index.js",
@@ -37,7 +38,6 @@
     "LICENSE"
   ],
   "license": "MIT",
-  "packageManager": "pnpm@10.6.5",
   "engines": {
     "node": "^22.19.0 || >=24.0.0",
     "pnpm": ">=10.0.0"

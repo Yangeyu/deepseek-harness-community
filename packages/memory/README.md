@@ -2,9 +2,10 @@
 
 File-backed adaptive memory for DeepSeek Harness. Markdown is the authoritative store; the plugin loads bounded global and project indexes, exposes model-facing memory tools, and learns reusable corrections in quiet, logged maintenance sessions.
 
-This is a third-party Harness plugin and remains independent of the upstream
-`packages/` tree. `@yangeyu/deepseek-harness-tui` consumes its public service to
-show memory state and include mutations in the TUI's existing rewind workflow.
+This is a third-party Harness plugin maintained in the community extension
+monorepo, outside the upstream `packages/` tree. The TUI consumes its public
+service to show memory state and include mutations in the existing rewind
+workflow.
 
 ## Storage
 
@@ -67,11 +68,12 @@ Session clients can call `ctx.memory.setPolicy()` to disable memory use or learn
 ## Develop
 
 ```sh
+cd ../..
 pnpm install --frozen-lockfile
 pnpm run check
 ```
 
-The package builds ESM runtime and declarations into `lib/`. Release order is
-Memory first, then clients such as the TUI that declare the released Memory
-version as a dependency. Verified `lib/` artifacts are committed so GitHub and
-local-path installation do not depend on a target-machine build.
+The package builds ESM runtime and declarations into `lib/`. Verified `lib/`
+artifacts are committed so GitHub and local-path installation do not depend on
+a target-machine build. The TUI embeds this runtime for its GitHub release but
+the standalone package remains independently publishable.

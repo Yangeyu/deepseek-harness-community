@@ -1,5 +1,0 @@
-packages:
-  - .
-  - ../deepseek-harness-memory
-
-linkWorkspacePackages: true

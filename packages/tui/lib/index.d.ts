@@ -1,8 +1,9 @@
+import { r as MemoryMutation } from "./index-CbzrvIlp.js";
 import { HistoryEntry, IApiClient, ModelSelection, MuxFrame, QueuedInboxItem, RpcId, SessionModels, SessionSummary } from "@deepseek-ai/dsh-host-apiproxy";
 import { Component, EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
 import z from "@deepseek-ai/schemastery";
-import { MemoryMutation } from "@yangeyu/deepseek-harness-memory";
 import { Context } from "@deepseek-ai/cordis";
+import { SessionProjectionMap } from "@deepseek-ai/dsh-session-projection/types";
 //#region src/config.d.ts
 /** User-configurable TUI presentation and history bounds. */
 interface Config {
@@ -34,24 +35,6 @@ interface ResolvedConfig {
 }
 /** Resolve optional loader fields once at application startup. */
 declare function resolveConfig(config: Config): ResolvedConfig;
-//#endregion
-//#region node_modules/.pnpm/@deepseek-ai+dsh-session-projection@0.1.0-rc.6_@deepseek-ai+cordis@4.0.1_@deepseek-ai+d_64a6b0602a631355cd8e96ecf58f6c70/node_modules/@deepseek-ai/dsh-session-projection/lib/types/types.d.ts
-/**
- * Pure-type outlet of the session-projection Service Definition: the one projection type
- * table, importable from client aggregates without dragging the host-side
- * cordis Context merges of the package root (dsh-agent → dsh-session). Domain
- * packages may declare-merge through either the package root or this outlet —
- * re-export preserves symbol identity, so both land on the same table.
- *
- * @module @deepseek-ai/dsh-session-projection/types
- */
-/**
- * The single projection type table for the whole chain (host provider, wire
- * block, client cell, React hook). Domain packages merge their key here via
- * declaration merging; values are wire-JSON whole values. How a value is
- * rendered is the slot system's business, never this layer's.
- */
-interface SessionProjectionMap {}
 //#endregion
 //#region src/checkpoint.d.ts
 /** One file that differs from the pre-turn worktree checkpoint. */

@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: mkdir dist
+      - run: pnpm pack --pack-destination dist
+      - run: pnpm --filter @yangeyu/deepseek-harness-memory pack --pack-destination ../../dist
+      - run: pnpm --filter @yangeyu/deepseek-harness-tui pack --pack-destination ../../dist
+      - run: gh release create "$GITHUB_REF_NAME" dist/*.tgz --generate-notes --title "$GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ github.token }}
