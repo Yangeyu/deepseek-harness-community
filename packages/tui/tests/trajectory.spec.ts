@@ -45,6 +45,64 @@ function toolEvents(completed: boolean): HistoryEntry[] {
   }] : []] as TuiState['events']
 }
 
+function timedTraceEvents(): HistoryEntry[] {
+  const tool = (
+    seq: number,
+    callId: string,
+    title: string,
+    startedAt: number,
+    completedAt: number,
+  ): HistoryEntry[] => [{
+    event: {
+      type: 'tool/call',
+      seq,
+      time: startedAt,
+      data: {
+        turn: 1,
+        step: 1,
+        callId,
+        name: 'bash',
+        arguments: `{"command":"${title}"}`,
+      },
+    },
+    view: { for: 'call', view: { card: 'terminal', title } },
+  }, {
+    event: {
+      type: 'tool/result',
+      seq: seq + 1,
+      time: completedAt,
+      surfaceOp: 'append',
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          id: `result-${callId}`,
+          role: 'user',
+          source: { kind: 'tool', callId },
+          content: [{
+            type: 'tool-result',
+            toolCallId: callId,
+            content: [{ type: 'text', text: `${title} complete` }],
+            isError: false,
+          }],
+        },
+      },
+    },
+    view: { for: 'result', view: { card: 'terminal', title, output: `${title} complete`, exitCode: 0 } },
+  }] as TuiState['events']
+
+  return [{
+    event: { type: 'turn/start', seq: 0, time: 1_000, data: { turn: 1 } },
+  }, {
+    event: { type: 'step/start', seq: 1, time: 1_100, data: { turn: 1, step: 1 } },
+  }, ...tool(2, 'slow', 'slow tool', 1_200, 1_900),
+  ...tool(4, 'fast', 'fast tool', 1_950, 2_050), {
+    event: { type: 'step/end', seq: 6, time: 2_200, data: { turn: 1, step: 1 } },
+  }, {
+    event: { type: 'turn/end', seq: 7, time: 2_300, data: { turn: 1, reason: { kind: 'completed' } } },
+  }] as TuiState['events']
+}
+
 function state(events: HistoryEntry[], overrides: Partial<TuiState> = {}): TuiState {
   return {
     sessionId: 'session-trajectory' as SessionSummary['sessionId'],
@@ -120,6 +178,36 @@ describe('trajectory records', () => {
       schema: { name: 'bash' },
     })
   })
+
+  it('keeps complete semantic detail while limiting only the ledger preview', () => {
+    const detail = `${'Long response content '.repeat(12)}VISIBLE_TAIL`
+    const entries = [{
+      event: { type: 'step/start', seq: 0, time: 1_000, data: { turn: 1, step: 1 } },
+    }, {
+      event: {
+        type: 'assistant/message',
+        seq: 1,
+        time: 2_500,
+        surfaceOp: 'append',
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'assistant-long',
+            role: 'assistant',
+            source: { kind: 'model', provider: 'deepseek', model: 'chat' },
+            content: [{ type: 'text', text: detail }],
+          },
+        },
+      },
+    }] as TuiState['events']
+
+    const record = buildTrajectoryRecords(entries).at(-1)
+
+    expect(record?.summary.endsWith('…')).toBe(true)
+    expect(record?.detail).toBe(detail)
+    expect(record?.detail).toContain('VISIBLE_TAIL')
+  })
 })
 
 describe('TrajectoryView', () => {
@@ -181,10 +269,10 @@ describe('TrajectoryView', () => {
       vi.fn(),
     )
 
-    expect(view.render(100).join('\n')).toContain('TOOL      bash · Completed')
+    expect(view.render(100).join('\n')).toContain('TOOL      echo NAVIGATION_OK · bash · Completed')
     view.handleInput('\r')
     expect(view.render(100).join('\n')).toContain('[Summary]')
-    expect(view.render(100).join('\n')).toContain('Event: tool/call → tool/result')
+    expect(view.render(100).join('\n')).toContain('Event        tool/call → tool/result')
 
     view.handleInput('\t')
     expect(view.render(100).join('\n')).toContain('echo NAVIGATION_OK')
@@ -192,7 +280,7 @@ describe('TrajectoryView', () => {
     expect(view.render(100).join('\n')).toContain('NAVIGATION_OK')
 
     view.handleInput('\u001b')
-    expect(view.render(100).join('\n')).toContain('TOOL      bash · Completed')
+    expect(view.render(100).join('\n')).toContain('TOOL      echo NAVIGATION_OK · bash · Completed')
     view.handleInput('\u001b')
     expect(close).toHaveBeenCalledOnce()
   })
@@ -212,6 +300,124 @@ describe('TrajectoryView', () => {
     view.setState(state(toolEvents(true)))
 
     expect(view.render(100).join('\n')).toContain('bash · Completed')
+  })
+
+  it('keeps duration visible when a narrow ledger row truncates a long title', () => {
+    const entries = toolEvents(true)
+    const call = entries[0]
+    if (call?.event.type === 'tool/call') {
+      call.view = {
+        for: 'call',
+        view: { card: 'terminal', title: 'a very long tool title that cannot fit in a narrow terminal row' },
+      }
+    }
+    const view = new TrajectoryView(
+      state(entries),
+      () => 10,
+      createTheme(false),
+      async () => false,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )
+
+    const output = view.render(52).join('\n')
+
+    expect(output).toContain('300ms')
+    expect(output).toContain('…')
+  })
+
+  it('renders a responsive split trace explorer with bottleneck and complete Summary details', () => {
+    const view = new TrajectoryView(
+      state(timedTraceEvents()),
+      () => 20,
+      createTheme(false),
+      async () => false,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )
+
+    view.handleInput('k')
+    const overview = view.render(140).join('\n')
+
+    expect(overview).toContain('Bottleneck · slow tool · 700 ms')
+    expect(overview).toContain('EXECUTION')
+    expect(overview).toContain('DETAIL · slow tool')
+    expect(overview).toContain('Duration     700 ms')
+    expect(overview).toContain('Bottleneck   Slowest timed block in Step 1')
+    expect(overview).toContain('▲')
+
+    view.handleInput('\r')
+    view.handleInput('\t')
+    const input = view.render(140).join('\n')
+    expect(input).toContain('[Input]')
+    expect(input).toContain('Detail focus')
+    expect(input).toContain('slow tool')
+  })
+
+  it('collapses and expands semantic hierarchy nodes with h/l', () => {
+    const view = new TrajectoryView(
+      state(timedTraceEvents()),
+      () => 14,
+      createTheme(false),
+      async () => false,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )
+
+    view.handleInput('g')
+    view.handleInput('h')
+    const collapsed = view.render(100).join('\n')
+    expect(collapsed).toContain('1/4 visible')
+    expect(collapsed).toContain('▸ ● TURN')
+    expect(collapsed).not.toContain('fast tool · bash')
+
+    view.handleInput('l')
+    const expanded = view.render(100).join('\n')
+    expect(expanded).toContain('4 records')
+    expect(expanded).toContain('▾ ● TURN')
+    expect(expanded).toContain('fast tool · bash')
+  })
+
+  it('wraps the complete Summary text instead of reusing the truncated ledger preview', () => {
+    const detail = `${'Complete diagnostic sentence. '.repeat(8)}VISIBLE_TAIL`
+    const entries = [{
+      event: { type: 'step/start', seq: 0, time: 1_000, data: { turn: 1, step: 1 } },
+    }, {
+      event: {
+        type: 'assistant/message',
+        seq: 1,
+        time: 2_500,
+        surfaceOp: 'append',
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'assistant-summary',
+            role: 'assistant',
+            source: { kind: 'model', provider: 'deepseek', model: 'chat' },
+            content: [{ type: 'text', text: detail }],
+          },
+        },
+      },
+    }] as TuiState['events']
+    const view = new TrajectoryView(
+      state(entries),
+      () => 24,
+      createTheme(false),
+      async () => false,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )
+
+    view.handleInput('\r')
+    const output = view.render(70).join('\n')
+
+    expect(output).toContain('Duration     1.50 s')
+    expect(output).toContain('VISIBLE_TAIL')
   })
 
   it('pins an opened detail record while newer live events arrive', () => {

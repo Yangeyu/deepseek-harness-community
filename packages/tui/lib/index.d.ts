@@ -213,6 +213,7 @@ declare class TranscriptComponent implements Component {
   private state;
   private showDetails;
   private readonly expandedThinking;
+  private readonly toolExpansion;
   private readonly collapsedDiffs;
   private readonly followingThinking;
   private readonly blockOffsets;
@@ -230,8 +231,12 @@ declare class TranscriptComponent implements Component {
   handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean;
   render(width: number): string[];
   private renderPromptBlock;
+  private contentWidth;
+  private frameContent;
   private pushBlock;
   private renderThinking;
+  private renderTool;
+  private isToolExpanded;
   private renderDiff;
   private renderDiffTitle;
   private renderDiffLine;
@@ -254,7 +259,10 @@ interface TrajectoryRecord {
   turn?: number;
   step?: number;
   title: string;
+  /** Compact, single-line preview used only by the execution ledger. */
   summary: string;
+  /** Complete semantic text shown by the Summary tab. */
+  detail?: string;
   status: TrajectoryStatus;
   startedAt: number;
   completedAt?: number;
@@ -284,6 +292,9 @@ declare class TrajectoryView implements Component {
   private followTail;
   private loadingEarlier;
   private loadError;
+  private splitLayout;
+  private readonly collapsedTurns;
+  private readonly collapsedSteps;
   constructor(state: Readonly<TuiState>, visibleRows: () => number, theme: TuiTheme, onLoadEarlier: () => Promise<boolean>, onInterrupt: () => void, onCancel: () => void, onChange: () => void);
   /** Rebuild from the latest live event window while preserving the selected semantic record. */
   setState(state: Readonly<TuiState>): void;
@@ -291,9 +302,18 @@ declare class TrajectoryView implements Component {
   invalidate(): void;
   render(width: number): string[];
   private renderList;
+  private renderSplit;
   private renderDetail;
+  private renderDetailPanel;
+  private renderOverviewHeader;
+  private renderColumnHeader;
+  private renderListRows;
   private renderRecord;
+  private visibleRecordIndexes;
+  private collapseSelected;
+  private expandSelected;
   private move;
+  private openDetail;
   private selectTab;
   private scrollDetail;
   private loadEarlier;

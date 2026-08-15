@@ -4,9 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
-- Add a live `/trajectory` execution ledger with paired turn, step, and tool
-  lifecycles, paged earlier history, and Summary, Payload, Result, Schema, and
-  Timing detail views inside the current TUI session.
+- Add a responsive `/trajectory` trace explorer with paired lifecycles, paged
+  history, fixed duration/share visualization, bottleneck highlighting,
+  collapsible hierarchy, and complete side-by-side event inspection.
 - Share project memory across linked Git Worktrees and differently named clones,
   including migration of existing local-directory-based memory.
 - Add the standalone file-backed Memory plugin to the TUI bundle, including

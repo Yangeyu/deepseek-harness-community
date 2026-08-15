@@ -1,5 +1,5 @@
 import { InProcessApiClient, toFetchHandler } from "@deepseek-ai/dsh-host-apiproxy";
-import { CombinedAutocompleteProvider, Container, Editor, Key, Markdown, ProcessTerminal, SelectList, Text, TuiMainScreen, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { CombinedAutocompleteProvider, Container, Editor, Key, Markdown, ProcessTerminal, SelectList, Text, TuiMainScreen, matchesKey, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, rmdir, symlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { highlight, supportsLanguage } from "cli-highlight";
@@ -1118,7 +1118,7 @@ function createTheme(enabled) {
 	const diffAdded = ansiSequence(enabled, "48;2;12;48;28", "49");
 	const diffRemoved = ansiSequence(enabled, "48;2;58;23;31", "49");
 	const error = ansi(enabled, 31, 39);
-	const reasoning = ansi(enabled, 90, 39);
+	const reasoning = ansiSequence(enabled, "38;2;148;163;184", "39");
 	const success = ansi(enabled, 32, 39);
 	const underline = ansi(enabled, 4, 24);
 	const warning = ansi(enabled, 33, 39);
@@ -1154,7 +1154,7 @@ function createTheme(enabled) {
 			selectList: select
 		},
 		markdown: {
-			heading: (text) => bold(accent(text)),
+			heading: (text) => /^#{3,6} $/u.test(stripTerminalSequences(text)) ? "" : bold(accent(text)),
 			link: accent,
 			linkUrl: dim,
 			code: warning,
@@ -1488,6 +1488,17 @@ function boundedLines(value, limit) {
 		...lines.slice(-tail)
 	].join("\n");
 }
+function toolArguments(value, limit) {
+	const clean = sanitizeTerminalText(value).trim();
+	if (clean === "") return void 0;
+	try {
+		const parsed = JSON.parse(clean);
+		if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && Object.keys(parsed).length === 0) return;
+		return boundedLines(displayUnknown(parsed), limit);
+	} catch {
+		return boundedLines(clean, limit);
+	}
+}
 function rawResultText(entry) {
 	if (entry.event.type !== "tool/result") return "";
 	const result = entry.event.data.message.content[0];
@@ -1633,15 +1644,14 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 					} });
 					break;
 				}
-				const body = result === void 0 ? showDetails ? displayUnknown(event.data.arguments) : void 0 : showDetails ? resultBody(resultView, rawResultText(result), maxToolOutputLines) : void 0;
-				rows.push({
-					label: `${result === void 0 ? "○" : failed ? "×" : "●"} ${sanitizeTerminalText(title)}`,
-					labelPaint: result === void 0 ? theme.warning : failed ? theme.error : theme.success,
-					...body === void 0 || body === "" ? {} : {
-						body,
-						dim: true
-					}
-				});
+				const argumentsBody = toolArguments(event.data.arguments, maxToolOutputLines);
+				rows.push({ tool: {
+					key: `${String(event.data.callId)}:tool`,
+					title: sanitizeTerminalText(title),
+					status: result === void 0 ? "pending" : failed ? "failed" : "completed",
+					...argumentsBody === void 0 ? {} : { arguments: argumentsBody },
+					...result === void 0 ? {} : { result: resultBody(resultView, rawResultText(result), maxToolOutputLines) }
+				} });
 				break;
 			}
 			case "turn/end": if (event.data.reason.kind === "error") rows.push({
@@ -1698,6 +1708,7 @@ var TranscriptComponent = class {
 	state;
 	showDetails = false;
 	expandedThinking = /* @__PURE__ */ new Set();
+	toolExpansion = /* @__PURE__ */ new Map();
 	collapsedDiffs = /* @__PURE__ */ new Set();
 	followingThinking = /* @__PURE__ */ new Set();
 	blockOffsets = /* @__PURE__ */ new Map();
@@ -1715,6 +1726,7 @@ var TranscriptComponent = class {
 	setState(state) {
 		if (state.sessionId !== this.state.sessionId) {
 			this.expandedThinking.clear();
+			this.toolExpansion.clear();
 			this.collapsedDiffs.clear();
 			this.followingThinking.clear();
 			this.blockOffsets.clear();
@@ -1725,6 +1737,7 @@ var TranscriptComponent = class {
 	}
 	setDetails(show) {
 		this.showDetails = show;
+		this.toolExpansion.clear();
 	}
 	/** Supply asynchronously resolved absolute file-line starts for diff cards. */
 	setDiffLineStarts(starts) {
@@ -1751,13 +1764,14 @@ var TranscriptComponent = class {
 					this.expandedThinking.add(hit.key);
 					this.followingThinking.add(hit.key);
 				}
-			} else if (!this.collapsedDiffs.delete(hit.key)) {
+			} else if (hit.kind === "tool") this.toolExpansion.set(hit.key, !this.isToolExpanded(hit.key));
+			else if (!this.collapsedDiffs.delete(hit.key)) {
 				this.collapsedDiffs.add(hit.key);
 				this.blockOffsets.delete(hit.key);
 			}
 			return true;
 		}
-		if (hit === void 0 || hit.kind === "thinking" && !this.expandedThinking.has(hit.key) || hit.kind === "diff" && this.collapsedDiffs.has(hit.key)) return false;
+		if (hit === void 0 || hit.kind === "tool" || hit.kind === "thinking" && !this.expandedThinking.has(hit.key) || hit.kind === "diff" && this.collapsedDiffs.has(hit.key)) return false;
 		return this.scrollBlock(hit.key, action === "wheel-up" ? -3 : 3, hit.kind === "thinking");
 	}
 	render(width) {
@@ -1768,27 +1782,38 @@ var TranscriptComponent = class {
 		for (const [index, row] of rows.entries()) {
 			if (index > 0) lines.push("");
 			if (row.thinking !== void 0) {
-				this.pushBlock(lines, this.renderThinking(row.thinking, safeWidth), row.thinking.key, "thinking");
+				const contentWidth = this.contentWidth(safeWidth);
+				this.pushBlock(lines, this.frameContent(this.renderThinking(row.thinking, contentWidth), safeWidth), row.thinking.key, "thinking");
+				continue;
+			}
+			if (row.tool !== void 0) {
+				const contentWidth = this.contentWidth(safeWidth);
+				this.pushBlock(lines, this.frameContent(this.renderTool(row.tool, contentWidth), safeWidth), row.tool.key, "tool");
 				continue;
 			}
 			if (row.diff !== void 0) {
-				this.pushBlock(lines, this.renderDiff(row.diff, safeWidth), row.diff.key, "diff");
+				const contentWidth = this.contentWidth(safeWidth);
+				this.pushBlock(lines, this.frameContent(this.renderDiff(row.diff, contentWidth), safeWidth), row.diff.key, "diff");
 				continue;
 			}
 			if (row.prompt && row.body !== void 0) {
 				lines.push(...this.renderPromptBlock(row.body, row.promptStatus, safeWidth));
 				continue;
 			}
-			if (row.label !== void 0) lines.push(truncateToWidth((row.labelPaint ?? ((text) => text))(row.label), safeWidth));
-			if (row.body === void 0 || row.body === "") continue;
-			const body = sanitizeTerminalText(row.body);
-			if (row.markdown) {
-				const markdown = new Markdown(body, 0, 0, this.theme.markdown, row.dim ? { color: this.theme.dim } : void 0);
-				lines.push(...markdown.render(safeWidth));
-			} else {
-				const styled = row.dim ? this.theme.dim(body) : body;
-				lines.push(...wrapTextWithAnsi(styled, safeWidth));
+			const contentWidth = this.contentWidth(safeWidth);
+			const contentLines = [];
+			if (row.label !== void 0) contentLines.push(truncateToWidth((row.labelPaint ?? ((text) => text))(row.label), contentWidth));
+			if (row.body !== void 0 && row.body !== "") {
+				const body = sanitizeTerminalText(row.body);
+				if (row.markdown) {
+					const markdown = new Markdown(body, 0, 0, this.theme.markdown, row.dim ? { color: this.theme.dim } : void 0);
+					contentLines.push(...markdown.render(contentWidth));
+				} else {
+					const styled = row.dim ? this.theme.dim(body) : body;
+					contentLines.push(...wrapTextWithAnsi(styled, contentWidth));
+				}
 			}
+			lines.push(...this.frameContent(contentLines, safeWidth));
 		}
 		if (this.hoveredBlockKey !== void 0 && !this.blockHits.some((hit) => hit.key === this.hoveredBlockKey)) this.hoveredBlockKey = void 0;
 		return lines;
@@ -1813,6 +1838,19 @@ var TranscriptComponent = class {
 		lines.push(paintLine(" ".repeat(width)));
 		return lines;
 	}
+	contentWidth(width) {
+		return Math.max(1, width - (width >= 24 ? 2 : 0));
+	}
+	frameContent(lines, width) {
+		const gutter = width >= 24 ? 1 : 0;
+		if (gutter === 0) return lines;
+		const contentWidth = this.contentWidth(width);
+		return lines.map((line) => {
+			const content = truncateToWidth(line, contentWidth, "…");
+			const right = " ".repeat(Math.max(gutter, width - gutter - visibleWidth(content)));
+			return `${" ".repeat(gutter)}${content}${right}`;
+		});
+	}
 	pushBlock(lines, rendered, key, kind) {
 		const titleLine = lines.length;
 		lines.push(...rendered);
@@ -1835,6 +1873,34 @@ var TranscriptComponent = class {
 		const visible = content.slice(offset, offset + this.thinkingMaxLines);
 		const range = maxOffset === 0 ? "" : ` · ${offset + 1}-${Math.min(content.length, offset + this.thinkingMaxLines)}/${content.length}`;
 		return [this.renderBlockTitle(`${marker} ${label}${range}`, thinking.key, width, this.theme.reasoning), ...visible.map((line) => truncateToWidth(`${this.theme.reasoning("│")} ${line}`, width))];
+	}
+	renderTool(tool, width) {
+		const expanded = this.isToolExpanded(tool.key);
+		const marker = expanded ? "▾" : "▸";
+		const glyph = tool.status === "pending" ? "○" : tool.status === "failed" ? "×" : "●";
+		const paint = tool.status === "pending" ? this.theme.warning : tool.status === "failed" ? this.theme.error : this.theme.success;
+		const title = `${marker} ${glyph} ${tool.title}`;
+		const renderedTitle = this.hoveredBlockKey === tool.key ? this.theme.hover(truncateToWidth(title, width, "…")) : truncateToWidth(`${this.theme.dim(`${marker} `)}${paint(glyph)} ${this.theme.assistant(tool.title)}`, width, "…");
+		if (!expanded) return [renderedTitle];
+		const sections = [...tool.arguments === void 0 ? [] : [{
+			label: "Arguments",
+			value: tool.arguments
+		}], ...tool.result === void 0 || tool.result === "" ? [] : [{
+			label: "Result",
+			value: tool.result
+		}]];
+		if (sections.length === 0) return [renderedTitle, truncateToWidth(`  ${this.theme.reasoning("No details recorded yet.")}`, width)];
+		return [renderedTitle, ...sections.flatMap((section, index) => [
+			...index === 0 ? [] : [""],
+			truncateToWidth(`  ${this.theme.dim(section.label)}`, width),
+			...sanitizeTerminalText(section.value).split("\n").flatMap((line) => {
+				const wrapped = wrapTextWithAnsi(line, Math.max(1, width - 4));
+				return (wrapped.length === 0 ? [""] : wrapped).map((part) => truncateToWidth(`  ${this.theme.reasoning("│")} ${this.theme.reasoning(part)}`, width, "…"));
+			})
+		])];
+	}
+	isToolExpanded(key) {
+		return this.toolExpansion.get(key) ?? this.showDetails;
 	}
 	renderDiff(diff, width) {
 		const model = buildDiffDisplay(diff.title, diff.diffs, this.diffLineStarts.get(diff.key) ?? []);
@@ -1958,7 +2024,9 @@ var ComposerAnchoredLayout = class extends Container {
 			"",
 			...transcript
 		];
-		const availableRows = Math.max(0, this.viewportRows() - composer.length);
+		const viewportRows = Math.max(0, this.viewportRows());
+		const composerGapRows = this.composerOverride === void 0 && viewportRows > composer.length ? 1 : 0;
+		const availableRows = Math.max(0, viewportRows - composer.length - composerGapRows);
 		this.conversationPageRows = Math.max(1, availableRows);
 		this.maxConversationTop = Math.max(0, conversation.length - availableRows);
 		const requestedTop = this.conversationTop ?? this.maxConversationTop;
@@ -1973,7 +2041,7 @@ var ComposerAnchoredLayout = class extends Container {
 		const gap = Math.max(0, availableRows - visible.length);
 		return [
 			...visible,
-			...Array(gap).fill(""),
+			...Array(gap + composerGapRows).fill(""),
 			...composer
 		];
 	}
@@ -2026,11 +2094,11 @@ const TABS = [
 	},
 	{
 		id: "payload",
-		label: "Payload"
+		label: "Input"
 	},
 	{
 		id: "result",
-		label: "Result"
+		label: "Output"
 	},
 	{
 		id: "schema",
@@ -2041,6 +2109,8 @@ const TABS = [
 		label: "Timing"
 	}
 ];
+const SPLIT_MIN_WIDTH = 120;
+const SHARE_BAR_WIDTH = 7;
 function recordValue(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
 }
@@ -2214,6 +2284,7 @@ function buildTrajectoryRecords(entries) {
 			case "user/message": {
 				const text = messageText(event.data);
 				const source = recordValue(event.data.source)?.kind;
+				const detail = text === "" ? displayUnknown(event.data.content) : text;
 				records.push({
 					key: `event:${String(event.seq)}`,
 					kind: "user",
@@ -2221,7 +2292,8 @@ function buildTrajectoryRecords(entries) {
 					seq: event.seq,
 					...at,
 					title: source === "user" ? "User input" : "Context input",
-					summary: oneLine(text === "" ? displayUnknown(event.data.content) : text),
+					summary: oneLine(detail),
+					detail,
 					status: "info",
 					startedAt: event.time,
 					payload: event.data
@@ -2231,6 +2303,7 @@ function buildTrajectoryRecords(entries) {
 			case "assistant/message": {
 				const start = stepStarts.get(stepKey(event.data.turn, event.data.step));
 				const text = messageText(event.data.message);
+				const detail = text === "" ? "(empty response)" : text;
 				records.push({
 					key: `event:${String(event.seq)}`,
 					kind: "assistant",
@@ -2239,7 +2312,8 @@ function buildTrajectoryRecords(entries) {
 					turn: event.data.turn,
 					step: event.data.step,
 					title: "Assistant response",
-					summary: oneLine(text === "" ? "(empty response)" : text),
+					summary: oneLine(detail),
+					detail,
 					status: "completed",
 					startedAt: start?.event.time ?? event.time,
 					completedAt: event.time,
@@ -2268,6 +2342,7 @@ function buildTrajectoryRecords(entries) {
 					step: event.data.step,
 					title: displayTitle,
 					summary: `${event.data.name} · ${completed === void 0 ? "Running" : failed ? "Failed" : "Completed"}`,
+					detail: displayTitle,
 					status: completed === void 0 ? "pending" : failed ? "failed" : "completed",
 					startedAt: event.time,
 					...completed === void 0 ? {} : {
@@ -2293,6 +2368,7 @@ function buildTrajectoryRecords(entries) {
 					...at,
 					title: "Model request",
 					summary: `${config.provider}/${config.model}${config.reasoningEffort === void 0 ? "" : ` · ${String(config.reasoningEffort)}`}`,
+					detail: `Model request to ${config.provider}/${config.model}${config.reasoningEffort === void 0 ? "" : ` with ${String(config.reasoningEffort)} reasoning`}`,
 					status: "info",
 					startedAt: event.time,
 					payload: event.data.header,
@@ -2309,23 +2385,28 @@ function buildTrajectoryRecords(entries) {
 					...at,
 					title: "Request context",
 					summary: `${event.data.provider}/${event.data.model}${event.data.contextWindow === void 0 ? "" : ` · ${String(event.data.contextWindow)} context`}`,
+					detail: `Request context for ${event.data.provider}/${event.data.model}${event.data.contextWindow === void 0 ? "" : ` with a ${String(event.data.contextWindow)} token window`}`,
 					status: "info",
 					startedAt: event.time,
 					payload: event.data
 				});
 				break;
-			default: records.push({
-				key: `event:${String(event.seq)}`,
-				kind: event.type === "todo/write" ? "context" : "event",
-				type: event.type,
-				seq: event.seq,
-				...at,
-				title: event.type,
-				summary: oneLine(displayUnknown(event.data)),
-				status: "info",
-				startedAt: event.time,
-				payload: event.data
-			});
+			default: {
+				const detail = displayUnknown(event.data);
+				records.push({
+					key: `event:${String(event.seq)}`,
+					kind: event.type === "todo/write" ? "context" : "event",
+					type: event.type,
+					seq: event.seq,
+					...at,
+					title: event.type,
+					summary: oneLine(detail),
+					detail,
+					status: "info",
+					startedAt: event.time,
+					payload: event.data
+				});
+			}
 		}
 		if (event.type === "step/end") activeStep = void 0;
 		if (event.type === "turn/end") {
@@ -2342,18 +2423,74 @@ function formatDuration(milliseconds) {
 	const seconds = Math.floor(milliseconds % 6e4 / 1e3);
 	return `${String(minutes)}m ${String(seconds)}s`;
 }
-function tabValue(record, tab) {
+function effectiveDuration(record, now) {
+	if (record.completedAt !== void 0) return Math.max(0, record.completedAt - record.startedAt);
+	return record.status === "pending" ? Math.max(0, now - record.startedAt) : void 0;
+}
+function parentRecord(record, records) {
+	if (record.kind === "turn") return void 0;
+	if (record.kind === "step") return records.find((candidate) => candidate.kind === "turn" && candidate.turn === record.turn);
+	if (record.step !== void 0) {
+		const step = records.find((candidate) => candidate.kind === "step" && candidate.turn === record.turn && candidate.step === record.step);
+		if (step !== void 0) return step;
+	}
+	return records.find((candidate) => candidate.kind === "turn" && candidate.turn === record.turn);
+}
+function trajectoryMetrics(records, now) {
+	const metrics = /* @__PURE__ */ new Map();
+	const firstStart = records.reduce((minimum, record) => Math.min(minimum, record.startedAt), Number.POSITIVE_INFINITY);
+	const groups = /* @__PURE__ */ new Map();
+	for (const record of records) {
+		const parent = parentRecord(record, records);
+		const durationMs = effectiveDuration(record, now);
+		const parentDurationMs = parent === void 0 ? void 0 : effectiveDuration(parent, now);
+		const baseline = records.find((candidate) => candidate.kind === "turn" && candidate.turn === record.turn)?.startedAt ?? (Number.isFinite(firstStart) ? firstStart : record.startedAt);
+		metrics.set(record.key, {
+			...durationMs === void 0 ? {} : { durationMs },
+			offsetMs: Math.max(0, record.startedAt - baseline),
+			...durationMs === void 0 || parentDurationMs === void 0 || parentDurationMs <= 0 ? {} : { shareOfParent: Math.max(0, Math.min(1, durationMs / parentDurationMs)) },
+			slowest: false,
+			...parent === void 0 ? {} : { parentTitle: parent.title }
+		});
+		if (record.kind === "turn" || durationMs === void 0) continue;
+		const group = parent?.key ?? "root";
+		const siblings = groups.get(group) ?? [];
+		siblings.push({
+			record,
+			durationMs
+		});
+		groups.set(group, siblings);
+	}
+	for (const siblings of groups.values()) {
+		const slowest = siblings.reduce((current, candidate) => candidate.durationMs > current.durationMs ? candidate : current);
+		const current = metrics.get(slowest.record.key);
+		if (current !== void 0) current.slowest = true;
+	}
+	return metrics;
+}
+function bottleneckRecord(records, metrics) {
+	const timedLeaves = records.filter((record) => record.kind !== "turn" && record.kind !== "step" && metrics.get(record.key)?.durationMs !== void 0);
+	return (timedLeaves.length === 0 ? records.filter((record) => record.kind === "step" && metrics.get(record.key)?.durationMs !== void 0) : timedLeaves).reduce((slowest, candidate) => {
+		if (slowest === void 0) return candidate;
+		return (metrics.get(candidate.key)?.durationMs ?? 0) > (metrics.get(slowest.key)?.durationMs ?? 0) ? candidate : slowest;
+	}, void 0);
+}
+function tabValue(record, tab, metrics) {
 	switch (tab) {
 		case "summary": return [
-			`Kind: ${record.kind}`,
-			`Status: ${record.status}`,
-			`Event: ${record.type}${record.completionType === void 0 ? "" : ` → ${record.completionType}`}`,
-			`Sequence: ${String(record.seq)}${record.completionSeq === void 0 ? "" : ` → ${String(record.completionSeq)}`}`,
-			...record.turn === void 0 ? [] : [`Turn: ${String(record.turn)}`],
-			...record.step === void 0 ? [] : [`Step: ${String(record.step)}`],
+			`Status       ${record.status}`,
+			`Duration     ${metrics.durationMs === void 0 ? "Not measured" : formatDuration(metrics.durationMs)}`,
+			...metrics.shareOfParent === void 0 ? [] : [`Share        ${(metrics.shareOfParent * 100).toFixed(1)}% of ${metrics.parentTitle ?? "parent"}`],
+			...metrics.slowest ? [`Bottleneck   Slowest timed block in ${metrics.parentTitle ?? "current scope"}`] : [],
+			`Location     ${[record.turn === void 0 ? void 0 : `Turn ${String(record.turn)}`, record.step === void 0 ? void 0 : `Step ${String(record.step)}`].filter((value) => value !== void 0).join(" / ") || "Session"}`,
+			`Event        ${record.type}${record.completionType === void 0 ? "" : ` → ${record.completionType}`}`,
+			`Sequence     ${String(record.seq)}${record.completionSeq === void 0 ? "" : ` → ${String(record.completionSeq)}`}`,
 			"",
 			record.title,
-			record.summary
+			...(record.detail ?? record.summary).split("\n"),
+			"",
+			`Started      ${new Date(record.startedAt).toISOString()}`,
+			`Completed    ${record.completedAt === void 0 ? "Still running or not applicable" : new Date(record.completedAt).toISOString()}`
 		];
 		case "payload": return record.payload === void 0 ? ["No payload recorded for this event."] : displayUnknown(record.payload).split("\n");
 		case "result": return record.result === void 0 ? ["No result recorded for this event."] : displayUnknown(record.result).split("\n");
@@ -2362,7 +2499,9 @@ function tabValue(record, tab) {
 			const end = record.completedAt;
 			return [
 				`Started: ${new Date(record.startedAt).toISOString()}`,
-				...end === void 0 ? ["Completed: still running or not applicable"] : [`Completed: ${new Date(end).toISOString()}`, `Duration: ${formatDuration(Math.max(0, end - record.startedAt))}`],
+				...end === void 0 ? ["Completed: still running or not applicable"] : [`Completed: ${new Date(end).toISOString()}`, `Duration: ${formatDuration(metrics.durationMs ?? Math.max(0, end - record.startedAt))}`],
+				...metrics.shareOfParent === void 0 ? [] : [`Parent share: ${(metrics.shareOfParent * 100).toFixed(1)}% of ${metrics.parentTitle ?? "parent"}`],
+				`Start offset: +${formatDuration(metrics.offsetMs)}`,
 				"",
 				"Timing source: durable session event timestamps"
 			];
@@ -2387,6 +2526,18 @@ function kindLabel(kind) {
 		case "event": return "EVENT";
 	}
 }
+function padVisible(text, width) {
+	const clipped = truncateToWidth(text, Math.max(0, width), "…");
+	return `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
+}
+function compactDuration(milliseconds) {
+	if (milliseconds === void 0) return "—";
+	if (milliseconds < 1e3) return `${String(Math.round(milliseconds))}ms`;
+	if (milliseconds < 6e4) return `${(milliseconds / 1e3).toFixed(milliseconds < 1e4 ? 1 : 0)}s`;
+	const minutes = Math.floor(milliseconds / 6e4);
+	const seconds = Math.floor(milliseconds % 6e4 / 1e3);
+	return `${String(minutes)}m${String(seconds).padStart(2, "0")}s`;
+}
 /** Full-screen, keyboard-first execution ledger and event detail surface. */
 var TrajectoryView = class {
 	visibleRows;
@@ -2407,6 +2558,9 @@ var TrajectoryView = class {
 	followTail = true;
 	loadingEarlier = false;
 	loadError;
+	splitLayout = false;
+	collapsedTurns = /* @__PURE__ */ new Set();
+	collapsedSteps = /* @__PURE__ */ new Set();
 	constructor(state, visibleRows, theme, onLoadEarlier, onInterrupt, onCancel, onChange) {
 		this.visibleRows = visibleRows;
 		this.theme = theme;
@@ -2429,6 +2583,8 @@ var TrajectoryView = class {
 			this.followTail = true;
 			this.tabIndex = 0;
 			this.detailOffset = 0;
+			this.collapsedTurns.clear();
+			this.collapsedSteps.clear();
 		}
 		const preserved = selectedKey === void 0 ? -1 : this.records.findIndex((record) => record.key === selectedKey);
 		this.index = this.followTail || preserved === -1 ? Math.max(0, this.records.length - 1) : preserved;
@@ -2471,6 +2627,18 @@ var TrajectoryView = class {
 			this.onCancel();
 			return;
 		}
+		if (this.splitLayout && matchesKey(data, Key.tab) && this.records[this.index] !== void 0) {
+			this.openDetail();
+			return;
+		}
+		if (data === "h") {
+			this.collapseSelected();
+			return;
+		}
+		if (data === "l") {
+			this.expandSelected();
+			return;
+		}
 		if (matchesKey(data, Key.up) || data === "k") {
 			if (this.index === 0) this.loadEarlier();
 			else this.move(-1);
@@ -2490,58 +2658,104 @@ var TrajectoryView = class {
 			this.move(this.listPageRows);
 			return;
 		}
-		if (matchesKey(data, Key.enter) && this.records[this.index] !== void 0) {
-			this.mode = "detail";
+		if (data === "g") {
+			this.index = this.visibleRecordIndexes()[0] ?? 0;
 			this.followTail = false;
-			this.tabIndex = 0;
 			this.detailOffset = 0;
+			return;
 		}
+		if (data === "G") {
+			this.index = this.visibleRecordIndexes().at(-1) ?? Math.max(0, this.records.length - 1);
+			this.followTail = true;
+			this.detailOffset = 0;
+			return;
+		}
+		if (matchesKey(data, Key.ctrl("u"))) {
+			this.move(-Math.max(1, Math.floor(this.listPageRows / 2)));
+			return;
+		}
+		if (matchesKey(data, Key.ctrl("d"))) {
+			this.move(Math.max(1, Math.floor(this.listPageRows / 2)));
+			return;
+		}
+		if (matchesKey(data, Key.enter) && this.records[this.index] !== void 0) this.openDetail();
 	}
 	invalidate() {}
 	render(width) {
-		return this.mode === "detail" ? this.renderDetail(width) : this.renderList(width);
+		const now = Date.now();
+		const metrics = trajectoryMetrics(this.records, now);
+		this.splitLayout = width >= SPLIT_MIN_WIDTH && this.records[this.index] !== void 0;
+		if (this.splitLayout) return this.renderSplit(width, metrics);
+		return this.mode === "detail" ? this.renderDetail(width, metrics) : this.renderList(width, metrics);
 	}
-	renderList(width) {
+	renderList(width, metrics) {
 		const height = Math.max(1, this.visibleRows());
-		const header = [
-			truncateToWidth(this.theme.bold(this.theme.accent("Trajectory")), width),
-			truncateToWidth(this.theme.dim([
-				this.state.sessionId === void 0 ? "No session" : String(this.state.sessionId),
-				this.state.running ? "Live" : "Idle",
-				`${String(this.records.length)} records`,
-				...this.state.historyHasMore ? ["earlier history available"] : []
-			].join(" · ")), width),
-			""
-		];
-		const footerText = this.loadingEarlier ? "Loading earlier history…" : this.loadError === void 0 ? "↑/↓ or j/k select · Enter details · PageUp/PageDown page · Esc chat" : `History load failed: ${this.loadError}`;
+		const header = this.renderOverviewHeader(width, metrics);
+		const footerText = this.loadingEarlier ? "Loading earlier history…" : this.loadError === void 0 ? "j/k select · h/l fold · Enter inspect · g/G ends · Esc chat" : `History load failed: ${this.loadError}`;
 		const footer = [truncateToWidth(this.loadError === void 0 ? this.theme.dim(footerText) : this.theme.warning(footerText), width)];
-		const available = Math.max(0, height - header.length - footer.length);
-		this.listPageRows = Math.max(1, available);
-		const maximumStart = Math.max(0, this.records.length - available);
-		const start = Math.max(0, Math.min(maximumStart, this.index - Math.floor(available / 2)));
-		const visible = this.records.slice(start, start + available);
-		const body = visible.length === 0 && available > 0 ? [this.theme.dim("No execution records yet. Events will appear here while the session runs.")] : visible.map((record, offset) => this.renderRecord(record, start + offset === this.index, width));
+		const available = Math.max(0, height - header.length - footer.length - 1);
+		const body = this.renderListRows(width, available, metrics);
 		return this.fit([
 			...header,
+			this.renderColumnHeader(width),
 			...body,
 			...Array(Math.max(0, available - body.length)).fill(""),
 			...footer
 		], height);
 	}
-	renderDetail(width) {
+	renderSplit(width, metrics) {
 		const height = Math.max(1, this.visibleRows());
+		const header = this.renderOverviewHeader(width, metrics);
+		const footerText = this.mode === "detail" ? "Detail focus · j/k scroll · Tab/←/→ section · Esc events" : "Ledger focus · j/k select · h/l fold · Enter/Tab inspect · Esc chat";
+		const footer = [truncateToWidth(this.theme.dim(footerText), width)];
+		const available = Math.max(0, height - header.length - footer.length);
+		const innerWidth = Math.max(1, width - 3);
+		const leftWidth = Math.max(58, Math.min(innerWidth - 42, Math.floor(innerWidth * .58)));
+		const rightWidth = Math.max(1, innerWidth - leftWidth);
+		const record = this.records[this.index];
+		if (record === void 0) return this.renderList(width, metrics);
+		const leftBodyRows = Math.max(0, available - 1);
+		const left = [this.renderColumnHeader(leftWidth), ...this.renderListRows(leftWidth, leftBodyRows, metrics)];
+		const right = this.renderDetailPanel(rightWidth, available, record, metrics.get(record.key) ?? {
+			offsetMs: 0,
+			slowest: false
+		}, true);
+		const divider = this.mode === "detail" ? this.theme.accent("│") : this.theme.dim("│");
+		const body = Array.from({ length: available }, (_, row) => {
+			const leftLine = left[row] ?? "";
+			const rightLine = right[row] ?? "";
+			return `${padVisible(leftLine, leftWidth)} ${divider} ${truncateToWidth(rightLine, rightWidth, "…")}`;
+		});
+		return this.fit([
+			...header,
+			...body,
+			...footer
+		], height);
+	}
+	renderDetail(width, metrics) {
 		const record = this.records[this.index];
 		if (record === void 0) {
 			this.mode = "list";
-			return this.renderList(width);
+			return this.renderList(width, metrics);
 		}
+		return this.renderDetailPanel(width, Math.max(1, this.visibleRows()), record, metrics.get(record.key) ?? {
+			offsetMs: 0,
+			slowest: false
+		}, false);
+	}
+	renderDetailPanel(width, height, record, metrics, split) {
 		const tabs = TABS.map((tab, index) => index === this.tabIndex ? this.theme.bold(this.theme.accent(`[${tab.label}]`)) : this.theme.dim(` ${tab.label} `)).join(" ");
 		const location = [
 			record.turn === void 0 ? void 0 : `Turn ${String(record.turn)}`,
 			record.step === void 0 ? void 0 : `Step ${String(record.step)}`,
 			`seq ${String(record.seq)}`
 		].filter((value) => value !== void 0).join(" · ");
-		const header = [
+		const header = split ? [
+			truncateToWidth(this.theme.bold(this.theme.accent(`DETAIL · ${record.title}`)), width),
+			truncateToWidth(this.theme.dim(`${kindLabel(record.kind)} · ${location}`), width),
+			truncateToWidth(tabs, width),
+			this.theme.dim("─".repeat(Math.max(0, width)))
+		] : [
 			truncateToWidth(this.theme.bold(this.theme.accent(`Trajectory · ${record.title}`)), width),
 			truncateToWidth(this.theme.dim(`${kindLabel(record.kind)} · ${location}`), width),
 			truncateToWidth(tabs, width),
@@ -2549,12 +2763,13 @@ var TrajectoryView = class {
 		];
 		const available = Math.max(0, height - header.length - 1);
 		this.detailPageRows = Math.max(1, available);
-		const content = wrapped(tabValue(record, TABS[this.tabIndex]?.id ?? "summary"), width);
+		const content = wrapped(tabValue(record, TABS[this.tabIndex]?.id ?? "summary", metrics), width);
 		this.detailMaxOffset = Math.max(0, content.length - available);
 		this.detailOffset = Math.max(0, Math.min(this.detailMaxOffset, this.detailOffset));
 		const body = content.slice(this.detailOffset, this.detailOffset + available);
 		const range = content.length <= available ? "" : ` · ${String(this.detailOffset + 1)}-${String(Math.min(content.length, this.detailOffset + available))}/${String(content.length)}`;
-		const footer = [truncateToWidth(this.theme.dim(`Tab/←/→ section · ↑/↓ or j/k scroll · Esc events${range}`), width)];
+		const controls = split && this.mode === "list" ? "Enter/Tab focus details" : "Tab/←/→ section · j/k scroll · Esc events";
+		const footer = [truncateToWidth(this.theme.dim(`${controls}${range}`), width)];
 		return this.fit([
 			...header,
 			...body,
@@ -2562,18 +2777,117 @@ var TrajectoryView = class {
 			...footer
 		], height);
 	}
-	renderRecord(record, selected, width) {
-		const indent = record.kind === "turn" ? "" : record.kind === "step" ? "  " : record.step === void 0 ? "  " : "    ";
+	renderOverviewHeader(width, metrics) {
+		const activeTurn = this.records.filter((record) => record.kind === "turn").at(-1);
+		const total = activeTurn === void 0 ? void 0 : metrics.get(activeTurn.key)?.durationMs;
+		const visibleCount = this.visibleRecordIndexes().length;
+		const recordCount = visibleCount === this.records.length ? `${String(this.records.length)} records` : `${String(visibleCount)}/${String(this.records.length)} visible`;
+		const title = [
+			"Trajectory",
+			this.state.running ? "Live" : "Idle",
+			activeTurn?.title,
+			total === void 0 ? void 0 : formatDuration(total),
+			recordCount
+		].filter((value) => value !== void 0).join(" · ");
+		const bottleneck = bottleneckRecord(this.records, metrics);
+		const bottleneckMetrics = bottleneck === void 0 ? void 0 : metrics.get(bottleneck.key);
+		const bottleneckLine = bottleneck === void 0 || bottleneckMetrics?.durationMs === void 0 ? "Bottleneck · no timed operation available yet" : `Bottleneck · ${bottleneck.title} · ${formatDuration(bottleneckMetrics.durationMs)}${bottleneckMetrics.shareOfParent === void 0 ? "" : ` · ${(bottleneckMetrics.shareOfParent * 100).toFixed(1)}% of ${bottleneckMetrics.parentTitle ?? "parent"}`}`;
+		return [
+			truncateToWidth(this.theme.bold(this.theme.accent(title)), width),
+			truncateToWidth(bottleneck === void 0 ? this.theme.dim(bottleneckLine) : this.theme.warning(bottleneckLine), width),
+			this.theme.dim("─".repeat(Math.max(0, width)))
+		];
+	}
+	renderColumnHeader(width) {
+		if (width < 44) return this.theme.dim(truncateToWidth("EXECUTION", width));
+		const suffix = width >= 72 ? `${padVisible("START", 7)} ${padVisible("TIME", 8)} ${padVisible("SHARE", SHARE_BAR_WIDTH)}` : padVisible("TIME", 8);
+		const executionWidth = Math.max(1, width - visibleWidth(suffix) - 1);
+		return this.theme.dim(`${padVisible("EXECUTION", executionWidth)} ${suffix}`);
+	}
+	renderListRows(width, available, metrics) {
+		this.listPageRows = Math.max(1, available);
+		const visibleIndexes = this.visibleRecordIndexes();
+		const selectedPosition = Math.max(0, visibleIndexes.indexOf(this.index));
+		const maximumStart = Math.max(0, visibleIndexes.length - available);
+		const start = Math.max(0, Math.min(maximumStart, selectedPosition - Math.floor(available / 2)));
+		const visible = visibleIndexes.slice(start, start + available);
+		if (visible.length === 0 && available > 0) return [this.theme.dim("No execution records yet. Events will appear here while the session runs.")];
+		return visible.map((recordIndex) => this.renderRecord(this.records[recordIndex], recordIndex === this.index, width, metrics.get(this.records[recordIndex].key) ?? {
+			offsetMs: 0,
+			slowest: false
+		}));
+	}
+	renderRecord(record, selected, width, metrics) {
+		if (width < 28) return truncateToWidth(`${selected ? "›" : " "} ${kindLabel(record.kind)} ${record.title}`, width, "…");
+		const branch = record.kind === "turn" ? "" : record.kind === "step" ? "  ├─" : record.step === void 0 ? "  ├─" : "  │ ├─";
 		const glyph = record.status === "pending" ? this.theme.warning("○") : record.status === "warning" ? this.theme.warning("!") : record.status === "failed" ? this.theme.error("×") : record.status === "completed" ? this.theme.success("●") : this.theme.dim("·");
+		const turnCollapsed = record.turn !== void 0 && this.collapsedTurns.has(record.turn);
+		const stepCollapsed = record.turn !== void 0 && record.step !== void 0 && this.collapsedSteps.has(stepKey(record.turn, record.step));
+		const disclosure = record.kind === "turn" ? turnCollapsed ? "▸ " : "▾ " : record.kind === "step" ? stepCollapsed ? "▸ " : "▾ " : "";
 		const cursor = selected ? this.theme.accent("›") : " ";
-		const label = kindLabel(record.kind).padEnd(9);
-		const duration = record.completedAt === void 0 ? "" : ` · ${formatDuration(Math.max(0, record.completedAt - record.startedAt))}`;
-		const plain = `${cursor} ${indent}${glyph} ${label} ${record.summary}${duration}`;
-		return truncateToWidth(selected ? this.theme.bold(plain) : plain, width, "…");
+		const compact = width < 48;
+		const label = compact ? kindLabel(record.kind).slice(0, 4).padEnd(4) : kindLabel(record.kind).padEnd(9);
+		const prefix = `${cursor} ${compact ? "" : branch}${disclosure}${glyph} ${label} `;
+		const durationLabel = padVisible(compactDuration(metrics.durationMs).padStart(7), 7);
+		const durationCell = metrics.slowest ? this.theme.warning(`▲${durationLabel}`) : ` ${durationLabel}`;
+		const detailed = width >= 72;
+		const filled = metrics.shareOfParent === void 0 ? 0 : Math.max(1, Math.min(SHARE_BAR_WIDTH, Math.round(metrics.shareOfParent * SHARE_BAR_WIDTH)));
+		const rawBar = metrics.shareOfParent === void 0 ? "·".repeat(SHARE_BAR_WIDTH) : `${"█".repeat(filled)}${"·".repeat(SHARE_BAR_WIDTH - filled)}`;
+		const bar = metrics.slowest ? this.theme.warning(rawBar) : this.theme.dim(rawBar);
+		const offsetCell = padVisible(`+${compactDuration(metrics.offsetMs)}`, 7);
+		const suffix = detailed ? `${offsetCell} ${durationCell} ${bar}` : durationCell;
+		const contentWidth = Math.max(1, width - visibleWidth(prefix) - visibleWidth(suffix) - 1);
+		const line = `${prefix}${padVisible(`${record.title} · ${record.summary}`, contentWidth)} ${suffix}`;
+		return truncateToWidth(selected ? this.theme.bold(line) : line, width, "…");
+	}
+	visibleRecordIndexes() {
+		const indexes = [];
+		for (const [index, record] of this.records.entries()) {
+			if (record.kind === "turn") {
+				indexes.push(index);
+				continue;
+			}
+			if (record.turn !== void 0 && this.collapsedTurns.has(record.turn)) continue;
+			if (record.kind === "step") {
+				indexes.push(index);
+				continue;
+			}
+			if (record.turn !== void 0 && record.step !== void 0 && this.collapsedSteps.has(stepKey(record.turn, record.step))) continue;
+			indexes.push(index);
+		}
+		return indexes;
+	}
+	collapseSelected() {
+		const record = this.records[this.index];
+		if (record?.kind === "turn" && record.turn !== void 0) this.collapsedTurns.add(record.turn);
+		else if (record?.kind === "step" && record.turn !== void 0 && record.step !== void 0) this.collapsedSteps.add(stepKey(record.turn, record.step));
+		else if (record !== void 0) {
+			const parent = parentRecord(record, this.records);
+			const parentIndex = parent === void 0 ? -1 : this.records.findIndex((candidate) => candidate.key === parent.key);
+			if (parentIndex >= 0) this.index = parentIndex;
+		}
+		this.followTail = false;
+		this.detailOffset = 0;
+	}
+	expandSelected() {
+		const record = this.records[this.index];
+		if (record?.kind === "turn" && record.turn !== void 0) this.collapsedTurns.delete(record.turn);
+		else if (record?.kind === "step" && record.turn !== void 0 && record.step !== void 0) this.collapsedSteps.delete(stepKey(record.turn, record.step));
+		this.detailOffset = 0;
 	}
 	move(offset) {
-		this.index = Math.max(0, Math.min(this.records.length - 1, this.index + offset));
+		const visible = this.visibleRecordIndexes();
+		const position = Math.max(0, visible.indexOf(this.index));
+		const target = Math.max(0, Math.min(visible.length - 1, position + offset));
+		this.index = visible[target] ?? this.index;
 		this.followTail = this.index === this.records.length - 1;
+		this.detailOffset = 0;
+	}
+	openDetail() {
+		this.mode = "detail";
+		this.followTail = false;
+		this.tabIndex = 0;
+		this.detailOffset = 0;
 	}
 	selectTab(offset) {
 		this.tabIndex = (this.tabIndex + offset + TABS.length) % TABS.length;

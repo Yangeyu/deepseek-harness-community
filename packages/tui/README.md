@@ -48,8 +48,9 @@ The initial terminal client supports:
 - the same durable turn/step timing, decode throughput, cache-hit, token-usage,
   and context-pressure projections shown below the Harness Web composer;
 - individually clickable tool calls with bounded Arguments and Result details;
-- a full-screen `/trajectory` execution ledger with paired turn, step, and tool
-  lifecycles plus Summary, Payload, Result, Schema, and Timing inspection; and
+- a responsive `/trajectory` trace explorer with paired turn, step, and tool
+  lifecycles, bottleneck timing, and Summary, Input, Output, Schema, and Timing
+  inspection; and
 - an application-owned transcript viewport with pointer and keyboard scrolling,
   stable history position, and automatic tail following.
 
@@ -118,10 +119,17 @@ dsh --profile tui [options]
 `/trajectory` temporarily replaces the conversation composer with a full-screen,
 live execution ledger for the current session. Use `↑`/`↓` or `j`/`k` to select a
 semantic event, `Enter` to inspect it, and `Tab` or `←`/`→` to move through Summary,
-Payload, Result, Schema, and Timing. `Esc` returns from details to the ledger and
-then to chat. `PageUp` at the earliest loaded record fetches an older,
-message-aligned history page without losing live tail events. `Ctrl+C` remains an
-interrupt while the session is running. In a detail tab, `j`/`k` scrolls its content.
+Input, Output, Schema, and Timing. Each ledger row reserves fixed Start, Time, and
+relative Share columns so long titles cannot hide duration; the header and `▲`
+marker identify the current bottleneck. `h`/`l` collapses or expands Turn and Step
+nodes, while `g`/`G` jumps to the first or last visible record.
+
+At 120 columns or wider, the ledger and selected detail render side by side;
+narrow terminals retain the single-pane `Enter`/`Esc` drill-down flow. Summary
+wraps the complete semantic text and includes duration, parent share, lifecycle,
+location, and sequence information. `PageUp` at the earliest loaded record fetches
+an older, message-aligned history page without losing live tail events. `Ctrl+C`
+remains an interrupt while the session is running.
 
 The model selector uses `↑`/`↓` (or `1`–`9`) in both the model and reasoning
 effort steps. `Enter` advances or applies the complete selection to the current session;
