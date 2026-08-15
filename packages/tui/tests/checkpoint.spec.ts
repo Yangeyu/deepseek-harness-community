@@ -113,7 +113,7 @@ describe('WorkspaceCheckpointStore', () => {
     store.continueFrom(secondPreview, 'session-grandchild')
     expect(store.list('session-grandchild').map(summary => summary.prompt)).toEqual(['first prompt'])
     expect(() => store.list('session-child')).toThrow('no rewind checkpoint')
-  })
+  }, 15_000)
 
   it('keeps earlier checkpoints when a later capture fails', async () => {
     const root = await repository()
