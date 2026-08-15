@@ -1112,7 +1112,6 @@ function ansiSequence(enabled, open, close) {
 /** Build the complete color-disabled or standard-ANSI theme. */
 function createTheme(enabled) {
 	const accent = ansi(enabled, 36, 39);
-	const assistant = ansi(enabled, 34, 39);
 	const bold = ansi(enabled, 1, 22);
 	const dim = ansi(enabled, 2, 22);
 	const diffAdded = ansiSequence(enabled, "48;2;12;48;28", "49");
@@ -1120,6 +1119,7 @@ function createTheme(enabled) {
 	const error = ansi(enabled, 31, 39);
 	const reasoning = ansiSequence(enabled, "38;2;148;163;184", "39");
 	const success = ansi(enabled, 32, 39);
+	const tool = ansiSequence(enabled, "38;2;125;211;252", "39");
 	const underline = ansi(enabled, 4, 24);
 	const warning = ansi(enabled, 33, 39);
 	const user = ansi(enabled, 97, 39);
@@ -1135,7 +1135,6 @@ function createTheme(enabled) {
 	};
 	return {
 		accent,
-		assistant,
 		bold,
 		dim,
 		diffAdded,
@@ -1144,6 +1143,7 @@ function createTheme(enabled) {
 		hover,
 		reasoning,
 		success,
+		tool,
 		underline,
 		user,
 		userBlock,
@@ -1298,7 +1298,8 @@ var DiffLineLocator = class {
 };
 //#endregion
 //#region src/diff.ts
-/** Claude Code-style terminal projection for Harness file-diff render intent. */
+/** Terminal-friendly projection for Harness file-diff render intent. */
+const CONTEXT_RADIUS = 2;
 function contentLines(text) {
 	if (text === "") return [];
 	return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
@@ -1309,6 +1310,37 @@ function operationName(title, diffs) {
 	if (/^(?:delete|remove)\b/i.test(title)) return "Delete";
 	const firstWord = title.trim().split(/\s+/, 1)[0];
 	return firstWord === void 0 || firstWord === "" ? "Update" : firstWord;
+}
+function compactContext(lines, path) {
+	const changed = lines.map((line, index) => line.kind === "add" || line.kind === "del" ? index : -1).filter((index) => index >= 0);
+	if (changed.length === 0) return [...lines];
+	const visible = /* @__PURE__ */ new Set();
+	for (const index of changed) {
+		const first = Math.max(0, index - CONTEXT_RADIUS);
+		const last = Math.min(lines.length - 1, index + CONTEXT_RADIUS);
+		for (let cursor = first; cursor <= last; cursor += 1) visible.add(cursor);
+	}
+	const compacted = [];
+	let omitted = false;
+	for (const [index, line] of lines.entries()) {
+		if (!visible.has(index)) {
+			omitted = true;
+			continue;
+		}
+		if (omitted) compacted.push({
+			kind: "gap",
+			path,
+			text: "⋯"
+		});
+		compacted.push(line);
+		omitted = false;
+	}
+	if (omitted) compacted.push({
+		kind: "gap",
+		path,
+		text: "⋯"
+	});
+	return compacted;
 }
 function pushHunk(lines, diff, start) {
 	let added = 0;
@@ -1332,8 +1364,9 @@ function pushHunk(lines, diff, start) {
 			removed
 		};
 	}
-	for (const change of diffLines(diff.oldText, diff.newText)) for (const text of contentLines(change.value)) if (change.removed === true) {
-		lines.push({
+	const hunkLines = [];
+	for (const change of diffLines(diff.oldText, diff.newText, { ignoreNewlineAtEof: true })) for (const text of contentLines(change.value)) if (change.removed === true) {
+		hunkLines.push({
 			kind: "del",
 			path: diff.path,
 			text,
@@ -1342,7 +1375,7 @@ function pushHunk(lines, diff, start) {
 		if (oldNumber !== void 0) oldNumber += 1;
 		removed += 1;
 	} else if (change.added === true) {
-		lines.push({
+		hunkLines.push({
 			kind: "add",
 			path: diff.path,
 			text,
@@ -1351,7 +1384,7 @@ function pushHunk(lines, diff, start) {
 		if (newNumber !== void 0) newNumber += 1;
 		added += 1;
 	} else {
-		lines.push({
+		hunkLines.push({
 			kind: "context",
 			path: diff.path,
 			text,
@@ -1360,6 +1393,7 @@ function pushHunk(lines, diff, start) {
 		if (oldNumber !== void 0) oldNumber += 1;
 		if (newNumber !== void 0) newNumber += 1;
 	}
+	lines.push(...compactContext(hunkLines, diff.path));
 	return {
 		added,
 		removed
@@ -1463,6 +1497,9 @@ function diffSummary(added, removed) {
 }
 //#endregion
 //#region src/transcript.ts
+const DIFF_CONTENT_INDENT = "  ";
+const DISCLOSURE_COLLAPSED = "›";
+const DISCLOSURE_EXPANDED = "⌄";
 function stepKey$1(turn, step) {
 	return `${turn}:${step}`;
 }
@@ -1487,6 +1524,10 @@ function boundedLines(value, limit) {
 		`… ${lines.length - head - tail} lines hidden …`,
 		...lines.slice(-tail)
 	].join("\n");
+}
+function padToWidth(value, width) {
+	const clipped = truncateToWidth(value, width, "…", true);
+	return `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
 }
 function toolArguments(value, limit) {
 	const clean = sanitizeTerminalText(value).trim();
@@ -1864,7 +1905,7 @@ var TranscriptComponent = class {
 	}
 	renderThinking(thinking, width) {
 		const expanded = this.expandedThinking.has(thinking.key);
-		const marker = expanded ? "▾" : "▸";
+		const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED;
 		const label = thinking.streaming ? "Thinking…" : "Thought";
 		if (!expanded) return [this.renderBlockTitle(`${marker} ${label}`, thinking.key, width, this.theme.reasoning)];
 		const contentWidth = Math.max(1, width - 2);
@@ -1876,11 +1917,12 @@ var TranscriptComponent = class {
 	}
 	renderTool(tool, width) {
 		const expanded = this.isToolExpanded(tool.key);
-		const marker = expanded ? "▾" : "▸";
-		const glyph = tool.status === "pending" ? "○" : tool.status === "failed" ? "×" : "●";
+		const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED;
+		const glyph = tool.status === "pending" ? "○" : tool.status === "failed" ? "×" : "•";
 		const paint = tool.status === "pending" ? this.theme.warning : tool.status === "failed" ? this.theme.error : this.theme.success;
+		const renderedGlyph = tool.status === "completed" ? this.theme.bold(paint(glyph)) : paint(glyph);
 		const title = `${marker} ${glyph} ${tool.title}`;
-		const renderedTitle = this.hoveredBlockKey === tool.key ? this.theme.hover(truncateToWidth(title, width, "…")) : truncateToWidth(`${this.theme.dim(`${marker} `)}${paint(glyph)} ${this.theme.assistant(tool.title)}`, width, "…");
+		const renderedTitle = this.hoveredBlockKey === tool.key ? this.theme.hover(truncateToWidth(title, width, "…")) : truncateToWidth(`${this.theme.dim(`${marker} `)}${renderedGlyph} ${this.theme.tool(tool.title)}`, width, "…");
 		if (!expanded) return [renderedTitle];
 		const sections = [...tool.arguments === void 0 ? [] : [{
 			label: "Arguments",
@@ -1910,45 +1952,55 @@ var TranscriptComponent = class {
 		const { offset } = this.resolveBlockOffset(diff.key, model.lines.length, this.maxToolOutputLines, false);
 		const visible = model.lines.slice(offset, offset + this.maxToolOutputLines);
 		const numberWidth = Math.max(2, ...model.lines.map((line) => String(line.number ?? "").length));
+		const contentWidth = Math.max(1, width - 2);
 		return [
 			title,
-			truncateToWidth(this.theme.dim(`  └ ${diffSummary(model.added, model.removed)}`), width),
-			...visible.map((line) => this.renderDiffLine(line, width, numberWidth))
+			truncateToWidth(this.theme.reasoning(`${DIFF_CONTENT_INDENT}└ ${diffSummary(model.added, model.removed)}`), width),
+			...visible.flatMap((line) => this.renderDiffLine(line, contentWidth, numberWidth).map((rendered) => `${DIFF_CONTENT_INDENT}${rendered}`))
 		];
 	}
 	renderDiffTitle(operation, target, settled, collapsed, key, width) {
-		const marker = collapsed ? "▸ " : "";
+		const marker = `${collapsed ? DISCLOSURE_COLLAPSED : DISCLOSURE_EXPANDED} `;
 		const cleanOperation = sanitizeTerminalText(operation);
 		const cleanTarget = sanitizeTerminalText(target);
-		const status = settled ? "●" : "○";
+		const status = settled ? "•" : "○";
 		const plain = `${marker}${status} ${cleanOperation}(${cleanTarget})`;
 		if (this.hoveredBlockKey === key) return this.theme.hover(truncateToWidth(plain, width, "…"));
 		return truncateToWidth([
 			marker,
-			(settled ? this.theme.success : this.theme.warning)(status),
-			` ${this.theme.assistant(cleanOperation)}(`,
+			settled ? this.theme.bold(this.theme.success(status)) : this.theme.warning(status),
+			` ${this.theme.tool(cleanOperation)}(`,
 			this.theme.underline(cleanTarget),
 			")"
 		].join(""), width, "…");
 	}
 	renderDiffLine(line, width, numberWidth) {
 		switch (line.kind) {
-			case "file": return truncateToWidth(this.theme.bold(`  ${sanitizeTerminalText(line.text)}`), width);
-			case "gap": return truncateToWidth(this.theme.dim("  ⋯"), width);
+			case "file": return [truncateToWidth(this.theme.bold(sanitizeTerminalText(line.text)), width)];
+			case "gap": return [truncateToWidth(this.theme.dim("⋯"), width)];
 			case "context": {
-				const prefix = this.theme.dim(`${String(line.number ?? "").padStart(numberWidth)}   `);
-				const code = highlightDiffText(sanitizeTerminalText(line.text), line.path, this.theme);
-				return truncateToWidth(`${prefix}${code}`, width, "…");
+				const gutterWidth = numberWidth + 3;
+				const firstPrefix = this.theme.dim(`${String(line.number ?? "").padStart(numberWidth)}   `);
+				const continuationPrefix = " ".repeat(gutterWidth);
+				const code = this.theme.reasoning(sanitizeTerminalText(line.text));
+				const wrapped = wrapTextWithAnsi(code, Math.max(1, width - gutterWidth));
+				return (wrapped.length === 0 ? [""] : wrapped).map((part, index) => truncateToWidth(`${index === 0 ? firstPrefix : continuationPrefix}${part}`, width, "…"));
 			}
 			case "del": {
-				const prefix = this.theme.error(`${String(line.number ?? "").padStart(numberWidth)} - `);
+				const gutterWidth = numberWidth + 3;
+				const firstPrefix = this.theme.error(`${String(line.number ?? "").padStart(numberWidth)} - `);
+				const continuationPrefix = " ".repeat(gutterWidth);
 				const code = highlightDiffText(sanitizeTerminalText(line.text), line.path, this.theme);
-				return this.theme.diffRemoved(truncateToWidth(`${prefix}${code}`, width, "…", true));
+				const wrapped = wrapTextWithAnsi(code, Math.max(1, width - gutterWidth));
+				return (wrapped.length === 0 ? [""] : wrapped).map((part, index) => this.theme.diffRemoved(padToWidth(`${index === 0 ? firstPrefix : continuationPrefix}${part}`, width)));
 			}
 			case "add": {
-				const prefix = this.theme.success(`${String(line.number ?? "").padStart(numberWidth)} + `);
+				const gutterWidth = numberWidth + 3;
+				const firstPrefix = this.theme.success(`${String(line.number ?? "").padStart(numberWidth)} + `);
+				const continuationPrefix = " ".repeat(gutterWidth);
 				const code = highlightDiffText(sanitizeTerminalText(line.text), line.path, this.theme);
-				return this.theme.diffAdded(truncateToWidth(`${prefix}${code}`, width, "…", true));
+				const wrapped = wrapTextWithAnsi(code, Math.max(1, width - gutterWidth));
+				return (wrapped.length === 0 ? [""] : wrapped).map((part, index) => this.theme.diffAdded(padToWidth(`${index === 0 ? firstPrefix : continuationPrefix}${part}`, width)));
 			}
 		}
 	}
@@ -2989,6 +3041,14 @@ function sessionDescription(session) {
 function questionTitle(question) {
 	return [question.header, question.question].filter(Boolean).join(" · ");
 }
+function shellArgument(value) {
+	if (/^[A-Za-z0-9._:-]+$/.test(value)) return value;
+	return `'${value.replaceAll("'", "'\\''")}'`;
+}
+function resumeHint(sessionId) {
+	if (sessionId === void 0) return void 0;
+	return `\nResume this session with:\n  dsh-tui --resume ${shellArgument(String(sessionId))}\n\n`;
+}
 /** Main-screen pi-tui application for one in-process Harness API client. */
 var TuiApplication = class {
 	config;
@@ -3719,7 +3779,9 @@ var TuiApplication = class {
 	async requestExit(code) {
 		if (this.exiting) return;
 		this.exiting = true;
+		const hint = code === 0 ? resumeHint(this.controller.current.sessionId) : void 0;
 		await this.dispose();
+		if (hint !== void 0) this.runtime.stdout.write(hint);
 		this.runtime.exit(code);
 	}
 };
@@ -4128,7 +4190,7 @@ function parseArgs(args, base) {
 		config
 	};
 }
-const HELP = `Usage: dsh --profile tui [options]
+const HELP = `Usage: dsh-tui [options]
 
 Options:
   --resume <session-id>  Resume an existing session

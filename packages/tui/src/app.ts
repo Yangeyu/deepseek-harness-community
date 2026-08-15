@@ -87,6 +87,16 @@ function questionTitle(question: QuestionPrompt['questions'][number]): string {
   return [question.header, question.question].filter(Boolean).join(' · ')
 }
 
+function shellArgument(value: string): string {
+  if (/^[A-Za-z0-9._:-]+$/.test(value)) return value
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+function resumeHint(sessionId: TuiState['sessionId']): string | undefined {
+  if (sessionId === undefined) return undefined
+  return `\nResume this session with:\n  dsh-tui --resume ${shellArgument(String(sessionId))}\n\n`
+}
+
 /** Main-screen pi-tui application for one in-process Harness API client. */
 export class TuiApplication implements TuiControllerSink {
   private readonly terminal = new ProcessTerminal()
@@ -931,7 +941,9 @@ export class TuiApplication implements TuiControllerSink {
   private async requestExit(code: number): Promise<void> {
     if (this.exiting) return
     this.exiting = true
+    const hint = code === 0 ? resumeHint(this.controller.current.sessionId) : undefined
     await this.dispose()
+    if (hint !== undefined) this.runtime.stdout.write(hint)
     this.runtime.exit(code)
   }
 }

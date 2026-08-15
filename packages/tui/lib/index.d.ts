@@ -185,7 +185,6 @@ type Paint = (text: string) => string;
 /** Terminal presentation roles used by the renderer and dialogs. */
 interface TuiTheme {
   accent: Paint;
-  assistant: Paint;
   bold: Paint;
   dim: Paint;
   diffAdded: Paint;
@@ -194,6 +193,7 @@ interface TuiTheme {
   hover: Paint;
   reasoning: Paint;
   success: Paint;
+  tool: Paint;
   underline: Paint;
   user: Paint;
   userBlock: Paint;

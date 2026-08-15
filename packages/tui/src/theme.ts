@@ -10,7 +10,6 @@ type Paint = (text: string) => string
 /** Terminal presentation roles used by the renderer and dialogs. */
 export interface TuiTheme {
   accent: Paint
-  assistant: Paint
   bold: Paint
   dim: Paint
   diffAdded: Paint
@@ -19,6 +18,7 @@ export interface TuiTheme {
   hover: Paint
   reasoning: Paint
   success: Paint
+  tool: Paint
   underline: Paint
   user: Paint
   userBlock: Paint
@@ -39,7 +39,6 @@ function ansiSequence(enabled: boolean, open: string, close: string): Paint {
 /** Build the complete color-disabled or standard-ANSI theme. */
 export function createTheme(enabled: boolean): TuiTheme {
   const accent = ansi(enabled, 36, 39)
-  const assistant = ansi(enabled, 34, 39)
   const bold = ansi(enabled, 1, 22)
   const dim = ansi(enabled, 2, 22)
   const diffAdded = ansiSequence(enabled, '48;2;12;48;28', '49')
@@ -50,6 +49,8 @@ export function createTheme(enabled: boolean): TuiTheme {
   // sacrificing legibility.
   const reasoning = ansiSequence(enabled, '38;2;148;163;184', '39')
   const success = ansi(enabled, 32, 39)
+  // Tool titles need more luminance than standard ANSI blue on dark terminals.
+  const tool = ansiSequence(enabled, '38;2;125;211;252', '39')
   const underline = ansi(enabled, 4, 24)
   const warning = ansi(enabled, 33, 39)
   const user = ansi(enabled, 97, 39)
@@ -65,7 +66,6 @@ export function createTheme(enabled: boolean): TuiTheme {
   }
   return {
     accent,
-    assistant,
     bold,
     dim,
     diffAdded,
@@ -74,6 +74,7 @@ export function createTheme(enabled: boolean): TuiTheme {
     hover,
     reasoning,
     success,
+    tool,
     underline,
     user,
     userBlock,

@@ -57,6 +57,10 @@ interface BlockHit {
   lastLine: number
 }
 
+const DIFF_CONTENT_INDENT = '  '
+const DISCLOSURE_COLLAPSED = '›'
+const DISCLOSURE_EXPANDED = '⌄'
+
 function stepKey(turn: number, step: number): string {
   return `${turn}:${step}`
 }
@@ -87,6 +91,11 @@ function boundedLines(value: string, limit: number): string {
   const head = Math.max(1, Math.ceil(limit / 2))
   const tail = Math.max(1, Math.floor(limit / 2))
   return [...lines.slice(0, head), `… ${lines.length - head - tail} lines hidden …`, ...lines.slice(-tail)].join('\n')
+}
+
+function padToWidth(value: string, width: number): string {
+  const clipped = truncateToWidth(value, width, '…', true)
+  return `${clipped}${' '.repeat(Math.max(0, width - visibleWidth(clipped)))}`
 }
 
 function toolArguments(value: string, limit: number): string | undefined {
@@ -526,7 +535,7 @@ export class TranscriptComponent implements Component {
     width: number,
   ): string[] {
     const expanded = this.expandedThinking.has(thinking.key)
-    const marker = expanded ? '▾' : '▸'
+    const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
     const label = thinking.streaming ? 'Thinking…' : 'Thought'
     if (!expanded) return [this.renderBlockTitle(`${marker} ${label}`, thinking.key, width, this.theme.reasoning)]
 
@@ -554,15 +563,16 @@ export class TranscriptComponent implements Component {
 
   private renderTool(tool: NonNullable<TranscriptRow['tool']>, width: number): string[] {
     const expanded = this.isToolExpanded(tool.key)
-    const marker = expanded ? '▾' : '▸'
-    const glyph = tool.status === 'pending' ? '○' : tool.status === 'failed' ? '×' : '●'
+    const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
+    const glyph = tool.status === 'pending' ? '○' : tool.status === 'failed' ? '×' : '•'
     const paint = tool.status === 'pending'
       ? this.theme.warning
       : tool.status === 'failed' ? this.theme.error : this.theme.success
+    const renderedGlyph = tool.status === 'completed' ? this.theme.bold(paint(glyph)) : paint(glyph)
     const title = `${marker} ${glyph} ${tool.title}`
     const renderedTitle = this.hoveredBlockKey === tool.key
       ? this.theme.hover(truncateToWidth(title, width, '…'))
-      : truncateToWidth(`${this.theme.dim(`${marker} `)}${paint(glyph)} ${this.theme.assistant(tool.title)}`, width, '…')
+      : truncateToWidth(`${this.theme.dim(`${marker} `)}${renderedGlyph} ${this.theme.tool(tool.title)}`, width, '…')
     if (!expanded) return [renderedTitle]
 
     const sections = [
@@ -598,10 +608,12 @@ export class TranscriptComponent implements Component {
     const { offset } = this.resolveBlockOffset(diff.key, model.lines.length, this.maxToolOutputLines, false)
     const visible = model.lines.slice(offset, offset + this.maxToolOutputLines)
     const numberWidth = Math.max(2, ...model.lines.map(line => String(line.number ?? '').length))
+    const contentWidth = Math.max(1, width - DIFF_CONTENT_INDENT.length)
     return [
       title,
-      truncateToWidth(this.theme.dim(`  └ ${diffSummary(model.added, model.removed)}`), width),
-      ...visible.map(line => this.renderDiffLine(line, width, numberWidth)),
+      truncateToWidth(this.theme.reasoning(`${DIFF_CONTENT_INDENT}└ ${diffSummary(model.added, model.removed)}`), width),
+      ...visible.flatMap(line => this.renderDiffLine(line, contentWidth, numberWidth)
+        .map(rendered => `${DIFF_CONTENT_INDENT}${rendered}`)),
     ]
   }
 
@@ -613,39 +625,53 @@ export class TranscriptComponent implements Component {
     key: string,
     width: number,
   ): string {
-    const marker = collapsed ? '▸ ' : ''
+    const marker = `${collapsed ? DISCLOSURE_COLLAPSED : DISCLOSURE_EXPANDED} `
     const cleanOperation = sanitizeTerminalText(operation)
     const cleanTarget = sanitizeTerminalText(target)
-    const status = settled ? '●' : '○'
+    const status = settled ? '•' : '○'
     const plain = `${marker}${status} ${cleanOperation}(${cleanTarget})`
     if (this.hoveredBlockKey === key) return this.theme.hover(truncateToWidth(plain, width, '…'))
     return truncateToWidth([
       marker,
-      (settled ? this.theme.success : this.theme.warning)(status),
-      ` ${this.theme.assistant(cleanOperation)}(`,
+      settled ? this.theme.bold(this.theme.success(status)) : this.theme.warning(status),
+      ` ${this.theme.tool(cleanOperation)}(`,
       this.theme.underline(cleanTarget),
       ')',
     ].join(''), width, '…')
   }
 
-  private renderDiffLine(line: DiffDisplayLine, width: number, numberWidth: number): string {
+  private renderDiffLine(line: DiffDisplayLine, width: number, numberWidth: number): string[] {
     switch (line.kind) {
-      case 'file': return truncateToWidth(this.theme.bold(`  ${sanitizeTerminalText(line.text)}`), width)
-      case 'gap': return truncateToWidth(this.theme.dim('  ⋯'), width)
+      case 'file': return [truncateToWidth(this.theme.bold(sanitizeTerminalText(line.text)), width)]
+      case 'gap': return [truncateToWidth(this.theme.dim('⋯'), width)]
       case 'context': {
-        const prefix = this.theme.dim(`${String(line.number ?? '').padStart(numberWidth)}   `)
-        const code = highlightDiffText(sanitizeTerminalText(line.text), line.path, this.theme)
-        return truncateToWidth(`${prefix}${code}`, width, '…')
+        const gutterWidth = numberWidth + 3
+        const firstPrefix = this.theme.dim(`${String(line.number ?? '').padStart(numberWidth)}   `)
+        const continuationPrefix = ' '.repeat(gutterWidth)
+        const code = this.theme.reasoning(sanitizeTerminalText(line.text))
+        const wrapped = wrapTextWithAnsi(code, Math.max(1, width - gutterWidth))
+        return (wrapped.length === 0 ? [''] : wrapped).map((part, index) =>
+          truncateToWidth(`${index === 0 ? firstPrefix : continuationPrefix}${part}`, width, '…'))
       }
       case 'del': {
-        const prefix = this.theme.error(`${String(line.number ?? '').padStart(numberWidth)} - `)
+        const gutterWidth = numberWidth + 3
+        const firstPrefix = this.theme.error(`${String(line.number ?? '').padStart(numberWidth)} - `)
+        const continuationPrefix = ' '.repeat(gutterWidth)
         const code = highlightDiffText(sanitizeTerminalText(line.text), line.path, this.theme)
-        return this.theme.diffRemoved(truncateToWidth(`${prefix}${code}`, width, '…', true))
+        const wrapped = wrapTextWithAnsi(code, Math.max(1, width - gutterWidth))
+        return (wrapped.length === 0 ? [''] : wrapped).map((part, index) => this.theme.diffRemoved(
+          padToWidth(`${index === 0 ? firstPrefix : continuationPrefix}${part}`, width),
+        ))
       }
       case 'add': {
-        const prefix = this.theme.success(`${String(line.number ?? '').padStart(numberWidth)} + `)
+        const gutterWidth = numberWidth + 3
+        const firstPrefix = this.theme.success(`${String(line.number ?? '').padStart(numberWidth)} + `)
+        const continuationPrefix = ' '.repeat(gutterWidth)
         const code = highlightDiffText(sanitizeTerminalText(line.text), line.path, this.theme)
-        return this.theme.diffAdded(truncateToWidth(`${prefix}${code}`, width, '…', true))
+        const wrapped = wrapTextWithAnsi(code, Math.max(1, width - gutterWidth))
+        return (wrapped.length === 0 ? [''] : wrapped).map((part, index) => this.theme.diffAdded(
+          padToWidth(`${index === 0 ? firstPrefix : continuationPrefix}${part}`, width),
+        ))
       }
     }
   }

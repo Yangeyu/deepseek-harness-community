@@ -22,6 +22,7 @@ interface AppInternals {
   handleGlobalInput(data: string): { consume?: boolean } | undefined
   requestRewind(): void
   performRewind(preview: RewindPreview): Promise<void>
+  requestExit(code: number): Promise<void>
   submit(value: string, forcedMode?: 'queue' | 'steer'): Promise<void>
 }
 
@@ -35,12 +36,14 @@ function memoryService(overrides: Partial<ProjectMemoryService> = {}): ProjectMe
 function application(
   checkpoints: WorkspaceCheckpointStore = new WorkspaceCheckpointStore(10),
   memory: ProjectMemoryService = memoryService(),
+  runtimeOverrides: Partial<TuiRuntime> = {},
 ): TuiApplication {
   const runtime: TuiRuntime = {
     stdin: process.stdin,
     stdout: process.stdout,
     stderr: process.stderr,
     exit: vi.fn(),
+    ...runtimeOverrides,
   }
   const app = new TuiApplication(
     {} as IApiClient,
@@ -155,6 +158,29 @@ describe('TuiApplication input routing', () => {
     internals.trajectoryView?.handleInput('\u001b')
     expect(internals.trajectoryView).toBeUndefined()
     expect(internals.composerModalActive).toBe(false)
+  })
+
+  it('prints a copyable session resume command after restoring the terminal', async () => {
+    const write = vi.fn(() => true)
+    const exit = vi.fn()
+    const app = application(undefined, undefined, {
+      stdout: { write } as unknown as NodeJS.WriteStream,
+      exit,
+    })
+    const internals = app as unknown as AppInternals
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue({
+      ...internals.controller.current,
+      sessionId: 'session-123' as TuiState['sessionId'],
+    })
+    const dispose = vi.spyOn(app, 'dispose').mockResolvedValue()
+
+    await internals.requestExit(0)
+
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(write).toHaveBeenCalledWith('\nResume this session with:\n  dsh-tui --resume session-123\n\n')
+    expect(exit).toHaveBeenCalledWith(0)
+    expect(dispose.mock.invocationCallOrder[0]).toBeLessThan(write.mock.invocationCallOrder[0] ?? 0)
+    expect(write.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0] ?? 0)
   })
 
   it('restores workspace, memory mutations, and conversation as one rewind transaction', async () => {

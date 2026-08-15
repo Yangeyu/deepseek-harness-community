@@ -94,13 +94,16 @@ pnpm run start
 ## Command-line options
 
 ```text
-dsh --profile tui [options]
+dsh-tui [options]
 
 --resume <session-id>  Resume an existing session
 --cwd <path>           Start a new session in this directory
 --no-color             Disable ANSI color
 -h, --help             Show help
 ```
+
+After a normal exit, the restored shell prints a copyable
+`dsh-tui --resume <session-id>` command for the active session.
 
 ## Keyboard and input behavior
 

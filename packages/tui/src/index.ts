@@ -83,7 +83,7 @@ function parseArgs(args: readonly string[], base: TuiConfig): ParsedArgs {
   return { help, config }
 }
 
-const HELP = `Usage: dsh --profile tui [options]
+const HELP = `Usage: dsh-tui [options]
 
 Options:
   --resume <session-id>  Resume an existing session

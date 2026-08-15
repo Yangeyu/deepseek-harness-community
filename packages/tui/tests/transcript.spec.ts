@@ -156,17 +156,17 @@ describe('TranscriptComponent', () => {
     ]), createTheme(true), true, 8, 3)
 
     const collapsed = transcript.render(80).join('\n')
-    expect(collapsed).toContain('▸ Thought')
+    expect(collapsed).toContain('› Thought')
     expect(collapsed).not.toContain('thought 1')
     expect(collapsed).toContain('final answer')
 
     expect(transcript.handlePointer(0, 'move')).toBe(true)
     const hovered = transcript.render(80).join('\n')
-    expect(hovered).toContain('\u001b[1m\u001b[36m▸ Thought\u001b[39m\u001b[22m')
+    expect(hovered).toContain('\u001b[1m\u001b[36m› Thought\u001b[39m\u001b[22m')
     expect(hovered).not.toContain('\u001b[7m')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const expanded = transcript.render(80).join('\n')
-    expect(expanded).toContain('▾ Thought')
+    expect(expanded).toContain('⌄ Thought')
     expect(expanded).toContain('thought 1')
     expect(expanded).toContain('\u001b[38;2;148;163;184m')
     expect(expanded).not.toContain('thought 8')
@@ -194,7 +194,7 @@ describe('TranscriptComponent', () => {
     const events = Array.from({ length: 5 }, (_, index) => reasoningChunk(index, `- stream ${index + 1}\n`))
     const transcript = new TranscriptComponent(state(events), createTheme(false), true, 8, 3)
 
-    expect(transcript.render(80).join('\n')).toContain('▸ Thinking…')
+    expect(transcript.render(80).join('\n')).toContain('› Thinking…')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const following = transcript.render(80).join('\n')
     expect(following).toContain('stream 5')
@@ -369,17 +369,20 @@ describe('TranscriptComponent', () => {
           view: { card: 'generic', title: 'Search project', content: [{ type: 'text', text: '3 matches' }] },
         },
       }),
-    ]), createTheme(false), true, 8)
+    ]), createTheme(true), true, 8)
 
-    const collapsed = transcript.render(80).join('\n')
-    expect(collapsed).toContain('▸ ● Search project')
+    const collapsedOutput = transcript.render(80).join('\n')
+    const collapsed = stripTerminalSequences(collapsedOutput)
+    expect(collapsed).toContain('› • Search project')
+    expect(collapsedOutput).toContain('\u001b[1m\u001b[32m•\u001b[39m\u001b[22m')
+    expect(collapsedOutput).toContain('\u001b[38;2;125;211;252mSearch project\u001b[39m')
     expect(collapsed).not.toContain('render details')
     expect(collapsed).not.toContain('3 matches')
 
     expect(transcript.handlePointer(0, 'move')).toBe(true)
     expect(transcript.handlePointer(0, 'click')).toBe(true)
-    const expanded = transcript.render(80).join('\n')
-    expect(expanded).toContain('▾ ● Search project')
+    const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(expanded).toContain('⌄ • Search project')
     expect(expanded).toContain('Arguments')
     expect(expanded).toContain('render details')
     expect(expanded).toContain('Result')
@@ -438,10 +441,17 @@ describe('TranscriptComponent', () => {
 
     const initial = transcript.render(80).join('\n')
     const plainInitial = stripTerminalSequences(initial)
-    expect(plainInitial).toContain('● Update(src/app.ts)')
+    expect(plainInitial).toContain('⌄ • Update(src/app.ts)')
     expect(plainInitial).toContain('└ Added 1 line, removed 1 line')
     expect(plainInitial).toContain('3 - const mode = "old"')
     expect(initial).toContain('\u001b[48;2;58;23;31m')
+    const initialLines = plainInitial.split('\n')
+    const titleColumn = initialLines.find(line => line.includes('⌄ • Update(src/app.ts)'))?.indexOf('•') ?? -1
+    const summaryColumn = initialLines.find(line => line.includes('└ Added 1 line'))?.indexOf('└') ?? -1
+    const removedColumn = initialLines.find(line => line.includes('3 - const mode'))?.indexOf('3 -') ?? -1
+    expect(titleColumn).toBeGreaterThanOrEqual(0)
+    expect(summaryColumn).toBe(titleColumn)
+    expect(removedColumn).toBeGreaterThan(summaryColumn)
     expect(plainInitial).not.toContain('stale')
     expect(plainInitial).not.toContain('"new"')
 
@@ -453,8 +463,55 @@ describe('TranscriptComponent', () => {
     expect(transcript.render(80).join('\n')).not.toContain('\u001b[7m')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(collapsed).toContain('▸ ● Update(src/app.ts)')
+    expect(collapsed).toContain('› • Update(src/app.ts)')
     expect(collapsed).not.toContain('const mode')
+  })
+
+  it('wraps long changed lines without hiding their tail', () => {
+    const longLine = 'A long changed line keeps wrapping until the unique VISIBLE_TAIL remains readable.'
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'tool/call',
+          seq: 0,
+          time: 1,
+          data: { turn: 1, step: 1, callId: 'call-long-diff', name: 'write', arguments: '{}' },
+        },
+        view: {
+          for: 'call',
+          view: { card: 'diff', title: 'Write notes.txt', diffs: [{ path: 'notes.txt', oldText: null, newText: longLine }] },
+        },
+      }),
+      entry({
+        event: {
+          type: 'tool/result',
+          seq: 1,
+          time: 2,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'm-long-diff',
+              role: 'user',
+              source: { kind: 'tool', callId: 'call-long-diff' },
+              content: [{ type: 'tool-result', toolCallId: 'call-long-diff', content: [{ type: 'text', text: 'done' }] }],
+            },
+          },
+        },
+        view: {
+          for: 'result',
+          view: { card: 'diff', title: 'Write notes.txt', diffs: [{ path: 'notes.txt', oldText: null, newText: longLine }] },
+        },
+      }),
+    ]), createTheme(true), true, 8)
+
+    const output = transcript.render(32)
+    const plain = stripTerminalSequences(output.join('\n'))
+    const addedRows = output.filter(line => line.includes('\u001b[48;2;12;48;28m'))
+    expect(plain).toContain('VISIBLE_TAIL')
+    expect(addedRows.length).toBeGreaterThan(1)
+    expect(output.every(line => visibleWidth(line) === 32)).toBe(true)
   })
 })
 

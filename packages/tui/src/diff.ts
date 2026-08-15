@@ -1,4 +1,4 @@
-/** Claude Code-style terminal projection for Harness file-diff render intent. */
+/** Terminal-friendly projection for Harness file-diff render intent. */
 
 import { highlight, supportsLanguage, type Theme as SyntaxTheme } from 'cli-highlight'
 import { diffLines } from 'diff'
@@ -6,6 +6,8 @@ import type { ToolResultView } from '@deepseek-ai/dsh-host-apiproxy'
 import type { TuiTheme } from './theme.ts'
 
 type FileDiff = Extract<ToolResultView, { card: 'diff' }>['diffs'][number]
+
+const CONTEXT_RADIUS = 2
 
 /** One visible row in an inline file-edit card. */
 export interface DiffDisplayLine {
@@ -38,6 +40,34 @@ function operationName(title: string, diffs: readonly FileDiff[]): string {
   return firstWord === undefined || firstWord === '' ? 'Update' : firstWord
 }
 
+function compactContext(lines: readonly DiffDisplayLine[], path: string): DiffDisplayLine[] {
+  const changed = lines
+    .map((line, index) => line.kind === 'add' || line.kind === 'del' ? index : -1)
+    .filter(index => index >= 0)
+  if (changed.length === 0) return [...lines]
+
+  const visible = new Set<number>()
+  for (const index of changed) {
+    const first = Math.max(0, index - CONTEXT_RADIUS)
+    const last = Math.min(lines.length - 1, index + CONTEXT_RADIUS)
+    for (let cursor = first; cursor <= last; cursor += 1) visible.add(cursor)
+  }
+
+  const compacted: DiffDisplayLine[] = []
+  let omitted = false
+  for (const [index, line] of lines.entries()) {
+    if (!visible.has(index)) {
+      omitted = true
+      continue
+    }
+    if (omitted) compacted.push({ kind: 'gap', path, text: '⋯' })
+    compacted.push(line)
+    omitted = false
+  }
+  if (omitted) compacted.push({ kind: 'gap', path, text: '⋯' })
+  return compacted
+}
+
 function pushHunk(
   lines: DiffDisplayLine[],
   diff: FileDiff,
@@ -56,23 +86,25 @@ function pushHunk(
     }
     return { added, removed }
   }
-  for (const change of diffLines(diff.oldText, diff.newText)) {
+  const hunkLines: DiffDisplayLine[] = []
+  for (const change of diffLines(diff.oldText, diff.newText, { ignoreNewlineAtEof: true })) {
     for (const text of contentLines(change.value)) {
       if (change.removed === true) {
-        lines.push({ kind: 'del', path: diff.path, text, number: oldNumber })
+        hunkLines.push({ kind: 'del', path: diff.path, text, number: oldNumber })
         if (oldNumber !== undefined) oldNumber += 1
         removed += 1
       } else if (change.added === true) {
-        lines.push({ kind: 'add', path: diff.path, text, number: newNumber })
+        hunkLines.push({ kind: 'add', path: diff.path, text, number: newNumber })
         if (newNumber !== undefined) newNumber += 1
         added += 1
       } else {
-        lines.push({ kind: 'context', path: diff.path, text, number: newNumber })
+        hunkLines.push({ kind: 'context', path: diff.path, text, number: newNumber })
         if (oldNumber !== undefined) oldNumber += 1
         if (newNumber !== undefined) newNumber += 1
       }
     }
   }
+  lines.push(...compactContext(hunkLines, diff.path))
   return { added, removed }
 }
 
