@@ -1,6 +1,6 @@
 import { Editor } from '@earendil-works/pi-tui'
 import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
-import type { MemoryMutation, ProjectMemoryService } from '@yangeyu/deepseek-harness-memory'
+import type { MemoryMutation, ProjectMemoryService } from '@vascent/deepseek-harness-memory'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TuiApplication, type TuiRuntime } from '../src/app.ts'
 import { WorkspaceCheckpointStore, type RewindPreview } from '../src/checkpoint.ts'

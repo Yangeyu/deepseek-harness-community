@@ -2,7 +2,7 @@
  * Third-party terminal profile bundle for DeepSeek Harness. The application
  * consumes only the transport-neutral ApiProxy and keeps pi-tui behind its own
  * controller/rendering seam.
- * @module @yangeyu/deepseek-harness-tui
+ * @module @vascent/deepseek-harness-tui
  */
 
 import type { Context } from '@deepseek-ai/cordis'

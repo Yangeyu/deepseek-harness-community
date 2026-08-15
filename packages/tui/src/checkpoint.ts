@@ -18,7 +18,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
-import type { MemoryMutation } from '@yangeyu/deepseek-harness-memory'
+import type { MemoryMutation } from '@vascent/deepseek-harness-memory'
 
 const GIT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 

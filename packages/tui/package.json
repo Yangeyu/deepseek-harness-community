@@ -1,5 +1,5 @@
 {
-  "name": "@yangeyu/deepseek-harness-tui",
+  "name": "@vascent/deepseek-harness-tui",
   "version": "0.1.0",
   "description": "Claude Code-inspired terminal client bundle for DeepSeek Harness",
   "keywords": [
@@ -123,7 +123,7 @@
     "@deepseek-ai/dsh-base": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-session-projection": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-token-meter": ">=0.1.0-rc.5 <0.2.0",
-    "@yangeyu/deepseek-harness-memory": "workspace:^",
+    "@vascent/deepseek-harness-memory": "workspace:^",
     "@types/node": "^22.20.0",
     "oxlint": "1.76.0",
     "tsdown": "^0.22.2",

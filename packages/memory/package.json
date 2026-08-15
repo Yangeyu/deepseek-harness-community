@@ -1,5 +1,5 @@
 {
-  "name": "@yangeyu/deepseek-harness-memory",
+  "name": "@vascent/deepseek-harness-memory",
   "version": "0.1.0",
   "description": "File-backed project memory plugin for DeepSeek Harness",
   "keywords": [

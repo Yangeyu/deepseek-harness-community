@@ -20,7 +20,7 @@ import type {
   MemoryDocument,
   MemoryOverview,
   MemorySessionPolicy,
-} from '@yangeyu/deepseek-harness-memory'
+} from '@vascent/deepseek-harness-memory'
 import { sanitizeTerminalText } from './text.ts'
 import type { TuiTheme } from './theme.ts'
 import type { RewindCheckpointSummary, RewindPreview } from './checkpoint.ts'

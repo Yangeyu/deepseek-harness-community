@@ -1,6 +1,6 @@
 {
-  "name": "@yangeyu/dsh-tui",
-  "version": "0.1.1",
+  "name": "@vascent/dsh-tui",
+  "version": "0.1.2",
   "description": "One-command DeepSeek Harness TUI launcher and community extension workspace",
   "keywords": [
     "deepseek",
@@ -39,12 +39,13 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @yangeyu/deepseek-harness-memory run build && pnpm --filter @yangeyu/deepseek-harness-tui run build",
+    "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-tui run build",
     "lint": "pnpm --filter './packages/*' run lint",
     "typecheck": "pnpm --filter './packages/*' run typecheck",
     "test": "node --test tests/*.test.js && pnpm --filter './packages/*' run test",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
     "pack:check": "npm pack --dry-run",
+    "release": "release-it",
     "start": "node bin/dsh-tui.js"
   },
   "dependencies": {
@@ -76,5 +77,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "release-it": "21.0.2"
   }
 }

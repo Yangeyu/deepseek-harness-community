@@ -35,7 +35,7 @@
       name: '@deepseek-ai/dsh-workspace'
 
     - id: memory
-      name: '@yangeyu/deepseek-harness-tui/memory'
+      name: '@vascent/deepseek-harness-tui/memory'
       config:
         root: !!js dshHomePath('memories')
         useMemories: true
@@ -69,7 +69,7 @@
       name: '@deepseek-ai/dsh-cordis-host-runner'
 
     - id: terminal
-      name: '@yangeyu/deepseek-harness-tui'
+      name: '@vascent/deepseek-harness-tui'
       config:
         historyMessages: 200
         rewindCheckpoints: 20

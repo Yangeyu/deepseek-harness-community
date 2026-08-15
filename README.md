@@ -13,10 +13,10 @@ deepseek-harness-community/
 
 ## Install
 
-Node.js `^22.19.0` or `>=24.0.0` is required. Install a tagged GitHub release globally:
+Node.js `^22.19.0` or `>=24.0.0` is required. Install the launcher globally from npm:
 
 ```sh
-npm install --global https://github.com/Yangeyu/deepseek-harness-community/releases/download/v0.1.1/yangeyu-dsh-tui-0.1.1.tgz
+npm install --global @vascent/dsh-tui
 ```
 
 Then start the TUI from any project directory:
@@ -25,12 +25,12 @@ Then start the TUI from any project directory:
 dsh-tui
 ```
 
-The release tarball avoids npm's unreliable lifecycle handling for large Git-source dependency trees. The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DEEPSEEK_API_KEY` before beginning a model-backed session. `DSH_HOME` continues to override the Harness data directory.
+The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DEEPSEEK_API_KEY` before beginning a model-backed session. `DSH_HOME` continues to override the Harness data directory.
 
 ## Packages
 
-- [`@yangeyu/deepseek-harness-tui`](packages/tui) provides the terminal client, profile patch, streaming transcript, diffs, rewind checkpoints, model selection, and memory UI.
-- [`@yangeyu/deepseek-harness-memory`](packages/memory) provides file-backed global and per-project memory with explicit remember/forget tools and correction learning.
+- [`@vascent/deepseek-harness-tui`](packages/tui) provides the terminal client, profile patch, streaming transcript, diffs, rewind checkpoints, model selection, and memory UI.
+- [`@vascent/deepseek-harness-memory`](packages/memory) provides file-backed global and per-project memory with explicit remember/forget tools and correction learning.
 
 The TUI bundle embeds the Memory runtime in its `./memory` entry so a GitHub installation has no unpublished registry dependency. The standalone Memory package remains available for other Harness profiles.
 
@@ -46,4 +46,23 @@ Run `pnpm run start` from the project you want the agent to edit. The launcher u
 
 ## Release
 
-Tags named `v*` run the complete checks and create a GitHub Release containing installable tarballs. npm package manifests are public-ready, but npm publication is a separate authenticated step.
+Create a patch, minor, or major release from any authenticated development machine:
+
+```sh
+pnpm release patch
+```
+
+`release-it` verifies the branch and worktree, runs the complete checks, updates the root version, creates the release commit and `v*` tag, and pushes them. GitHub Actions then builds clean tarballs, publishes every new workspace version to npm through Trusted Publishing (OIDC), and creates the GitHub Release. Local npm credentials and repository `NPM_TOKEN` secrets are not used.
+
+Each npm package needs a one-time bootstrap publish before its Trusted Publisher can be configured. See [npm's Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/) when applying this release pattern to another repository.
+
+After that first publish, an npm account with package write access and 2FA can bind the package to its workflow without creating a token:
+
+```sh
+npm exec --package=npm@^11.15.0 -- npm trust github @scope/package \
+  --repo owner/repository \
+  --file release.yml \
+  --allow-publish
+```
+
+The package `repository.url`, GitHub owner/repository, and workflow filename are exact, case-sensitive identifiers. A monorepo configures this trust once for each independently published package.

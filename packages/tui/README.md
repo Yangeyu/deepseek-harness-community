@@ -1,4 +1,4 @@
-# @yangeyu/deepseek-harness-tui
+# @vascent/deepseek-harness-tui
 
 A keyboard-first terminal client bundle for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { MemoryDocument, MemoryOverview } from '@yangeyu/deepseek-harness-memory'
+import type { MemoryDocument, MemoryOverview } from '@vascent/deepseek-harness-memory'
 import { MemoryDialog } from '../src/dialogs.ts'
 import { createTheme } from '../src/theme.ts'
 

@@ -18,7 +18,7 @@ import type {
   MemoryActivity,
   MemoryMutation,
   ProjectMemoryService,
-} from '@yangeyu/deepseek-harness-memory'
+} from '@vascent/deepseek-harness-memory'
 import type { ResolvedConfig } from './config.ts'
 import {
   HarnessController,

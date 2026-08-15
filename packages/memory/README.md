@@ -47,7 +47,7 @@ Mount the package after the base bundle:
 
 ```yaml
 - id: memory
-  name: '@yangeyu/deepseek-harness-memory'
+  name: '@vascent/deepseek-harness-memory'
   config:
     root: !!js dshHomePath('memories')
     useMemories: true

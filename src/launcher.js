@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
 const PROFILE = 'tui'
-const TUI_PACKAGE = '@yangeyu/deepseek-harness-tui'
+const TUI_PACKAGE = '@vascent/deepseek-harness-tui'
 const require = createRequire(import.meta.url)
 
 /** Resolve the Harness home using the same environment precedence as dsh. */

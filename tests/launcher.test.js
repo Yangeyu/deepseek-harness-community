@@ -17,7 +17,7 @@ test('profileUsesPlugin requires the active bundle to resolve to this package', 
   await mkdir(join(profile, 'node_modules', '@yangeyu'), { recursive: true })
   await mkdir(plugin)
   await writeFile(join(profile, 'package.json'), JSON.stringify({
-    dsh: { profile: { bundles: ['@yangeyu/deepseek-harness-tui'] } },
+    dsh: { profile: { bundles: ['@vascent/deepseek-harness-tui'] } },
   }))
   await symlink(plugin, join(profile, 'node_modules', '@yangeyu', 'deepseek-harness-tui'), 'dir')
 

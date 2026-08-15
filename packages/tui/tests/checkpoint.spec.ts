@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { MemoryMutation } from '@yangeyu/deepseek-harness-memory'
+import type { MemoryMutation } from '@vascent/deepseek-harness-memory'
 import { WorkspaceCheckpointStore } from '../src/checkpoint.ts'
 
 const temporaryDirectories: string[] = []
