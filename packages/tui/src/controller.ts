@@ -35,6 +35,7 @@ export interface TuiState {
   running: boolean
   connected: boolean
   events: HistoryEntry[]
+  historyHasMore: boolean
   queue: QueuedInboxItem[]
   pendingSubmissions: PendingSubmission[]
   models: SessionModels | undefined
@@ -99,6 +100,7 @@ export class HarnessController {
       running: false,
       connected: false,
       events: [],
+      historyHasMore: false,
       queue: [],
       pendingSubmissions: [],
       models: undefined,
@@ -133,6 +135,28 @@ export class HarnessController {
   /** List resumable session rows for a terminal selector. */
   async sessions(): Promise<SessionSummary[]> {
     return valueOf(await this.api.sessions.list({})).items
+  }
+
+  /** Prepend one older, message-aligned history page without disturbing live tail events. */
+  async loadEarlierHistory(): Promise<boolean> {
+    const sessionId = this.requireSession()
+    const generation = this.generation
+    const beforeSeq = this.state.events.at(0)?.event.seq
+    if (!this.state.historyHasMore || beforeSeq === undefined) return false
+    const page = valueOf(await this.api.sessions.history({
+      sessionId,
+      beforeSeq,
+      maxMessages: this.historyMessages,
+    }))
+    if (generation !== this.generation || sessionId !== this.state.sessionId) return false
+    const present = new Set(this.state.events.map(entry => entry.event.seq))
+    const earlier = page.events.filter(entry => !present.has(entry.event.seq))
+    this.patch({
+      events: [...earlier, ...this.state.events],
+      historyHasMore: page.hasMore,
+      error: undefined,
+    })
+    return earlier.length > 0
   }
 
   /** Switch the terminal to a fresh session in the current working directory. */
@@ -351,6 +375,7 @@ export class HarnessController {
       this.submissions.observeEvents(page.events)
       this.patch({
         events: page.events,
+        historyHasMore: page.hasMore,
         pendingSubmissions: this.submissions.snapshot,
         projections,
         error: undefined,
@@ -498,6 +523,7 @@ export class HarnessController {
       running: false,
       connected,
       events: [],
+      historyHasMore: false,
       queue: [],
       pendingSubmissions: [],
       models: undefined,

@@ -25,6 +25,8 @@ export type {
   TuiState,
 } from './controller.ts'
 export { TranscriptComponent } from './transcript.ts'
+export { buildTrajectoryRecords, TrajectoryView } from './trajectory.ts'
+export type { TrajectoryRecord } from './trajectory.ts'
 export { sanitizeTerminalText } from './text.ts'
 
 declare module '@deepseek-ai/cordis' {

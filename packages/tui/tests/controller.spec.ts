@@ -298,6 +298,44 @@ describe('HarnessController', () => {
     })
   })
 
+  it('prepends older history pages without losing the current live tail', async () => {
+    const { api } = fakeApi()
+    const history = vi.fn(async (request: { beforeSeq?: number }) => request.beforeSeq === undefined
+      ? ok({
+        events: [
+          { event: { type: 'turn/start', seq: 2, time: 3, data: { turn: 2 } } },
+          { event: { type: 'turn/end', seq: 3, time: 4, data: { turn: 2, reason: { kind: 'completed' } } } },
+        ],
+        hasMore: true,
+      })
+      : ok({
+        events: [
+          { event: { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } } },
+          { event: { type: 'turn/end', seq: 1, time: 2, data: { turn: 1, reason: { kind: 'completed' } } } },
+        ],
+        hasMore: false,
+      }))
+    api.sessions.history = history as unknown as IApiClient['sessions']['history']
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+
+    expect(controller.current.historyHasMore).toBe(true)
+    await expect(controller.loadEarlierHistory()).resolves.toBe(true)
+
+    expect(history).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: 'session-test',
+      beforeSeq: 2,
+      maxMessages: 100,
+    }))
+    expect(controller.current.events.map(entry => entry.event.seq)).toEqual([0, 1, 2, 3])
+    expect(controller.current.historyHasMore).toBe(false)
+    controller.dispose()
+  })
+
   it('forks at the boundary before the checkpointed turn', async () => {
     const source = 'session-source' as SessionSummary['sessionId']
     const child = 'session-child' as SessionSummary['sessionId']

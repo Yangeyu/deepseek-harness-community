@@ -42,6 +42,7 @@ import { composerStats } from './stats.ts'
 import { DiffLineLocator } from './diff-location.ts'
 import { TranscriptComponent } from './transcript.ts'
 import { ComposerAnchoredLayout } from './layout.ts'
+import { TrajectoryView } from './trajectory.ts'
 import type {
   RewindCheckpointSummary,
   RewindPreview,
@@ -63,6 +64,7 @@ const COMMANDS: SlashCommand[] = [
   { name: 'resume', description: 'Switch to another session', argumentHint: '[session-id]' },
   { name: 'model', description: 'Select model and provider', argumentHint: '[provider/model]' },
   { name: 'details', description: 'Toggle expanded tool output' },
+  { name: 'trajectory', description: 'Inspect the session execution chain' },
   { name: 'status', description: 'Show current session status' },
   { name: 'memories', description: 'Manage project memory and session learning' },
   { name: 'rewind', description: 'Open the workspace and conversation checkpoint history' },
@@ -98,6 +100,7 @@ export class TuiApplication implements TuiControllerSink {
   private readonly transcript: TranscriptComponent
   private readonly diffLineLocator = new DiffLineLocator()
   private readonly layout: ComposerAnchoredLayout
+  private trajectoryView: TrajectoryView | undefined
   private removeInputListener?: () => void
   private spinner: ReturnType<typeof setInterval> | undefined
   private spinnerFrame = 0
@@ -134,6 +137,7 @@ export class TuiApplication implements TuiControllerSink {
       running: false,
       connected: false,
       events: [],
+      historyHasMore: false,
       queue: [],
       pendingSubmissions: [],
       models: undefined,
@@ -204,6 +208,7 @@ export class TuiApplication implements TuiControllerSink {
   render(state: Readonly<TuiState>): void {
     if (this.disposed) return
     this.transcript.setState(state)
+    this.trajectoryView?.setState(state)
     this.diffLineLocator.resolve(state, () => {
       if (this.disposed || this.controller.current.sessionId !== state.sessionId) return
       this.transcript.setDiffLineStarts(this.diffLineLocator.current)
@@ -419,6 +424,7 @@ export class TuiApplication implements TuiControllerSink {
           '/resume [id] · switch session',
           '/model [provider/model] · select model',
           '/details · expand or collapse tool output',
+          '/trajectory · inspect the session execution chain',
           '/status · current session details',
           '/memories · manage memory and session learning',
           '/rewind · select a workspace and conversation checkpoint',
@@ -444,6 +450,10 @@ export class TuiApplication implements TuiControllerSink {
         this.showDetails = !this.showDetails
         this.transcript.setDetails(this.showDetails)
         this.tui.requestRender()
+        return true
+      case 'trajectory':
+      case 'trace':
+        this.openTrajectory()
         return true
       case 'status': {
         const state = this.controller.current
@@ -475,6 +485,32 @@ export class TuiApplication implements TuiControllerSink {
   private requestRewind(): void {
     this.disarmRewind()
     void this.runAction(() => this.openRewind())
+  }
+
+  private openTrajectory(): void {
+    if (this.tui.hasOverlay() || this.composerModalActive) return
+    const close = (): void => {
+      if (this.trajectoryView === undefined) return
+      this.trajectoryView = undefined
+      this.layout.setComposerOverride(undefined)
+      this.composerModalActive = false
+      this.tui.setFocus(this.editor)
+      this.tui.requestRender()
+    }
+    const trajectory = new TrajectoryView(
+      this.controller.current,
+      () => this.terminal.rows,
+      this.theme,
+      () => this.controller.loadEarlierHistory(),
+      () => { void this.runAction(() => this.controller.cancel()) },
+      close,
+      () => this.tui.requestRender(),
+    )
+    this.trajectoryView = trajectory
+    this.composerModalActive = true
+    this.layout.setComposerOverride(trajectory)
+    this.tui.setFocus(trajectory)
+    this.tui.requestRender()
   }
 
   private async openRewind(): Promise<void> {

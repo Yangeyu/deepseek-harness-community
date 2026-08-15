@@ -117,6 +117,7 @@ var HarnessController = class {
 			running: false,
 			connected: false,
 			events: [],
+			historyHasMore: false,
 			queue: [],
 			pendingSubmissions: [],
 			models: void 0,
@@ -149,6 +150,27 @@ var HarnessController = class {
 	/** List resumable session rows for a terminal selector. */
 	async sessions() {
 		return valueOf(await this.api.sessions.list({})).items;
+	}
+	/** Prepend one older, message-aligned history page without disturbing live tail events. */
+	async loadEarlierHistory() {
+		const sessionId = this.requireSession();
+		const generation = this.generation;
+		const beforeSeq = this.state.events.at(0)?.event.seq;
+		if (!this.state.historyHasMore || beforeSeq === void 0) return false;
+		const page = valueOf(await this.api.sessions.history({
+			sessionId,
+			beforeSeq,
+			maxMessages: this.historyMessages
+		}));
+		if (generation !== this.generation || sessionId !== this.state.sessionId) return false;
+		const present = new Set(this.state.events.map((entry) => entry.event.seq));
+		const earlier = page.events.filter((entry) => !present.has(entry.event.seq));
+		this.patch({
+			events: [...earlier, ...this.state.events],
+			historyHasMore: page.hasMore,
+			error: void 0
+		});
+		return earlier.length > 0;
 	}
 	/** Switch the terminal to a fresh session in the current working directory. */
 	async newSession() {
@@ -354,6 +376,7 @@ var HarnessController = class {
 			this.submissions.observeEvents(page.events);
 			this.patch({
 				events: page.events,
+				historyHasMore: page.hasMore,
 				pendingSubmissions: this.submissions.snapshot,
 				projections,
 				error: void 0
@@ -499,6 +522,7 @@ var HarnessController = class {
 			running: false,
 			connected,
 			events: [],
+			historyHasMore: false,
 			queue: [],
 			pendingSubmissions: [],
 			models: void 0,
@@ -1160,7 +1184,7 @@ function formatTokens(value) {
 	return `${scaled(value / 1e6)}M`;
 }
 /** Compact duration using the same rounding as the Harness Web composer. */
-function formatDuration(milliseconds) {
+function formatDuration$1(milliseconds) {
 	const seconds = milliseconds / 1e3;
 	if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`;
 	const whole = Math.round(seconds);
@@ -1184,11 +1208,11 @@ function statsGroups(stats) {
 	if (stats === void 0 || stats.steps === 0) return [];
 	const groups = [`${stats.turns} turns · ${stats.steps} steps`];
 	const durations = [];
-	if (stats.llmMs > 0) durations.push(`LLM ${formatDuration(stats.llmMs)}`);
-	if (stats.toolMs > 0) durations.push(`Tool call ${formatDuration(stats.toolMs)}`);
+	if (stats.llmMs > 0) durations.push(`LLM ${formatDuration$1(stats.llmMs)}`);
+	if (stats.toolMs > 0) durations.push(`Tool call ${formatDuration$1(stats.toolMs)}`);
 	if (durations.length > 0) groups.push(durations.join(" · "));
 	const speeds = [];
-	if (stats.ttftSteps > 0) speeds.push(`TTFT avg ${formatDuration(stats.ttftMs / stats.ttftSteps)}`);
+	if (stats.ttftSteps > 0) speeds.push(`TTFT avg ${formatDuration$1(stats.ttftMs / stats.ttftSteps)}`);
 	if (stats.decodeMs > 0) speeds.push(`${formatTokensPerSecond(stats.decodeTokens / (stats.decodeMs / 1e3))} tok/s`);
 	if (speeds.length > 0) groups.push(speeds.join(" · "));
 	return groups;
@@ -1439,16 +1463,16 @@ function diffSummary(added, removed) {
 }
 //#endregion
 //#region src/transcript.ts
-function stepKey(turn, step) {
+function stepKey$1(turn, step) {
 	return `${turn}:${step}`;
 }
-function messageText(content, reasoning) {
+function messageText$1(content, reasoning) {
 	return content.filter((block) => block.type === "text" || reasoning && block.type === "reasoning").map((block) => block.type === "reasoning" ? `> ${block.text ?? ""}` : block.text ?? "").join("\n");
 }
 function reasoningText(content) {
 	return content.filter((block) => block.type === "reasoning").map((block) => block.text ?? "").join("\n");
 }
-function callTitle(name, view) {
+function callTitle$1(name, view) {
 	if (view === void 0) return name;
 	if (view.card === "terminal") return `$ ${view.title}`;
 	return view.title;
@@ -1468,9 +1492,9 @@ function rawResultText(entry) {
 	if (entry.event.type !== "tool/result") return "";
 	const result = entry.event.data.message.content[0];
 	if (result?.type !== "tool-result") return "";
-	return messageText(result.content, true);
+	return messageText$1(result.content, true);
 }
-function resultTitle(view) {
+function resultTitle$1(view) {
 	return view?.title;
 }
 function resultBody(view, fallback, limit) {
@@ -1497,7 +1521,7 @@ function resultBody(view, fallback, limit) {
 				...view.sources.map((source) => `- ${source.title ?? source.url} — ${source.url}`),
 				...view.truncated ? ["… sources truncated …"] : []
 			].filter(Boolean).join("\n"), limit);
-		case "generic": return boundedLines(view.content === void 0 ? fallback : messageText(view.content, true), limit);
+		case "generic": return boundedLines(view.content === void 0 ? fallback : messageText$1(view.content, true), limit);
 	}
 }
 function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLines) {
@@ -1506,7 +1530,7 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 	const results = /* @__PURE__ */ new Map();
 	for (const entry of state.events) {
 		const event = entry.event;
-		if (event.type === "assistant/message") finalSteps.add(stepKey(event.data.turn, event.data.step));
+		if (event.type === "assistant/message") finalSteps.add(stepKey$1(event.data.turn, event.data.step));
 		if (event.type === "tool/result") results.set(String(event.data.message.source.callId), entry);
 	}
 	const partials = /* @__PURE__ */ new Map();
@@ -1517,7 +1541,7 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 				if (event.surfaceOp !== "append") break;
 				const human = event.data.source.kind === "user";
 				if (!human && !showDetails) break;
-				const text = messageText(event.data.content, showReasoning);
+				const text = messageText$1(event.data.content, showReasoning);
 				if (text.trim() === "") break;
 				rows.push({
 					...human ? { prompt: true } : {
@@ -1531,7 +1555,7 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 				break;
 			}
 			case "assistant/chunk": {
-				const key = stepKey(event.data.turn, event.data.step);
+				const key = stepKey$1(event.data.turn, event.data.step);
 				if (finalSteps.has(key)) break;
 				const chunk = event.data.chunk;
 				if (chunk.type !== "text-delta" && chunk.type !== "reasoning-delta") break;
@@ -1582,11 +1606,11 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 				}
 				const reasoning = reasoningText(event.data.message.content);
 				if (showReasoning && reasoning.trim() !== "") rows.push({ thinking: {
-					key: `${stepKey(event.data.turn, event.data.step)}:thinking`,
+					key: `${stepKey$1(event.data.turn, event.data.step)}:thinking`,
 					text: reasoning,
 					streaming: false
 				} });
-				const text = messageText(event.data.message.content, false);
+				const text = messageText$1(event.data.message.content, false);
 				if (text.trim() !== "") rows.push({
 					body: text,
 					markdown: true
@@ -1598,7 +1622,7 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 				const result = results.get(String(event.data.callId));
 				const resultView = result?.view?.for === "result" ? result.view.view : void 0;
 				const failed = result?.event.type === "tool/result" && result.event.data.error !== void 0;
-				const title = resultTitle(resultView) ?? callTitle(event.data.name, callView);
+				const title = resultTitle$1(resultView) ?? callTitle$1(event.data.name, callView);
 				const diffView = resultView?.card === "diff" ? resultView : result === void 0 && callView?.card === "diff" ? callView : void 0;
 				if (!failed && diffView !== void 0 && diffView.diffs.length > 0) {
 					rows.push({ diff: {
@@ -1635,7 +1659,7 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 	const visibleQueueRpcIds = /* @__PURE__ */ new Set();
 	for (const item of state.queue) {
 		if (item.placement === "context") continue;
-		const body = messageText(item.message.content, false);
+		const body = messageText$1(item.message.content, false);
 		if (body.trim() === "") continue;
 		const source = item.message.source;
 		if (source.kind === "user" && "rpcId" in source) visibleQueueRpcIds.add(String(source.rpcId));
@@ -1989,6 +2013,590 @@ var ComposerAnchoredLayout = class extends Container {
 	}
 };
 //#endregion
+//#region src/trajectory.ts
+const TABS = [
+	{
+		id: "summary",
+		label: "Summary"
+	},
+	{
+		id: "payload",
+		label: "Payload"
+	},
+	{
+		id: "result",
+		label: "Result"
+	},
+	{
+		id: "schema",
+		label: "Schema"
+	},
+	{
+		id: "timing",
+		label: "Timing"
+	}
+];
+function recordValue(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+function numericField(value, field) {
+	const candidate = recordValue(value)?.[field];
+	return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : void 0;
+}
+function position(entry) {
+	const turn = numericField(entry.event.data, "turn");
+	const step = numericField(entry.event.data, "step");
+	return {
+		...turn === void 0 ? {} : { turn },
+		...step === void 0 ? {} : { step }
+	};
+}
+function locatedPosition(entry, activeTurn, activeStep) {
+	const explicit = position(entry);
+	const turn = explicit.turn ?? activeTurn;
+	const step = explicit.step ?? activeStep;
+	return {
+		...turn === void 0 ? {} : { turn },
+		...step === void 0 ? {} : { step }
+	};
+}
+function stepKey(turn, step) {
+	return `${String(turn)}:${String(step)}`;
+}
+function contentText(value) {
+	if (!Array.isArray(value)) return "";
+	const parts = [];
+	for (const item of value) {
+		const block = recordValue(item);
+		if (block === void 0) continue;
+		if (typeof block.text === "string") parts.push(block.text);
+		if (Array.isArray(block.content)) {
+			const nested = contentText(block.content);
+			if (nested !== "") parts.push(nested);
+		}
+	}
+	return parts.join("\n");
+}
+function messageText(value) {
+	return contentText(recordValue(value)?.content);
+}
+function oneLine(value, maximum = 140) {
+	const normalized = sanitizeTerminalText(value).replaceAll(/\s+/gu, " ").trim();
+	if (normalized.length <= maximum) return normalized;
+	return `${normalized.slice(0, Math.max(1, maximum - 1))}…`;
+}
+function parsedJson(value) {
+	try {
+		return JSON.parse(value);
+	} catch {
+		return value;
+	}
+}
+function resultTitle(entry) {
+	if (entry?.view?.for !== "result") return void 0;
+	return entry.view.view.title;
+}
+function callTitle(entry) {
+	if (entry.view?.for !== "call") return void 0;
+	return entry.view.view.title;
+}
+function turnStatus(reason) {
+	const kind = recordValue(reason)?.kind;
+	if (kind === "completed") return "completed";
+	if (kind === "error") return "failed";
+	return "warning";
+}
+function resultFailed(entry) {
+	if (entry.event.type !== "tool/result") return false;
+	const block = entry.event.data.message.content[0];
+	return entry.event.data.error !== void 0 || block?.isError === true;
+}
+function toolResult(entry) {
+	if (entry.event.type !== "tool/result") return void 0;
+	const text = messageText(entry.event.data.message);
+	if (entry.event.data.error === void 0) return text === "" ? entry.event.data.message.content : text;
+	return {
+		error: entry.event.data.error,
+		...text === "" ? { content: entry.event.data.message.content } : { content: text }
+	};
+}
+function toolSchemaMap(entry) {
+	if (entry.event.type !== "request/header") return void 0;
+	const schemas = /* @__PURE__ */ new Map();
+	for (const tool of entry.event.data.header.tools ?? []) schemas.set(tool.name, tool);
+	return schemas;
+}
+/** Pair lifecycle boundaries and tool call/results into an ordered diagnostic ledger. */
+function buildTrajectoryRecords(entries) {
+	const turnEnds = /* @__PURE__ */ new Map();
+	const stepEnds = /* @__PURE__ */ new Map();
+	const stepStarts = /* @__PURE__ */ new Map();
+	const toolResults = /* @__PURE__ */ new Map();
+	for (const entry of entries) {
+		const event = entry.event;
+		if (event.type === "turn/end") turnEnds.set(event.data.turn, entry);
+		if (event.type === "step/start") stepStarts.set(stepKey(event.data.turn, event.data.step), entry);
+		if (event.type === "step/end") stepEnds.set(stepKey(event.data.turn, event.data.step), entry);
+		if (event.type === "tool/result") toolResults.set(String(event.data.message.source.callId), entry);
+	}
+	let schemas = /* @__PURE__ */ new Map();
+	let activeTurn;
+	let activeStep;
+	const records = [];
+	for (const entry of entries) {
+		const event = entry.event;
+		if (event.type === "turn/start") activeTurn = event.data.turn;
+		if (event.type === "step/start") activeStep = event.data.step;
+		const at = locatedPosition(entry, activeTurn, activeStep);
+		const schemaSnapshot = toolSchemaMap(entry);
+		if (schemaSnapshot !== void 0) schemas = schemaSnapshot;
+		switch (event.type) {
+			case "assistant/chunk":
+			case "turn/end":
+			case "step/end":
+			case "tool/result": break;
+			case "turn/start": {
+				const completed = turnEnds.get(event.data.turn);
+				const reason = completed?.event.type === "turn/end" ? completed.event.data.reason : void 0;
+				const reasonKind = recordValue(reason)?.kind;
+				records.push({
+					key: `turn:${String(event.data.turn)}:${String(event.seq)}`,
+					kind: "turn",
+					type: event.type,
+					...completed === void 0 ? {} : {
+						completionType: completed.event.type,
+						completionSeq: completed.event.seq
+					},
+					seq: event.seq,
+					turn: event.data.turn,
+					title: `Turn ${String(event.data.turn)}`,
+					summary: completed === void 0 ? "Running" : `Finished · ${typeof reasonKind === "string" ? reasonKind : "completed"}`,
+					status: completed === void 0 ? "pending" : turnStatus(reason),
+					startedAt: event.time,
+					...completed === void 0 ? {} : {
+						completedAt: completed.event.time,
+						result: reason
+					},
+					payload: event.data
+				});
+				break;
+			}
+			case "step/start": {
+				const completed = stepEnds.get(stepKey(event.data.turn, event.data.step));
+				records.push({
+					key: `step:${String(event.data.turn)}:${String(event.data.step)}:${String(event.seq)}`,
+					kind: "step",
+					type: event.type,
+					...completed === void 0 ? {} : {
+						completionType: completed.event.type,
+						completionSeq: completed.event.seq
+					},
+					seq: event.seq,
+					turn: event.data.turn,
+					step: event.data.step,
+					title: `Step ${String(event.data.step)}`,
+					summary: completed === void 0 ? "Running" : "Completed",
+					status: completed === void 0 ? "pending" : "completed",
+					startedAt: event.time,
+					...completed === void 0 ? {} : {
+						completedAt: completed.event.time,
+						result: completed.event.data
+					},
+					payload: event.data
+				});
+				break;
+			}
+			case "user/message": {
+				const text = messageText(event.data);
+				const source = recordValue(event.data.source)?.kind;
+				records.push({
+					key: `event:${String(event.seq)}`,
+					kind: "user",
+					type: event.type,
+					seq: event.seq,
+					...at,
+					title: source === "user" ? "User input" : "Context input",
+					summary: oneLine(text === "" ? displayUnknown(event.data.content) : text),
+					status: "info",
+					startedAt: event.time,
+					payload: event.data
+				});
+				break;
+			}
+			case "assistant/message": {
+				const start = stepStarts.get(stepKey(event.data.turn, event.data.step));
+				const text = messageText(event.data.message);
+				records.push({
+					key: `event:${String(event.seq)}`,
+					kind: "assistant",
+					type: event.type,
+					seq: event.seq,
+					turn: event.data.turn,
+					step: event.data.step,
+					title: "Assistant response",
+					summary: oneLine(text === "" ? "(empty response)" : text),
+					status: "completed",
+					startedAt: start?.event.time ?? event.time,
+					completedAt: event.time,
+					payload: { source: event.data.message.source },
+					result: {
+						content: text === "" ? event.data.message.content : text,
+						...event.data.usage === void 0 ? {} : { usage: event.data.usage }
+					}
+				});
+				break;
+			}
+			case "tool/call": {
+				const completed = toolResults.get(String(event.data.callId));
+				const displayTitle = resultTitle(completed) ?? callTitle(entry) ?? event.data.name;
+				const failed = completed === void 0 ? false : resultFailed(completed);
+				records.push({
+					key: `tool:${String(event.data.callId)}:${String(event.seq)}`,
+					kind: "tool",
+					type: event.type,
+					...completed === void 0 ? {} : {
+						completionType: completed.event.type,
+						completionSeq: completed.event.seq
+					},
+					seq: event.seq,
+					turn: event.data.turn,
+					step: event.data.step,
+					title: displayTitle,
+					summary: `${event.data.name} · ${completed === void 0 ? "Running" : failed ? "Failed" : "Completed"}`,
+					status: completed === void 0 ? "pending" : failed ? "failed" : "completed",
+					startedAt: event.time,
+					...completed === void 0 ? {} : {
+						completedAt: completed.event.time,
+						result: toolResult(completed)
+					},
+					payload: {
+						callId: event.data.callId,
+						name: event.data.name,
+						arguments: parsedJson(event.data.arguments)
+					},
+					...schemas.get(event.data.name) === void 0 ? {} : { schema: schemas.get(event.data.name) }
+				});
+				break;
+			}
+			case "request/header": {
+				const config = event.data.header.config;
+				records.push({
+					key: `event:${String(event.seq)}`,
+					kind: "request",
+					type: event.type,
+					seq: event.seq,
+					...at,
+					title: "Model request",
+					summary: `${config.provider}/${config.model}${config.reasoningEffort === void 0 ? "" : ` · ${String(config.reasoningEffort)}`}`,
+					status: "info",
+					startedAt: event.time,
+					payload: event.data.header,
+					...event.data.header.tools === void 0 ? {} : { schema: event.data.header.tools }
+				});
+				break;
+			}
+			case "request/context":
+				records.push({
+					key: `event:${String(event.seq)}`,
+					kind: "context",
+					type: event.type,
+					seq: event.seq,
+					...at,
+					title: "Request context",
+					summary: `${event.data.provider}/${event.data.model}${event.data.contextWindow === void 0 ? "" : ` · ${String(event.data.contextWindow)} context`}`,
+					status: "info",
+					startedAt: event.time,
+					payload: event.data
+				});
+				break;
+			default: records.push({
+				key: `event:${String(event.seq)}`,
+				kind: event.type === "todo/write" ? "context" : "event",
+				type: event.type,
+				seq: event.seq,
+				...at,
+				title: event.type,
+				summary: oneLine(displayUnknown(event.data)),
+				status: "info",
+				startedAt: event.time,
+				payload: event.data
+			});
+		}
+		if (event.type === "step/end") activeStep = void 0;
+		if (event.type === "turn/end") {
+			activeStep = void 0;
+			activeTurn = void 0;
+		}
+	}
+	return records;
+}
+function formatDuration(milliseconds) {
+	if (milliseconds < 1e3) return `${String(Math.max(0, Math.round(milliseconds)))} ms`;
+	if (milliseconds < 6e4) return `${(milliseconds / 1e3).toFixed(milliseconds < 1e4 ? 2 : 1)} s`;
+	const minutes = Math.floor(milliseconds / 6e4);
+	const seconds = Math.floor(milliseconds % 6e4 / 1e3);
+	return `${String(minutes)}m ${String(seconds)}s`;
+}
+function tabValue(record, tab) {
+	switch (tab) {
+		case "summary": return [
+			`Kind: ${record.kind}`,
+			`Status: ${record.status}`,
+			`Event: ${record.type}${record.completionType === void 0 ? "" : ` → ${record.completionType}`}`,
+			`Sequence: ${String(record.seq)}${record.completionSeq === void 0 ? "" : ` → ${String(record.completionSeq)}`}`,
+			...record.turn === void 0 ? [] : [`Turn: ${String(record.turn)}`],
+			...record.step === void 0 ? [] : [`Step: ${String(record.step)}`],
+			"",
+			record.title,
+			record.summary
+		];
+		case "payload": return record.payload === void 0 ? ["No payload recorded for this event."] : displayUnknown(record.payload).split("\n");
+		case "result": return record.result === void 0 ? ["No result recorded for this event."] : displayUnknown(record.result).split("\n");
+		case "schema": return record.schema === void 0 ? ["Schema unavailable for this event."] : displayUnknown(record.schema).split("\n");
+		case "timing": {
+			const end = record.completedAt;
+			return [
+				`Started: ${new Date(record.startedAt).toISOString()}`,
+				...end === void 0 ? ["Completed: still running or not applicable"] : [`Completed: ${new Date(end).toISOString()}`, `Duration: ${formatDuration(Math.max(0, end - record.startedAt))}`],
+				"",
+				"Timing source: durable session event timestamps"
+			];
+		}
+	}
+}
+function wrapped(lines, width) {
+	return lines.flatMap((line) => {
+		const rendered = wrapTextWithAnsi(sanitizeTerminalText(line), Math.max(1, width));
+		return rendered.length === 0 ? [""] : rendered;
+	});
+}
+function kindLabel(kind) {
+	switch (kind) {
+		case "turn": return "TURN";
+		case "step": return "STEP";
+		case "user": return "USER";
+		case "request": return "REQUEST";
+		case "assistant": return "ASSISTANT";
+		case "tool": return "TOOL";
+		case "context": return "CONTEXT";
+		case "event": return "EVENT";
+	}
+}
+/** Full-screen, keyboard-first execution ledger and event detail surface. */
+var TrajectoryView = class {
+	visibleRows;
+	theme;
+	onLoadEarlier;
+	onInterrupt;
+	onCancel;
+	onChange;
+	state;
+	records;
+	index;
+	mode = "list";
+	tabIndex = 0;
+	detailOffset = 0;
+	detailPageRows = 1;
+	detailMaxOffset = 0;
+	listPageRows = 1;
+	followTail = true;
+	loadingEarlier = false;
+	loadError;
+	constructor(state, visibleRows, theme, onLoadEarlier, onInterrupt, onCancel, onChange) {
+		this.visibleRows = visibleRows;
+		this.theme = theme;
+		this.onLoadEarlier = onLoadEarlier;
+		this.onInterrupt = onInterrupt;
+		this.onCancel = onCancel;
+		this.onChange = onChange;
+		this.state = state;
+		this.records = buildTrajectoryRecords(state.events);
+		this.index = Math.max(0, this.records.length - 1);
+	}
+	/** Rebuild from the latest live event window while preserving the selected semantic record. */
+	setState(state) {
+		const sessionChanged = state.sessionId !== this.state.sessionId;
+		const selectedKey = this.records[this.index]?.key;
+		this.state = state;
+		this.records = buildTrajectoryRecords(state.events);
+		if (sessionChanged) {
+			this.mode = "list";
+			this.followTail = true;
+			this.tabIndex = 0;
+			this.detailOffset = 0;
+		}
+		const preserved = selectedKey === void 0 ? -1 : this.records.findIndex((record) => record.key === selectedKey);
+		this.index = this.followTail || preserved === -1 ? Math.max(0, this.records.length - 1) : preserved;
+	}
+	handleInput(data) {
+		if (matchesKey(data, Key.ctrl("c"))) {
+			if (this.state.running) this.onInterrupt();
+			else this.onCancel();
+			return;
+		}
+		if (this.mode === "detail") {
+			if (matchesKey(data, Key.escape)) {
+				this.mode = "list";
+				this.detailOffset = 0;
+				return;
+			}
+			if (matchesKey(data, Key.tab)) {
+				this.selectTab(1);
+				return;
+			}
+			if (matchesKey(data, Key.shift(Key.tab))) {
+				this.selectTab(-1);
+				return;
+			}
+			if (matchesKey(data, Key.left)) {
+				this.selectTab(-1);
+				return;
+			}
+			if (matchesKey(data, Key.right)) {
+				this.selectTab(1);
+				return;
+			}
+			if (matchesKey(data, Key.up)) this.scrollDetail(-1);
+			if (matchesKey(data, Key.down)) this.scrollDetail(1);
+			if (matchesKey(data, Key.pageUp)) this.scrollDetail(-this.detailPageRows);
+			if (matchesKey(data, Key.pageDown)) this.scrollDetail(this.detailPageRows);
+			return;
+		}
+		if (matchesKey(data, Key.escape)) {
+			this.onCancel();
+			return;
+		}
+		if (matchesKey(data, Key.up)) {
+			if (this.index === 0) this.loadEarlier();
+			else this.move(-1);
+			return;
+		}
+		if (matchesKey(data, Key.down)) {
+			this.move(1);
+			return;
+		}
+		if (matchesKey(data, Key.pageUp)) {
+			const previous = this.index;
+			this.move(-this.listPageRows);
+			if (previous === 0 || this.index === 0) this.loadEarlier();
+			return;
+		}
+		if (matchesKey(data, Key.pageDown)) {
+			this.move(this.listPageRows);
+			return;
+		}
+		if (matchesKey(data, Key.enter) && this.records[this.index] !== void 0) {
+			this.mode = "detail";
+			this.followTail = false;
+			this.tabIndex = 0;
+			this.detailOffset = 0;
+		}
+	}
+	invalidate() {}
+	render(width) {
+		return this.mode === "detail" ? this.renderDetail(width) : this.renderList(width);
+	}
+	renderList(width) {
+		const height = Math.max(1, this.visibleRows());
+		const header = [
+			truncateToWidth(this.theme.bold(this.theme.accent("Trajectory")), width),
+			truncateToWidth(this.theme.dim([
+				this.state.sessionId === void 0 ? "No session" : String(this.state.sessionId),
+				this.state.running ? "Live" : "Idle",
+				`${String(this.records.length)} records`,
+				...this.state.historyHasMore ? ["earlier history available"] : []
+			].join(" · ")), width),
+			""
+		];
+		const footerText = this.loadingEarlier ? "Loading earlier history…" : this.loadError === void 0 ? "↑/↓ select · Enter details · PageUp/PageDown page · Esc chat" : `History load failed: ${this.loadError}`;
+		const footer = [truncateToWidth(this.loadError === void 0 ? this.theme.dim(footerText) : this.theme.warning(footerText), width)];
+		const available = Math.max(0, height - header.length - footer.length);
+		this.listPageRows = Math.max(1, available);
+		const maximumStart = Math.max(0, this.records.length - available);
+		const start = Math.max(0, Math.min(maximumStart, this.index - Math.floor(available / 2)));
+		const visible = this.records.slice(start, start + available);
+		const body = visible.length === 0 && available > 0 ? [this.theme.dim("No execution records yet. Events will appear here while the session runs.")] : visible.map((record, offset) => this.renderRecord(record, start + offset === this.index, width));
+		return this.fit([
+			...header,
+			...body,
+			...Array(Math.max(0, available - body.length)).fill(""),
+			...footer
+		], height);
+	}
+	renderDetail(width) {
+		const height = Math.max(1, this.visibleRows());
+		const record = this.records[this.index];
+		if (record === void 0) {
+			this.mode = "list";
+			return this.renderList(width);
+		}
+		const tabs = TABS.map((tab, index) => index === this.tabIndex ? this.theme.bold(this.theme.accent(`[${tab.label}]`)) : this.theme.dim(` ${tab.label} `)).join(" ");
+		const location = [
+			record.turn === void 0 ? void 0 : `Turn ${String(record.turn)}`,
+			record.step === void 0 ? void 0 : `Step ${String(record.step)}`,
+			`seq ${String(record.seq)}`
+		].filter((value) => value !== void 0).join(" · ");
+		const header = [
+			truncateToWidth(this.theme.bold(this.theme.accent(`Trajectory · ${record.title}`)), width),
+			truncateToWidth(this.theme.dim(`${kindLabel(record.kind)} · ${location}`), width),
+			truncateToWidth(tabs, width),
+			""
+		];
+		const available = Math.max(0, height - header.length - 1);
+		this.detailPageRows = Math.max(1, available);
+		const content = wrapped(tabValue(record, TABS[this.tabIndex]?.id ?? "summary"), width);
+		this.detailMaxOffset = Math.max(0, content.length - available);
+		this.detailOffset = Math.max(0, Math.min(this.detailMaxOffset, this.detailOffset));
+		const body = content.slice(this.detailOffset, this.detailOffset + available);
+		const range = content.length <= available ? "" : ` · ${String(this.detailOffset + 1)}-${String(Math.min(content.length, this.detailOffset + available))}/${String(content.length)}`;
+		const footer = [truncateToWidth(this.theme.dim(`Tab/←/→ section · ↑/↓ scroll · Esc events${range}`), width)];
+		return this.fit([
+			...header,
+			...body,
+			...Array(Math.max(0, available - body.length)).fill(""),
+			...footer
+		], height);
+	}
+	renderRecord(record, selected, width) {
+		const indent = record.kind === "turn" ? "" : record.kind === "step" ? "  " : record.step === void 0 ? "  " : "    ";
+		const glyph = record.status === "pending" ? this.theme.warning("○") : record.status === "warning" ? this.theme.warning("!") : record.status === "failed" ? this.theme.error("×") : record.status === "completed" ? this.theme.success("●") : this.theme.dim("·");
+		const cursor = selected ? this.theme.accent("›") : " ";
+		const label = kindLabel(record.kind).padEnd(9);
+		const duration = record.completedAt === void 0 ? "" : ` · ${formatDuration(Math.max(0, record.completedAt - record.startedAt))}`;
+		const plain = `${cursor} ${indent}${glyph} ${label} ${record.summary}${duration}`;
+		return truncateToWidth(selected ? this.theme.bold(plain) : plain, width, "…");
+	}
+	move(offset) {
+		this.index = Math.max(0, Math.min(this.records.length - 1, this.index + offset));
+		this.followTail = this.index === this.records.length - 1;
+	}
+	selectTab(offset) {
+		this.tabIndex = (this.tabIndex + offset + TABS.length) % TABS.length;
+		this.detailOffset = 0;
+	}
+	scrollDetail(offset) {
+		this.detailOffset = Math.max(0, Math.min(this.detailMaxOffset, this.detailOffset + offset));
+	}
+	async loadEarlier() {
+		if (!this.state.historyHasMore || this.loadingEarlier) return;
+		this.loadingEarlier = true;
+		this.loadError = void 0;
+		this.followTail = false;
+		this.onChange();
+		try {
+			await this.onLoadEarlier();
+		} catch (error) {
+			this.loadError = error instanceof Error ? error.message : String(error);
+		} finally {
+			this.loadingEarlier = false;
+			this.onChange();
+		}
+	}
+	fit(lines, height) {
+		return [...lines.slice(0, height), ...Array(Math.max(0, height - lines.length)).fill("")];
+	}
+};
+//#endregion
 //#region src/mouse.ts
 /** Enable SGR mouse coordinates and pointer-motion reports on the main screen. */
 const ENABLE_MOUSE_TRACKING = "\x1B[?1000h\x1B[?1003h\x1B[?1006h";
@@ -2036,6 +2644,10 @@ const COMMANDS = [
 		description: "Toggle expanded tool output"
 	},
 	{
+		name: "trajectory",
+		description: "Inspect the session execution chain"
+	},
+	{
 		name: "status",
 		description: "Show current session status"
 	},
@@ -2075,6 +2687,7 @@ var TuiApplication = class {
 	transcript;
 	diffLineLocator = new DiffLineLocator();
 	layout;
+	trajectoryView;
 	removeInputListener;
 	spinner;
 	spinnerFrame = 0;
@@ -2108,6 +2721,7 @@ var TuiApplication = class {
 			running: false,
 			connected: false,
 			events: [],
+			historyHasMore: false,
 			queue: [],
 			pendingSubmissions: [],
 			models: void 0,
@@ -2163,6 +2777,7 @@ var TuiApplication = class {
 	render(state) {
 		if (this.disposed) return;
 		this.transcript.setState(state);
+		this.trajectoryView?.setState(state);
 		this.diffLineLocator.resolve(state, () => {
 			if (this.disposed || this.controller.current.sessionId !== state.sessionId) return;
 			this.transcript.setDiffLineStarts(this.diffLineLocator.current);
@@ -2349,6 +2964,7 @@ var TuiApplication = class {
 					"/resume [id] · switch session",
 					"/model [provider/model] · select model",
 					"/details · expand or collapse tool output",
+					"/trajectory · inspect the session execution chain",
 					"/status · current session details",
 					"/memories · manage memory and session learning",
 					"/rewind · select a workspace and conversation checkpoint",
@@ -2374,6 +2990,10 @@ var TuiApplication = class {
 				this.showDetails = !this.showDetails;
 				this.transcript.setDetails(this.showDetails);
 				this.tui.requestRender();
+				return true;
+			case "trajectory":
+			case "trace":
+				this.openTrajectory();
 				return true;
 			case "status": {
 				const state = this.controller.current;
@@ -2403,6 +3023,25 @@ var TuiApplication = class {
 	requestRewind() {
 		this.disarmRewind();
 		this.runAction(() => this.openRewind());
+	}
+	openTrajectory() {
+		if (this.tui.hasOverlay() || this.composerModalActive) return;
+		const close = () => {
+			if (this.trajectoryView === void 0) return;
+			this.trajectoryView = void 0;
+			this.layout.setComposerOverride(void 0);
+			this.composerModalActive = false;
+			this.tui.setFocus(this.editor);
+			this.tui.requestRender();
+		};
+		const trajectory = new TrajectoryView(this.controller.current, () => this.terminal.rows, this.theme, () => this.controller.loadEarlierHistory(), () => {
+			this.runAction(() => this.controller.cancel());
+		}, close, () => this.tui.requestRender());
+		this.trajectoryView = trajectory;
+		this.composerModalActive = true;
+		this.layout.setComposerOverride(trajectory);
+		this.tui.setFocus(trajectory);
+		this.tui.requestRender();
 	}
 	async openRewind() {
 		if (this.tui.hasOverlay() || this.composerModalActive) return;
@@ -3221,6 +3860,6 @@ function apply(ctx, config) {
 	});
 }
 //#endregion
-export { Config, HarnessController, TranscriptComponent, apply, inject, name, resolveConfig, sanitizeTerminalText };
+export { Config, HarnessController, TrajectoryView, TranscriptComponent, apply, buildTrajectoryRecords, inject, name, resolveConfig, sanitizeTerminalText };
 
 //# sourceMappingURL=index.js.map

@@ -87,6 +87,7 @@ interface TuiState {
   running: boolean;
   connected: boolean;
   events: HistoryEntry[];
+  historyHasMore: boolean;
   queue: QueuedInboxItem[];
   pendingSubmissions: PendingSubmission[];
   models: SessionModels | undefined;
@@ -122,6 +123,8 @@ declare class HarnessController {
   notice(message: string): void;
   /** List resumable session rows for a terminal selector. */
   sessions(): Promise<SessionSummary[]>;
+  /** Prepend one older, message-aligned history page without disturbing live tail events. */
+  loadEarlierHistory(): Promise<boolean>;
   /** Switch the terminal to a fresh session in the current working directory. */
   newSession(): Promise<void>;
   /** Clear the visible conversation immediately, then attach a fresh session. */
@@ -237,6 +240,66 @@ declare class TranscriptComponent implements Component {
   private scrollBlock;
 }
 //#endregion
+//#region src/trajectory.d.ts
+type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'context' | 'event';
+type TrajectoryStatus = 'pending' | 'completed' | 'warning' | 'failed' | 'info';
+/** One semantic execution record assembled from the durable session event log. */
+interface TrajectoryRecord {
+  key: string;
+  kind: TrajectoryKind;
+  type: string;
+  completionType?: string;
+  seq: number;
+  completionSeq?: number;
+  turn?: number;
+  step?: number;
+  title: string;
+  summary: string;
+  status: TrajectoryStatus;
+  startedAt: number;
+  completedAt?: number;
+  payload?: unknown;
+  result?: unknown;
+  schema?: unknown;
+}
+/** Pair lifecycle boundaries and tool call/results into an ordered diagnostic ledger. */
+declare function buildTrajectoryRecords(entries: readonly HistoryEntry[]): TrajectoryRecord[];
+/** Full-screen, keyboard-first execution ledger and event detail surface. */
+declare class TrajectoryView implements Component {
+  private readonly visibleRows;
+  private readonly theme;
+  private readonly onLoadEarlier;
+  private readonly onInterrupt;
+  private readonly onCancel;
+  private readonly onChange;
+  private state;
+  private records;
+  private index;
+  private mode;
+  private tabIndex;
+  private detailOffset;
+  private detailPageRows;
+  private detailMaxOffset;
+  private listPageRows;
+  private followTail;
+  private loadingEarlier;
+  private loadError;
+  constructor(state: Readonly<TuiState>, visibleRows: () => number, theme: TuiTheme, onLoadEarlier: () => Promise<boolean>, onInterrupt: () => void, onCancel: () => void, onChange: () => void);
+  /** Rebuild from the latest live event window while preserving the selected semantic record. */
+  setState(state: Readonly<TuiState>): void;
+  handleInput(data: string): void;
+  invalidate(): void;
+  render(width: number): string[];
+  private renderList;
+  private renderDetail;
+  private renderRecord;
+  private move;
+  private selectTab;
+  private scrollDetail;
+  private loadEarlier;
+  private fit;
+}
+//#endregion
 //#region src/text.d.ts
 /** Remove terminal control sequences from untrusted model, tool, and user text. */
 declare function sanitizeTerminalText(value: string): string;
@@ -263,5 +326,5 @@ declare const inject: string[];
 /** Mount the terminal application and bind its lifetime to the plugin effect. */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { type ApprovalPrompt, Config, type Config as TuiConfig, HarnessController, type PendingSubmission, type QuestionPrompt, TranscriptComponent, type TuiControllerSink, type TuiRuntime, type TuiState, apply, inject, name, resolveConfig, sanitizeTerminalText };
+export { type ApprovalPrompt, Config, type Config as TuiConfig, HarnessController, type PendingSubmission, type QuestionPrompt, type TrajectoryRecord, TrajectoryView, TranscriptComponent, type TuiControllerSink, type TuiRuntime, type TuiState, apply, buildTrajectoryRecords, inject, name, resolveConfig, sanitizeTerminalText };
 //# sourceMappingURL=index.d.ts.map

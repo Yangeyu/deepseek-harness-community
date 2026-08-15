@@ -47,7 +47,9 @@ The initial terminal client supports:
 - reconnect and history resynchronization;
 - the same durable turn/step timing, decode throughput, cache-hit, token-usage,
   and context-pressure projections shown below the Harness Web composer;
-- bounded tool output with expandable details; and
+- bounded tool output with expandable details;
+- a full-screen `/trajectory` execution ledger with paired turn, step, and tool
+  lifecycles plus Summary, Payload, Result, Schema, and Timing inspection; and
 - an application-owned transcript viewport with pointer and keyboard scrolling,
   stable history position, and automatic tail following.
 
@@ -113,6 +115,14 @@ dsh --profile tui [options]
 | `PageUp` / `PageDown` | Scroll conversation history while the editor is empty |
 | `Esc Esc` | Open the checkpoint selector; use `↑`/`↓` and `Enter` to inspect a node |
 
+`/trajectory` temporarily replaces the conversation composer with a full-screen,
+live execution ledger for the current session. Use `↑`/`↓` to select a semantic
+event, `Enter` to inspect it, and `Tab` or `←`/`→` to move through Summary,
+Payload, Result, Schema, and Timing. `Esc` returns from details to the ledger and
+then to chat. `PageUp` at the earliest loaded record fetches an older,
+message-aligned history page without losing live tail events. `Ctrl+C` remains an
+interrupt while the session is running.
+
 The model selector uses `↑`/`↓` (or `1`–`9`) in both the model and reasoning
 effort steps. `Enter` advances or applies the complete selection to the current session;
 the Harness Host also saves it as the default for new sessions, matching the
@@ -170,7 +180,7 @@ The status row shows a separate animation while quiet learning is running.
 `/clear` removes the visible conversation synchronously and then attaches a
 fresh session; if session creation fails, the previous view is restored. Slash
 commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/details`, `/status`,
-`/memories`, `/rewind`, and `/exit`.
+`/trajectory`, `/memories`, `/rewind`, and `/exit`.
 
 ## Architecture
 
@@ -182,6 +192,7 @@ Cordis bundle entry
         -> pi-tui application (input, dialogs, unified rewind transaction)
            -> ComposerAnchoredLayout (transcript viewport and tail following)
               -> TranscriptComponent (pure event/view projection)
+              -> TrajectoryView (paged execution ledger and event inspection)
 ```
 
 The TUI consumes tool-provided presentation intent (`generic`, `terminal`,

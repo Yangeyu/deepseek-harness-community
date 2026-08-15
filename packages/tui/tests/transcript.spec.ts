@@ -16,6 +16,7 @@ function state(events: HistoryEntry[]): TuiState {
     running: false,
     connected: true,
     events,
+    historyHasMore: false,
     queue: [],
     pendingSubmissions: [],
     models: undefined,

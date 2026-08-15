@@ -16,6 +16,8 @@ interface AppInternals {
   footer: { render(width: number): string[] }
   status: { render(width: number): string[] }
   transcript: { render(width: number): string[] }
+  trajectoryView?: { handleInput(data: string): void; render(width: number): string[] }
+  composerModalActive: boolean
   tui: { requestRender(): void }
   handleGlobalInput(data: string): { consume?: boolean } | undefined
   requestRewind(): void
@@ -140,6 +142,19 @@ describe('TuiApplication input routing', () => {
     })
     expect(internals.status.render(80).join('\n')).toContain('Working (4s · esc to interrupt)')
     expect(internals.transcript.render(80).join('\n')).not.toContain('Working')
+  })
+
+  it('opens /trajectory in the current TUI and returns to the composer on Escape', async () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+
+    await internals.submit('/trajectory')
+
+    expect(internals.composerModalActive).toBe(true)
+    expect(internals.trajectoryView?.render(80).join('\n')).toContain('Trajectory')
+    internals.trajectoryView?.handleInput('\u001b')
+    expect(internals.trajectoryView).toBeUndefined()
+    expect(internals.composerModalActive).toBe(false)
   })
 
   it('restores workspace, memory mutations, and conversation as one rewind transaction', async () => {

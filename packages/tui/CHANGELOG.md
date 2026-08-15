@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Add a live `/trajectory` execution ledger with paired turn, step, and tool
+  lifecycles, paged earlier history, and Summary, Payload, Result, Schema, and
+  Timing detail views inside the current TUI session.
 - Add the standalone file-backed Memory plugin to the TUI bundle, including
   `/memories`, quiet-learning status, per-session policy switches, and unified
   workspace/memory/conversation rewind.
