@@ -55,8 +55,9 @@
       name: '@deepseek-ai/dsh-cordis-host-runner'
 
     - id: terminal
-      name: deepseek-harness-tui
+      name: '@yangeyu/deepseek-harness-tui'
       config:
         historyMessages: 200
         showReasoning: true
+        thinkingMaxLines: 8
         color: true

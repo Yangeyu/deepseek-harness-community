@@ -2,7 +2,7 @@
  * Third-party terminal profile bundle for DeepSeek Harness. The application
  * consumes only the transport-neutral ApiProxy and keeps pi-tui behind its own
  * controller/rendering seam.
- * @module deepseek-harness-tui
+ * @module @yangeyu/deepseek-harness-tui
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -11,6 +11,7 @@ import {
   toFetchHandler,
 } from '@deepseek-ai/dsh-host-apiproxy'
 import { TuiApplication, type TuiRuntime } from './app.ts'
+import { installCheckpointCapture, WorkspaceCheckpointStore } from './checkpoint.ts'
 import { Config, resolveConfig, type Config as TuiConfig } from './config.ts'
 
 export { Config, resolveConfig }
@@ -40,7 +41,7 @@ declare module '@deepseek-ai/cordis' {
 export const name = 'community-tui'
 
 /** The in-process API gateway must exist before the terminal can activate. */
-export const inject = ['apiProxy']
+export const inject = ['apiProxy', 'agents']
 
 interface ParsedArgs {
   help: boolean
@@ -105,7 +106,9 @@ export function apply(ctx: Context, config: TuiConfig): void {
     exit,
   }
   const api = new InProcessApiClient(toFetchHandler(ctx.apiProxy))
-  const app = new TuiApplication(api, resolveConfig(parsed.config), runtime)
+  const checkpoints = new WorkspaceCheckpointStore()
+  installCheckpointCapture(ctx, checkpoints)
+  const app = new TuiApplication(api, resolveConfig(parsed.config), runtime, checkpoints)
   ctx.effect(() => {
     let active = true
     void (async () => {

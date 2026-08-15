@@ -7,9 +7,7 @@ import {
   TuiMainScreen,
   matchesKey,
   type OverlayHandle,
-  type SelectItem,
   type SlashCommand,
-  type TUI,
 } from '@earendil-works/pi-tui'
 import type {
   IApiClient,
@@ -28,13 +26,22 @@ import {
   ChoiceDialog,
   ModelDialog,
   MultiSelectDialog,
+  RewindDialog,
   TextInputDialog,
 } from './dialogs.ts'
 import { sanitizeTerminalText } from './text.ts'
 import { createTheme, type TuiTheme } from './theme.ts'
 import { composerStats } from './stats.ts'
+import { DiffLineLocator } from './diff-location.ts'
 import { TranscriptComponent } from './transcript.ts'
 import { ComposerAnchoredLayout } from './layout.ts'
+import type { RewindPreview, WorkspaceCheckpointStore } from './checkpoint.ts'
+import {
+  DISABLE_MOUSE_TRACKING,
+  ENABLE_MOUSE_TRACKING,
+  parseMouseReport,
+  type MouseReport,
+} from './mouse.ts'
 
 const DOUBLE_ESCAPE_MS = 600
 
@@ -68,7 +75,7 @@ function questionTitle(question: QuestionPrompt['questions'][number]): string {
 /** Main-screen pi-tui application for one in-process Harness API client. */
 export class TuiApplication implements TuiControllerSink {
   private readonly terminal = new ProcessTerminal()
-  private readonly tui: TUI
+  private readonly tui: TuiMainScreen
   private readonly theme: TuiTheme
   private readonly controller: HarnessController
   private readonly header: Text
@@ -76,6 +83,7 @@ export class TuiApplication implements TuiControllerSink {
   private readonly footer = new Text('', 0, 0)
   private readonly editor: Editor
   private readonly transcript: TranscriptComponent
+  private readonly diffLineLocator = new DiffLineLocator()
   private readonly layout: ComposerAnchoredLayout
   private removeInputListener?: () => void
   private spinner: ReturnType<typeof setInterval> | undefined
@@ -93,6 +101,7 @@ export class TuiApplication implements TuiControllerSink {
     api: IApiClient,
     private readonly config: ResolvedConfig,
     private readonly runtime: TuiRuntime,
+    private readonly checkpoints: WorkspaceCheckpointStore,
   ) {
     this.theme = createTheme(config.color)
     this.tui = new TuiMainScreen(this.terminal, config.showHardwareCursor)
@@ -115,6 +124,7 @@ export class TuiApplication implements TuiControllerSink {
       this.theme,
       config.showReasoning,
       config.maxToolOutputLines,
+      config.thinkingMaxLines,
     )
     this.editor = new Editor(this.tui, this.theme.editor, { paddingX: 1, autocompleteMaxVisible: 10 })
     this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(COMMANDS, config.cwd))
@@ -140,6 +150,7 @@ export class TuiApplication implements TuiControllerSink {
     this.terminal.setTitle(this.config.title)
     this.removeInputListener = this.tui.addInputListener(data => this.handleGlobalInput(data))
     this.tui.start()
+    this.terminal.write(ENABLE_MOUSE_TRACKING)
     await this.controller.start(this.config.sessionId)
   }
 
@@ -149,6 +160,7 @@ export class TuiApplication implements TuiControllerSink {
     this.disposed = true
     this.controller.dispose()
     if (this.spinner !== undefined) clearInterval(this.spinner)
+    this.terminal.write(DISABLE_MOUSE_TRACKING)
     this.removeInputListener?.()
     this.tui.stop()
     await this.terminal.drainInput(250, 30)
@@ -157,6 +169,12 @@ export class TuiApplication implements TuiControllerSink {
   render(state: Readonly<TuiState>): void {
     if (this.disposed) return
     this.transcript.setState(state)
+    this.diffLineLocator.resolve(state, () => {
+      if (this.disposed || this.controller.current.sessionId !== state.sessionId) return
+      this.transcript.setDiffLineStarts(this.diffLineLocator.current)
+      this.tui.requestRender()
+    })
+    this.transcript.setDiffLineStarts(this.diffLineLocator.current)
     this.header.setText([
       this.theme.bold(this.theme.accent(`✦ ${this.config.title}`)),
       this.theme.dim(`${state.cwd}${state.sessionId === undefined ? '' : ` · ${String(state.sessionId)}`}`),
@@ -210,6 +228,11 @@ export class TuiApplication implements TuiControllerSink {
   }
 
   private handleGlobalInput(data: string): { consume?: boolean } | undefined {
+    const mouse = parseMouseReport(data)
+    if (mouse !== undefined) {
+      this.handleMouse(mouse)
+      return { consume: true }
+    }
     if (this.composerModalActive) return undefined
     if (matchesKey(data, Key.ctrl('c'))) {
       if (this.controller.current.running) void this.runAction(() => this.controller.cancel())
@@ -248,6 +271,24 @@ export class TuiApplication implements TuiControllerSink {
       }
     }
     return undefined
+  }
+
+  private handleMouse(mouse: MouseReport): void {
+    const blocked = this.composerModalActive || this.tui.hasOverlay()
+    const renderState = this.tui.captureRenderState()
+    const transcriptLine = blocked
+      ? -1
+      : this.layout.transcriptRowAt(mouse.y, renderState.previousViewportTop, this.terminal.columns)
+    let changed = this.transcript.handlePointer(transcriptLine, 'move')
+    if (!blocked && (mouse.button & 64) !== 0) {
+      changed = this.transcript.handlePointer(
+        transcriptLine,
+        (mouse.button & 1) === 0 ? 'wheel-up' : 'wheel-down',
+      ) || changed
+    } else if (!blocked && mouse.button === 0 && !mouse.release) {
+      changed = this.transcript.handlePointer(transcriptLine, 'click') || changed
+    }
+    if (changed) this.tui.requestRender()
   }
 
   private async submitEditor(mode: 'queue' | 'steer'): Promise<void> {
@@ -328,7 +369,50 @@ export class TuiApplication implements TuiControllerSink {
   }
 
   private requestRewind(): void {
-    this.controller.notice('Rewind is not available until the checkpoint provider and fork-before-turn API are installed.')
+    void this.runAction(() => this.openRewind())
+  }
+
+  private async openRewind(): Promise<void> {
+    if (this.tui.hasOverlay() || this.composerModalActive) return
+    const sessionId = this.controller.current.sessionId
+    if (sessionId === undefined) throw new Error('no terminal session is active')
+    const preview = await this.checkpoints.preview(String(sessionId))
+    const close = (): void => {
+      this.layout.setComposerOverride(undefined)
+      this.composerModalActive = false
+      this.tui.setFocus(this.editor)
+      this.tui.requestRender()
+    }
+    const dialog = new RewindDialog(
+      preview,
+      this.theme,
+      () => {
+        close()
+        void this.runAction(() => this.performRewind(preview))
+      },
+      close,
+    )
+    this.composerModalActive = true
+    this.layout.setComposerOverride(dialog)
+    this.tui.setFocus(dialog)
+    this.tui.requestRender()
+  }
+
+  private async performRewind(preview: RewindPreview): Promise<void> {
+    const rollback = await this.checkpoints.restore(preview)
+    try {
+      await this.controller.rewind(preview)
+    } catch (error: unknown) {
+      try {
+        await rollback()
+      } catch (rollbackError: unknown) {
+        throw new Error(`rewind failed (${String(error)}) and workspace rollback also failed (${String(rollbackError)})`)
+      }
+      throw error
+    }
+    this.checkpoints.consume(preview.sessionId)
+    this.editor.setText(preview.prompt)
+    this.tui.requestRender()
   }
 
   private async openSessionSelector(): Promise<void> {

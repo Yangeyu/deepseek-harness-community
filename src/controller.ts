@@ -15,6 +15,7 @@ import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/t
 // Merge the Web composer's projection keys into SessionProjectionMap.
 import type {} from '@deepseek-ai/dsh-session-stats/client'
 import type {} from '@deepseek-ai/dsh-token-meter/client'
+import type { RewindPreview } from './checkpoint.ts'
 
 type SessionId = SessionSummary['sessionId']
 
@@ -136,6 +137,32 @@ export class HarnessController {
   /** Switch the terminal to an existing persisted or live session. */
   async resume(sessionId: string): Promise<void> {
     await this.openSession(sessionId)
+  }
+
+  /** Fork to the boundary before the checkpointed turn, or create a fresh first-turn replacement. */
+  async rewind(preview: RewindPreview): Promise<void> {
+    const source = this.requireSession()
+    if (String(source) !== preview.sessionId) throw new Error('the active session changed before rewind')
+    let target: SessionId
+    if (preview.previousTurnEndSeq === undefined) {
+      const created = valueOf(await this.api.sessions.create({ cwd: this.state.cwd }))
+      target = created.sessionId
+      const selection = this.state.models?.current
+      if (selection !== undefined) {
+        valueOf(await this.api.sessions.selectModel({
+          sessionId: target,
+          provider: selection.provider,
+          model: selection.model,
+          ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+        }))
+      }
+    } else {
+      target = valueOf(await this.api.sessions.fork({
+        sessionId: source,
+        atSeq: preview.previousTurnEndSeq,
+      })).sessionId
+    }
+    await this.openSession(String(target))
   }
 
   /** Submit ordinary text using the caller-selected queue placement. */

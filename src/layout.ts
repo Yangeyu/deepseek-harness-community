@@ -46,6 +46,11 @@ export class ComposerAnchoredLayout extends Container {
     if (component !== undefined) this.addChild(component)
   }
 
+  /** Map a visible terminal row to the transcript's most recent rendered rows. */
+  transcriptRowAt(screenRow: number, viewportTop: number, width: number): number {
+    return viewportTop + screenRow - this.header.render(width).length - 1
+  }
+
   private renderComposer(width: number): string[] {
     if (this.composerOverride !== undefined) return this.composerOverride.render(width)
     return [

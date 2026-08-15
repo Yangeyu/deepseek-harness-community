@@ -1,4 +1,4 @@
-# deepseek-harness-tui
+# @yangeyu/deepseek-harness-tui
 
 A keyboard-first, scrollback-preserving terminal client bundle for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
@@ -23,7 +23,15 @@ The initial terminal client supports:
 - streaming assistant text, reasoning, tool calls, and tool results;
 - terminal Markdown rendering for headings, emphasis, lists, links, quotes,
   tables, and fenced code blocks;
-- Codex-style user prompts with a bold `›` marker and no persistent speaker labels;
+- collapsed-by-default thinking blocks with an eight-line viewport, foreground
+  hover highlighting, click-to-toggle, and wheel scrolling;
+- Claude Code-style edit cards with exact changed-line counts, contextual lines,
+  absolute line numbers when the applied hunk can be located, syntax colors,
+  and red/green changed-line backgrounds;
+- last-turn rewind with a changed-file checkpoint preview, workspace restore,
+  conversation fork, and original-prompt refill;
+- Codex-style user prompts with highlighted foreground text, a `›` marker, and
+  no persistent speaker labels;
 - queueing input while a turn is running and steering the active turn;
 - cancelling a running turn;
 - model and reasoning-effort selection;
@@ -42,38 +50,42 @@ it does not copy Claude Code internals. The renderer is
 behind a transport-neutral controller, so it can be replaced without moving
 session logic into UI components.
 
-`Rewind Last Turn` is intentionally not marked complete. Harness already
-provides session forking, but a safe implementation also needs an authoritative
-file checkpoint/restore capability. Until that capability exists, `/rewind`
-reports the missing dependency rather than approximating restoration with
-`git reset` or another destructive repository-wide command.
+## Install
 
-## Local development install
-
-The package currently targets Harness `0.1.0-rc.5`. Those package versions are
-linked to the sibling checkout through the development-only `pnpm.overrides`
-table in `package.json`.
+The package supports DeepSeek Harness `>=0.1.0-rc.5 <0.2.0`. Install the tagged
+GitHub release directly into a `tui` profile, then start it:
 
 ```sh
-cd /Users/yang/Workplace/deepseek-harness-tui
-pnpm install
-pnpm run check
-
-cd /Users/yang/Workplace/deepseek-harness
-pnpm dsh plugin --profile tui add ../deepseek-harness-tui
-pnpm dsh --profile tui
+dsh plugin --profile tui add github:Yangeyu/deepseek-harness-tui#v0.1.0
+dsh --profile tui
 ```
 
-After compatible Harness packages are published, remove the local link
-overrides and install the package by registry name:
+The repository commits its verified `lib/` artifacts, so installing from a tag
+does not run a package build on the target machine. To install the downloadable
+release tarball instead:
 
 ```sh
-dsh plugin --profile tui add deepseek-harness-tui
+dsh plugin --profile tui add ./yangeyu-deepseek-harness-tui-0.1.0.tgz
 dsh --profile tui
 ```
 
 The bundle's `cordis.patch.yml` layers the required Host services and terminal
 entry point over the automatically installed `dsh-base` profile.
+
+## Develop
+
+```sh
+pnpm install --frozen-lockfile
+pnpm run check
+```
+
+For a local end-to-end run from a neighboring Harness checkout:
+
+```sh
+cd ../deepseek-harness
+pnpm dsh plugin --profile tui add ../deepseek-harness-tui
+pnpm dsh --profile tui
+```
 
 ## Command-line options
 
@@ -96,12 +108,26 @@ dsh --profile tui [options]
 | `Ctrl+C` | Cancel while running; exit while idle |
 | `Ctrl+O` | Toggle expanded tool details |
 | `Shift+Tab` | Cycle supported reasoning efforts |
-| `Esc Esc` | Request last-turn rewind; currently reports the missing checkpoint provider |
+| `Esc Esc` | Preview and confirm the last-turn workspace and conversation rewind |
 
 The model selector uses `↑`/`↓` (or `1`–`9`) in both the model and reasoning
 effort steps. `Enter` advances or applies the complete selection to the current session;
 the Harness Host also saves it as the default for new sessions, matching the
 current Web client behavior.
+
+Thinking blocks highlight on pointer hover and toggle on click. The pointer
+wheel scrolls expanded thinking and long inline diffs inside their bounded
+viewports. Mouse tracking keeps keyboard focus in the editor and preserves the
+main-screen scrollback model; hold the terminal's mouse-bypass modifier (usually
+Shift) when native terminal text selection is needed.
+
+Rewind snapshots the Git worktree immediately before the first step of each
+user-authored turn. `Esc Esc` shows the changed paths and line counts, then one
+confirmation restores the checkpoint, forks the conversation before that turn,
+and returns the original prompt to the editor. The implementation never runs
+`git reset` and never changes the user's Git index. Checkpoints are process-local
+and cover Git-tracked plus non-ignored untracked files; ignored files and
+submodule contents are outside the current restore scope.
 
 Slash commands: `/help`, `/new`, `/resume`, `/model`, `/details`, `/status`,
 `/rewind`, and `/exit`.
@@ -121,16 +147,6 @@ The TUI consumes tool-provided presentation intent (`generic`, `terminal`,
 therefore add render behavior through Harness's existing presenter extension
 point without changing the terminal controller.
 
-## Rewind completion criteria
-
-The final single rewind action must perform one coordinated operation:
-
-1. verify that the active turn is idle and identify the last direct user turn;
-2. restore only file mutations owned by that turn, with stale-content checks;
-3. fork the conversation immediately before that user message;
-4. switch the TUI to the fork and refill the original prompt; and
-5. leave the source session unchanged as the recovery path.
-
-If file restoration cannot complete, the conversation must not fork. This is
-why the current client does not expose a conversation-only rewind as a separate
-feature.
+Applied diff line numbers are resolved asynchronously against the workspace and
+cached outside the renderer. Missing, deleted, or ambiguous historical hunks
+still render correctly without inventing an absolute line number.

@@ -17,6 +17,7 @@ import type {
 } from '@deepseek-ai/dsh-host-apiproxy'
 import { sanitizeTerminalText } from './text.ts'
 import type { TuiTheme } from './theme.ts'
+import type { RewindPreview } from './checkpoint.ts'
 
 /** Keyboard selector with a title and optional explanatory line. */
 export class ChoiceDialog implements Component {
@@ -223,6 +224,62 @@ export class ModelDialog implements Component {
   private currentEfforts(): EffortChoice[] {
     const row = this.rows[this.index]
     return row === undefined ? [] : effortChoices(row)
+  }
+}
+
+/** Confirmation surface for the single file-restore plus conversation-fork rewind action. */
+export class RewindDialog implements Component {
+  private confirmSelected = true
+
+  constructor(
+    private readonly preview: RewindPreview,
+    private readonly theme: TuiTheme,
+    private readonly onConfirm: () => void,
+    private readonly onCancel: () => void,
+  ) {}
+
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.left) || matchesKey(data, Key.up)) {
+      this.confirmSelected = true
+      return
+    }
+    if (matchesKey(data, Key.right) || matchesKey(data, Key.down) || matchesKey(data, Key.tab)) {
+      this.confirmSelected = false
+      return
+    }
+    if (matchesKey(data, Key.enter)) {
+      if (this.confirmSelected) this.onConfirm()
+      else this.onCancel()
+      return
+    }
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))) this.onCancel()
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const prompt = sanitizeTerminalText(this.preview.prompt).replaceAll('\n', ' ')
+    const lines = [
+      this.theme.bold('Rewind Last Turn'),
+      this.theme.dim('Restore the workspace checkpoint and return to the previous user-message node.'),
+      '',
+      truncateToWidth(`${this.theme.bold('Prompt')}  ${prompt}`, width),
+      this.theme.bold(`Checkpoint · ${this.preview.files.length} changed file${this.preview.files.length === 1 ? '' : 's'}`),
+    ]
+    if (this.preview.files.length === 0) lines.push(this.theme.dim('  No workspace files changed.'))
+    for (const change of this.preview.files.slice(0, 8)) {
+      const counts = change.added === undefined || change.removed === undefined
+        ? 'binary'
+        : `${this.theme.success(`+${change.added}`)} ${this.theme.error(`-${change.removed}`)}`
+      lines.push(truncateToWidth(`  ${counts}  ${sanitizeTerminalText(change.path)}`, width))
+    }
+    if (this.preview.files.length > 8) {
+      lines.push(this.theme.dim(`  … ${this.preview.files.length - 8} more files`))
+    }
+    const confirm = this.confirmSelected ? this.theme.hover(' Rewind ') : ' Rewind '
+    const cancel = this.confirmSelected ? ' Cancel ' : this.theme.hover(' Cancel ')
+    lines.push('', `${confirm}  ${cancel}`, this.theme.dim('←/→ choose · Enter confirm · Esc cancel'))
+    return lines
   }
 }
 

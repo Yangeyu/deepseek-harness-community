@@ -3,6 +3,7 @@ export function sanitizeTerminalText(value: string): string {
   return value
     .replaceAll('\r\n', '\n')
     .replaceAll('\r', '\n')
+    // oxlint-disable-next-line no-control-regex -- terminal-safe text removes C0/C1 bytes.
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu, '')
 }
 

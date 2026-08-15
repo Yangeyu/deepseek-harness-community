@@ -1,7 +1,22 @@
 {
-  "name": "deepseek-harness-tui",
+  "name": "@yangeyu/deepseek-harness-tui",
   "version": "0.1.0",
-  "description": "A keyboard-first terminal client bundle for DeepSeek Harness",
+  "description": "Claude Code-inspired terminal client bundle for DeepSeek Harness",
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "tui",
+    "coding-agent",
+    "terminal"
+  ],
+  "homepage": "https://github.com/Yangeyu/deepseek-harness-tui#readme",
+  "bugs": {
+    "url": "https://github.com/Yangeyu/deepseek-harness-tui/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Yangeyu/deepseek-harness-tui.git"
+  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -17,11 +32,14 @@
     "lib",
     "cordis.patch.yml",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "license": "MIT",
+  "packageManager": "pnpm@10.6.5",
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0 || >=24.0.0",
+    "pnpm": ">=10.0.0"
   },
   "dsh": {
     "bundle": {
@@ -30,11 +48,41 @@
   },
   "scripts": {
     "build": "tsdown",
+    "lint": "oxlint --deny-warnings src tests tsdown.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run build"
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "prepack": "pnpm run check"
   },
   "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@earendil-works/pi-tui": "^0.84.2",
+    "cli-highlight": "^2.1.11",
+    "diff": "^9.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-base": ">=0.1.0-rc.5 <0.2.0",
+    "@deepseek-ai/dsh-host-apiproxy": ">=0.1.0-rc.5 <0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-base": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-host-apiproxy": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.5 <0.2.0",
+    "@deepseek-ai/dsh-base": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-code-runtime-worker-thread": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-cordis-host-runner": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-host-apiproxy": ">=0.1.0-rc.5 <0.2.0",
@@ -47,36 +95,10 @@
     "@deepseek-ai/dsh-storage-json": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-token-meter": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-workspace": ">=0.1.0-rc.5 <0.2.0",
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "@earendil-works/pi-tui": "^0.84.2"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-base": ">=0.1.0-rc.5 <0.2.0"
-  },
-  "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
     "@types/node": "^22.20.0",
+    "oxlint": "1.76.0",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
-  },
-  "pnpm": {
-    "overrides": {
-      "@deepseek-ai/cordis": "link:../deepseek-harness/vendor/cordis",
-      "@deepseek-ai/dsh-base": "link:../deepseek-harness/packages/bundle/base",
-      "@deepseek-ai/dsh-code-runtime-worker-thread": "link:../deepseek-harness/packages/code-runtime/code-runtime-worker-thread",
-      "@deepseek-ai/dsh-cordis-host-runner": "link:../deepseek-harness/packages/extensions/cordis-host-runner",
-      "@deepseek-ai/dsh-host-apiproxy": "link:../deepseek-harness/packages/host/apiproxy",
-      "@deepseek-ai/dsh-host-directory-picker-browse": "link:../deepseek-harness/packages/host/directory-picker-browse",
-      "@deepseek-ai/dsh-session-projection": "link:../deepseek-harness/packages/session/session-projection",
-      "@deepseek-ai/dsh-session-projection-cache": "link:../deepseek-harness/packages/session/session-projection-cache",
-      "@deepseek-ai/dsh-session-stats": "link:../deepseek-harness/packages/session/session-stats",
-      "@deepseek-ai/dsh-storage": "link:../deepseek-harness/packages/storage/storage",
-      "@deepseek-ai/dsh-storage-domain": "link:../deepseek-harness/packages/storage/storage-domain",
-      "@deepseek-ai/dsh-storage-json": "link:../deepseek-harness/packages/storage/storage-json",
-      "@deepseek-ai/dsh-token-meter": "link:../deepseek-harness/packages/llm/token-meter",
-      "@deepseek-ai/dsh-workspace": "link:../deepseek-harness/packages/workspace/workspace"
-    }
   }
 }

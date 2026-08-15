@@ -10,6 +10,7 @@ export default defineConfig({
   clean: true,
   fixedExtension: false,
   deps: {
+    onlyBundle: false,
     neverBundle: [
       '@deepseek-ai/cordis',
       '@deepseek-ai/dsh-host-apiproxy',

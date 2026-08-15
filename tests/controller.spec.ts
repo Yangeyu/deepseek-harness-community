@@ -117,4 +117,50 @@ describe('HarnessController', () => {
       contextWindow: 10_000,
     })
   })
+
+  it('forks at the boundary before the checkpointed turn', async () => {
+    const source = 'session-source' as SessionSummary['sessionId']
+    const child = 'session-child' as SessionSummary['sessionId']
+    const fork = vi.fn(async () => ok({ sessionId: child }))
+    const models: SessionModels = {
+      current: { provider: 'deepseek', model: 'chat' },
+      routable: true,
+      groups: [],
+      failures: [],
+    }
+    const api = {
+      host: { describe: async () => ok({ version: 'test', cwd: '/workspace', attachedSessions: 0, canOpenPath: false }) },
+      sessions: {
+        list: async () => ok({
+          items: [{ sessionId: child, updatedAt: 1, running: false, blank: false, cwd: '/workspace' }],
+        }),
+        create: async (request: { sessionId?: SessionSummary['sessionId'] }) => ok({ sessionId: request.sessionId ?? source }),
+        history: async () => ok({ events: [], hasMore: false }),
+        models: async () => ok(models),
+        fork,
+      },
+      events: { async *mux(): AsyncGenerator<never> {}, async *host(): AsyncGenerator<never> {} },
+      respond: async () => ({ accepted: true as const }),
+    } as unknown as IApiClient
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+
+    await controller.start()
+    await controller.rewind({
+      checkpointId: 'checkpoint-1',
+      sessionId: String(source),
+      turn: 3,
+      prompt: 'redo this',
+      previousTurnEndSeq: 17,
+      files: [],
+      currentTree: 'tree',
+    })
+    controller.dispose()
+
+    expect(fork).toHaveBeenCalledWith({ sessionId: source, atSeq: 17 })
+    expect(controller.current.sessionId).toBe(child)
+  })
 })

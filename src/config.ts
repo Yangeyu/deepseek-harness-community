@@ -4,6 +4,7 @@ import z from '@deepseek-ai/schemastery'
 export interface Config {
   historyMessages?: number
   maxToolOutputLines?: number
+  thinkingMaxLines?: number
   showReasoning?: boolean
   showHardwareCursor?: boolean
   color?: boolean
@@ -16,6 +17,7 @@ export interface Config {
 export const Config: z<Config> = z.object({
   historyMessages: z.natural().min(10).max(2000).default(200),
   maxToolOutputLines: z.natural().min(2).max(200).default(12),
+  thinkingMaxLines: z.natural().min(3).max(30).default(8),
   showReasoning: z.boolean().default(true),
   showHardwareCursor: z.boolean().default(false),
   color: z.boolean().default(true),
@@ -28,6 +30,7 @@ export const Config: z<Config> = z.object({
 export interface ResolvedConfig {
   historyMessages: number
   maxToolOutputLines: number
+  thinkingMaxLines: number
   showReasoning: boolean
   showHardwareCursor: boolean
   color: boolean
@@ -41,6 +44,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
   return {
     historyMessages: config.historyMessages ?? 200,
     maxToolOutputLines: config.maxToolOutputLines ?? 12,
+    thinkingMaxLines: config.thinkingMaxLines ?? 8,
     showReasoning: config.showReasoning ?? true,
     showHardwareCursor: config.showHardwareCursor ?? false,
     color: config.color ?? true,
