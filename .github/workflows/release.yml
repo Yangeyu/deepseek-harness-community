@@ -24,7 +24,9 @@ jobs:
       - run: npm install --global npm@^11.15.0
       - run: pnpm install --frozen-lockfile
       - name: Verify tag and package version
-        run: test "$GITHUB_REF_NAME" = "v$(node --print \"require('./package.json').version\")"
+        run: |
+          package_version=$(node --print "require('./package.json').version")
+          test "$GITHUB_REF_NAME" = "v${package_version}"
       - run: pnpm run check
       - run: mkdir dist
       - run: pnpm pack --pack-destination dist
