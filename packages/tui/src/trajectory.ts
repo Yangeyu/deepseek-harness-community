@@ -484,8 +484,8 @@ export class TrajectoryView implements Component {
         this.selectTab(1)
         return
       }
-      if (matchesKey(data, Key.up)) this.scrollDetail(-1)
-      if (matchesKey(data, Key.down)) this.scrollDetail(1)
+      if (matchesKey(data, Key.up) || data === 'k') this.scrollDetail(-1)
+      if (matchesKey(data, Key.down) || data === 'j') this.scrollDetail(1)
       if (matchesKey(data, Key.pageUp)) this.scrollDetail(-this.detailPageRows)
       if (matchesKey(data, Key.pageDown)) this.scrollDetail(this.detailPageRows)
       return
@@ -494,12 +494,12 @@ export class TrajectoryView implements Component {
       this.onCancel()
       return
     }
-    if (matchesKey(data, Key.up)) {
+    if (matchesKey(data, Key.up) || data === 'k') {
       if (this.index === 0) void this.loadEarlier()
       else this.move(-1)
       return
     }
-    if (matchesKey(data, Key.down)) {
+    if (matchesKey(data, Key.down) || data === 'j') {
       this.move(1)
       return
     }
@@ -542,7 +542,7 @@ export class TrajectoryView implements Component {
     const footerText = this.loadingEarlier
       ? 'Loading earlier history…'
       : this.loadError === undefined
-        ? '↑/↓ select · Enter details · PageUp/PageDown page · Esc chat'
+        ? '↑/↓ or j/k select · Enter details · PageUp/PageDown page · Esc chat'
         : `History load failed: ${this.loadError}`
     const footer = [truncateToWidth(
       this.loadError === undefined ? this.theme.dim(footerText) : this.theme.warning(footerText),
@@ -591,7 +591,7 @@ export class TrajectoryView implements Component {
       ? ''
       : ` · ${String(this.detailOffset + 1)}-${String(Math.min(content.length, this.detailOffset + available))}/${String(content.length)}`
     const footer = [truncateToWidth(this.theme.dim(
-      `Tab/←/→ section · ↑/↓ scroll · Esc events${range}`,
+      `Tab/←/→ section · ↑/↓ or j/k scroll · Esc events${range}`,
     ), width)]
     return this.fit([...header, ...body, ...Array<string>(Math.max(0, available - body.length)).fill(''), ...footer], height)
   }

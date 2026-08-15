@@ -123,6 +123,52 @@ describe('trajectory records', () => {
 })
 
 describe('TrajectoryView', () => {
+  it('supports Vim j/k navigation in the ledger and detail viewport', () => {
+    const assistant = {
+      event: {
+        type: 'assistant/message',
+        seq: 5,
+        time: 1_700,
+        surfaceOp: 'append',
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'assistant-vim',
+            role: 'assistant',
+            source: { kind: 'model', provider: 'deepseek', model: 'chat' },
+            content: [{ type: 'text', text: 'Vim navigation response' }],
+          },
+        },
+      },
+    } as TuiState['events'][number]
+    const view = new TrajectoryView(
+      state([...toolEvents(true), assistant]),
+      () => 8,
+      createTheme(false),
+      async () => false,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )
+
+    view.handleInput('k')
+    view.handleInput('\r')
+    expect(view.render(100).join('\n')).toContain('Trajectory · echo NAVIGATION_OK')
+
+    view.handleInput('\t')
+    const top = view.render(100)
+    view.handleInput('j')
+    expect(view.render(100)).not.toEqual(top)
+    view.handleInput('k')
+    expect(view.render(100)).toEqual(top)
+
+    view.handleInput('\u001b')
+    view.handleInput('j')
+    view.handleInput('\r')
+    expect(view.render(100).join('\n')).toContain('Trajectory · Assistant response')
+  })
+
   it('navigates from the ledger through payload and result details, then back to chat', () => {
     const close = vi.fn()
     const view = new TrajectoryView(

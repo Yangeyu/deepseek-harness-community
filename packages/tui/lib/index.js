@@ -2461,8 +2461,8 @@ var TrajectoryView = class {
 				this.selectTab(1);
 				return;
 			}
-			if (matchesKey(data, Key.up)) this.scrollDetail(-1);
-			if (matchesKey(data, Key.down)) this.scrollDetail(1);
+			if (matchesKey(data, Key.up) || data === "k") this.scrollDetail(-1);
+			if (matchesKey(data, Key.down) || data === "j") this.scrollDetail(1);
 			if (matchesKey(data, Key.pageUp)) this.scrollDetail(-this.detailPageRows);
 			if (matchesKey(data, Key.pageDown)) this.scrollDetail(this.detailPageRows);
 			return;
@@ -2471,12 +2471,12 @@ var TrajectoryView = class {
 			this.onCancel();
 			return;
 		}
-		if (matchesKey(data, Key.up)) {
+		if (matchesKey(data, Key.up) || data === "k") {
 			if (this.index === 0) this.loadEarlier();
 			else this.move(-1);
 			return;
 		}
-		if (matchesKey(data, Key.down)) {
+		if (matchesKey(data, Key.down) || data === "j") {
 			this.move(1);
 			return;
 		}
@@ -2513,7 +2513,7 @@ var TrajectoryView = class {
 			].join(" · ")), width),
 			""
 		];
-		const footerText = this.loadingEarlier ? "Loading earlier history…" : this.loadError === void 0 ? "↑/↓ select · Enter details · PageUp/PageDown page · Esc chat" : `History load failed: ${this.loadError}`;
+		const footerText = this.loadingEarlier ? "Loading earlier history…" : this.loadError === void 0 ? "↑/↓ or j/k select · Enter details · PageUp/PageDown page · Esc chat" : `History load failed: ${this.loadError}`;
 		const footer = [truncateToWidth(this.loadError === void 0 ? this.theme.dim(footerText) : this.theme.warning(footerText), width)];
 		const available = Math.max(0, height - header.length - footer.length);
 		this.listPageRows = Math.max(1, available);
@@ -2554,7 +2554,7 @@ var TrajectoryView = class {
 		this.detailOffset = Math.max(0, Math.min(this.detailMaxOffset, this.detailOffset));
 		const body = content.slice(this.detailOffset, this.detailOffset + available);
 		const range = content.length <= available ? "" : ` · ${String(this.detailOffset + 1)}-${String(Math.min(content.length, this.detailOffset + available))}/${String(content.length)}`;
-		const footer = [truncateToWidth(this.theme.dim(`Tab/←/→ section · ↑/↓ scroll · Esc events${range}`), width)];
+		const footer = [truncateToWidth(this.theme.dim(`Tab/←/→ section · ↑/↓ or j/k scroll · Esc events${range}`), width)];
 		return this.fit([
 			...header,
 			...body,

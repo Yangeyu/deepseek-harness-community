@@ -116,12 +116,12 @@ dsh --profile tui [options]
 | `Esc Esc` | Open the checkpoint selector; use `↑`/`↓` and `Enter` to inspect a node |
 
 `/trajectory` temporarily replaces the conversation composer with a full-screen,
-live execution ledger for the current session. Use `↑`/`↓` to select a semantic
-event, `Enter` to inspect it, and `Tab` or `←`/`→` to move through Summary,
+live execution ledger for the current session. Use `↑`/`↓` or `j`/`k` to select a
+semantic event, `Enter` to inspect it, and `Tab` or `←`/`→` to move through Summary,
 Payload, Result, Schema, and Timing. `Esc` returns from details to the ledger and
 then to chat. `PageUp` at the earliest loaded record fetches an older,
 message-aligned history page without losing live tail events. `Ctrl+C` remains an
-interrupt while the session is running.
+interrupt while the session is running. In a detail tab, `j`/`k` scrolls its content.
 
 The model selector uses `↑`/`↓` (or `1`–`9`) in both the model and reasoning
 effort steps. `Enter` advances or applies the complete selection to the current session;
