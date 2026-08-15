@@ -101,6 +101,35 @@ describe('TranscriptComponent', () => {
     expect(output).not.toContain('```')
   })
 
+  it('renders deep Markdown headings without exposing their source markers', () => {
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'assistant/message',
+          seq: 0,
+          time: 1,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'm-deep-heading',
+              role: 'assistant',
+              source: { kind: 'model', provider: 'p', model: 'm' },
+              content: [{ type: 'text', text: '### Production CORS\n\n#### Error middleware' }],
+            },
+          },
+        },
+      }),
+    ]), createTheme(true), true, 8)
+
+    const output = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(output).toContain('Production CORS')
+    expect(output).toContain('Error middleware')
+    expect(output).not.toContain('###')
+    expect(output.startsWith(' Production CORS')).toBe(true)
+  })
+
   it('collapses thinking by default and scrolls within its bounded viewport', () => {
     const transcript = new TranscriptComponent(state([
       entry({
@@ -139,6 +168,7 @@ describe('TranscriptComponent', () => {
     const expanded = transcript.render(80).join('\n')
     expect(expanded).toContain('▾ Thought')
     expect(expanded).toContain('thought 1')
+    expect(expanded).toContain('\u001b[38;2;148;163;184m')
     expect(expanded).not.toContain('thought 8')
     expect(expanded.split('\n').filter(line => line.includes('│'))).toHaveLength(3)
 
@@ -200,6 +230,7 @@ describe('TranscriptComponent', () => {
     expect(rendered).toHaveLength(3)
     expect(rendered.every(line => line.includes('\u001b[48;2;36;42;58m'))).toBe(true)
     expect(rendered.every(line => visibleWidth(line) === 80)).toBe(true)
+    expect(rendered.every(line => line.startsWith('\u001b[48;2;36;42;58m'))).toBe(true)
     expect(output).toContain('\u001b[97m› explain this code\u001b[39m')
     expect(output).not.toContain('You')
   })
@@ -293,6 +324,69 @@ describe('TranscriptComponent', () => {
     expect(output).toContain('passed')
     expect(output).toContain('[exit 0]')
     expect(output).not.toContain('opaque-name')
+  })
+
+  it('expands one tool call on title click to reveal its arguments and result', () => {
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'tool/call',
+          seq: 0,
+          time: 1,
+          data: {
+            turn: 1,
+            step: 1,
+            callId: 'call-click',
+            name: 'search',
+            arguments: '{"query":"render details"}',
+          },
+        },
+        view: { for: 'call', view: { card: 'generic', title: 'Search project' } },
+      }),
+      entry({
+        event: {
+          type: 'tool/result',
+          seq: 1,
+          time: 2,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'm-tool-click',
+              role: 'user',
+              source: { kind: 'tool', callId: 'call-click' },
+              content: [{
+                type: 'tool-result',
+                toolCallId: 'call-click',
+                content: [{ type: 'text', text: '3 matches' }],
+              }],
+            },
+          },
+        },
+        view: {
+          for: 'result',
+          view: { card: 'generic', title: 'Search project', content: [{ type: 'text', text: '3 matches' }] },
+        },
+      }),
+    ]), createTheme(false), true, 8)
+
+    const collapsed = transcript.render(80).join('\n')
+    expect(collapsed).toContain('▸ ● Search project')
+    expect(collapsed).not.toContain('render details')
+    expect(collapsed).not.toContain('3 matches')
+
+    expect(transcript.handlePointer(0, 'move')).toBe(true)
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    const expanded = transcript.render(80).join('\n')
+    expect(expanded).toContain('▾ ● Search project')
+    expect(expanded).toContain('Arguments')
+    expect(expanded).toContain('render details')
+    expect(expanded).toContain('Result')
+    expect(expanded).toContain('3 matches')
+
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.render(80).join('\n')).not.toContain('3 matches')
   })
 
   it('shows applied file diffs by default and scrolls them with the pointer', () => {

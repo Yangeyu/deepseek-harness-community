@@ -23,15 +23,15 @@ The initial terminal client supports:
 - streaming assistant text, reasoning, tool calls, and tool results;
 - terminal Markdown rendering for headings, emphasis, lists, links, quotes,
   tables, and fenced code blocks;
-- collapsed-by-default thinking blocks with an eight-line viewport, foreground
-  hover highlighting, click-to-toggle, and wheel scrolling;
+- collapsed-by-default thinking blocks with a readable secondary foreground,
+  an eight-line viewport, hover highlighting, click-to-toggle, and wheel scrolling;
 - Claude Code-style edit cards with exact changed-line counts, contextual lines,
   absolute line numbers when the applied hunk can be located, syntax colors,
   and red/green changed-line backgrounds;
 - bounded turn checkpoints with an instant keyboard selector, changed-file
   preview, workspace restore, conversation fork, and original-prompt refill;
 - Codex-style full-width user-message blocks with restrained background color,
-  a stable `›` anchor, and no persistent speaker labels;
+  internal text padding, a stable `›` anchor, and no persistent speaker labels;
 - queueing input while a turn is running and steering the active turn;
 - immediate local prompt rendering, one animated working row fixed directly
   above the editor for the full running turn with elapsed time and an interrupt hint,
@@ -47,7 +47,7 @@ The initial terminal client supports:
 - reconnect and history resynchronization;
 - the same durable turn/step timing, decode throughput, cache-hit, token-usage,
   and context-pressure projections shown below the Harness Web composer;
-- bounded tool output with expandable details;
+- individually clickable tool calls with bounded Arguments and Result details;
 - a full-screen `/trajectory` execution ledger with paired turn, step, and tool
   lifecycles plus Summary, Payload, Result, Schema, and Timing inspection; and
 - an application-owned transcript viewport with pointer and keyboard scrolling,
@@ -128,11 +128,13 @@ effort steps. `Enter` advances or applies the complete selection to the current 
 the Harness Host also saves it as the default for new sessions, matching the
 current Web client behavior.
 
-Thinking blocks highlight on pointer hover and toggle on click. The pointer
-wheel scrolls expanded thinking and long inline diffs inside their bounded
-viewports; at a block boundary or over ordinary output, the same wheel scrolls
-the conversation. Scrolling upward pauses automatic tail following, and
-PageDown or a downward wheel returns to live output. Hold the terminal's
+Thinking and ordinary tool-call titles highlight on pointer hover and toggle on
+click. Tool details show both the recorded Arguments and Result; `Ctrl+O`
+remains the keyboard shortcut for expanding or collapsing them together. The
+pointer wheel scrolls expanded thinking and long inline diffs inside their
+bounded viewports; at a block boundary or over ordinary output, the same wheel
+scrolls the conversation. Scrolling upward pauses automatic tail following,
+and PageDown or a downward wheel returns to live output. Hold the terminal's
 mouse-bypass modifier (usually Shift) when native terminal text selection is
 needed.
 

@@ -37,7 +37,9 @@ export class ComposerAnchoredLayout extends Container {
     const composer = this.renderComposer(width)
     const transcriptStart = header.length + 1
     const conversation = [...header, '', ...transcript]
-    const availableRows = Math.max(0, this.viewportRows() - composer.length)
+    const viewportRows = Math.max(0, this.viewportRows())
+    const composerGapRows = this.composerOverride === undefined && viewportRows > composer.length ? 1 : 0
+    const availableRows = Math.max(0, viewportRows - composer.length - composerGapRows)
     this.conversationPageRows = Math.max(1, availableRows)
     this.maxConversationTop = Math.max(0, conversation.length - availableRows)
 
@@ -54,7 +56,7 @@ export class ComposerAnchoredLayout extends Container {
     const gap = Math.max(0, availableRows - visible.length)
     return [
       ...visible,
-      ...Array<string>(gap).fill(''),
+      ...Array<string>(gap + composerGapRows).fill(''),
       ...composer,
     ]
   }

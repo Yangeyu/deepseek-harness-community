@@ -34,6 +34,13 @@ interface TranscriptRow {
     text: string
     streaming: boolean
   }
+  tool?: {
+    key: string
+    title: string
+    status: 'pending' | 'completed' | 'failed'
+    arguments?: string
+    result?: string
+  }
   diff?: {
     key: string
     title: string
@@ -44,7 +51,7 @@ interface TranscriptRow {
 
 interface BlockHit {
   key: string
-  kind: 'thinking' | 'diff'
+  kind: 'thinking' | 'tool' | 'diff'
   titleLine: number
   firstLine: number
   lastLine: number
@@ -80,6 +87,20 @@ function boundedLines(value: string, limit: number): string {
   const head = Math.max(1, Math.ceil(limit / 2))
   const tail = Math.max(1, Math.floor(limit / 2))
   return [...lines.slice(0, head), `… ${lines.length - head - tail} lines hidden …`, ...lines.slice(-tail)].join('\n')
+}
+
+function toolArguments(value: string, limit: number): string | undefined {
+  const clean = sanitizeTerminalText(value).trim()
+  if (clean === '') return undefined
+  try {
+    const parsed = JSON.parse(clean) as unknown
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) && Object.keys(parsed).length === 0) {
+      return undefined
+    }
+    return boundedLines(displayUnknown(parsed), limit)
+  } catch {
+    return boundedLines(clean, limit)
+  }
 }
 
 function rawResultText(entry: HistoryEntry): string {
@@ -242,13 +263,17 @@ function rowsFromState(
           })
           break
         }
-        const body = result === undefined
-          ? showDetails ? displayUnknown(event.data.arguments) : undefined
-          : showDetails ? resultBody(resultView, rawResultText(result), maxToolOutputLines) : undefined
+        const argumentsBody = toolArguments(event.data.arguments, maxToolOutputLines)
         rows.push({
-          label: `${result === undefined ? '○' : failed ? '×' : '●'} ${sanitizeTerminalText(title)}`,
-          labelPaint: result === undefined ? theme.warning : failed ? theme.error : theme.success,
-          ...body === undefined || body === '' ? {} : { body, dim: true },
+          tool: {
+            key: `${String(event.data.callId)}:tool`,
+            title: sanitizeTerminalText(title),
+            status: result === undefined ? 'pending' : failed ? 'failed' : 'completed',
+            ...argumentsBody === undefined ? {} : { arguments: argumentsBody },
+            ...result === undefined
+              ? {}
+              : { result: resultBody(resultView, rawResultText(result), maxToolOutputLines) },
+          },
         })
         break
       }
@@ -307,6 +332,7 @@ export class TranscriptComponent implements Component {
   private state: Readonly<TuiState>
   private showDetails = false
   private readonly expandedThinking = new Set<string>()
+  private readonly toolExpansion = new Map<string, boolean>()
   private readonly collapsedDiffs = new Set<string>()
   private readonly followingThinking = new Set<string>()
   private readonly blockOffsets = new Map<string, number>()
@@ -328,6 +354,7 @@ export class TranscriptComponent implements Component {
   setState(state: Readonly<TuiState>): void {
     if (state.sessionId !== this.state.sessionId) {
       this.expandedThinking.clear()
+      this.toolExpansion.clear()
       this.collapsedDiffs.clear()
       this.followingThinking.clear()
       this.blockOffsets.clear()
@@ -339,6 +366,7 @@ export class TranscriptComponent implements Component {
 
   setDetails(show: boolean): void {
     this.showDetails = show
+    this.toolExpansion.clear()
   }
 
   /** Supply asynchronously resolved absolute file-line starts for diff cards. */
@@ -368,13 +396,15 @@ export class TranscriptComponent implements Component {
           this.expandedThinking.add(hit.key)
           this.followingThinking.add(hit.key)
         }
+      } else if (hit.kind === 'tool') {
+        this.toolExpansion.set(hit.key, !this.isToolExpanded(hit.key))
       } else if (!this.collapsedDiffs.delete(hit.key)) {
         this.collapsedDiffs.add(hit.key)
         this.blockOffsets.delete(hit.key)
       }
       return true
     }
-    if (hit === undefined || (hit.kind === 'thinking' && !this.expandedThinking.has(hit.key)) ||
+    if (hit === undefined || hit.kind === 'tool' || (hit.kind === 'thinking' && !this.expandedThinking.has(hit.key)) ||
       (hit.kind === 'diff' && this.collapsedDiffs.has(hit.key))) return false
     return this.scrollBlock(hit.key, action === 'wheel-up' ? -3 : 3, hit.kind === 'thinking')
   }
@@ -393,29 +423,55 @@ export class TranscriptComponent implements Component {
     for (const [index, row] of rows.entries()) {
       if (index > 0) lines.push('')
       if (row.thinking !== undefined) {
-        this.pushBlock(lines, this.renderThinking(row.thinking, safeWidth), row.thinking.key, 'thinking')
+        const contentWidth = this.contentWidth(safeWidth)
+        this.pushBlock(
+          lines,
+          this.frameContent(this.renderThinking(row.thinking, contentWidth), safeWidth),
+          row.thinking.key,
+          'thinking',
+        )
+        continue
+      }
+      if (row.tool !== undefined) {
+        const contentWidth = this.contentWidth(safeWidth)
+        this.pushBlock(
+          lines,
+          this.frameContent(this.renderTool(row.tool, contentWidth), safeWidth),
+          row.tool.key,
+          'tool',
+        )
         continue
       }
       if (row.diff !== undefined) {
-        this.pushBlock(lines, this.renderDiff(row.diff, safeWidth), row.diff.key, 'diff')
+        const contentWidth = this.contentWidth(safeWidth)
+        this.pushBlock(
+          lines,
+          this.frameContent(this.renderDiff(row.diff, contentWidth), safeWidth),
+          row.diff.key,
+          'diff',
+        )
         continue
       }
       if (row.prompt && row.body !== undefined) {
         lines.push(...this.renderPromptBlock(row.body, row.promptStatus, safeWidth))
         continue
       }
+      const contentWidth = this.contentWidth(safeWidth)
+      const contentLines: string[] = []
       if (row.label !== undefined) {
-        lines.push(truncateToWidth((row.labelPaint ?? (text => text))(row.label), safeWidth))
+        contentLines.push(truncateToWidth((row.labelPaint ?? (text => text))(row.label), contentWidth))
       }
-      if (row.body === undefined || row.body === '') continue
-      const body = sanitizeTerminalText(row.body)
-      if (row.markdown) {
-        const markdown = new Markdown(body, 0, 0, this.theme.markdown, row.dim ? { color: this.theme.dim } : undefined)
-        lines.push(...markdown.render(safeWidth))
-      } else {
-        const styled = row.dim ? this.theme.dim(body) : body
-        lines.push(...wrapTextWithAnsi(styled, safeWidth))
+      if (row.body !== undefined && row.body !== '') {
+        const body = sanitizeTerminalText(row.body)
+        if (row.markdown) {
+          const markdown = new Markdown(body, 0, 0, this.theme.markdown, row.dim ? { color: this.theme.dim } : undefined)
+          contentLines.push(...markdown.render(contentWidth))
+        } else {
+          const styled = row.dim ? this.theme.dim(body) : body
+          contentLines.push(...wrapTextWithAnsi(styled, contentWidth))
+        }
       }
+      lines.push(...this.frameContent(contentLines, safeWidth))
     }
     if (this.hoveredBlockKey !== undefined && !this.blockHits.some(hit => hit.key === this.hoveredBlockKey)) {
       this.hoveredBlockKey = undefined
@@ -442,6 +498,21 @@ export class TranscriptComponent implements Component {
     if (status !== undefined) lines.push(paintLine(`   ${this.theme.dim(this.theme.user(status))} `))
     lines.push(paintLine(' '.repeat(width)))
     return lines
+  }
+
+  private contentWidth(width: number): number {
+    return Math.max(1, width - (width >= 24 ? 2 : 0))
+  }
+
+  private frameContent(lines: string[], width: number): string[] {
+    const gutter = width >= 24 ? 1 : 0
+    if (gutter === 0) return lines
+    const contentWidth = this.contentWidth(width)
+    return lines.map(line => {
+      const content = truncateToWidth(line, contentWidth, '…')
+      const right = ' '.repeat(Math.max(gutter, width - gutter - visibleWidth(content)))
+      return `${' '.repeat(gutter)}${content}${right}`
+    })
   }
 
   private pushBlock(lines: string[], rendered: string[], key: string, kind: BlockHit['kind']): void {
@@ -479,6 +550,44 @@ export class TranscriptComponent implements Component {
       this.renderBlockTitle(`${marker} ${label}${range}`, thinking.key, width, this.theme.reasoning),
       ...visible.map(line => truncateToWidth(`${this.theme.reasoning('│')} ${line}`, width)),
     ]
+  }
+
+  private renderTool(tool: NonNullable<TranscriptRow['tool']>, width: number): string[] {
+    const expanded = this.isToolExpanded(tool.key)
+    const marker = expanded ? '▾' : '▸'
+    const glyph = tool.status === 'pending' ? '○' : tool.status === 'failed' ? '×' : '●'
+    const paint = tool.status === 'pending'
+      ? this.theme.warning
+      : tool.status === 'failed' ? this.theme.error : this.theme.success
+    const title = `${marker} ${glyph} ${tool.title}`
+    const renderedTitle = this.hoveredBlockKey === tool.key
+      ? this.theme.hover(truncateToWidth(title, width, '…'))
+      : truncateToWidth(`${this.theme.dim(`${marker} `)}${paint(glyph)} ${this.theme.assistant(tool.title)}`, width, '…')
+    if (!expanded) return [renderedTitle]
+
+    const sections = [
+      ...tool.arguments === undefined ? [] : [{ label: 'Arguments', value: tool.arguments }],
+      ...tool.result === undefined || tool.result === '' ? [] : [{ label: 'Result', value: tool.result }],
+    ]
+    if (sections.length === 0) {
+      return [renderedTitle, truncateToWidth(`  ${this.theme.reasoning('No details recorded yet.')}`, width)]
+    }
+    return [
+      renderedTitle,
+      ...sections.flatMap((section, index) => [
+        ...index === 0 ? [] : [''],
+        truncateToWidth(`  ${this.theme.dim(section.label)}`, width),
+        ...sanitizeTerminalText(section.value).split('\n').flatMap(line => {
+          const wrapped = wrapTextWithAnsi(line, Math.max(1, width - 4))
+          return (wrapped.length === 0 ? [''] : wrapped)
+            .map(part => truncateToWidth(`  ${this.theme.reasoning('│')} ${this.theme.reasoning(part)}`, width, '…'))
+        }),
+      ]),
+    ]
+  }
+
+  private isToolExpanded(key: string): boolean {
+    return this.toolExpansion.get(key) ?? this.showDetails
   }
 
   private renderDiff(diff: NonNullable<TranscriptRow['diff']>, width: number): string[] {

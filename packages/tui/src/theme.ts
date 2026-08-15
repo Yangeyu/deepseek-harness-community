@@ -3,6 +3,7 @@ import type {
   MarkdownTheme,
   SelectListTheme,
 } from '@earendil-works/pi-tui'
+import { stripTerminalSequences } from '@earendil-works/pi-tui'
 
 type Paint = (text: string) => string
 
@@ -44,7 +45,10 @@ export function createTheme(enabled: boolean): TuiTheme {
   const diffAdded = ansiSequence(enabled, '48;2;12;48;28', '49')
   const diffRemoved = ansiSequence(enabled, '48;2;58;23;31', '49')
   const error = ansi(enabled, 31, 39)
-  const reasoning = ansi(enabled, 90, 39)
+  // Reasoning is secondary content, but ANSI bright-black becomes nearly
+  // invisible in several dark terminal palettes. Keep it muted without
+  // sacrificing legibility.
+  const reasoning = ansiSequence(enabled, '38;2;148;163;184', '39')
   const success = ansi(enabled, 32, 39)
   const underline = ansi(enabled, 4, 24)
   const warning = ansi(enabled, 33, 39)
@@ -80,7 +84,10 @@ export function createTheme(enabled: boolean): TuiTheme {
       selectList: select,
     },
     markdown: {
-      heading: text => bold(accent(text)),
+      // pi-tui deliberately passes the literal marker for level 3+ headings
+      // through the theme. Hide that marker so rendered Markdown never looks
+      // like unparsed source while fenced code remains untouched.
+      heading: text => /^#{3,6} $/u.test(stripTerminalSequences(text)) ? '' : bold(accent(text)),
       link: accent,
       linkUrl: dim,
       code: warning,
