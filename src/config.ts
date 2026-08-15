@@ -3,6 +3,7 @@ import z from '@deepseek-ai/schemastery'
 /** User-configurable TUI presentation and history bounds. */
 export interface Config {
   historyMessages?: number
+  rewindCheckpoints?: number
   maxToolOutputLines?: number
   thinkingMaxLines?: number
   showReasoning?: boolean
@@ -16,6 +17,7 @@ export interface Config {
 /** Loader schema for the public plugin configuration. */
 export const Config: z<Config> = z.object({
   historyMessages: z.natural().min(10).max(2000).default(200),
+  rewindCheckpoints: z.natural().min(2).max(100).default(20),
   maxToolOutputLines: z.natural().min(2).max(200).default(12),
   thinkingMaxLines: z.natural().min(3).max(30).default(8),
   showReasoning: z.boolean().default(true),
@@ -29,6 +31,7 @@ export const Config: z<Config> = z.object({
 /** Fully materialized settings consumed by the application. */
 export interface ResolvedConfig {
   historyMessages: number
+  rewindCheckpoints: number
   maxToolOutputLines: number
   thinkingMaxLines: number
   showReasoning: boolean
@@ -43,6 +46,7 @@ export interface ResolvedConfig {
 export function resolveConfig(config: Config): ResolvedConfig {
   return {
     historyMessages: config.historyMessages ?? 200,
+    rewindCheckpoints: config.rewindCheckpoints ?? 20,
     maxToolOutputLines: config.maxToolOutputLines ?? 12,
     thinkingMaxLines: config.thinkingMaxLines ?? 8,
     showReasoning: config.showReasoning ?? true,

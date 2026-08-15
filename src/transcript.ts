@@ -27,6 +27,8 @@ interface TranscriptRow {
   markdown?: boolean
   dim?: boolean
   prompt?: boolean
+  promptStatus?: string
+  loading?: boolean
   thinking?: {
     key: string
     text: string
@@ -64,6 +66,33 @@ function reasoningText(content: readonly { type: string; text?: string }[]): str
     .filter(block => block.type === 'reasoning')
     .map(block => block.text ?? '')
     .join('\n')
+}
+
+function awaitingVisibleOutput(entries: readonly HistoryEntry[], showReasoning: boolean): boolean {
+  let awaiting = false
+  for (const entry of entries) {
+    const event = entry.event
+    if (event.type === 'user/message') {
+      if (event.surfaceOp === 'append' && event.data.source.kind === 'user'
+        && messageText(event.data.content, false).trim() !== '') awaiting = true
+      continue
+    }
+    if (!awaiting) continue
+    if (event.type === 'assistant/chunk') {
+      const chunk = event.data.chunk
+      if ((chunk.type === 'text-delta' || (showReasoning && chunk.type === 'reasoning-delta'))
+        && chunk.text.trim() !== '') awaiting = false
+      continue
+    }
+    if (event.type === 'assistant/message') {
+      const visible = messageText(event.data.message.content, false)
+      const reasoning = showReasoning ? reasoningText(event.data.message.content) : ''
+      if (visible.trim() !== '' || reasoning.trim() !== '') awaiting = false
+      continue
+    }
+    if (event.type === 'tool/call' || event.type === 'turn/end') awaiting = false
+  }
+  return awaiting
 }
 
 function callTitle(name: string, view: ToolCallView | undefined): string {
@@ -270,13 +299,35 @@ function rowsFromState(
     }
   }
 
-  if (state.queue.length > 0) {
+  const visibleQueueRpcIds = new Set<string>()
+  for (const item of state.queue) {
+    if (item.placement === 'context') continue
+    const body = messageText(item.message.content, false)
+    if (body.trim() === '') continue
+    const source = item.message.source
+    if (source.kind === 'user' && 'rpcId' in source) visibleQueueRpcIds.add(String(source.rpcId))
     rows.push({
-      label: `Queued · ${state.queue.length}`,
-      labelPaint: theme.warning,
-      body: state.queue.map(item => messageText(item.message.content, false)).filter(Boolean).join('\n'),
-      dim: true,
+      prompt: true,
+      body,
+      promptStatus: item.placement === 'steering' ? 'Steering next step…' : 'Queued',
     })
+  }
+  let localWorking = false
+  for (const submission of state.pendingSubmissions) {
+    if (submission.rpcId !== undefined && visibleQueueRpcIds.has(String(submission.rpcId))) continue
+    if (submission.intent === 'working') localWorking = true
+    rows.push({
+      prompt: true,
+      body: submission.text,
+      ...submission.intent === 'queueing'
+        ? { promptStatus: 'Queueing…' }
+        : submission.intent === 'steering'
+          ? { promptStatus: 'Steering…' }
+          : {},
+    })
+  }
+  if (localWorking || (state.running && awaitingVisibleOutput(state.events, showReasoning))) {
+    rows.push({ loading: true })
   }
   if (state.notice !== undefined) rows.push({ label: 'Notice', labelPaint: theme.accent, body: state.notice })
   if (state.error !== undefined) rows.push({ label: 'Error', labelPaint: theme.error, body: state.error })
@@ -295,6 +346,7 @@ export class TranscriptComponent implements Component {
   private blockHits: BlockHit[] = []
   private hoveredBlockKey: string | undefined
   private diffLineStarts: DiffLineStarts = new Map()
+  private loadingFrame = '·'
 
   constructor(
     state: Readonly<TuiState>,
@@ -320,6 +372,11 @@ export class TranscriptComponent implements Component {
 
   setDetails(show: boolean): void {
     this.showDetails = show
+  }
+
+  /** Select the current application-owned loading animation frame. */
+  setLoadingFrame(frame: string): void {
+    this.loadingFrame = frame
   }
 
   /** Supply asynchronously resolved absolute file-line starts for diff cards. */
@@ -373,6 +430,10 @@ export class TranscriptComponent implements Component {
     this.blockHits = []
     for (const [index, row] of rows.entries()) {
       if (index > 0) lines.push('')
+      if (row.loading) {
+        lines.push(this.theme.accent(`${this.loadingFrame} Working…`))
+        continue
+      }
       if (row.thinking !== undefined) {
         this.pushBlock(lines, this.renderThinking(row.thinking, safeWidth), row.thinking.key, 'thinking')
         continue
@@ -391,6 +452,7 @@ export class TranscriptComponent implements Component {
             firstLine = false
           }
         }
+        if (row.promptStatus !== undefined) lines.push(this.theme.dim(`  ${row.promptStatus}`))
         continue
       }
       if (row.label !== undefined) {

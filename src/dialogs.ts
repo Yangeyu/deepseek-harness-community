@@ -5,6 +5,7 @@ import {
   Text,
   matchesKey,
   truncateToWidth,
+  wrapTextWithAnsi,
   type Component,
   type Focusable,
   type SelectItem,
@@ -17,7 +18,7 @@ import type {
 } from '@deepseek-ai/dsh-host-apiproxy'
 import { sanitizeTerminalText } from './text.ts'
 import type { TuiTheme } from './theme.ts'
-import type { RewindPreview } from './checkpoint.ts'
+import type { RewindCheckpointSummary, RewindPreview } from './checkpoint.ts'
 
 /** Keyboard selector with a title and optional explanatory line. */
 export class ChoiceDialog implements Component {
@@ -227,9 +228,130 @@ export class ModelDialog implements Component {
   }
 }
 
-/** Confirmation surface for the single file-restore plus conversation-fork rewind action. */
+/** Bounded keyboard selector for process-local turn checkpoints. */
+export class RewindCheckpointDialog implements Component {
+  private summaries: RewindCheckpointSummary[]
+  private index: number
+  private inspectionError: string | undefined
+
+  constructor(
+    summaries: RewindCheckpointSummary[],
+    selectedCheckpointId: string | undefined,
+    private readonly visibleRows: () => number,
+    private readonly theme: TuiTheme,
+    private readonly onSelect: (summary: RewindCheckpointSummary) => void,
+    private readonly onCancel: () => void,
+  ) {
+    this.summaries = summaries
+    const selected = selectedCheckpointId === undefined
+      ? summaries.length - 1
+      : summaries.findIndex(summary => summary.checkpointId === selectedCheckpointId)
+    this.index = Math.max(0, selected)
+  }
+
+  /** Replace asynchronously inspected rows without moving the current selection. */
+  setSummaries(summaries: RewindCheckpointSummary[]): void {
+    const selectedId = this.summaries[this.index]?.checkpointId
+    this.summaries = summaries
+    const selected = selectedId === undefined
+      ? summaries.length - 1
+      : summaries.findIndex(summary => summary.checkpointId === selectedId)
+    this.index = selected === -1 ? Math.max(0, summaries.length - 1) : Math.max(0, selected)
+    this.inspectionError = undefined
+  }
+
+  /** Keep selection usable when optional workspace-count inspection fails. */
+  setInspectionError(message: string): void {
+    this.inspectionError = message
+  }
+
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.up)) {
+      this.move(-1)
+      return
+    }
+    if (matchesKey(data, Key.down)) {
+      this.move(1)
+      return
+    }
+    if (matchesKey(data, Key.pageUp)) {
+      this.move(-this.maxVisibleItems())
+      return
+    }
+    if (matchesKey(data, Key.pageDown)) {
+      this.move(this.maxVisibleItems())
+      return
+    }
+    if (matchesKey(data, Key.enter)) {
+      const selected = this.summaries[this.index]
+      if (selected !== undefined) this.onSelect(selected)
+      return
+    }
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))) this.onCancel()
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const maxVisible = this.maxVisibleItems()
+    const start = Math.max(0, Math.min(
+      this.summaries.length - maxVisible,
+      this.index - Math.floor(maxVisible / 2),
+    ))
+    const end = Math.min(this.summaries.length, start + maxVisible)
+    const lines = [
+      this.theme.bold('Rewind'),
+      this.theme.dim('Restore the workspace and conversation to the point before…'),
+      '',
+    ]
+    if (start > 0) lines.push(this.theme.dim(`  ↑ ${start} more above`), '')
+    for (let row = start; row < end; row += 1) {
+      const summary = this.summaries[row]
+      if (summary === undefined) continue
+      const selected = row === this.index
+      const cursor = selected ? this.theme.accent('›') : ' '
+      const prompt = sanitizeTerminalText(summary.prompt).replaceAll('\n', ' ')
+      const fileStatus = summary.turnChangedFiles === undefined
+        ? 'Checking workspace changes…'
+        : summary.turnChangedFiles === 0
+          ? 'No code changes'
+          : `${summary.turnChangedFiles} changed file${summary.turnChangedFiles === 1 ? '' : 's'} this turn`
+      lines.push(truncateToWidth(
+        `${cursor} ${selected ? this.theme.bold(prompt) : prompt}`,
+        width,
+      ))
+      lines.push(truncateToWidth(`    ${this.theme.dim(fileStatus)}`, width), '')
+    }
+    if (end < this.summaries.length) lines.push(this.theme.dim(`  ↓ ${this.summaries.length - end} more below`), '')
+    if (this.inspectionError !== undefined) {
+      lines.push(truncateToWidth(this.theme.warning(`Workspace status unavailable: ${this.inspectionError}`), width))
+    }
+    lines.push(this.theme.dim('↑/↓ select · Enter continue · Esc cancel'))
+    return lines
+  }
+
+  private move(offset: number): void {
+    this.index = Math.max(0, Math.min(this.summaries.length - 1, this.index + offset))
+  }
+
+  private maxVisibleItems(): number {
+    return Math.max(1, Math.min(6, Math.floor((this.visibleRows() - 8) / 3)))
+  }
+}
+
+function relativeAge(time: number): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1_000))
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+/** Claude Code-style confirmation for the unified workspace and conversation rewind. */
 export class RewindDialog implements Component {
-  private confirmSelected = true
+  private selected = 0
 
   constructor(
     private readonly preview: RewindPreview,
@@ -239,16 +361,20 @@ export class RewindDialog implements Component {
   ) {}
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.left) || matchesKey(data, Key.up)) {
-      this.confirmSelected = true
+    if (matchesKey(data, Key.up)) {
+      this.selected = 0
       return
     }
-    if (matchesKey(data, Key.right) || matchesKey(data, Key.down) || matchesKey(data, Key.tab)) {
-      this.confirmSelected = false
+    if (matchesKey(data, Key.down) || matchesKey(data, Key.tab)) {
+      this.selected = 1
+      return
+    }
+    if (data === '1' || data === '2') {
+      this.selected = Number(data) - 1
       return
     }
     if (matchesKey(data, Key.enter)) {
-      if (this.confirmSelected) this.onConfirm()
+      if (this.selected === 0) this.onConfirm()
       else this.onCancel()
       return
     }
@@ -259,27 +385,36 @@ export class RewindDialog implements Component {
 
   render(width: number): string[] {
     const prompt = sanitizeTerminalText(this.preview.prompt).replaceAll('\n', ' ')
+    const changed = this.preview.files.length
+    const confirmation = wrapTextWithAnsi(
+      this.theme.dim('Confirm you want to restore the workspace and conversation to the point before you sent this message:'),
+      width,
+    )
+    const promptLines = wrapTextWithAnsi(prompt, Math.max(1, width - 2))
+    const impact = wrapTextWithAnsi(this.theme.dim(changed === 0
+      ? 'The code will be unchanged.'
+      : `${changed} changed file${changed === 1 ? '' : 's'} will be restored.`), width)
     const lines = [
-      this.theme.bold('Rewind Last Turn'),
-      this.theme.dim('Restore the workspace checkpoint and return to the previous user-message node.'),
+      this.theme.bold('Rewind'),
       '',
-      truncateToWidth(`${this.theme.bold('Prompt')}  ${prompt}`, width),
-      this.theme.bold(`Checkpoint · ${this.preview.files.length} changed file${this.preview.files.length === 1 ? '' : 's'}`),
+      ...confirmation,
+      '',
+      ...promptLines.map(line => `${this.theme.dim('│')} ${this.theme.bold(line)}`),
+      `${this.theme.dim('│')} ${this.theme.dim(`(${relativeAge(this.preview.createdAt)})`)}`,
+      '',
+      this.theme.dim('The conversation will be forked.'),
+      ...impact,
+      '',
     ]
-    if (this.preview.files.length === 0) lines.push(this.theme.dim('  No workspace files changed.'))
-    for (const change of this.preview.files.slice(0, 8)) {
-      const counts = change.added === undefined || change.removed === undefined
-        ? 'binary'
-        : `${this.theme.success(`+${change.added}`)} ${this.theme.error(`-${change.removed}`)}`
-      lines.push(truncateToWidth(`  ${counts}  ${sanitizeTerminalText(change.path)}`, width))
-    }
-    if (this.preview.files.length > 8) {
-      lines.push(this.theme.dim(`  … ${this.preview.files.length - 8} more files`))
-    }
-    const confirm = this.confirmSelected ? this.theme.hover(' Rewind ') : ' Rewind '
-    const cancel = this.confirmSelected ? ' Cancel ' : this.theme.hover(' Cancel ')
-    lines.push('', `${confirm}  ${cancel}`, this.theme.dim('←/→ choose · Enter confirm · Esc cancel'))
-    return lines
+    const restore = `${this.selected === 0 ? '›' : ' '} 1. Restore workspace and conversation`
+    const cancel = `${this.selected === 1 ? '›' : ' '} 2. Never mind`
+    lines.push(
+      this.selected === 0 ? this.theme.accent(restore) : restore,
+      this.selected === 1 ? this.theme.accent(cancel) : cancel,
+      '',
+      this.theme.dim('↑/↓ select · Enter confirm · Esc back'),
+    )
+    return lines.map(line => truncateToWidth(line, width))
   }
 }
 

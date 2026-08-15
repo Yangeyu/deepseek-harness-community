@@ -35,13 +35,14 @@ describe('WorkspaceCheckpointStore', () => {
     await writeFile(join(root, 'b.txt'), 'staged baseline\n')
     git(root, 'add', 'b.txt')
     const indexTree = git(root, 'write-tree')
-    const store = new WorkspaceCheckpointStore()
+    const store = new WorkspaceCheckpointStore(10)
     await store.capture({ sessionId: 'session-1', turn: 2, cwd: root, prompt: 'make changes', previousTurnEndSeq: 17 })
 
     await writeFile(join(root, 'a.txt'), 'ai change\n')
     await writeFile(join(root, 'b.txt'), 'ai staged-file change\n')
     await writeFile(join(root, 'new.txt'), 'created\n')
-    const preview = await store.preview('session-1')
+    const [summary] = store.list('session-1')
+    const preview = await store.preview('session-1', summary?.checkpointId ?? '')
     expect(preview.previousTurnEndSeq).toBe(17)
     expect(preview.prompt).toBe('make changes')
     expect(preview.files.map(change => change.path)).toEqual(['a.txt', 'b.txt', 'new.txt'])
@@ -61,13 +62,64 @@ describe('WorkspaceCheckpointStore', () => {
 
   it('rejects a stale confirmation when the workspace changed after preview', async () => {
     const root = await repository()
-    const store = new WorkspaceCheckpointStore()
+    const store = new WorkspaceCheckpointStore(10)
     await store.capture({ sessionId: 'session-2', turn: 1, cwd: root, prompt: 'edit a' })
     await writeFile(join(root, 'a.txt'), 'first change\n')
-    const preview = await store.preview('session-2')
+    const [summary] = store.list('session-2')
+    const preview = await store.preview('session-2', summary?.checkpointId ?? '')
     await writeFile(join(root, 'a.txt'), 'later change\n')
 
     await expect(store.restore(preview)).rejects.toThrow('workspace changed after the rewind preview')
     expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('later change\n')
+  })
+
+  it('lists bounded turn history newest-last and restores an older selected node', async () => {
+    const root = await repository()
+    const store = new WorkspaceCheckpointStore(3)
+    await store.capture({ sessionId: 'session-history', turn: 1, cwd: root, prompt: 'first prompt' })
+    await store.capture({ sessionId: 'session-history', turn: 2, cwd: root, prompt: 'second prompt', previousTurnEndSeq: 4 })
+    await writeFile(join(root, 'a.txt'), 'after second\n')
+    await store.capture({ sessionId: 'session-history', turn: 3, cwd: root, prompt: 'third prompt', previousTurnEndSeq: 9 })
+    await writeFile(join(root, 'b.txt'), 'after third\n')
+
+    const summaries = store.list('session-history')
+    expect(summaries.map(summary => summary.prompt)).toEqual(['first prompt', 'second prompt', 'third prompt'])
+    const described = await store.describe('session-history')
+    expect(described.map(summary => summary.turnChangedFiles)).toEqual([0, 1, 1])
+
+    const selected = summaries[1]
+    const preview = await store.preview('session-history', selected?.checkpointId ?? '')
+    expect(preview.previousTurnEndSeq).toBe(4)
+    await store.restore(preview)
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('original\n')
+
+    store.continueFrom(preview, 'session-child')
+    expect(store.list('session-child').map(summary => summary.prompt)).toEqual(['first prompt'])
+    expect(() => store.list('session-history')).toThrow('no rewind checkpoint')
+
+    await store.capture({
+      sessionId: 'session-child',
+      turn: 2,
+      cwd: root,
+      prompt: 'replacement second prompt',
+      previousTurnEndSeq: 4,
+    })
+    await writeFile(join(root, 'a.txt'), 'replacement second change\n')
+    const replacement = store.list('session-child').at(-1)
+    const secondPreview = await store.preview('session-child', replacement?.checkpointId ?? '')
+    await store.restore(secondPreview)
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('original\n')
+    store.continueFrom(secondPreview, 'session-grandchild')
+    expect(store.list('session-grandchild').map(summary => summary.prompt)).toEqual(['first prompt'])
+    expect(() => store.list('session-child')).toThrow('no rewind checkpoint')
+  })
+
+  it('keeps earlier checkpoints when a later capture fails', async () => {
+    const root = await repository()
+    const store = new WorkspaceCheckpointStore(10)
+    await store.capture({ sessionId: 'session-failure', turn: 1, cwd: root, prompt: 'usable prompt' })
+    store.fail('session-failure', new Error('later capture failed'))
+
+    expect(store.list('session-failure')).toHaveLength(1)
   })
 })

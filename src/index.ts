@@ -19,6 +19,7 @@ export type { TuiConfig, TuiRuntime }
 export { HarnessController } from './controller.ts'
 export type {
   ApprovalPrompt,
+  PendingSubmission,
   QuestionPrompt,
   TuiControllerSink,
   TuiState,
@@ -106,9 +107,10 @@ export function apply(ctx: Context, config: TuiConfig): void {
     exit,
   }
   const api = new InProcessApiClient(toFetchHandler(ctx.apiProxy))
-  const checkpoints = new WorkspaceCheckpointStore()
+  const resolved = resolveConfig(parsed.config)
+  const checkpoints = new WorkspaceCheckpointStore(resolved.rewindCheckpoints)
   installCheckpointCapture(ctx, checkpoints)
-  const app = new TuiApplication(api, resolveConfig(parsed.config), runtime, checkpoints)
+  const app = new TuiApplication(api, resolved, runtime, checkpoints)
   ctx.effect(() => {
     let active = true
     void (async () => {

@@ -16,6 +16,9 @@ import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/t
 import type {} from '@deepseek-ai/dsh-session-stats/client'
 import type {} from '@deepseek-ai/dsh-token-meter/client'
 import type { RewindPreview } from './checkpoint.ts'
+import { SubmissionTracker, type PendingSubmission } from './submission.ts'
+
+export type { PendingSubmission } from './submission.ts'
 
 type SessionId = SessionSummary['sessionId']
 
@@ -33,6 +36,7 @@ export interface TuiState {
   connected: boolean
   events: HistoryEntry[]
   queue: QueuedInboxItem[]
+  pendingSubmissions: PendingSubmission[]
   models: SessionModels | undefined
   projections: Partial<SessionProjectionMap>
   notice: string | undefined
@@ -78,9 +82,10 @@ function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void
 export class HarnessController {
   private readonly abort = new AbortController()
   private state: TuiState
-  private resyncTask: Promise<void> | undefined
+  private resyncTask: { generation: number; promise: Promise<void> } | undefined
   private generation = 0
   private projectionSeqs: Record<string, number> = {}
+  private readonly submissions = new SubmissionTracker()
 
   constructor(
     private readonly api: IApiClient,
@@ -95,6 +100,7 @@ export class HarnessController {
       connected: false,
       events: [],
       queue: [],
+      pendingSubmissions: [],
       models: undefined,
       projections: {},
       notice: undefined,
@@ -134,15 +140,21 @@ export class HarnessController {
     await this.openSession()
   }
 
+  /** Clear the visible conversation immediately, then attach a fresh session. */
+  async clearSession(): Promise<void> {
+    await this.openSession(undefined, true)
+  }
+
   /** Switch the terminal to an existing persisted or live session. */
   async resume(sessionId: string): Promise<void> {
     await this.openSession(sessionId)
   }
 
-  /** Fork to the boundary before the checkpointed turn, or create a fresh first-turn replacement. */
-  async rewind(preview: RewindPreview): Promise<void> {
+  /** Fork to the boundary before the checkpointed turn, then open and return the replacement session. */
+  async rewind(preview: RewindPreview, onPhase?: (phase: 'forking' | 'opening') => void): Promise<SessionId> {
     const source = this.requireSession()
     if (String(source) !== preview.sessionId) throw new Error('the active session changed before rewind')
+    onPhase?.('forking')
     let target: SessionId
     if (preview.previousTurnEndSeq === undefined) {
       const created = valueOf(await this.api.sessions.create({ cwd: this.state.cwd }))
@@ -162,20 +174,47 @@ export class HarnessController {
         atSeq: preview.previousTurnEndSeq,
       })).sessionId
     }
+    onPhase?.('opening')
     await this.openSession(String(target))
+    return target
   }
 
   /** Submit ordinary text using the caller-selected queue placement. */
   async prompt(text: string, mode: 'queue' | 'steer'): Promise<void> {
     const sessionId = this.requireSession()
-    const clientTimeZone = terminalTimeZone()
-    const response = await this.api.sessions.prompt({
-      sessionId,
-      mode,
-      content: [{ type: 'text', text }],
-      ...clientTimeZone === undefined ? {} : { clientTimeZone },
+    const generation = this.generation
+    const pending = this.submissions.start(text, mode, this.state.running)
+    this.patch({
+      pendingSubmissions: this.submissions.snapshot,
+      notice: undefined,
+      error: undefined,
     })
-    const accepted = valueOf(response)
+    const rejectPending = (): void => {
+      if (generation !== this.generation || sessionId !== this.state.sessionId) return
+      this.submissions.reject(pending.key)
+      this.patch({ pendingSubmissions: this.submissions.snapshot })
+    }
+    const clientTimeZone = terminalTimeZone()
+    let response: Awaited<ReturnType<IApiClient['sessions']['prompt']>>
+    try {
+      response = await this.api.sessions.prompt({
+        sessionId,
+        mode,
+        content: [{ type: 'text', text }],
+        ...clientTimeZone === undefined ? {} : { clientTimeZone },
+      })
+    } catch (error: unknown) {
+      rejectPending()
+      throw error
+    }
+    if (!response.result.ok) {
+      rejectPending()
+      throw new Error(response.result.error.message)
+    }
+    if (generation !== this.generation || sessionId !== this.state.sessionId) return
+    this.submissions.accept(pending.key, response.rpcId)
+    this.patch({ pendingSubmissions: this.submissions.snapshot })
+    const accepted = response.result.value
     if (accepted.command?.text !== undefined) this.notice(accepted.command.text)
   }
 
@@ -253,45 +292,54 @@ export class HarnessController {
     return sessionId
   }
 
-  private async openSession(resumeSessionId?: string): Promise<void> {
+  private async openSession(resumeSessionId?: string, clearImmediately = false): Promise<void> {
+    const previousState = this.state
+    const previousProjectionSeqs = this.projectionSeqs
     const generation = ++this.generation
-    const host = valueOf(await this.api.host.describe({}))
-    let cwd = this.state.cwd || host.cwd
-    let requested: SessionId | undefined
-    if (resumeSessionId !== undefined) {
-      const summary = valueOf(await this.api.sessions.list({})).items
-        .find(item => String(item.sessionId) === resumeSessionId)
-      if (summary === undefined) throw new Error(`session "${resumeSessionId}" was not found`)
-      requested = summary.sessionId
-      cwd = summary.cwd ?? host.cwd
+    if (clearImmediately) {
+      this.state = this.emptySessionState(previousState.cwd, previousState.connected)
+      this.projectionSeqs = {}
+      this.emit()
     }
-    const created = valueOf(await this.api.sessions.create({
-      cwd,
-      ...requested === undefined ? {} : { sessionId: requested },
-    }))
-    if (generation !== this.generation) return
-    this.state = {
-      sessionId: created.sessionId,
-      cwd,
-      running: false,
-      connected: this.state.connected,
-      events: [],
-      queue: [],
-      models: undefined,
-      projections: {},
-      notice: undefined,
-      error: undefined,
+    try {
+      const host = valueOf(await this.api.host.describe({}))
+      let cwd = previousState.cwd || host.cwd
+      let requested: SessionId | undefined
+      if (resumeSessionId !== undefined) {
+        const summary = valueOf(await this.api.sessions.list({})).items
+          .find(item => String(item.sessionId) === resumeSessionId)
+        if (summary === undefined) throw new Error(`session "${resumeSessionId}" was not found`)
+        requested = summary.sessionId
+        cwd = summary.cwd ?? host.cwd
+      }
+      const created = valueOf(await this.api.sessions.create({
+        cwd,
+        ...requested === undefined ? {} : { sessionId: requested },
+      }))
+      if (generation !== this.generation) return
+      this.submissions.reset()
+      this.state = {
+        ...this.emptySessionState(cwd, this.state.connected),
+        sessionId: created.sessionId,
+      }
+      this.emit()
+      this.projectionSeqs = {}
+      await Promise.all([this.resync(), this.refreshModels().catch(() => undefined)])
+    } catch (error: unknown) {
+      if (clearImmediately && generation === this.generation) {
+        this.state = previousState
+        this.projectionSeqs = previousProjectionSeqs
+        this.emit()
+      }
+      throw error
     }
-    this.emit()
-    this.projectionSeqs = {}
-    await Promise.all([this.resync(), this.refreshModels().catch(() => undefined)])
   }
 
   private async resync(): Promise<void> {
-    if (this.resyncTask !== undefined) return this.resyncTask
     const sessionId = this.requireSession()
     const generation = this.generation
-    this.resyncTask = (async () => {
+    if (this.resyncTask?.generation === generation) return this.resyncTask.promise
+    const promise = (async () => {
       const page = valueOf(await this.api.sessions.history({
         sessionId,
         maxMessages: this.historyMessages,
@@ -300,11 +348,18 @@ export class HarnessController {
       const projections = page.projections === undefined
         ? this.state.projections
         : this.mergeProjectionBaseline(page.projections.asOfSeq, page.projections.values)
-      this.patch({ events: page.events, projections, error: undefined })
+      this.submissions.observeEvents(page.events)
+      this.patch({
+        events: page.events,
+        pendingSubmissions: this.submissions.snapshot,
+        projections,
+        error: undefined,
+      })
     })().finally(() => {
-      this.resyncTask = undefined
+      if (this.resyncTask?.promise === promise) this.resyncTask = undefined
     })
-    return this.resyncTask
+    this.resyncTask = { generation, promise }
+    return promise
   }
 
   private async runMuxLoop(): Promise<void> {
@@ -364,7 +419,10 @@ export class HarnessController {
         return
       }
       case 'session/queue':
-        this.patch({ queue: frame.items })
+        this.patch({
+          queue: frame.items,
+          pendingSubmissions: this.submissions.snapshot,
+        })
         return
       case 'session/projection':
         this.applyProjection(frame.key, frame.value, frame.seq)
@@ -387,13 +445,24 @@ export class HarnessController {
   }
 
   private async appendEvent(entry: HistoryEntry): Promise<void> {
+    this.submissions.observeEvents([entry])
     const currentLast = this.state.events.at(-1)?.event.seq
-    if (currentLast !== undefined && entry.event.seq <= currentLast) return
+    if (currentLast !== undefined && entry.event.seq <= currentLast) {
+      const pendingSubmissions = this.submissions.snapshot
+      if (pendingSubmissions.length !== this.state.pendingSubmissions.length) {
+        this.patch({ pendingSubmissions })
+      }
+      return
+    }
     if (currentLast !== undefined && entry.event.seq !== currentLast + 1) {
       await this.resync()
       return
     }
-    this.patch({ events: [...this.state.events, entry], error: undefined })
+    this.patch({
+      events: [...this.state.events, entry],
+      pendingSubmissions: this.submissions.snapshot,
+      error: undefined,
+    })
   }
 
   private mergeProjectionBaseline(
@@ -420,6 +489,22 @@ export class HarnessController {
         [key]: value,
       },
     })
+  }
+
+  private emptySessionState(cwd: string, connected: boolean): TuiState {
+    return {
+      sessionId: undefined,
+      cwd,
+      running: false,
+      connected,
+      events: [],
+      queue: [],
+      pendingSubmissions: [],
+      models: undefined,
+      projections: {},
+      notice: undefined,
+      error: undefined,
+    }
   }
 
   private patch(change: Partial<TuiState>): void {

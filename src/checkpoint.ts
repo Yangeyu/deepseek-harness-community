@@ -29,6 +29,7 @@ interface Checkpoint {
   root: string
   tree: string
   prompt: string
+  createdAt: number
   previousTurnEndSeq?: number
 }
 
@@ -44,12 +45,23 @@ export interface CheckpointFileChange {
   removed?: number
 }
 
-/** Immutable confirmation payload for one last-turn rewind. */
+/** Lightweight row shown before one checkpoint is inspected. */
+export interface RewindCheckpointSummary {
+  checkpointId: string
+  sessionId: string
+  turn: number
+  prompt: string
+  createdAt: number
+  turnChangedFiles?: number
+}
+
+/** Immutable confirmation payload for one selected-turn rewind. */
 export interface RewindPreview {
   checkpointId: string
   sessionId: string
   turn: number
   prompt: string
+  createdAt: number
   previousTurnEndSeq?: number
   files: CheckpointFileChange[]
   currentTree: string
@@ -214,10 +226,16 @@ function promptText(messages: readonly PromptMessage[]): string | undefined {
   return text.trim() === '' ? undefined : text
 }
 
-/** In-memory last-turn checkpoints backed by detached Git worktree trees. */
+/** Bounded in-memory turn history backed by detached Git worktree trees. */
 export class WorkspaceCheckpointStore {
-  private readonly checkpoints = new Map<string, Checkpoint>()
+  private readonly checkpoints = new Map<string, Checkpoint[]>()
   private readonly failures = new Map<string, string>()
+
+  constructor(private readonly historyLimit: number) {
+    if (!Number.isInteger(historyLimit) || historyLimit < 1) {
+      throw new Error('checkpoint history limit must be a positive integer')
+    }
+  }
 
   /** Capture the current worktree before one user-authored turn enters its first step. */
   async capture(input: {
@@ -227,40 +245,85 @@ export class WorkspaceCheckpointStore {
     prompt: string
     previousTurnEndSeq?: number
   }): Promise<void> {
-    const existing = this.checkpoints.get(input.sessionId)
-    if (existing?.turn === input.turn) return
+    const existing = this.checkpoints.get(input.sessionId) ?? []
+    if (existing.at(-1)?.turn === input.turn) return
     const root = await repositoryRoot(input.cwd)
     const tree = await captureTree(root)
-    this.checkpoints.set(input.sessionId, {
+    const next = [...existing, {
       id: randomUUID(),
       ...input,
+      createdAt: Date.now(),
       root,
       tree,
-    })
+    }]
+    this.checkpoints.set(input.sessionId, next.slice(-this.historyLimit))
     this.failures.delete(input.sessionId)
   }
 
   /** Remember a non-fatal capture failure for the next rewind request. */
   fail(sessionId: string, error: unknown): void {
-    this.checkpoints.delete(sessionId)
     this.failures.set(sessionId, error instanceof Error ? error.message : String(error))
   }
 
-  /** Compare the live worktree with the last user-turn checkpoint. */
-  async preview(sessionId: string): Promise<RewindPreview> {
-    const checkpoint = this.checkpoints.get(sessionId)
-    if (checkpoint === undefined) {
-      const failure = this.failures.get(sessionId)
-      throw new Error(failure === undefined
-        ? 'no rewind checkpoint is available for this session'
-        : `the last-turn checkpoint failed: ${failure}`)
-    }
+  /** Return newest-last checkpoint rows without reading the live worktree. */
+  list(sessionId: string): RewindCheckpointSummary[] {
+    return this.requireCheckpoints(sessionId).map(checkpoint => ({
+      checkpointId: checkpoint.id,
+      sessionId,
+      turn: checkpoint.turn,
+      prompt: checkpoint.prompt,
+      createdAt: checkpoint.createdAt,
+    }))
+  }
+
+  /** Add per-turn changed-file counts after the list is already visible. */
+  async describe(sessionId: string): Promise<RewindCheckpointSummary[]> {
+    const checkpoints = this.requireCheckpoints(sessionId)
+    const currentTrees = new Map<string, Promise<string>>()
+    return Promise.all(checkpoints.map(async (checkpoint, index) => {
+      const next = checkpoints[index + 1]
+      let turnEndTree: string
+      if (next?.root === checkpoint.root) {
+        turnEndTree = next.tree
+      } else {
+        let currentTree = currentTrees.get(checkpoint.root)
+        if (currentTree === undefined) {
+          currentTree = captureTree(checkpoint.root)
+          currentTrees.set(checkpoint.root, currentTree)
+        }
+        turnEndTree = await currentTree
+      }
+      const names = await runGit(checkpoint.root, [
+        'diff',
+        '--name-only',
+        '-z',
+        '--no-renames',
+        checkpoint.tree,
+        turnEndTree,
+      ])
+      return {
+        checkpointId: checkpoint.id,
+        sessionId,
+        turn: checkpoint.turn,
+        prompt: checkpoint.prompt,
+        createdAt: checkpoint.createdAt,
+        turnChangedFiles: parseNulList(names).length,
+      }
+    }))
+  }
+
+  /** Compare the live worktree with one selected user-turn checkpoint. */
+  async preview(sessionId: string, checkpointId: string): Promise<RewindPreview> {
+    const checkpoint = this.requireCheckpoints(sessionId)
+      .find(candidate => candidate.id === checkpointId)
+    if (checkpoint === undefined) throw new Error('the selected rewind checkpoint is no longer available')
     const currentTree = await captureTree(checkpoint.root)
     return {
       checkpointId: checkpoint.id,
       sessionId,
       turn: checkpoint.turn,
       prompt: checkpoint.prompt,
+      createdAt: checkpoint.createdAt,
       ...checkpoint.previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq: checkpoint.previousTurnEndSeq },
       files: await changedFiles(checkpoint.root, checkpoint.tree, currentTree),
       currentTree,
@@ -270,17 +333,39 @@ export class WorkspaceCheckpointStore {
   /** Restore a confirmed preview and return a guarded rollback for later session-fork failure. */
   async restore(preview: RewindPreview): Promise<() => Promise<void>> {
     const checkpoint = this.checkpoints.get(preview.sessionId)
-    if (checkpoint === undefined || checkpoint.id !== preview.checkpointId) {
-      throw new Error('the rewind checkpoint was replaced; open the preview again')
-    }
+      ?.find(candidate => candidate.id === preview.checkpointId)
+    if (checkpoint === undefined) throw new Error('the selected rewind checkpoint is no longer available')
     await applyTree(checkpoint.root, checkpoint.tree, preview.currentTree)
     return async () => applyTree(checkpoint.root, preview.currentTree, checkpoint.tree)
   }
 
-  /** Retire a checkpoint after its file restore and conversation fork both succeed. */
-  consume(sessionId: string): void {
-    this.checkpoints.delete(sessionId)
-    this.failures.delete(sessionId)
+  /** Move checkpoints before the restored turn onto the forked conversation. */
+  continueFrom(preview: RewindPreview, targetSessionId: string): void {
+    const checkpoints = this.checkpoints.get(preview.sessionId)
+    const selectedIndex = checkpoints?.findIndex(checkpoint => checkpoint.id === preview.checkpointId) ?? -1
+    if (selectedIndex === -1) throw new Error('the restored rewind checkpoint is no longer available')
+    const ancestors = checkpoints?.slice(0, selectedIndex).map(checkpoint => ({
+      ...checkpoint,
+      sessionId: targetSessionId,
+    })) ?? []
+
+    this.checkpoints.delete(preview.sessionId)
+    this.failures.delete(preview.sessionId)
+    if (ancestors.length === 0) {
+      this.checkpoints.delete(targetSessionId)
+    } else {
+      this.checkpoints.set(targetSessionId, ancestors)
+    }
+    this.failures.delete(targetSessionId)
+  }
+
+  private requireCheckpoints(sessionId: string): Checkpoint[] {
+    const checkpoints = this.checkpoints.get(sessionId)
+    if (checkpoints !== undefined && checkpoints.length > 0) return checkpoints
+    const failure = this.failures.get(sessionId)
+    throw new Error(failure === undefined
+      ? 'no rewind checkpoint is available for this session'
+      : `the latest checkpoint capture failed: ${failure}`)
   }
 }
 

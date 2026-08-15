@@ -6,6 +6,7 @@ import { Context } from "@deepseek-ai/cordis";
 /** User-configurable TUI presentation and history bounds. */
 interface Config {
   historyMessages?: number;
+  rewindCheckpoints?: number;
   maxToolOutputLines?: number;
   thinkingMaxLines?: number;
   showReasoning?: boolean;
@@ -20,6 +21,7 @@ declare const Config: z<Config>;
 /** Fully materialized settings consumed by the application. */
 interface ResolvedConfig {
   historyMessages: number;
+  rewindCheckpoints: number;
   maxToolOutputLines: number;
   thinkingMaxLines: number;
   showReasoning: boolean;
@@ -57,15 +59,26 @@ interface CheckpointFileChange {
   added?: number;
   removed?: number;
 }
-/** Immutable confirmation payload for one last-turn rewind. */
+/** Immutable confirmation payload for one selected-turn rewind. */
 interface RewindPreview {
   checkpointId: string;
   sessionId: string;
   turn: number;
   prompt: string;
+  createdAt: number;
   previousTurnEndSeq?: number;
   files: CheckpointFileChange[];
   currentTree: string;
+}
+//#endregion
+//#region src/submission.d.ts
+/** Locally visible prompt retained until its durable user-message event is observed. */
+interface PendingSubmission {
+  key: number;
+  text: string;
+  mode: 'queue' | 'steer';
+  intent: 'working' | 'queueing' | 'steering';
+  rpcId?: RpcId;
 }
 //#endregion
 //#region src/controller.d.ts
@@ -90,6 +103,7 @@ interface TuiState {
   connected: boolean;
   events: HistoryEntry[];
   queue: QueuedInboxItem[];
+  pendingSubmissions: PendingSubmission[];
   models: SessionModels | undefined;
   projections: Partial<SessionProjectionMap>;
   notice: string | undefined;
@@ -111,6 +125,7 @@ declare class HarnessController {
   private resyncTask;
   private generation;
   private projectionSeqs;
+  private readonly submissions;
   constructor(api: IApiClient, sink: TuiControllerSink, cwd: string, historyMessages: number);
   /** Current immutable-by-convention state snapshot. */
   get current(): Readonly<TuiState>;
@@ -124,10 +139,12 @@ declare class HarnessController {
   sessions(): Promise<SessionSummary[]>;
   /** Switch the terminal to a fresh session in the current working directory. */
   newSession(): Promise<void>;
+  /** Clear the visible conversation immediately, then attach a fresh session. */
+  clearSession(): Promise<void>;
   /** Switch the terminal to an existing persisted or live session. */
   resume(sessionId: string): Promise<void>;
-  /** Fork to the boundary before the checkpointed turn, or create a fresh first-turn replacement. */
-  rewind(preview: RewindPreview): Promise<void>;
+  /** Fork to the boundary before the checkpointed turn, then open and return the replacement session. */
+  rewind(preview: RewindPreview, onPhase?: (phase: 'forking' | 'opening') => void): Promise<SessionId>;
   /** Submit ordinary text using the caller-selected queue placement. */
   prompt(text: string, mode: 'queue' | 'steer'): Promise<void>;
   /** Cancel the active turn while preserving pending queued work. */
@@ -157,6 +174,7 @@ declare class HarnessController {
   private appendEvent;
   private mergeProjectionBaseline;
   private applyProjection;
+  private emptySessionState;
   private patch;
   private emit;
 }
@@ -213,9 +231,12 @@ declare class TranscriptComponent implements Component {
   private blockHits;
   private hoveredBlockKey;
   private diffLineStarts;
+  private loadingFrame;
   constructor(state: Readonly<TuiState>, theme: TuiTheme, showReasoning: boolean, maxToolOutputLines: number, thinkingMaxLines?: number);
   setState(state: Readonly<TuiState>): void;
   setDetails(show: boolean): void;
+  /** Select the current application-owned loading animation frame. */
+  setLoadingFrame(frame: string): void;
   /** Supply asynchronously resolved absolute file-line starts for diff cards. */
   setDiffLineStarts(starts: DiffLineStarts): void;
   invalidate(): void;
@@ -258,5 +279,5 @@ declare const inject: string[];
 /** Mount the terminal application and bind its lifetime to the plugin effect. */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { type ApprovalPrompt, Config, type Config as TuiConfig, HarnessController, type QuestionPrompt, TranscriptComponent, type TuiControllerSink, type TuiRuntime, type TuiState, apply, inject, name, resolveConfig, sanitizeTerminalText };
+export { type ApprovalPrompt, Config, type Config as TuiConfig, HarnessController, type PendingSubmission, type QuestionPrompt, TranscriptComponent, type TuiControllerSink, type TuiRuntime, type TuiState, apply, inject, name, resolveConfig, sanitizeTerminalText };
 //# sourceMappingURL=index.d.ts.map

@@ -1,6 +1,6 @@
 # @yangeyu/deepseek-harness-tui
 
-A keyboard-first, scrollback-preserving terminal client bundle for
+A keyboard-first terminal client bundle for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
 This is a third-party integration package. It deliberately lives beside the
@@ -28,11 +28,14 @@ The initial terminal client supports:
 - Claude Code-style edit cards with exact changed-line counts, contextual lines,
   absolute line numbers when the applied hunk can be located, syntax colors,
   and red/green changed-line backgrounds;
-- last-turn rewind with a changed-file checkpoint preview, workspace restore,
-  conversation fork, and original-prompt refill;
+- bounded turn checkpoints with an instant keyboard selector, changed-file
+  preview, workspace restore, conversation fork, and original-prompt refill;
 - Codex-style user prompts with highlighted foreground text, a `›` marker, and
   no persistent speaker labels;
 - queueing input while a turn is running and steering the active turn;
+- immediate local prompt rendering, one animated working row that hands its
+  position directly to Thinking or answer output, authoritative queue
+  presentation, and `rpcId` reconciliation with the durable session event;
 - cancelling a running turn;
 - model and reasoning-effort selection;
 - a Codex-style model surface that temporarily replaces the composer and moves
@@ -42,7 +45,8 @@ The initial terminal client supports:
 - the same durable turn/step timing, decode throughput, cache-hit, token-usage,
   and context-pressure projections shown below the Harness Web composer;
 - bounded tool output with expandable details; and
-- terminal scrollback instead of an alternate-screen application.
+- an application-owned transcript viewport with pointer and keyboard scrolling,
+  stable history position, and automatic tail following.
 
 The UI follows the low-chrome interaction style of coding-agent terminals, but
 it does not copy Claude Code internals. The renderer is
@@ -108,7 +112,9 @@ dsh --profile tui [options]
 | `Ctrl+C` | Cancel while running; exit while idle |
 | `Ctrl+O` | Toggle expanded tool details |
 | `Shift+Tab` | Cycle supported reasoning efforts |
-| `Esc Esc` | Preview and confirm the last-turn workspace and conversation rewind |
+| `↑` / `↓` | Browse previously submitted input while editing |
+| `PageUp` / `PageDown` | Scroll conversation history while the editor is empty |
+| `Esc Esc` | Open the checkpoint selector; use `↑`/`↓` and `Enter` to inspect a node |
 
 The model selector uses `↑`/`↓` (or `1`–`9`) in both the model and reasoning
 effort steps. `Enter` advances or applies the complete selection to the current session;
@@ -117,19 +123,30 @@ current Web client behavior.
 
 Thinking blocks highlight on pointer hover and toggle on click. The pointer
 wheel scrolls expanded thinking and long inline diffs inside their bounded
-viewports. Mouse tracking keeps keyboard focus in the editor and preserves the
-main-screen scrollback model; hold the terminal's mouse-bypass modifier (usually
-Shift) when native terminal text selection is needed.
+viewports; at a block boundary or over ordinary output, the same wheel scrolls
+the conversation. Scrolling upward pauses automatic tail following, and
+PageDown or a downward wheel returns to live output. Hold the terminal's
+mouse-bypass modifier (usually Shift) when native terminal text selection is
+needed.
 
 Rewind snapshots the Git worktree immediately before the first step of each
-user-authored turn. `Esc Esc` shows the changed paths and line counts, then one
-confirmation restores the checkpoint, forks the conversation before that turn,
-and returns the original prompt to the editor. The implementation never runs
-`git reset` and never changes the user's Git index. Checkpoints are process-local
-and cover Git-tracked plus non-ignored untracked files; ignored files and
-submodule contents are outside the current restore scope.
+user-authored turn. `Esc Esc` opens the process-local checkpoint history
+immediately; per-turn changed-file counts fill in asynchronously rather than
+showing the cumulative rollback scope. `↑`/`↓` selects a prompt node, `Enter`
+opens a vertical confirmation with the target prompt and restore impact, and
+`Esc` returns to the list or closes it. One confirmation restores the selected
+workspace checkpoint, forks the conversation before that turn, and returns the
+selected prompt to the editor. The implementation never runs `git reset` and
+never changes the user's Git index. The history limit defaults to 20 through
+`rewindCheckpoints`. Checkpoints before the restored turn follow the forked
+conversation, so `Esc Esc` can rewind repeatedly until the retained history is
+exhausted. Checkpoints cover Git-tracked plus non-ignored untracked
+files; ignored files and submodule contents are outside the current restore
+scope.
 
-Slash commands: `/help`, `/new`, `/resume`, `/model`, `/details`, `/status`,
+`/clear` removes the visible conversation synchronously and then attaches a
+fresh session; if session creation fails, the previous view is restored. Slash
+commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/details`, `/status`,
 `/rewind`, and `/exit`.
 
 ## Architecture
@@ -138,8 +155,9 @@ Slash commands: `/help`, `/new`, `/resume`, `/model`, `/details`, `/status`,
 Cordis bundle entry
   -> in-process ApiProxy client
      -> HarnessController (session and stream state)
-        -> pi-tui application (input, dialogs, rendering)
-           -> TranscriptComponent (pure event/view projection)
+        -> pi-tui application (input, dialogs, rewind transaction feedback)
+           -> ComposerAnchoredLayout (transcript viewport and tail following)
+              -> TranscriptComponent (pure event/view projection)
 ```
 
 The TUI consumes tool-provided presentation intent (`generic`, `terminal`,

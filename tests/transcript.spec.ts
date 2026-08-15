@@ -17,6 +17,7 @@ function state(events: HistoryEntry[]): TuiState {
     connected: true,
     events,
     queue: [],
+    pendingSubmissions: [],
     models: undefined,
     projections: {},
     notice: undefined,
@@ -196,6 +197,92 @@ describe('TranscriptComponent', () => {
     const output = transcript.render(80).join('\n')
     expect(output).toContain('\u001b[1m\u001b[33m› explain this code\u001b[39m\u001b[22m')
     expect(output).not.toContain('You')
+  })
+
+  it('joins an animated working row to a local prompt without an accepted phase', () => {
+    const pending = state([])
+    pending.pendingSubmissions = [{
+      key: 1,
+      text: 'render before the network round trip',
+      mode: 'queue',
+      intent: 'working',
+    }]
+    const transcript = new TranscriptComponent(pending, createTheme(true), true, 8)
+    transcript.setLoadingFrame('✦')
+
+    const output = transcript.render(80).join('\n')
+    expect(output).toContain('\u001b[1m\u001b[33m› render before the network round trip\u001b[39m\u001b[22m')
+    expect(output).toContain('✦ Working…')
+    expect(output).not.toContain('Accepted')
+    expect(output).not.toContain('Sending')
+    expect(output).not.toContain('You')
+  })
+
+  it('hands a local prompt to a visible queue row without hiding context placement', () => {
+    const queued = state([])
+    queued.pendingSubmissions = [{
+      key: 1,
+      text: 'queued once',
+      mode: 'queue',
+      intent: 'working',
+      rpcId: 'rpc-queued' as never,
+    }]
+    queued.queue = [{
+      id: 'message-queued',
+      placement: 'queued',
+      message: {
+        id: 'message-queued',
+        role: 'user',
+        source: { kind: 'user', rpcId: 'rpc-queued' },
+        content: [{ type: 'text', text: 'queued once' }],
+      },
+    }] as TuiState['queue']
+
+    const visible = new TranscriptComponent(queued, createTheme(false), true, 8).render(80).join('\n')
+    expect(visible.match(/queued once/g)).toHaveLength(1)
+    expect(visible).toContain('Queued')
+
+    queued.queue = [{ ...queued.queue[0]!, placement: 'context' }]
+    const context = new TranscriptComponent(queued, createTheme(false), true, 8).render(80).join('\n')
+    expect(context).toContain('queued once')
+    expect(context).toContain('Working…')
+    expect(context).not.toContain('Accepted')
+  })
+
+  it('replaces the working row with the first visible thinking output', () => {
+    const running = state([
+      entry({
+        event: {
+          type: 'user/message',
+          seq: 0,
+          time: 1,
+          surfaceOp: 'append',
+          data: {
+            id: 'm-user-loading',
+            role: 'user',
+            source: { kind: 'user' },
+            content: [{ type: 'text', text: 'work on this' }],
+          },
+        },
+      }),
+    ])
+    running.running = true
+    const transcript = new TranscriptComponent(running, createTheme(false), true, 8)
+    transcript.setLoadingFrame('✳')
+    expect(transcript.render(80).join('\n')).toContain('✳ Working…')
+
+    running.events = [...running.events, entry({
+      event: {
+        type: 'assistant/chunk',
+        seq: 1,
+        time: 2,
+        data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'checking' } },
+      },
+    })]
+    transcript.setState(running)
+    const output = transcript.render(80).join('\n')
+    expect(output).toContain('Thinking…')
+    expect(output).not.toContain('Working…')
   })
 
   it('uses tool-owned presentation intent and expands bounded result output', () => {
