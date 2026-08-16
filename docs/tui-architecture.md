@@ -62,7 +62,9 @@ reducing the number of visible files.
 5. Paired lifecycle events produce one semantic node. This applies to
    turn/start-end, step/start-end, tool/call-result, and command/run-done.
    Command nodes remain standalone because their lifecycle is explicitly not
-   wrapped by a turn, even when their events arrive during active work.
+   wrapped by a turn, even when their events arrive during active work. A
+   `turn/end` also closes unmatched streaming or tool children as failed or
+   interrupted; terminal history never remains visually live.
 6. Recorded timing is authoritative. Pending records may use the current render
    clock, but completed records never infer timestamps that are absent.
 7. Stable semantic keys preserve selection across live replacement and history
@@ -81,7 +83,28 @@ reducing the number of visible files.
 11. Transcript Activity groups are a replayable presentation projection, not a
    session event. Only adjacent reasoning and non-diff tool nodes group
    together. Prompts, assistant text, Commands, errors, notices, and file diffs
-   are hard boundaries; applied file changes remain top-level review evidence.
+   are hard boundaries. Returned file Diff evidence remains top-level
+   regardless of execution status. Thought, tool, Diff, and Activity summaries
+   consume one shared running/completed/failed/interrupted state model.
+
+## Transcript interaction contract
+
+- One execution vocabulary drives Activity, Thought, tool, and Diff status.
+  Renderers consume the projected status; they do not reinterpret event
+  completion independently.
+- One child-disclosure state controls Thought and tool details. Clicking an
+  Activity title reveals its ordered children, clicking a child title toggles
+  its bounded details, and `Ctrl+O` changes the default for both levels.
+  Explicit pointer choices override that default until the next global toggle.
+- Failed Activity and child nodes disclose once by default and remain manually
+  collapsible. Interrupted nodes are terminal but stay compact unless the user
+  opens them.
+- Title rows are the only click targets. The pointer wheel first scrolls an
+  expanded bounded child or Diff; when that target cannot scroll, the same
+  gesture falls through to conversation scrolling.
+- Diff is intentionally specialized: returned file evidence never enters an
+  Activity group, remains top-level regardless of execution status, and opens
+  by default. It shares status and pointer semantics, not the child layout.
 
 ## Current components
 

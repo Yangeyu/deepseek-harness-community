@@ -131,7 +131,7 @@ After a normal exit, the restored shell prints a copyable
 | `Alt+A` | Focus and manage the attachment rail |
 | `Alt+Backspace` | Remove the latest image draft |
 | `Ctrl+C` | Cancel while running; exit while idle |
-| `Ctrl+O` | Toggle Activity and tool details |
+| `Ctrl+O` | Toggle all Activity details |
 | `Shift+Tab` | Cycle supported reasoning efforts |
 | `↑` / `↓` | Browse previously submitted input while editing |
 | `PageUp` / `PageDown` | Scroll conversation history while the editor is empty |
@@ -223,11 +223,15 @@ Adjacent Thinking and ordinary tool calls form one collapsed Activity group.
 Click its summary to reveal the ordered child titles, then click a child to
 inspect bounded reasoning or the recorded Arguments and Result. Successful
 groups stay compact, live groups expose their latest action in the summary, and
-failed groups open to the failed tool by default without preventing a manual
-collapse. File edits are hard Activity boundaries: their applied diffs remain
-top-level conversation cards and open by default. `Ctrl+O` expands or collapses
-Activity and tool details together. The pointer wheel scrolls expanded thinking
-and long inline diffs inside their bounded viewports; at a block boundary or
+failed groups open to the failed child by default without preventing a manual
+collapse. A terminal turn marks unresolved work as interrupted instead of
+leaving stale live output. Thought, tool, and Diff titles share `○` running,
+`•` completed, `×` failed, and `!` interrupted status glyphs. File edits are
+hard Activity boundaries: returned Diff evidence remains a top-level
+conversation card regardless of execution status and opens by default.
+`Ctrl+O` expands or collapses Activity, Thought, and tool details together.
+The pointer wheel scrolls expanded thinking and long inline diffs inside their
+bounded viewports; at a block boundary or
 over ordinary output, the same wheel scrolls the conversation. Scrolling upward
 pauses automatic tail following, and PageDown or a downward wheel returns to
 live output. Hold the terminal's mouse-bypass modifier (usually Shift) when

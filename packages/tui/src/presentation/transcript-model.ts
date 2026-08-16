@@ -9,6 +9,8 @@ import { displayUnknown, sanitizeTerminalText } from '../text.ts'
 
 export type TranscriptTone = 'accent' | 'dim' | 'error' | 'warning'
 
+export type TranscriptExecutionStatus = 'running' | 'completed' | 'failed' | 'interrupted'
+
 export interface TranscriptTextItem {
   kind: 'text'
   label?: string
@@ -28,20 +30,20 @@ export interface TranscriptThinkingItem {
   kind: 'thinking'
   key: string
   text: string
-  streaming: boolean
+  status: TranscriptExecutionStatus
   startedAt: number
-  completedAt?: number
+  endedAt?: number
 }
 
 export interface TranscriptToolItem {
   kind: 'tool'
   key: string
   title: string
-  status: 'pending' | 'completed' | 'failed'
+  status: TranscriptExecutionStatus
   arguments?: string
   result?: string
   startedAt: number
-  completedAt?: number
+  endedAt?: number
 }
 
 export type TranscriptActivityItem = TranscriptThinkingItem | TranscriptToolItem
@@ -50,16 +52,16 @@ export interface TranscriptActivityGroup {
   kind: 'activity'
   key: string
   items: readonly TranscriptActivityItem[]
-  status: 'running' | 'completed' | 'failed'
+  status: TranscriptExecutionStatus
   startedAt: number
-  completedAt?: number
+  endedAt?: number
 }
 
 export interface TranscriptDiffItem {
   kind: 'diff'
   key: string
   title: string
-  settled: boolean
+  status: TranscriptExecutionStatus
   diffs: Extract<ToolResultView, { card: 'diff' }>['diffs']
 }
 
@@ -125,6 +127,13 @@ function rawResultText(entry: HistoryEntry): string {
   return messageText(result.content, true)
 }
 
+function toolResultFailed(entry: HistoryEntry): boolean {
+  if (entry.event.type !== 'tool/result') return false
+  if (entry.event.data.error !== undefined) return true
+  const result = entry.event.data.message.content[0]
+  return result?.type === 'tool-result' && result.isError === true
+}
+
 function resultTitle(view: ToolResultView | undefined): string | undefined {
   return view?.title
 }
@@ -180,10 +189,9 @@ function activityStatus(
   items: readonly TranscriptActivityItem[],
   runningTail: boolean,
 ): TranscriptActivityGroup['status'] {
-  if (items.some(item => item.kind === 'tool' && item.status === 'failed')) return 'failed'
-  const pending = items.some(item =>
-    (item.kind === 'tool' && item.status === 'pending') || (item.kind === 'thinking' && item.streaming))
-  if (runningTail || pending) return 'running'
+  if (items.some(item => item.status === 'failed')) return 'failed'
+  if (items.some(item => item.status === 'interrupted')) return 'interrupted'
+  if (runningTail || items.some(item => item.status === 'running')) return 'running'
   return 'completed'
 }
 
@@ -200,16 +208,15 @@ export function groupTranscriptActivity(
     const first = activity[0]
     if (first === undefined) return
     const status = activityStatus(activity, runningTail)
-    const completedTimes = activity.map(item => item.completedAt).filter(value => value !== undefined)
+    const endTimes = activity.map(item => item.endedAt).filter(value => value !== undefined)
+    const hasEndTiming = status !== 'running' && endTimes.length === activity.length
     grouped.push({
       kind: 'activity',
       key: `activity:${first.key}`,
       items: activity,
       status,
       startedAt: Math.min(...activity.map(item => item.startedAt)),
-      ...status === 'running' || completedTimes.length === 0
-        ? {}
-        : { completedAt: Math.max(...completedTimes) },
+      ...hasEndTiming ? { endedAt: Math.max(...endTimes) } : {},
     })
     activity = []
   }
@@ -237,6 +244,7 @@ export function buildTranscriptItems(
   const finalSteps = new Set<string>()
   const reasoningStarts = new Map<string, number>()
   const results = new Map<string, HistoryEntry>()
+  const turnEnds = new Map<number, { status: 'failed' | 'interrupted'; endedAt: number }>()
   const commandRuns = new Set<string>()
   const commandResults = new Map<string, HistoryEntry>()
   for (const entry of state.events) {
@@ -247,6 +255,12 @@ export function buildTranscriptItems(
       if (!reasoningStarts.has(key)) reasoningStarts.set(key, event.time)
     }
     if (event.type === 'tool/result') results.set(String(event.data.message.source.callId), entry)
+    if (event.type === 'turn/end') {
+      turnEnds.set(event.data.turn, {
+        status: event.data.reason.kind === 'error' ? 'failed' : 'interrupted',
+        endedAt: event.time,
+      })
+    }
     if (event.type === 'command/run') commandRuns.add(String(event.data.commandId))
     if (event.type === 'command/done') commandResults.set(String(event.data.commandId), entry)
   }
@@ -275,7 +289,7 @@ export function buildTranscriptItems(
             arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${source.provider}/${source.model}`,
             result: rawText === '' ? 'Vision analysis completed.' : rawText,
             startedAt: Math.max(0, event.time - source.durationMs),
-            completedAt: event.time,
+            endedAt: event.time,
           })
           break
         }
@@ -313,22 +327,25 @@ export function buildTranscriptItems(
           if (!showReasoning) break
           partial.reasoning += chunk.text
           partial.reasoningStartedAt ??= event.time
+          const terminal = turnEnds.get(event.data.turn)
           if (partial.thinkingIndex === undefined) {
             partial.thinkingIndex = items.length
             items.push({
               kind: 'thinking',
               key: `${key}:thinking`,
               text: '',
-              streaming: true,
+              status: terminal?.status ?? 'running',
               startedAt: partial.reasoningStartedAt,
+              ...terminal === undefined ? {} : { endedAt: terminal.endedAt },
             })
           }
           items[partial.thinkingIndex] = {
             kind: 'thinking',
             key: `${key}:thinking`,
             text: partial.reasoning,
-            streaming: true,
+            status: terminal?.status ?? 'running',
             startedAt: partial.reasoningStartedAt,
+            ...terminal === undefined ? {} : { endedAt: terminal.endedAt },
           }
           break
         }
@@ -352,9 +369,9 @@ export function buildTranscriptItems(
             kind: 'thinking',
             key: `${key}:thinking`,
             text: reasoning,
-            streaming: false,
+            status: 'completed',
             startedAt: reasoningStarts.get(key) ?? event.time,
-            completedAt: event.time,
+            endedAt: event.time,
           })
         }
         const text = messageText(event.data.message.content, false)
@@ -365,17 +382,22 @@ export function buildTranscriptItems(
         const callView = entry.view?.for === 'call' ? entry.view.view : undefined
         const result = results.get(String(event.data.callId))
         const resultView = result?.view?.for === 'result' ? result.view.view : undefined
-        const failed = result?.event.type === 'tool/result' && result.event.data.error !== undefined
+        const failed = result !== undefined && toolResultFailed(result)
+        const terminal = turnEnds.get(event.data.turn)
+        const status: TranscriptExecutionStatus = result !== undefined
+          ? failed ? 'failed' : 'completed'
+          : terminal?.status ?? 'running'
+        const endedAt = result?.event.time ?? terminal?.endedAt
         const title = resultTitle(resultView) ?? callTitle(event.data.name, callView)
         const diffView = resultView?.card === 'diff'
           ? resultView
           : result === undefined && callView?.card === 'diff' ? callView : undefined
-        if (!failed && diffView !== undefined && diffView.diffs.length > 0) {
+        if (diffView !== undefined && diffView.diffs.length > 0) {
           items.push({
             kind: 'diff',
             key: `${String(event.data.callId)}:diff`,
             title: sanitizeTerminalText(title),
-            settled: result !== undefined,
+            status,
             diffs: diffView.diffs,
           })
           break
@@ -385,15 +407,11 @@ export function buildTranscriptItems(
           kind: 'tool',
           key: `${String(event.data.callId)}:tool`,
           title: sanitizeTerminalText(title),
-          status: result === undefined ? 'pending' : failed ? 'failed' : 'completed',
+          status,
           ...argumentsBody === undefined ? {} : { arguments: argumentsBody },
-          ...result === undefined
-            ? {}
-            : {
-                result: resultBody(resultView, rawResultText(result), maxToolOutputLines),
-                completedAt: result.event.time,
-              },
+          ...result === undefined ? {} : { result: resultBody(resultView, rawResultText(result), maxToolOutputLines) },
           startedAt: event.time,
+          ...endedAt === undefined ? {} : { endedAt },
         })
         break
       }
@@ -474,7 +492,7 @@ export function buildTranscriptItems(
         kind: 'tool',
         key: `vision:${submission.activity.analysisId}`,
         title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · Analyzing… ${elapsed}`,
-        status: 'pending',
+        status: 'running',
         arguments: `${String(imageCount)} attached image${imageCount === 1 ? '' : 's'}`,
         startedAt: submission.activity.startedAt,
       }], true))

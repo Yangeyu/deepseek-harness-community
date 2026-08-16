@@ -8,14 +8,19 @@ import {
   type UngroupedTranscriptItem,
 } from '../../src/presentation/transcript-model.ts'
 
-function thinking(key: string, startedAt: number, completedAt?: number): TranscriptThinkingItem {
+function thinking(
+  key: string,
+  status: TranscriptThinkingItem['status'],
+  startedAt: number,
+  endedAt?: number,
+): TranscriptThinkingItem {
   return {
     kind: 'thinking',
     key,
     text: key,
-    streaming: completedAt === undefined,
+    status,
     startedAt,
-    ...completedAt === undefined ? {} : { completedAt },
+    ...endedAt === undefined ? {} : { endedAt },
   }
 }
 
@@ -23,7 +28,7 @@ function tool(
   key: string,
   status: TranscriptToolItem['status'],
   startedAt: number,
-  completedAt?: number,
+  endedAt?: number,
 ): TranscriptToolItem {
   return {
     kind: 'tool',
@@ -31,7 +36,7 @@ function tool(
     title: key,
     status,
     startedAt,
-    ...completedAt === undefined ? {} : { completedAt },
+    ...endedAt === undefined ? {} : { endedAt },
   }
 }
 
@@ -40,14 +45,14 @@ const diff: TranscriptDiffItem = {
   kind: 'diff',
   key: 'edit:diff',
   title: 'Edit src/app.ts',
-  settled: true,
+  status: 'completed',
   diffs: [{ path: 'src/app.ts', oldText: 'old', newText: 'new' }],
 }
 
 describe('groupTranscriptActivity', () => {
-  it('folds adjacent thinking and tools into one stable activity group', () => {
+  it('keeps the group identity stable while its live tail grows', () => {
     const initial: UngroupedTranscriptItem[] = [
-      thinking('1:1:thinking', 1_000, 1_200),
+      thinking('1:1:thinking', 'completed', 1_000, 1_200),
       tool('read:tool', 'completed', 1_250, 1_500),
     ]
     const first = groupTranscriptActivity(initial, false)
@@ -58,7 +63,7 @@ describe('groupTranscriptActivity', () => {
       key: 'activity:1:1:thinking',
       status: 'completed',
       startedAt: 1_000,
-      completedAt: 1_500,
+      endedAt: 1_500,
       items: initial,
     })])
     expect(extended[0]).toMatchObject({ key: 'activity:1:1:thinking', status: 'completed' })
@@ -66,12 +71,12 @@ describe('groupTranscriptActivity', () => {
 
   it('keeps diffs and visible text as ordered hard boundaries', () => {
     const grouped = groupTranscriptActivity([
-      thinking('before:thinking', 1, 2),
+      thinking('before:thinking', 'completed', 1, 2),
       tool('before:tool', 'completed', 2, 3),
       diff,
       tool('after:tool', 'completed', 4, 5),
       text,
-      thinking('final:thinking', 6, 7),
+      thinking('final:thinking', 'completed', 6, 7),
     ], false)
 
     expect(grouped.map(item => item.kind)).toEqual(['activity', 'diff', 'activity', 'text', 'activity'])
@@ -88,17 +93,21 @@ describe('groupTranscriptActivity', () => {
 
     expect(grouped[0]).toMatchObject({ kind: 'activity', status: 'completed' })
     expect(grouped[2]).toMatchObject({ kind: 'activity', status: 'running' })
-    expect(grouped[2]).not.toHaveProperty('completedAt')
+    expect(grouped[2]).not.toHaveProperty('endedAt')
   })
 
-  it('keeps streaming and failed states visible without relying on session state', () => {
-    const streaming = groupTranscriptActivity([thinking('live:thinking', 1)], false)
+  it('preserves running, failed, and interrupted terminal states', () => {
+    const streaming = groupTranscriptActivity([thinking('live:thinking', 'running', 1)], false)
     const failed = groupTranscriptActivity([
       tool('read:tool', 'completed', 1, 2),
       tool('test:tool', 'failed', 3, 5),
     ], true)
+    const interrupted = groupTranscriptActivity([
+      thinking('limited:thinking', 'interrupted', 6, 9),
+    ], false)
 
     expect(streaming[0]).toMatchObject({ kind: 'activity', status: 'running' })
-    expect(failed[0]).toMatchObject({ kind: 'activity', status: 'failed', startedAt: 1, completedAt: 5 })
+    expect(failed[0]).toMatchObject({ kind: 'activity', status: 'failed', startedAt: 1, endedAt: 5 })
+    expect(interrupted[0]).toMatchObject({ kind: 'activity', status: 'interrupted', startedAt: 6, endedAt: 9 })
   })
 })

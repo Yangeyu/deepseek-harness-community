@@ -723,7 +723,7 @@ export class TuiApplication implements TuiControllerSink {
       handler: () => this.pasteImage(),
     }, {
       name: 'details',
-      description: 'Toggle expanded tool output',
+      description: 'Toggle all Activity details',
       handler: () => { this.setDetailsExpanded(!this.showDetails) },
     }, {
       name: 'skills',

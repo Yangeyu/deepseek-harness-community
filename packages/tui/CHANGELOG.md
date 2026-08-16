@@ -19,8 +19,9 @@ All notable changes to this project are documented in this file.
   `/keymap`.
 - Group adjacent thinking and non-diff tools into compact, expandable Activity
   segments with stable timing/count summaries, live latest-action context, and
-  automatic failure disclosure, while keeping applied file diffs in the main
-  conversation timeline.
+  automatic failure disclosure; share terminal lifecycle and status-glyph
+  semantics across Thought, tools, and Diffs, settle interrupted work at
+  `turn/end`, and keep returned file evidence in the main conversation timeline.
 - Add file and macOS clipboard image drafts with a fixed two-row attachment
   rail, primary `Ctrl+V` paste, compatible `Alt+V` fallback, keyboard
   management, retained retry state, and Host limit prechecks.

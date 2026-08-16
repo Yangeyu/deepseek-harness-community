@@ -18,6 +18,7 @@ import {
   formatTranscriptDuration,
   type TranscriptActivityGroup,
   type TranscriptDiffItem,
+  type TranscriptExecutionStatus,
   type TranscriptTextItem,
   type TranscriptThinkingItem,
   type TranscriptTone,
@@ -34,10 +35,25 @@ interface BlockHit {
   lastLine: number
 }
 
+interface ExecutionVisual {
+  glyph: string
+  paint: (text: string) => string
+  bold: boolean
+}
+
 const DIFF_CONTENT_INDENT = '  '
 const ACTIVITY_CHILD_INDENT = 3
 const DISCLOSURE_COLLAPSED = '›'
 const DISCLOSURE_EXPANDED = '⌄'
+
+function thinkingLabel(status: TranscriptExecutionStatus): string {
+  switch (status) {
+    case 'running': return 'Thinking…'
+    case 'completed': return 'Thought'
+    case 'failed': return 'Thought failed'
+    case 'interrupted': return 'Thought interrupted'
+  }
+}
 
 function padToWidth(value: string, width: number): string {
   const clipped = truncateToWidth(value, width, '…', true)
@@ -51,11 +67,10 @@ export class TranscriptComponent implements Component {
   private readonly activityExpansion = new Map<string, boolean>()
   private readonly activityStatuses = new Map<string, TranscriptActivityGroup['status']>()
   private readonly failedActivities = new Set<string>()
-  private readonly failedTools = new Set<string>()
-  private readonly expandedThinking = new Set<string>()
-  private readonly toolExpansion = new Map<string, boolean>()
+  private readonly failedChildren = new Set<string>()
+  private readonly childExpansion = new Map<string, boolean>()
   private readonly collapsedDiffs = new Set<string>()
-  private readonly followingThinking = new Set<string>()
+  private readonly pausedThinking = new Set<string>()
   private readonly blockOffsets = new Map<string, number>()
   private readonly blockMaxOffsets = new Map<string, number>()
   private blockHits: BlockHit[] = []
@@ -77,11 +92,10 @@ export class TranscriptComponent implements Component {
       this.activityExpansion.clear()
       this.activityStatuses.clear()
       this.failedActivities.clear()
-      this.failedTools.clear()
-      this.expandedThinking.clear()
-      this.toolExpansion.clear()
+      this.failedChildren.clear()
+      this.childExpansion.clear()
       this.collapsedDiffs.clear()
-      this.followingThinking.clear()
+      this.pausedThinking.clear()
       this.blockOffsets.clear()
       this.blockMaxOffsets.clear()
       this.hoveredBlockKey = undefined
@@ -92,7 +106,8 @@ export class TranscriptComponent implements Component {
   setDetails(show: boolean): void {
     this.showDetails = show
     this.activityExpansion.clear()
-    this.toolExpansion.clear()
+    this.childExpansion.clear()
+    this.pausedThinking.clear()
   }
 
   /** Supply asynchronously resolved absolute file-line starts for diff cards. */
@@ -116,16 +131,12 @@ export class TranscriptComponent implements Component {
       this.hoveredBlockKey = hit.key
       if (hit.kind === 'activity') {
         this.activityExpansion.set(hit.key, !this.isActivityExpanded(hit.key))
-      } else if (hit.kind === 'thinking') {
-        if (this.expandedThinking.delete(hit.key)) {
-          this.followingThinking.delete(hit.key)
+      } else if (hit.kind === 'thinking' || hit.kind === 'tool') {
+        this.childExpansion.set(hit.key, !this.isChildExpanded(hit.key))
+        if (hit.kind === 'thinking') {
+          this.pausedThinking.delete(hit.key)
           this.blockOffsets.delete(hit.key)
-        } else {
-          this.expandedThinking.add(hit.key)
-          this.followingThinking.add(hit.key)
         }
-      } else if (hit.kind === 'tool') {
-        this.toolExpansion.set(hit.key, !this.isToolExpanded(hit.key))
       } else if (!this.collapsedDiffs.delete(hit.key)) {
         this.collapsedDiffs.add(hit.key)
         this.blockOffsets.delete(hit.key)
@@ -133,7 +144,7 @@ export class TranscriptComponent implements Component {
       return true
     }
     if (hit === undefined || hit.kind === 'activity' || hit.kind === 'tool' ||
-      (hit.kind === 'thinking' && !this.expandedThinking.has(hit.key)) ||
+      (hit.kind === 'thinking' && !this.isChildExpanded(hit.key)) ||
       (hit.kind === 'diff' && this.collapsedDiffs.has(hit.key))) return false
     return this.scrollBlock(hit.key, action === 'wheel-up' ? -3 : 3, hit.kind === 'thinking')
   }
@@ -149,7 +160,7 @@ export class TranscriptComponent implements Component {
     )
     this.blockHits = []
     this.failedActivities.clear()
-    this.failedTools.clear()
+    this.failedChildren.clear()
     const nextActivityStatuses = new Map<string, TranscriptActivityGroup['status']>()
     for (const item of items) {
       if (item.kind !== 'activity') continue
@@ -228,7 +239,7 @@ export class TranscriptComponent implements Component {
     const childWidth = Math.max(1, contentWidth - ACTIVITY_CHILD_INDENT)
     for (const [index, item] of activity.items.entries()) {
       const last = index === activity.items.length - 1
-      if (item.kind === 'tool' && item.status === 'failed') this.failedTools.add(item.key)
+      if (item.status === 'failed') this.failedChildren.add(item.key)
       const rendered = item.kind === 'thinking'
         ? this.renderThinking(item, childWidth)
         : this.renderTool(item, childWidth)
@@ -244,9 +255,9 @@ export class TranscriptComponent implements Component {
   private renderActivityTitle(activity: TranscriptActivityGroup, width: number): string {
     const expanded = this.isActivityExpanded(activity.key)
     const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
-    const elapsed = activity.completedAt === undefined
+    const elapsed = activity.endedAt === undefined
       ? undefined
-      : Math.max(0, activity.completedAt - activity.startedAt)
+      : Math.max(0, activity.endedAt - activity.startedAt)
     const duration = elapsed === undefined || elapsed === 0 ? undefined : elapsed
     const lead = this.activityLead(activity.status, duration)
     const thoughts = activity.items.filter(item => item.kind === 'thinking').length
@@ -258,15 +269,19 @@ export class TranscriptComponent implements Component {
     const latest = activity.status === 'running'
       ? activity.items.at(-1)
       : activity.status === 'failed'
-        ? activity.items.findLast(item => item.kind === 'tool' && item.status === 'failed')
-        : undefined
+        ? activity.items.findLast(item => item.status === 'failed')
+        : activity.status === 'interrupted'
+          ? activity.items.findLast(item => item.status === 'interrupted')
+          : undefined
     const latestLabel = latest === undefined
       ? undefined
-      : latest.kind === 'thinking' ? 'Thinking…' : latest.title
+      : latest.kind === 'thinking' ? thinkingLabel(latest.status) : latest.title
     const title = [lead, ...counts, latestLabel].filter(value => value !== undefined).join(' · ')
     const paint = activity.status === 'failed'
       ? this.theme.error
-      : activity.status === 'running' ? this.theme.warning : this.theme.reasoning
+      : activity.status === 'running' || activity.status === 'interrupted'
+        ? this.theme.warning
+        : this.theme.reasoning
     return this.renderBlockTitle(`${marker} ${title}`, activity.key, width, paint)
   }
 
@@ -274,6 +289,9 @@ export class TranscriptComponent implements Component {
     if (status === 'running') return 'Working'
     if (status === 'failed') {
       return duration === undefined ? 'Failed' : `Failed after ${formatTranscriptDuration(duration)}`
+    }
+    if (status === 'interrupted') {
+      return duration === undefined ? 'Interrupted' : `Interrupted after ${formatTranscriptDuration(duration)}`
     }
     return duration === undefined ? 'Worked' : `Worked for ${formatTranscriptDuration(duration)}`
   }
@@ -332,10 +350,12 @@ export class TranscriptComponent implements Component {
     thinking: TranscriptThinkingItem,
     width: number,
   ): string[] {
-    const expanded = this.expandedThinking.has(thinking.key)
+    const expanded = this.isChildExpanded(thinking.key)
     const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
-    const label = thinking.streaming ? 'Thinking…' : 'Thought'
-    if (!expanded) return [this.renderBlockTitle(`${marker} ${label}`, thinking.key, width, this.theme.reasoning)]
+    const label = thinkingLabel(thinking.status)
+    if (!expanded) {
+      return [this.renderExecutionTitle(marker, thinking.status, label, thinking.key, width, this.theme.reasoning)]
+    }
 
     const contentWidth = Math.max(1, width - 2)
     const content = new Markdown(
@@ -349,28 +369,20 @@ export class TranscriptComponent implements Component {
       thinking.key,
       content.length,
       this.thinkingMaxLines,
-      thinking.streaming && this.followingThinking.has(thinking.key),
+      thinking.status === 'running' && !this.pausedThinking.has(thinking.key),
     )
     const visible = content.slice(offset, offset + this.thinkingMaxLines)
     const range = maxOffset === 0 ? '' : ` · ${offset + 1}-${Math.min(content.length, offset + this.thinkingMaxLines)}/${content.length}`
     return [
-      this.renderBlockTitle(`${marker} ${label}${range}`, thinking.key, width, this.theme.reasoning),
+      this.renderExecutionTitle(marker, thinking.status, `${label}${range}`, thinking.key, width, this.theme.reasoning),
       ...visible.map(line => truncateToWidth(`${this.theme.reasoning('│')} ${line}`, width)),
     ]
   }
 
   private renderTool(tool: TranscriptToolItem, width: number): string[] {
-    const expanded = this.isToolExpanded(tool.key)
+    const expanded = this.isChildExpanded(tool.key)
     const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
-    const glyph = tool.status === 'pending' ? '○' : tool.status === 'failed' ? '×' : '•'
-    const paint = tool.status === 'pending'
-      ? this.theme.warning
-      : tool.status === 'failed' ? this.theme.error : this.theme.success
-    const renderedGlyph = tool.status === 'completed' ? this.theme.bold(paint(glyph)) : paint(glyph)
-    const title = `${marker} ${glyph} ${tool.title}`
-    const renderedTitle = this.hoveredBlockKey === tool.key
-      ? this.theme.hover(truncateToWidth(title, width, '…'))
-      : truncateToWidth(`${this.theme.dim(`${marker} `)}${renderedGlyph} ${this.theme.tool(tool.title)}`, width, '…')
+    const renderedTitle = this.renderExecutionTitle(marker, tool.status, tool.title, tool.key, width, this.theme.tool)
     if (!expanded) return [renderedTitle]
 
     const sections = [
@@ -394,14 +406,14 @@ export class TranscriptComponent implements Component {
     ]
   }
 
-  private isToolExpanded(key: string): boolean {
-    return this.toolExpansion.get(key) ?? (this.showDetails || this.failedTools.has(key))
+  private isChildExpanded(key: string): boolean {
+    return this.childExpansion.get(key) ?? (this.showDetails || this.failedChildren.has(key))
   }
 
   private renderDiff(diff: TranscriptDiffItem, width: number): string[] {
     const model = buildDiffDisplay(diff.title, diff.diffs, this.diffLineStarts.get(diff.key) ?? [])
     const collapsed = this.collapsedDiffs.has(diff.key)
-    const title = this.renderDiffTitle(model.operation, model.target, diff.settled, collapsed, diff.key, width)
+    const title = this.renderDiffTitle(model.operation, model.target, diff.status, collapsed, diff.key, width)
     if (collapsed) return [title]
     const { offset } = this.resolveBlockOffset(diff.key, model.lines.length, this.maxToolOutputLines, false)
     const visible = model.lines.slice(offset, offset + this.maxToolOutputLines)
@@ -418,7 +430,7 @@ export class TranscriptComponent implements Component {
   private renderDiffTitle(
     operation: string,
     target: string,
-    settled: boolean,
+    status: TranscriptExecutionStatus,
     collapsed: boolean,
     key: string,
     width: number,
@@ -426,12 +438,12 @@ export class TranscriptComponent implements Component {
     const marker = `${collapsed ? DISCLOSURE_COLLAPSED : DISCLOSURE_EXPANDED} `
     const cleanOperation = sanitizeTerminalText(operation)
     const cleanTarget = sanitizeTerminalText(target)
-    const status = settled ? '•' : '○'
-    const plain = `${marker}${status} ${cleanOperation}(${cleanTarget})`
+    const visual = this.executionVisual(status)
+    const plain = `${marker}${visual.glyph} ${cleanOperation}(${cleanTarget})`
     if (this.hoveredBlockKey === key) return this.theme.hover(truncateToWidth(plain, width, '…'))
     return truncateToWidth([
       marker,
-      settled ? this.theme.bold(this.theme.success(status)) : this.theme.warning(status),
+      this.renderExecutionGlyph(visual),
       ` ${this.theme.tool(cleanOperation)}(`,
       this.theme.underline(cleanTarget),
       ')',
@@ -481,6 +493,38 @@ export class TranscriptComponent implements Component {
       : paint(text)
   }
 
+  private renderExecutionTitle(
+    marker: string,
+    status: TranscriptExecutionStatus,
+    label: string,
+    key: string,
+    width: number,
+    labelPaint: (text: string) => string,
+  ): string {
+    const visual = this.executionVisual(status)
+    const plain = `${marker} ${visual.glyph} ${label}`
+    if (this.hoveredBlockKey === key) return this.theme.hover(truncateToWidth(plain, width, '…'))
+    return truncateToWidth(
+      `${this.theme.dim(`${marker} `)}${this.renderExecutionGlyph(visual)} ${labelPaint(label)}`,
+      width,
+      '…',
+    )
+  }
+
+  private executionVisual(status: TranscriptExecutionStatus): ExecutionVisual {
+    switch (status) {
+      case 'running': return { glyph: '○', paint: this.theme.warning, bold: false }
+      case 'completed': return { glyph: '•', paint: this.theme.success, bold: true }
+      case 'failed': return { glyph: '×', paint: this.theme.error, bold: false }
+      case 'interrupted': return { glyph: '!', paint: this.theme.warning, bold: false }
+    }
+  }
+
+  private renderExecutionGlyph(visual: ExecutionVisual): string {
+    const painted = visual.paint(visual.glyph)
+    return visual.bold ? this.theme.bold(painted) : painted
+  }
+
   private resolveBlockOffset(key: string, lines: number, limit: number, follow: boolean): { offset: number; maxOffset: number } {
     const maxOffset = Math.max(0, lines - limit)
     this.blockMaxOffsets.set(key, maxOffset)
@@ -496,8 +540,8 @@ export class TranscriptComponent implements Component {
     if (next === current) return false
     this.blockOffsets.set(key, next)
     if (thinking) {
-      if (next === maxOffset && delta > 0) this.followingThinking.add(key)
-      else if (delta < 0) this.followingThinking.delete(key)
+      if (next === maxOffset && delta > 0) this.pausedThinking.delete(key)
+      else if (delta < 0) this.pausedThinking.add(key)
     }
     return true
   }

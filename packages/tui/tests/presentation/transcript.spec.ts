@@ -212,13 +212,13 @@ describe('TranscriptComponent', () => {
     expect(hovered).not.toContain('\u001b[7m')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const activity = transcript.render(80).join('\n')
-    expect(stripTerminalSequences(activity)).toContain('└─ › Thought')
+    expect(stripTerminalSequences(activity)).toContain('└─ › • Thought')
     expect(activity).not.toContain('thought 1')
 
     expect(transcript.handlePointer(1, 'move')).toBe(true)
     expect(transcript.handlePointer(1, 'click')).toBe(true)
     const expanded = transcript.render(80).join('\n')
-    expect(expanded).toContain('⌄ Thought')
+    expect(expanded).toContain('⌄ • Thought')
     expect(expanded).toContain('thought 1')
     expect(expanded).toContain('\u001b[38;2;148;163;184m')
     expect(expanded).not.toContain('thought 8')
@@ -248,7 +248,7 @@ describe('TranscriptComponent', () => {
 
     expect(transcript.render(80).join('\n')).toContain('› Working · 1 thought · Thinking…')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
-    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › Thinking…')
+    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › ○ Thinking…')
     expect(transcript.handlePointer(1, 'click')).toBe(true)
     const following = transcript.render(80).join('\n')
     expect(following).toContain('stream 5')
@@ -259,6 +259,140 @@ describe('TranscriptComponent', () => {
     const paused = transcript.render(80).join('\n')
     expect(paused).toContain('stream 1')
     expect(paused).not.toContain('stream 6')
+  })
+
+  it('settles unfinished activity when the turn reaches its output limit', () => {
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'assistant/chunk',
+          seq: 0,
+          time: 1_000,
+          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'unfinished reasoning' } },
+        },
+      }),
+      entry({
+        event: {
+          type: 'tool/call',
+          seq: 1,
+          time: 1_100,
+          data: { turn: 1, step: 1, callId: 'call-unfinished', name: 'search', arguments: '{}' },
+        },
+        view: { for: 'call', view: { card: 'generic', title: 'Search project' } },
+      }),
+      entry({
+        event: {
+          type: 'turn/end',
+          seq: 2,
+          time: 1_250,
+          data: { turn: 1, reason: { kind: 'max-tokens' } },
+        },
+      }),
+    ]), createTheme(false), true, 8)
+
+    const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(collapsed).toContain('› Interrupted after 250ms · 1 thought · 1 tool · Search project')
+    expect(collapsed).not.toContain('Working')
+    expect(collapsed).toContain('The response reached the model output limit.')
+
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(expanded).toContain('├─ › ! Thought interrupted')
+    expect(expanded).toContain('└─ › ! Search project')
+  })
+
+  it('opens failed unfinished thinking and keeps the terminal error visible', () => {
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'assistant/chunk',
+          seq: 0,
+          time: 2_000,
+          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'diagnostic reasoning' } },
+        },
+      }),
+      entry({
+        event: {
+          type: 'turn/end',
+          seq: 1,
+          time: 2_300,
+          data: { turn: 1, reason: { kind: 'error', error: { message: 'model disconnected' } } },
+        },
+      }),
+    ]), createTheme(false), true, 8)
+
+    const output = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(output).toContain('⌄ Failed after 300ms · 1 thought · Thought failed')
+    expect(output).toContain('└─ ⌄ × Thought failed')
+    expect(output).toContain('diagnostic reasoning')
+    expect(output).toContain('model disconnected')
+  })
+
+  it('applies the global details toggle to both thinking and tools', () => {
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'assistant/message',
+          seq: 0,
+          time: 1,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'm-details-thinking',
+              role: 'assistant',
+              source: { kind: 'model', provider: 'p', model: 'm' },
+              content: [{ type: 'reasoning', text: 'reasoning details' }],
+            },
+          },
+        },
+      }),
+      entry({
+        event: {
+          type: 'tool/call',
+          seq: 1,
+          time: 2,
+          data: { turn: 1, step: 1, callId: 'call-details', name: 'read', arguments: '{"path":"src/app.ts"}' },
+        },
+        view: { for: 'call', view: { card: 'generic', title: 'Read src/app.ts' } },
+      }),
+      entry({
+        event: {
+          type: 'tool/result',
+          seq: 2,
+          time: 3,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'm-details-result',
+              role: 'user',
+              source: { kind: 'tool', callId: 'call-details' },
+              content: [{ type: 'tool-result', toolCallId: 'call-details', content: [{ type: 'text', text: 'tool details' }] }],
+            },
+          },
+        },
+        view: {
+          for: 'result',
+          view: { card: 'generic', title: 'Read src/app.ts', content: [{ type: 'text', text: 'tool details' }] },
+        },
+      }),
+    ]), createTheme(false), true, 8)
+
+    expect(transcript.render(80).join('\n')).not.toContain('reasoning details')
+    transcript.setDetails(true)
+    const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(expanded).toContain('⌄ • Thought')
+    expect(expanded).toContain('reasoning details')
+    expect(expanded).toContain('⌄ • Read src/app.ts')
+    expect(expanded).toContain('tool details')
+
+    transcript.setDetails(false)
+    const collapsed = transcript.render(80).join('\n')
+    expect(collapsed).not.toContain('reasoning details')
+    expect(collapsed).not.toContain('tool details')
   })
 
   it('renders the complete user prompt as a full-width block without adding a You label', () => {
@@ -629,6 +763,59 @@ describe('TranscriptComponent', () => {
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› • Update(src/app.ts)')
     expect(collapsed).not.toContain('const mode')
+  })
+
+  it('keeps returned file evidence top-level when an edit reports failure', () => {
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'tool/call',
+          seq: 0,
+          time: 1,
+          data: { turn: 1, step: 1, callId: 'call-partial-diff', name: 'edit', arguments: '{}' },
+        },
+        view: {
+          for: 'call',
+          view: { card: 'diff', title: 'Edit src/app.ts', diffs: [{ path: 'src/app.ts', oldText: 'old', newText: 'planned' }] },
+        },
+      }),
+      entry({
+        event: {
+          type: 'tool/result',
+          seq: 1,
+          time: 2,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'm-partial-diff',
+              role: 'user',
+              source: { kind: 'tool', callId: 'call-partial-diff' },
+              content: [{
+                type: 'tool-result',
+                toolCallId: 'call-partial-diff',
+                content: [{ type: 'text', text: 'second hunk failed' }],
+                isError: true,
+              }],
+            },
+          },
+        },
+        view: {
+          for: 'result',
+          view: {
+            card: 'diff',
+            title: 'Edit src/app.ts',
+            diffs: [{ path: 'src/app.ts', oldText: 'old', newText: 'partially applied' }],
+          },
+        },
+      }),
+    ]), createTheme(false), true, 8)
+
+    const output = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(output).toContain('⌄ × Update(src/app.ts)')
+    expect(output).toContain('partially applied')
+    expect(output).not.toContain('Failed after')
   })
 
   it('wraps long changed lines without hiding their tail', () => {
