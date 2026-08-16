@@ -21,6 +21,26 @@
   "bin": {
     "dsh-tui": "bin/dsh-tui.js"
   },
+  "exports": {
+    ".": {
+      "types": "./packages/tui/dist/index.d.ts",
+      "default": "./packages/tui/dist/index.js"
+    },
+    "./tui": {
+      "types": "./packages/tui/dist/index.d.ts",
+      "default": "./packages/tui/dist/index.js"
+    },
+    "./memory": {
+      "types": "./packages/tui/dist/memory.d.ts",
+      "default": "./packages/tui/dist/memory.js"
+    },
+    "./vision": {
+      "types": "./packages/tui/dist/vision.d.ts",
+      "default": "./packages/tui/dist/vision.js"
+    },
+    "./cordis.patch.yml": "./packages/tui/cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
   "files": [
     "bin/dsh-tui.js",
     "dist/launcher.js",
@@ -35,6 +55,7 @@
     "docs/tui-product-roadmap.md",
     "docs/tui-v0.1.6-design.md",
     "docs/tui-v0.1.7-design.md",
+    "docs/tui-v0.1.8-design.md",
     "README.md",
     "LICENSE"
   ],
@@ -47,7 +68,7 @@
     "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-vision run build && pnpm --filter @vascent/deepseek-harness-tui run build && tsdown",
     "lint": "oxlint --deny-warnings src tests tsdown.config.ts && pnpm --filter './packages/*' run lint",
     "typecheck": "tsc --noEmit && pnpm --filter './packages/*' run typecheck",
-    "test": "vitest run tests/launcher.test.ts && pnpm --filter './packages/*' run test",
+    "test": "vitest run tests/launcher.test.ts tests/release.test.ts && pnpm --filter './packages/*' run test",
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
     "dev": "pnpm run build && node bin/dsh-tui-dev.js",
     "pack:check": "npm pack --dry-run --ignore-scripts",

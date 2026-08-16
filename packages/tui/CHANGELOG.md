@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.1.8 - 2026-08-16
+
+- Expose the TUI, Memory, and Vision APIs through public subpaths of the single
+  `@vascent/dsh-tui` release artifact.
+- Add the `v0.1.8` unified execution lifecycle: one typed replayable snapshot
+  now drives Transcript, Trajectory, composer status, Diff, Activity, and
+  pre-admission Vision feedback with stable identities and atomic controller
+  publication.
+- Remove consumer event-pairing Maps, copied execution statuses and clocks,
+  Host-running child overrides, and duplicate glyph/disclosure policies; add
+  monotonic transition diagnostics, immutable boundaries, and indexed
+  long-history replay.
+- Keep failed Session opens from invalidating active prompt work, bind composer
+  timing to semantic Activity identity, preserve Activity disclosure through
+  history prepend, reuse lifecycle snapshots for unrelated controller updates,
+  and derive Trajectory parents and duration text from shared policies.
+
+## 0.1.7 - 2026-08-16
+
 - Standardize maintained implementation on TypeScript `src/`, generate ignored
   workspace and launcher output under `dist/`, and keep npm archives under
   `artifacts/` instead of committing generated runtime and declaration files.
@@ -26,7 +45,7 @@ All notable changes to this project are documented in this file.
 - Add file and macOS clipboard image drafts with a fixed two-row attachment
   rail, primary `Ctrl+V` paste, compatible `Alt+V` fallback, keyboard
   management, retained retry state, and Host limit prechecks.
-- Add a private Vision service workspace with explicit native/proxy routing,
+- Add the internal Vision service workspace with explicit native/proxy routing,
   DashScope `qwen3.7-plus` configuration, credential preflight, bounded
   untrusted observations, exact-id staging, and durable attachment evidence.
 - Persist completed proxy evidence through a structured, supported

@@ -3,8 +3,8 @@
 A keyboard-first terminal client bundle for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-This is a private source workspace maintained in the community extension
-repository, outside the upstream Harness `packages/` tree:
+This workspace owns a public API within the community extension repository,
+outside the upstream Harness `packages/` tree:
 
 ```text
 Workplace/
@@ -12,8 +12,9 @@ Workplace/
 └── deepseek-harness-community/  # launcher, Memory, and TUI
 ```
 
-Keeping upstream and community code separate makes ownership explicit while
-the monorepo gives the launcher and private workspaces one tested release unit.
+Keeping upstream and community code separate makes ownership explicit. The
+workspace is not published independently; its API is bundled into the single
+`@vascent/dsh-tui` release artifact.
 
 ## Current status
 
@@ -58,9 +59,9 @@ The initial terminal client supports:
 - compact, expandable Activity segments for adjacent thinking and non-diff
   tools, while applied file changes stay in the main conversation timeline;
 - individually clickable tool calls with bounded Arguments and Result details;
-- a responsive `/trajectory` trace explorer with paired turn, step, and tool
-  lifecycles, bottleneck timing, and Summary, Input, Output, Schema, and Timing
-  inspection; and
+- a responsive `/trajectory` trace explorer backed by the shared turn, step,
+  and tool lifecycle snapshot, with bottleneck timing plus Summary, Input,
+  Output, Schema, and Timing inspection; and
 - explicit image drafts from files or the macOS clipboard, automatic native
   multimodal routing, and a configurable DashScope proxy for text-only models;
 - an application-owned transcript viewport with pointer and keyboard scrolling,
@@ -75,7 +76,8 @@ session logic into UI components.
 ## Install
 
 The TUI supports DeepSeek Harness `>=0.1.0-rc.6 <0.2.0`. Install the repository's
-single public package; its launcher installs Harness and configures this workspace automatically:
+single public package; its launcher installs Harness and configures this
+workspace automatically:
 
 ```sh
 npm install --global @vascent/dsh-tui
@@ -85,9 +87,11 @@ dsh-tui
 The release pipeline builds verified `dist/` artifacts before packaging, so
 installation does not build this workspace on the target machine. Generated
 artifacts are not committed. The bundle's `cordis.patch.yml` layers the required
-Host services, its `./memory` plugin entry, and the terminal entry point over the
-automatically installed `dsh-base` profile. The subpath embeds the private Memory
-workspace runtime, so installation has no standalone plugin dependency.
+Host services, its bundled `./memory` and `./vision` entries, and the terminal
+entry point over the automatically installed `dsh-base` profile. Library and
+Cordis consumers use the public `@vascent/dsh-tui/tui`,
+`@vascent/dsh-tui/memory`, and `@vascent/dsh-tui/vision` subpaths from the same
+installation.
 
 ## Develop
 
@@ -294,16 +298,16 @@ Cordis bundle entry
   -> in-process ApiProxy client
      -> application/ (bootstrap orchestration and local interactions)
         ├─ input/ (semantic keymap actions and context-aware binding resolution)
-        ├─ runtime/ (controller, scoped session selectors, Slash and Skill catalogs)
+        ├─ runtime/ (controller, one execution lifecycle, scoped selectors, catalogs)
         ├─ trajectory/ (semantic hierarchy, timing, and trace view)
         └─ presentation/ (config/task/skill surfaces, transcript, diffs, and dialogs)
 ```
 
 The detailed ownership rules and staged design are recorded in
 [`docs/tui-architecture.md`](../../docs/tui-architecture.md).
-The product sequence and next-version interaction contracts are recorded in
+The product sequence and implemented `v0.1.8` lifecycle contracts are recorded in
 [`docs/tui-product-roadmap.md`](../../docs/tui-product-roadmap.md) and
-[`docs/tui-v0.1.7-design.md`](../../docs/tui-v0.1.7-design.md).
+[`docs/tui-v0.1.8-design.md`](../../docs/tui-v0.1.8-design.md).
 
 The TUI consumes tool-provided presentation intent (`generic`, `terminal`,
 `diff`, and related cards) rather than branching on tool names. New tools can

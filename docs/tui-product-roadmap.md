@@ -33,10 +33,11 @@ permissions · vision  ->  goal · todos · agents -> changes · trace   -> skil
 ```
 
 The TUI is already strong in the middle of one session: streaming output,
-tool and diff rendering, memory, rewind, and trajectory inspection. The next
-milestones add visual evidence, unify the execution lifecycle beneath every
-inspection surface, then complete the session, parallel-work, review, and reuse
-loops around that execution core.
+visual evidence, tool and diff rendering, memory, and a unified execution
+lifecycle beneath transcript and trajectory inspection. The next milestone
+rebuilds Rewind around source-attributed mutations and conflict-aware recovery,
+then completes the session, parallel-work, review, and reuse loops around that
+execution core.
 
 ## Milestones
 
@@ -103,7 +104,22 @@ Detailed decisions and acceptance criteria are in
 Detailed decisions, transition rules, migration slices, and acceptance criteria
 are in [`tui-v0.1.8-design.md`](tui-v0.1.8-design.md).
 
-### v0.1.9 — Session Center
+### v0.1.9 — Source-Attributed Rewind
+
+- Replace TUI-owned whole-worktree checkpoint policy with one transport-neutral
+  Rewind domain consumed through a narrow application port.
+- Journal source-attributed workspace mutations with stable session, turn, and
+  call identities plus before/after snapshot references.
+- Plan each restore as `safe`, `mergeable`, `conflict`, or `unsupported`; only
+  AI-owned mutations participate in the default restore plan.
+- Restore workspace mutations, Memory mutations, and the conversation fork as
+  one preflighted transaction with compensation on partial failure.
+- Keep `Restore` selected by default for safe plans, disable it for unresolved
+  conflicts, and show exact affected paths and ownership before confirmation.
+- Remove whole-worktree inference, tool-name parsing, duplicated checkpoint
+  state, compatibility bridges, and TUI-owned Git restore code after cutover.
+
+### v0.1.10 — Session Center
 
 - Upgrade resume selection with durable titles, workspace and activity
   metadata, running state, and parent/child lineage.

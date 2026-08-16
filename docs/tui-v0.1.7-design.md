@@ -115,9 +115,9 @@ The dependency rules are strict:
 5. Attachment references and supported user-message events remain the durable
    facts. A draft path, clipboard handle, spinner, or selected row is never
    persisted as a domain fact.
-6. The public release stays one package. The private Vision workspace is
-   bundled behind `@vascent/deepseek-harness-tui/vision`, matching the existing
-   Memory workspace pattern.
+6. The public release stays one npm package. The internal Vision workspace is
+   bundled behind `@vascent/dsh-tui/vision`, matching the Memory workspace
+   pattern while keeping both APIs public.
 
 ## Workspace and source layout
 

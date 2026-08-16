@@ -1,14 +1,13 @@
 # DeepSeek Harness Vision
 
-Private community workspace providing model-capability routing, image proxy
-analysis, and two-phase admission of source-attributed observations into
-supported user-message events. Proxy media stays in the standard durable inbox
-carrier used by authenticated attachment lookup and session export; image
-blocks never enter a text-only model request.
+This workspace owns the public, terminal-independent API for model-capability
+routing, image proxy analysis, and two-phase admission of source-attributed
+observations into supported user-message events. Proxy media stays in the
+standard durable inbox carrier used by authenticated attachment lookup and
+session export; image blocks never enter a text-only model request.
 
-The workspace is bundled into the public `@vascent/dsh-tui` package through its
-`./vision` subpath. It is not published independently and contains no terminal
-presentation code.
+Consumers import the API from `@vascent/dsh-tui/vision`. The workspace is not
+published independently and contains no terminal presentation code.
 
 TypeScript under `src/` is the maintained implementation. Builds write ignored
 runtime, declaration, and source-map artifacts to `dist/` for bundling by the

@@ -31,17 +31,24 @@ The first launch creates or updates the `tui` Harness profile under `~/.dsh`; la
 
 ## Packages
 
-- [`packages/tui`](packages/tui) is the private terminal-client workspace with the profile patch, grouped execution Activity, top-level file diffs, scoped Config and Task surfaces, Skills, rewind checkpoints, model selection, and memory UI.
-- [`packages/memory`](packages/memory) is the private file-backed memory workspace with explicit remember/forget tools and correction learning.
-- [`packages/vision`](packages/vision) is the private, terminal-independent Vision workspace for native/proxy routing, safe visual observations, and source-attributed evidence.
+- [`@vascent/dsh-tui`](package.json) is the only published npm package. It
+  provides the launcher, bundled profile, and public TUI entry point.
+- [`packages/tui`](packages/tui) owns the public terminal-client API and Cordis
+  bundle implementation exposed as `@vascent/dsh-tui/tui`.
+- [`packages/memory`](packages/memory) owns the public file-backed Memory API
+  exposed as `@vascent/dsh-tui/memory`.
+- [`packages/vision`](packages/vision) owns the public, terminal-independent
+  Vision API exposed as `@vascent/dsh-tui/vision`.
 
-All private workspaces are source modules managed in this GitHub repository. They are embedded in `@vascent/dsh-tui` and are not published as standalone npm packages.
+The three workspaces remain independently owned modules, but their manifests
+block standalone registry publication. One npm artifact therefore exposes all
+public APIs without creating separate package versions or release pipelines.
 The long-term ownership boundaries and staged design are documented in
 [`docs/tui-architecture.md`](docs/tui-architecture.md).
 Functional milestones are tracked in
-[`docs/tui-product-roadmap.md`](docs/tui-product-roadmap.md), with the next
-version specified in
-[`docs/tui-v0.1.7-design.md`](docs/tui-v0.1.7-design.md).
+[`docs/tui-product-roadmap.md`](docs/tui-product-roadmap.md). The implemented
+`v0.1.8` lifecycle contract is specified in
+[`docs/tui-v0.1.8-design.md`](docs/tui-v0.1.8-design.md).
 
 ## Develop
 
@@ -73,17 +80,8 @@ Create a patch, minor, or major release from any authenticated development machi
 pnpm release patch
 ```
 
-`release-it` verifies the branch and worktree, runs the complete checks, updates the root version, creates the release commit and `v*` tag, and pushes them. GitHub Actions then builds the single installable package, publishes it to npm through Trusted Publishing (OIDC), and creates the GitHub Release. Local npm credentials and repository `NPM_TOKEN` secrets are not used. All source code stays in this GitHub repository; the private plugin workspaces are embedded in the root distribution.
-
-Each npm package needs a one-time bootstrap publish before its Trusted Publisher can be configured. See [npm's Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/) when applying this release pattern to another repository.
-
-After that first publish, an npm account with package write access and 2FA can bind the package to its workflow without creating a token:
-
-```sh
-npm exec --package=npm@^11.15.0 -- npm trust github @scope/package \
-  --repo owner/repository \
-  --file release.yml \
-  --allow-publish
-```
-
-The package `repository.url`, GitHub owner/repository, and workflow filename are exact, case-sensitive identifiers. A monorepo configures this trust once for each independently published package.
+`release-it` verifies the branch and worktree, runs the complete checks, updates
+the root version, creates the release commit and `v*` tag, and pushes them.
+GitHub Actions then builds and packs the single `@vascent/dsh-tui` artifact,
+publishes it through Trusted Publishing (OIDC), and attaches it to one GitHub
+Release. Local npm credentials and repository `NPM_TOKEN` secrets are not used.

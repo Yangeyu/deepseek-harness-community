@@ -821,10 +821,10 @@ boundaries. It never justifies retaining the old internal lifecycle path.
   Vision node appears unless its typed evidence exists.
 - No Host schema, provider, credential, attachment, or persistence migration is
   required.
-- All four public packages keep synchronized versions and the declared
-  pre-`0.2.0` Harness compatibility range. The launcher remains a complete
-  installable artifact while Memory, Vision, and TUI can also be installed
-  independently.
+- The single public `@vascent/dsh-tui` package keeps the declared pre-`0.2.0`
+  Harness compatibility range. TUI, Memory, and Vision remain separate source
+  workspaces with public APIs exposed through package subpaths; they are not
+  published as independent registry artifacts.
 
 ## Testing strategy
 

@@ -2,9 +2,11 @@
 
 File-backed adaptive memory for DeepSeek Harness. Markdown is the authoritative store; the plugin loads bounded global and project indexes, exposes model-facing memory tools, and learns reusable corrections in quiet, logged maintenance sessions.
 
-This is a private source workspace maintained in the community extension
-repository, outside the upstream `packages/` tree. The TUI consumes its service
-to show memory state and include mutations in the existing rewind workflow.
+This workspace owns a public, terminal-independent API maintained in the
+community extension repository. The TUI consumes its service to show memory
+state and include mutations in the existing rewind workflow. Other Harness
+clients import it from `@vascent/dsh-tui/memory`; the workspace is not published
+as a separate npm artifact.
 
 ## Storage
 
@@ -46,7 +48,7 @@ Mount the package after the base bundle:
 
 ```yaml
 - id: memory
-  name: '@vascent/deepseek-harness-memory'
+  name: '@vascent/dsh-tui/memory'
   config:
     root: !!js dshHomePath('memories')
     useMemories: true
@@ -73,6 +75,6 @@ pnpm run check
 ```
 
 The workspace builds ESM runtime and declarations into ignored `dist/` output.
-The release pipeline verifies and embeds that runtime in the public TUI package;
-generated artifacts are not committed and this workspace is not published as a
-standalone npm package.
+The release pipeline verifies and embeds that runtime in the public
+`@vascent/dsh-tui` package; generated artifacts are not committed and this
+workspace is not published independently.
