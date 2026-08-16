@@ -5,6 +5,33 @@ import { buildTrajectoryRecords } from '../../src/trajectory/records.ts'
 import { toolEvents } from './fixtures.ts'
 
 describe('trajectory records', () => {
+  it('turns durable Vision evidence into a timed trace record', () => {
+    const entries = [{
+      event: {
+        type: 'vision/analysis',
+        seq: 0,
+        time: 2_500,
+        data: {
+          analysisId: 'analysis-1',
+          status: 'completed',
+          route: { strategy: 'proxy', provider: 'dashscope-vision', model: 'qwen3.7-plus' },
+          content: [],
+          durationMs: 1_500,
+          observation: 'Visible warning banner',
+        },
+      },
+    }] as TuiState['events']
+
+    expect(buildTrajectoryRecords(entries)).toEqual([expect.objectContaining({
+      kind: 'vision',
+      title: 'Vision analysis',
+      status: 'completed',
+      startedAt: 1_000,
+      completedAt: 2_500,
+      detail: 'Visible warning banner',
+    })])
+  })
+
   it('pairs turn, step, and tool boundaries while preserving request schema and timing', () => {
     const entries = [{
       event: { type: 'turn/start', seq: 0, time: 1_000, data: { turn: 1 } },

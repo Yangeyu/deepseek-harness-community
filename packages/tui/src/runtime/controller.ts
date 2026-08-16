@@ -5,6 +5,7 @@ import type {
   HostFrame,
   IApiClient,
   ModelSelection,
+  PromptContentPart,
   MuxFrame,
   QueuedInboxItem,
   RpcId,
@@ -205,7 +206,11 @@ export class HarnessController {
   }
 
   /** Submit ordinary text using the caller-selected queue placement. */
-  async prompt(text: string, mode: 'queue' | 'steer'): Promise<void> {
+  async prompt(
+    text: string,
+    mode: 'queue' | 'steer',
+    content: PromptContentPart[] = [{ type: 'text', text }],
+  ): Promise<void> {
     const sessionId = this.requireSession()
     const generation = this.generation
     const pending = this.submissions.start(text, mode, this.state.running)
@@ -225,7 +230,7 @@ export class HarnessController {
       response = await this.api.sessions.prompt({
         sessionId,
         mode,
-        content: [{ type: 'text', text }],
+        content,
         ...clientTimeZone === undefined ? {} : { clientTimeZone },
       })
     } catch (error: unknown) {

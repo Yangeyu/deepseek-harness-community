@@ -28,14 +28,14 @@ agent loop, permission system, task model, or plugin format.
 ## Product flow
 
 ```text
-Prepare                 Execute                  Review                 Reuse
-permissions · plan  ->  goal · todos · agents -> changes · trace   -> skills · sessions
+Prepare                    Execute                  Review                 Reuse
+permissions · vision  ->  goal · todos · agents -> changes · trace   -> skills · sessions
 ```
 
 The TUI is already strong in the middle of one session: streaming output,
 tool and diff rendering, memory, rewind, and trajectory inspection. The next
-milestones complete the control, parallel-work, review, and reuse loops around
-that execution core.
+milestones add visual evidence, then complete the session, parallel-work,
+review, and reuse loops around that execution core.
 
 ## Milestones
 
@@ -56,7 +56,24 @@ that execution core.
 Detailed decisions and acceptance criteria are in
 [`tui-v0.1.6-design.md`](tui-v0.1.6-design.md).
 
-### v0.1.7 — Session Center
+### v0.1.7 — Visual Input and Vision Proxy
+
+- Add explicit image drafts from files and the system clipboard with a compact,
+  keyboard-first attachment rail above the composer.
+- Introduce a private, TUI-independent Vision workspace that routes explicit
+  image-capable models natively and text-only models through a configured proxy.
+- Use the existing generic LLM adapter for Alibaba Cloud Bailian and recommend
+  `qwen3.7-plus` as the first proxy route while DeepSeek remains the primary
+  coding model.
+- Persist proxy image references, observations, status, usage, and duration as
+  source-attributed session evidence visible in Transcript and Trajectory.
+- Configure Vision under `/config`, fail closed on missing capability or
+  credentials, and keep secrets and originating local paths out of events.
+
+Detailed decisions and acceptance criteria are in
+[`tui-v0.1.7-design.md`](tui-v0.1.7-design.md).
+
+### v0.1.8 — Session Center
 
 - Upgrade resume selection with durable titles, workspace and activity
   metadata, running state, and parent/child lineage.
@@ -91,6 +108,8 @@ Detailed decisions and acceptance criteria are in
 
 - Add read-only Skill and plugin inventory diagnostics before attempting
   configuration editing in the terminal.
+- Standardize a remote Vision RPC only when a second out-of-process client
+  needs the community Vision service.
 - Support detached work, remote execution worlds, and multiple workspaces only
   through documented Harness capabilities.
 - Add command-plugin scaffolding only when a concrete developer workflow needs
@@ -102,6 +121,8 @@ Detailed decisions and acceptance criteria are in
 - Do not reproduce the complete Web settings UI in a terminal.
 - Do not create a TUI-specific agent, plan, goal, permission, session, or skill
   persistence format.
+- Do not create a TUI-specific model adapter, credential store, or attachment
+  store for Vision.
 - Do not add a generic renderer/plugin API before an independent extension
   requires one.
 - Do not turn every feature into a permanent pane; the conversation remains the

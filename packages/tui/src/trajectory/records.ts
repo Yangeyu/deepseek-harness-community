@@ -2,7 +2,7 @@ import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import { displayUnknown, sanitizeTerminalText } from '../text.ts'
 
-export type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'command' | 'context' | 'event'
+export type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'command' | 'vision' | 'context' | 'event'
 export type TrajectoryStatus = 'pending' | 'completed' | 'warning' | 'failed' | 'info'
 
 /** One semantic execution record assembled from the durable session event log. */
@@ -327,6 +327,37 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
             name: event.data.name,
             ...event.data.args === undefined ? {} : { arguments: event.data.args },
             source: event.data.source,
+          },
+        })
+        break
+      }
+      case 'vision/analysis': {
+        const failed = event.data.status !== 'completed'
+        const detail = event.data.observation
+          ?? event.data.error?.message
+          ?? `Vision analysis ${event.data.status}`
+        records.push({
+          key: `vision:${event.data.analysisId}:${String(event.seq)}`,
+          kind: 'vision',
+          type: event.type,
+          seq: event.seq,
+          ...at,
+          title: 'Vision analysis',
+          summary: `${event.data.route.provider}/${event.data.route.model} · ${String(event.data.durationMs)}ms · ${event.data.status}`,
+          detail,
+          status: failed ? event.data.status === 'cancelled' ? 'warning' : 'failed' : 'completed',
+          startedAt: Math.max(0, event.time - event.data.durationMs),
+          completedAt: event.time,
+          payload: {
+            analysisId: event.data.analysisId,
+            route: event.data.route,
+            images: event.data.content,
+          },
+          result: failed ? event.data.error : {
+            observation: event.data.observation,
+            truncated: event.data.truncated ?? false,
+            finishReason: event.data.finishReason,
+            usage: event.data.usage,
           },
         })
         break

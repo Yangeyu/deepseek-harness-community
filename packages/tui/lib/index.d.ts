@@ -1,9 +1,11 @@
 import { r as MemoryMutation } from "./index-BX8q4BCW.js";
-import { GoalRef, HistoryEntry, IApiClient, ModelSelection, MuxFrame, QueuedInboxItem, RpcId, SessionModels, SessionSummary } from "@deepseek-ai/dsh-host-apiproxy";
+import "./index-BFrW5xpj.js";
+import { GoalRef, HistoryEntry, IApiClient, ModelSelection, MuxFrame, PromptContentPart, QueuedInboxItem, RpcId, SessionModels, SessionSummary } from "@deepseek-ai/dsh-host-apiproxy";
 import { Component, EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
 import z from "@deepseek-ai/schemastery";
 import { Context } from "@deepseek-ai/cordis";
 import { SessionProjectionMap } from "@deepseek-ai/dsh-session-projection/types";
+import { ImageMediaType } from "@deepseek-ai/dsh-attachment";
 //#region src/application/config.d.ts
 /** User-configurable TUI presentation and history bounds. */
 interface Config {
@@ -134,7 +136,7 @@ declare class HarnessController {
   /** Fork to the boundary before the checkpointed turn, then open and return the replacement session. */
   rewind(preview: RewindPreview, onPhase?: (phase: 'forking' | 'opening') => void): Promise<SessionId$1>;
   /** Submit ordinary text using the caller-selected queue placement. */
-  prompt(text: string, mode: 'queue' | 'steer'): Promise<void>;
+  prompt(text: string, mode: 'queue' | 'steer', content?: PromptContentPart[]): Promise<void>;
   /** Create a durable Goal; the read side remains the goal projection. */
   createGoal(objective: string, maxGoalRounds?: number): Promise<GoalRef>;
   /** Edit the exact projected Goal revision with Host compare-and-set semantics. */
@@ -320,7 +322,7 @@ declare class TranscriptComponent implements Component {
 }
 //#endregion
 //#region src/trajectory/records.d.ts
-type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'command' | 'context' | 'event';
+type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'command' | 'vision' | 'context' | 'event';
 type TrajectoryStatus = 'pending' | 'completed' | 'warning' | 'failed' | 'info';
 /** One semantic execution record assembled from the durable session event log. */
 interface TrajectoryRecord {

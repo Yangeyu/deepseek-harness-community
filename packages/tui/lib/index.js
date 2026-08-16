@@ -1,15 +1,16 @@
 import { InProcessApiClient, toFetchHandler } from "@deepseek-ai/dsh-host-apiproxy";
 import { CombinedAutocompleteProvider, Container, Editor, Key, Markdown, ProcessTerminal, SelectList, Text, TuiMainScreen, matchesKey, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, rmdir, stat, symlink, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { highlight, supportsLanguage } from "cli-highlight";
 import { diffLines } from "diff";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 import { parse } from "yaml";
 import { execFile, spawn } from "node:child_process";
-import { constants } from "node:fs";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { promisify } from "node:util";
+import { constants } from "node:fs";
 import z from "@deepseek-ai/schemastery";
 //#region src/runtime/submission.ts
 function userMessageRpcId(entry) {
@@ -214,7 +215,10 @@ var HarnessController = class {
 		return target;
 	}
 	/** Submit ordinary text using the caller-selected queue placement. */
-	async prompt(text, mode) {
+	async prompt(text, mode, content = [{
+		type: "text",
+		text
+	}]) {
 		const sessionId = this.requireSession();
 		const generation = this.generation;
 		const pending = this.submissions.start(text, mode, this.state.running);
@@ -234,10 +238,7 @@ var HarnessController = class {
 			response = await this.api.sessions.prompt({
 				sessionId,
 				mode,
-				content: [{
-					type: "text",
-					text
-				}],
+				content,
 				...clientTimeZone === void 0 ? {} : { clientTimeZone }
 			});
 		} catch (error) {
@@ -1559,6 +1560,9 @@ const DISCLOSURE_EXPANDED = "⌄";
 function stepKey$3(turn, step) {
 	return `${turn}:${step}`;
 }
+function durationLabel(milliseconds) {
+	return milliseconds < 1e3 ? `${String(milliseconds)}ms` : `${(milliseconds / 1e3).toFixed(milliseconds < 1e4 ? 1 : 0)}s`;
+}
 function messageText$1(content, reasoning) {
 	return content.filter((block) => block.type === "text" || reasoning && block.type === "reasoning").map((block) => block.type === "reasoning" ? `> ${block.text ?? ""}` : block.text ?? "").join("\n");
 }
@@ -1653,7 +1657,9 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 				if (event.surfaceOp !== "append") break;
 				const human = event.data.source.kind === "user";
 				if (!human && !showDetails) break;
-				const text = messageText$1(event.data.content, showReasoning);
+				const rawText = messageText$1(event.data.content, showReasoning);
+				const imageCount = event.data.content.filter((block) => block.type === "image").length;
+				const text = [rawText, imageCount === 0 ? "" : `${String(imageCount)} image${imageCount === 1 ? "" : "s"} attached`].filter(Boolean).join("\n\n");
 				if (text.trim() === "") break;
 				rows.push({
 					...human ? { prompt: true } : {
@@ -1664,6 +1670,18 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 					markdown: human,
 					dim: !human
 				});
+				break;
+			}
+			case "vision/analysis": {
+				const failed = event.data.status !== "completed";
+				const imageCount = event.data.content.length;
+				rows.push({ tool: {
+					key: `vision:${event.data.analysisId}:${String(event.seq)}`,
+					title: `Vision · ${String(imageCount)} image${imageCount === 1 ? "" : "s"} · ${sanitizeTerminalText(event.data.route.model)} · ${durationLabel(event.data.durationMs)}`,
+					status: failed ? "failed" : "completed",
+					arguments: `${String(imageCount)} image${imageCount === 1 ? "" : "s"} · ${event.data.route.provider}/${event.data.route.model}`,
+					result: failed ? `${event.data.error?.code ?? "VISION_FAILED"}: ${event.data.error?.message ?? event.data.status}` : event.data.observation ?? "Vision analysis completed."
+				} });
 				break;
 			}
 			case "assistant/chunk": {
@@ -2120,6 +2138,7 @@ var ComposerAnchoredLayout = class extends Container {
 	editor;
 	footer;
 	viewportRows;
+	attachments;
 	composerOverride;
 	conversationTop;
 	renderedTranscriptTop = 0;
@@ -2127,7 +2146,7 @@ var ComposerAnchoredLayout = class extends Container {
 	renderedTranscriptScreenRow = 0;
 	maxConversationTop = 0;
 	conversationPageRows = 1;
-	constructor(header, transcript, status, editor, footer, viewportRows) {
+	constructor(header, transcript, status, editor, footer, viewportRows, attachments) {
 		super();
 		this.header = header;
 		this.transcript = transcript;
@@ -2135,9 +2154,11 @@ var ComposerAnchoredLayout = class extends Container {
 		this.editor = editor;
 		this.footer = footer;
 		this.viewportRows = viewportRows;
+		this.attachments = attachments;
 		this.addChild(header);
 		this.addChild(transcript);
 		this.addChild(status);
+		if (attachments !== void 0) this.addChild(attachments);
 		this.addChild(editor);
 		this.addChild(footer);
 	}
@@ -2211,6 +2232,7 @@ var ComposerAnchoredLayout = class extends Container {
 		if (this.composerOverride !== void 0) return this.composerOverride.render(width);
 		return [
 			...this.status.render(width),
+			...this.attachments?.render(width) ?? [],
 			...this.editor.render(width),
 			...this.footer.render(width)
 		];
@@ -2594,6 +2616,35 @@ function buildTrajectoryRecords(entries) {
 				});
 				break;
 			}
+			case "vision/analysis": {
+				const failed = event.data.status !== "completed";
+				const detail = event.data.observation ?? event.data.error?.message ?? `Vision analysis ${event.data.status}`;
+				records.push({
+					key: `vision:${event.data.analysisId}:${String(event.seq)}`,
+					kind: "vision",
+					type: event.type,
+					seq: event.seq,
+					...at,
+					title: "Vision analysis",
+					summary: `${event.data.route.provider}/${event.data.route.model} · ${String(event.data.durationMs)}ms · ${event.data.status}`,
+					detail,
+					status: failed ? event.data.status === "cancelled" ? "warning" : "failed" : "completed",
+					startedAt: Math.max(0, event.time - event.data.durationMs),
+					completedAt: event.time,
+					payload: {
+						analysisId: event.data.analysisId,
+						route: event.data.route,
+						images: event.data.content
+					},
+					result: failed ? event.data.error : {
+						observation: event.data.observation,
+						truncated: event.data.truncated ?? false,
+						finishReason: event.data.finishReason,
+						usage: event.data.usage
+					}
+				});
+				break;
+			}
 			case "request/header": {
 				const config = event.data.header.config;
 				records.push({
@@ -2736,6 +2787,7 @@ function kindLabel(kind) {
 		case "assistant": return "ASSISTANT";
 		case "tool": return "TOOL";
 		case "command": return "COMMAND";
+		case "vision": return "VISION";
 		case "context": return "CONTEXT";
 		case "event": return "EVENT";
 	}
@@ -3288,11 +3340,12 @@ function hasProjection(projections, key) {
 	return Object.hasOwn(projections, key);
 }
 /** Read current configuration values without introducing a second state store. */
-function configurationSnapshot(models, projections, detailsExpanded) {
+function configurationSnapshot(models, projections, detailsExpanded, vision) {
 	return {
 		models,
 		...hasProjection(projections, "permissions") ? { permissions: projections.permissions } : {},
 		...hasProjection(projections, "plan") ? { plan: projections.plan } : {},
+		...vision === void 0 ? {} : { vision },
 		detailsExpanded
 	};
 }
@@ -3349,6 +3402,13 @@ function configurationRows(snapshot) {
 			value: snapshot.plan === void 0 ? "Unavailable in this profile" : `${snapshot.plan.active ? "active" : "off"}${snapshot.plan.pending ? " · pending transition" : ""}`,
 			scope: "Session",
 			available: snapshot.plan !== void 0
+		},
+		{
+			kind: "vision",
+			label: "Vision",
+			value: snapshot.vision === void 0 ? "Unavailable in this profile" : snapshot.vision.config.mode === "disabled" ? "disabled" : `${snapshot.vision.config.mode} · ${snapshot.vision.config.proxyProvider}/${snapshot.vision.config.proxyModel}${snapshot.vision.credentialConfigured === false ? " · credential missing" : ""}`,
+			scope: "TUI",
+			available: snapshot.vision !== void 0
 		},
 		{
 			kind: "details",
@@ -3426,11 +3486,12 @@ var ConfigView = class {
 	onPlan;
 	onDetails;
 	onClose;
+	onVision;
 	stage;
 	entryStage;
 	index = 0;
 	pendingPermission;
-	constructor(snapshot, theme, onModel, onReasoning, onPermission, onPlan, onDetails, onClose, initialStage = "root") {
+	constructor(snapshot, theme, onModel, onReasoning, onPermission, onPlan, onDetails, onClose, initialStage = "root", onVision) {
 		this.snapshot = snapshot;
 		this.theme = theme;
 		this.onModel = onModel;
@@ -3439,6 +3500,7 @@ var ConfigView = class {
 		this.onPlan = onPlan;
 		this.onDetails = onDetails;
 		this.onClose = onClose;
+		this.onVision = onVision;
 		this.stage = initialStage;
 		this.entryStage = initialStage;
 	}
@@ -3543,6 +3605,10 @@ var ConfigView = class {
 			if (row === void 0 || !row.available) return;
 			if (row.kind === "model") {
 				this.onModel();
+				return;
+			}
+			if (row.kind === "vision") {
+				this.onVision?.();
 				return;
 			}
 			if (row.kind === "details") {
@@ -4544,6 +4610,450 @@ function runExternalEditor(editor, path, stdio) {
 	});
 }
 //#endregion
+//#region src/application/attachments/drafts.ts
+/** Small observable store; binary drafts never enter global TUI state or the session log. */
+var AttachmentDraftStore = class {
+	items = [];
+	listeners = /* @__PURE__ */ new Set();
+	get snapshot() {
+		return this.items;
+	}
+	get busy() {
+		return this.items.some((item) => item.status === "analyzing");
+	}
+	add(input) {
+		const draft = {
+			...input,
+			id: randomUUID(),
+			status: "ready"
+		};
+		this.items = [...this.items, draft];
+		this.emit();
+		return draft;
+	}
+	remove(id) {
+		if (this.busy) return false;
+		const next = this.items.filter((item) => item.id !== id);
+		if (next.length === this.items.length) return false;
+		this.items = next;
+		this.emit();
+		return true;
+	}
+	removeLast() {
+		const last = this.items.at(-1);
+		return last === void 0 ? false : this.remove(last.id);
+	}
+	removeAt(index) {
+		const draft = this.items[index];
+		return draft === void 0 ? false : this.remove(draft.id);
+	}
+	setStatus(ids, status, error) {
+		const selected = new Set(ids);
+		this.items = this.items.map((item) => selected.has(item.id) ? {
+			...item,
+			status,
+			...error === void 0 ? { error: void 0 } : { error }
+		} : item);
+		this.emit();
+	}
+	clear() {
+		if (this.items.length === 0) return;
+		this.items = [];
+		this.emit();
+	}
+	onChange(listener) {
+		this.listeners.add(listener);
+		listener(this.items);
+		return () => {
+			this.listeners.delete(listener);
+		};
+	}
+	emit() {
+		for (const listener of this.listeners) listener(this.items);
+	}
+};
+//#endregion
+//#region src/application/attachments/files.ts
+function startsWith(data, bytes) {
+	return bytes.every((byte, index) => data[index] === byte);
+}
+/** Detect the format from bytes so an extension cannot bypass Host validation. */
+function detectImageMediaType(data) {
+	if (startsWith(data, [
+		137,
+		80,
+		78,
+		71,
+		13,
+		10,
+		26,
+		10
+	])) return "image/png";
+	if (startsWith(data, [
+		255,
+		216,
+		255
+	])) return "image/jpeg";
+	const signature = new TextDecoder("ascii").decode(data.slice(0, 6));
+	if (signature === "GIF87a" || signature === "GIF89a") return "image/gif";
+	const riff = new TextDecoder("ascii").decode(data.slice(0, 4));
+	const webp = new TextDecoder("ascii").decode(data.slice(8, 12));
+	return riff === "RIFF" && webp === "WEBP" ? "image/webp" : void 0;
+}
+function uint16(data, offset, littleEndian) {
+	return littleEndian ? (data[offset] ?? 0) | (data[offset + 1] ?? 0) << 8 : (data[offset] ?? 0) << 8 | (data[offset + 1] ?? 0);
+}
+function uint32(data, offset) {
+	return (data[offset] ?? 0) * 16777216 + ((data[offset + 1] ?? 0) << 16) + ((data[offset + 2] ?? 0) << 8) + (data[offset + 3] ?? 0);
+}
+/** Read inexpensive header dimensions for draft feedback; Host decoding remains authoritative. */
+function imageDimensions(data, mediaType) {
+	if (mediaType === "image/png" && data.length >= 24) return {
+		width: uint32(data, 16),
+		height: uint32(data, 20)
+	};
+	if (mediaType === "image/gif" && data.length >= 10) return {
+		width: uint16(data, 6, true),
+		height: uint16(data, 8, true)
+	};
+	if (mediaType === "image/webp") {
+		const chunk = new TextDecoder("ascii").decode(data.slice(12, 16));
+		if (chunk === "VP8X" && data.length >= 30) return {
+			width: 1 + (data[24] ?? 0) + ((data[25] ?? 0) << 8) + ((data[26] ?? 0) << 16),
+			height: 1 + (data[27] ?? 0) + ((data[28] ?? 0) << 8) + ((data[29] ?? 0) << 16)
+		};
+		if (chunk === "VP8L" && data.length >= 25 && data[20] === 47) return {
+			width: 1 + (data[21] ?? 0) + (((data[22] ?? 0) & 63) << 8),
+			height: 1 + ((data[22] ?? 0) >> 6) + ((data[23] ?? 0) << 2) + (((data[24] ?? 0) & 15) << 10)
+		};
+		if (chunk === "VP8 " && data.length >= 30 && data[23] === 157 && data[24] === 1 && data[25] === 42) return {
+			width: uint16(data, 26, true) & 16383,
+			height: uint16(data, 28, true) & 16383
+		};
+		return;
+	}
+	if (mediaType !== "image/jpeg") return void 0;
+	let offset = 2;
+	while (offset + 8 < data.length) {
+		if (data[offset] !== 255) {
+			offset += 1;
+			continue;
+		}
+		const marker = data[offset + 1] ?? 0;
+		const length = uint16(data, offset + 2, false);
+		if (length < 2) return void 0;
+		if (marker >= 192 && marker <= 195) return {
+			height: uint16(data, offset + 5, false),
+			width: uint16(data, offset + 7, false)
+		};
+		offset += length + 2;
+	}
+}
+/** Read one explicit path relative to the active session directory. */
+async function imageDraftFromPath(path, cwd) {
+	const absolute = resolve(cwd, path);
+	if (!(await stat(absolute)).isFile()) throw new Error(`Image path is not a regular file: ${absolute}`);
+	const data = await readFile(absolute);
+	const mediaType = detectImageMediaType(data);
+	if (mediaType === void 0) throw new Error("Supported image formats are PNG, JPEG, GIF, and WebP.");
+	return {
+		name: basename(absolute),
+		mediaType,
+		data,
+		source: "file",
+		...imageDimensions(data, mediaType)
+	};
+}
+//#endregion
+//#region src/application/attachments/clipboard.ts
+const execFile$1 = promisify(execFile);
+const COPY_PNG_SCRIPT = [
+	"on run argv",
+	"set destination to POSIX file (item 1 of argv)",
+	"set imageData to the clipboard as «class PNGf»",
+	"set fileHandle to open for access destination with write permission",
+	"set eof fileHandle to 0",
+	"write imageData to fileHandle",
+	"close access fileHandle",
+	"end run"
+].join("\n");
+async function copyMacClipboard(file) {
+	await execFile$1("osascript", [
+		"-e",
+		COPY_PNG_SCRIPT,
+		file
+	]);
+}
+/** Copy a macOS clipboard image through a private temporary file and clean it immediately. */
+async function imageDraftFromClipboard(command = copyMacClipboard) {
+	if (process.platform !== "darwin" && command === copyMacClipboard) throw new Error("Clipboard image input is currently available on macOS. Use /attach <path> instead.");
+	const directory = await mkdtemp(join(tmpdir(), "dsh-tui-vision-"));
+	const file = join(directory, "clipboard.png");
+	try {
+		await command(file);
+		const data = await readFile(file);
+		const mediaType = detectImageMediaType(data);
+		if (mediaType === void 0) throw new Error("The clipboard does not contain a supported image.");
+		return {
+			name: "clipboard.png",
+			mediaType,
+			data,
+			source: "clipboard",
+			...imageDimensions(data, mediaType)
+		};
+	} catch (error) {
+		if (error instanceof Error && error.message.includes("supported image")) throw error;
+		throw new Error("The clipboard does not contain a readable image.", { cause: error });
+	} finally {
+		await rm(directory, {
+			recursive: true,
+			force: true
+		});
+	}
+}
+//#endregion
+//#region src/application/attachments/coordinator.ts
+/** Owns the only image submission state machine between the composer and Harness. */
+var AttachmentCoordinator = class {
+	drafts;
+	vision;
+	onProxyDisclosure;
+	abort;
+	constructor(drafts, vision, onProxyDisclosure) {
+		this.drafts = drafts;
+		this.vision = vision;
+		this.onProxyDisclosure = onProxyDisclosure;
+	}
+	cancel() {
+		this.abort?.abort(/* @__PURE__ */ new Error("Vision analysis cancelled."));
+	}
+	async submit(sessionId, selection, text, mode, limits, send) {
+		if (this.abort !== void 0) throw new Error("Vision analysis is already in progress.");
+		const images = [...this.drafts.snapshot];
+		if (images.length === 0) throw new Error("No images are attached.");
+		const ids = images.map((image) => image.id);
+		try {
+			this.checkLimits(images, limits);
+		} catch (error) {
+			this.drafts.setStatus(ids, "error", error instanceof Error ? error.message : String(error));
+			throw error;
+		}
+		this.drafts.setStatus(ids, "analyzing");
+		const abort = new AbortController();
+		this.abort = abort;
+		try {
+			const capability = await this.vision.capability(selection.provider, selection.model, abort.signal);
+			if (capability.strategy === "disabled") throw new Error(capability.message);
+			if (capability.strategy === "native") {
+				const content = [{
+					type: "text",
+					text
+				}, ...images.map((image) => ({
+					type: "image",
+					mediaType: image.mediaType,
+					data: Buffer.from(image.data).toString("base64"),
+					name: image.name
+				}))];
+				await send(text.trim() === "" ? "[Image]" : text, mode, content);
+				this.drafts.clear();
+				return "native";
+			}
+			const status = await this.vision.status(abort.signal);
+			if (!status.proxyRegistered || !status.proxySupportsImages) throw new Error(`Vision proxy ${status.config.proxyProvider}/${status.config.proxyModel} is not ready. Open /config vision.`);
+			if (status.credentialRef !== void 0 && status.credentialConfigured !== true) throw new Error(`Vision credential ${status.credentialRef} is missing. Open /config vision after configuring it.`);
+			this.onProxyDisclosure?.(capability.provider, capability.model);
+			const analysisId = this.vision.newAnalysisId();
+			const analysis = await this.vision.analyze({
+				analysisId,
+				sessionId,
+				userText: text,
+				images: images.map((image) => ({
+					data: image.data,
+					mediaType: image.mediaType,
+					name: image.name
+				}))
+			}, abort.signal);
+			try {
+				await send(text.trim() === "" ? "[Image]" : text, mode, [{
+					type: "text",
+					text: analysis.marker
+				}, {
+					type: "text",
+					text
+				}]);
+			} catch (error) {
+				this.vision.discard(analysisId);
+				throw error;
+			}
+			this.drafts.clear();
+			return "proxy";
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (abort.signal.aborted) this.drafts.setStatus(ids, "ready");
+			else this.drafts.setStatus(ids, "error", message);
+			throw error;
+		} finally {
+			if (this.abort === abort) this.abort = void 0;
+		}
+	}
+	checkLimits(images, limits) {
+		if (limits === void 0) return;
+		if (images.length > limits.maxImagesPerMessage) throw new Error(`A message may contain at most ${String(limits.maxImagesPerMessage)} images.`);
+		if (images.find((image) => image.data.byteLength > limits.maxImageBytes) !== void 0) throw new Error(`Each image must be at most ${String(limits.maxImageBytes)} bytes.`);
+		if (images.reduce((sum, image) => sum + image.data.byteLength, 0) > limits.maxMessageImageBytes) throw new Error(`Attached images must total at most ${String(limits.maxMessageImageBytes)} bytes.`);
+	}
+};
+//#endregion
+//#region src/presentation/attachments.ts
+function sizeLabel(bytes) {
+	return bytes < 1048576 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
+}
+/** Fixed composer rail for local image drafts; never scrolls into transcript history. */
+var AttachmentRail = class {
+	theme;
+	onRemove;
+	onExit;
+	drafts = [];
+	index = 0;
+	constructor(theme, onRemove, onExit) {
+		this.theme = theme;
+		this.onRemove = onRemove;
+		this.onExit = onExit;
+	}
+	setDrafts(drafts) {
+		this.drafts = drafts;
+		this.index = Math.min(this.index, Math.max(0, drafts.length - 1));
+	}
+	handleInput(data) {
+		if (matchesKey(data, Key.escape)) return this.onExit?.();
+		if (matchesKey(data, Key.left) || data === "h") this.index = Math.max(0, this.index - 1);
+		else if (matchesKey(data, Key.right) || data === "l") this.index = Math.min(this.drafts.length - 1, this.index + 1);
+		else if (matchesKey(data, Key.delete) || matchesKey(data, Key.backspace)) this.onRemove?.(this.index);
+	}
+	invalidate() {}
+	render(width) {
+		if (this.drafts.length === 0) return [];
+		const visible = this.drafts.slice(0, 2);
+		const cards = visible.map((draft, index) => {
+			const state = draft.status === "ready" ? "" : draft.status === "analyzing" ? this.theme.accent(" · analyzing") : this.theme.warning(" · failed");
+			const name = [...sanitizeTerminalText(draft.name)];
+			const shortName = name.length <= 24 ? name.join("") : `${name.slice(0, 11).join("")}…${name.slice(-12).join("")}`;
+			const dimensions = draft.width === void 0 || draft.height === void 0 ? "" : ` · ${String(draft.width)}×${String(draft.height)}`;
+			const card = `[${String(index + 1)}] ${shortName} ${this.theme.dim(`${sizeLabel(draft.data.byteLength)}${dimensions}`)}${state}`;
+			return index === this.index ? this.theme.bold(card) : card;
+		});
+		const overflow = this.drafts.length > visible.length ? `+${String(this.drafts.length - visible.length)} images · ` : "";
+		const error = this.drafts.find((draft) => draft.error !== void 0)?.error;
+		return [truncateToWidth(`${this.theme.accent("Image")}  ${cards.join("   ")}`, Math.max(1, width)), truncateToWidth(error === void 0 ? this.theme.dim(`${overflow}Alt+A manage · Ctrl+V paste · Alt+Backspace remove latest`) : this.theme.warning(sanitizeTerminalText(error)), Math.max(1, width))];
+	}
+};
+//#endregion
+//#region src/presentation/config/vision-view.ts
+const ACTIONS = [
+	{
+		kind: "mode",
+		mode: "auto",
+		label: "Auto",
+		description: "Use the active model when it supports images; otherwise use the configured Vision proxy."
+	},
+	{
+		kind: "mode",
+		mode: "proxy",
+		label: "Always use proxy",
+		description: "Analyze every attached image with the configured Vision proxy before the main model runs."
+	},
+	{
+		kind: "mode",
+		mode: "disabled",
+		label: "Disabled",
+		description: "Reject image submissions while leaving ordinary text prompts unchanged."
+	},
+	{
+		kind: "configure",
+		label: "Configure DashScope recommendation",
+		description: "Register dashscope-vision/qwen3.7-plus with DASHSCOPE_API_KEY. The secret value is never copied into settings."
+	}
+];
+/** Keyboard-first Vision settings surface backed by the host settings service. */
+var VisionConfigView = class {
+	status;
+	theme;
+	onMode;
+	onConfigure;
+	onClose;
+	index = 0;
+	confirmingConfigure = false;
+	constructor(status, theme, onMode, onConfigure, onClose) {
+		this.status = status;
+		this.theme = theme;
+		this.onMode = onMode;
+		this.onConfigure = onConfigure;
+		this.onClose = onClose;
+	}
+	setStatus(status) {
+		this.status = status;
+	}
+	handleInput(data) {
+		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+			if (this.confirmingConfigure) this.confirmingConfigure = false;
+			else this.onClose();
+			return;
+		}
+		if (this.confirmingConfigure) {
+			if (matchesKey(data, Key.enter)) {
+				this.confirmingConfigure = false;
+				this.onConfigure();
+			}
+			return;
+		}
+		if (matchesKey(data, Key.up) || data === "k") return this.move(-1);
+		if (matchesKey(data, Key.down) || data === "j") return this.move(1);
+		if (data === "g") this.index = 0;
+		else if (data === "G") this.index = ACTIONS.length - 1;
+		else if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) this.select();
+	}
+	invalidate() {}
+	render(width) {
+		if (this.confirmingConfigure) return [
+			this.theme.bold("Configure recommended DashScope route?"),
+			"",
+			...wrapTextWithAnsi("This writes the dashscope-vision/qwen3.7-plus provider profile and references DASHSCOPE_API_KEY. It does not read, copy, or display the secret value.", Math.max(1, width)),
+			"",
+			this.theme.dim("enter confirm · esc cancel")
+		].map((line) => truncateToWidth(line, Math.max(1, width)));
+		const credential = this.status.credentialRef === void 0 ? "credential route not registered" : this.status.credentialConfigured === true ? `${this.status.credentialRef} configured${this.status.credentialSource === void 0 ? "" : ` via ${this.status.credentialSource}`}` : `${this.status.credentialRef} missing`;
+		const route = `${this.status.config.proxyProvider}/${this.status.config.proxyModel}`;
+		const routeState = this.status.proxyRegistered ? this.status.proxySupportsImages ? "multimodal" : "image capability missing" : "not registered";
+		const lines = [
+			this.theme.bold("Vision"),
+			this.theme.dim(`TUI · Proxy ${sanitizeTerminalText(route)} · ${routeState}`),
+			...this.status.proxyEndpointHost === void 0 ? [] : [this.theme.dim(`Endpoint · ${sanitizeTerminalText(this.status.proxyEndpointHost)}`)],
+			this.theme.dim(sanitizeTerminalText(credential)),
+			this.theme.dim(`Bounds · ${String(this.status.config.maxTokens)} tokens · ${String(this.status.config.maxObservationChars)} observation chars`),
+			""
+		];
+		for (const [index, action] of ACTIONS.entries()) {
+			const selected = index === this.index;
+			const cursor = selected ? this.theme.accent("›") : " ";
+			const current = action.kind === "mode" && action.mode === this.status.config.mode;
+			const label = selected ? this.theme.bold(action.label) : action.label;
+			lines.push(`${cursor} ${label}${current ? this.theme.dim(" (current)") : ""}`);
+			if (selected) lines.push(...wrapTextWithAnsi(this.theme.dim(action.description), Math.max(1, width - 4)).map((line) => `    ${line}`));
+		}
+		lines.push("", this.theme.dim("j/k move · enter apply · g/G first/last · esc close"));
+		return lines.map((line) => truncateToWidth(line, Math.max(1, width)));
+	}
+	move(offset) {
+		this.index = Math.max(0, Math.min(ACTIONS.length - 1, this.index + offset));
+	}
+	select() {
+		const action = ACTIONS[this.index];
+		if (action === void 0) return;
+		if (action.kind === "configure") this.confirmingConfigure = true;
+		else if (action.mode !== this.status.config.mode) this.onMode(action.mode);
+	}
+};
+//#endregion
 //#region src/application/app.ts
 const DOUBLE_ESCAPE_MS = 600;
 function sessionDescription(session) {
@@ -4575,10 +5085,15 @@ var TuiApplication = class {
 	footer = new Text("", 0, 0);
 	editor;
 	transcript;
+	attachmentRail;
+	attachmentDrafts = new AttachmentDraftStore();
+	attachmentCoordinator;
+	vision;
 	diffLineLocator = new DiffLineLocator();
 	layout;
 	trajectoryView;
 	configView;
+	visionConfigView;
 	taskView;
 	skillsView;
 	removeInputListener;
@@ -4604,7 +5119,12 @@ var TuiApplication = class {
 	skillCatalog;
 	skillAuthoring;
 	autocompleteCwd;
-	constructor(api, config, runtime, checkpoints, memory, commandSource) {
+	attachmentSessionId = void 0;
+	removeAttachmentListener;
+	visionStatus;
+	attachmentRailFocused = false;
+	disclosedVisionRoutes = /* @__PURE__ */ new Set();
+	constructor(api, config, runtime, checkpoints, memory, commandSource, vision) {
 		this.config = config;
 		this.runtime = runtime;
 		this.checkpoints = checkpoints;
@@ -4628,6 +5148,21 @@ var TuiApplication = class {
 		this.controller = new HarnessController(api, this, config.cwd, config.historyMessages);
 		this.header = new Text("", 0, 0);
 		this.transcript = new TranscriptComponent(initial, this.theme, config.showReasoning, config.maxToolOutputLines, config.thinkingMaxLines);
+		this.attachmentRail = new AttachmentRail(this.theme, (index) => {
+			if (!this.attachmentDrafts.removeAt(index)) this.controller.notice("Wait for Vision analysis to finish before removing images.");
+		}, () => this.leaveAttachmentRail());
+		this.vision = vision;
+		this.visionStatus = vision === void 0 ? void 0 : {
+			config: vision.config,
+			proxyRegistered: false,
+			proxySupportsImages: false
+		};
+		this.attachmentCoordinator = vision === void 0 ? void 0 : new AttachmentCoordinator(this.attachmentDrafts, vision, (provider, model) => {
+			const key = `${provider}/${model}`;
+			if (this.disclosedVisionRoutes.has(key)) return;
+			this.disclosedVisionRoutes.add(key);
+			this.controller.notice(`Attached images are being analyzed by ${key}; the primary model receives only bounded visual evidence.`);
+		});
 		this.editor = new Editor(this.tui, this.theme.editor, {
 			paddingX: 1,
 			autocompleteMaxVisible: 10
@@ -4644,13 +5179,19 @@ var TuiApplication = class {
 			this.editor.addToHistory(text);
 			this.submit(text);
 		};
-		this.layout = new ComposerAnchoredLayout(this.header, this.transcript, this.status, this.editor, this.footer, () => this.terminal.rows);
+		this.layout = new ComposerAnchoredLayout(this.header, this.transcript, this.status, this.editor, this.footer, () => this.terminal.rows, this.attachmentRail);
 		this.tui.addChild(this.layout);
 		this.tui.setFocus(this.editor);
 		this.removeMemoryActivity = this.memory.onActivity((activity) => {
 			if (this.disposed) return;
 			this.memoryActivity = activity;
 			this.updateStatus(this.controller.current);
+			this.tui.requestRender();
+		});
+		this.removeAttachmentListener = this.attachmentDrafts.onChange((drafts) => {
+			if (this.disposed) return;
+			this.attachmentRail.setDrafts(drafts);
+			if (drafts.length === 0 && this.attachmentRailFocused) this.leaveAttachmentRail();
 			this.tui.requestRender();
 		});
 	}
@@ -4673,6 +5214,8 @@ var TuiApplication = class {
 		this.commands.dispose();
 		this.skillCatalog.dispose();
 		this.removeMemoryActivity();
+		this.removeAttachmentListener();
+		this.attachmentCoordinator?.cancel();
 		this.terminal.write(DISABLE_MOUSE_TRACKING);
 		this.removeInputListener?.();
 		this.tui.stop();
@@ -4680,11 +5223,16 @@ var TuiApplication = class {
 	}
 	render(state) {
 		if (this.disposed) return;
+		if (this.attachmentSessionId !== void 0 && this.attachmentSessionId !== state.sessionId) {
+			this.attachmentCoordinator?.cancel();
+			this.attachmentDrafts.clear();
+		}
+		this.attachmentSessionId = state.sessionId;
 		const commandsChanged = this.commands.setSession(state.sessionId);
 		this.skillCatalog.setSession(state.sessionId);
 		this.transcript.setState(state);
 		this.trajectoryView?.setState(state);
-		this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails));
+		this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus));
 		this.taskView?.setSnapshot(taskSnapshot(state.projections, state.running, state.queue.length));
 		this.skillsView?.setSnapshot(this.skillCatalog.current);
 		this.diffLineLocator.resolve(state, () => {
@@ -4698,7 +5246,7 @@ var TuiApplication = class {
 		const selection = state.models?.current;
 		const model = selection === void 0 ? "model unavailable" : `${selection.provider}/${selection.model}${selection.reasoningEffort === void 0 ? "" : ` · ${selection.reasoningEffort}`}`;
 		const stats = composerStats(state.projections);
-		const controls = state.running || state.pendingSubmissions.some((submission) => submission.intent === "working") ? "Enter steer · Alt+Enter queue · Esc cancel" : "Ctrl+O details · Shift+Tab effort · /help";
+		const controls = state.running || state.pendingSubmissions.some((submission) => submission.intent === "working") ? "Enter steer · Alt+Enter queue · Esc cancel" : "Ctrl+V image · Ctrl+O details · Shift+Tab effort · /help";
 		this.footer.setText([this.theme.dim(`${model} · ${controls}`), ...stats === "" ? [] : [this.theme.dim(stats)]].join("\n"));
 		if (state.cwd !== this.autocompleteCwd || commandsChanged) this.refreshAutocomplete(state.cwd, false);
 		this.tui.requestRender();
@@ -4773,6 +5321,13 @@ var TuiApplication = class {
 			return { consume: true };
 		}
 		if (this.composerModalActive) return void 0;
+		if (this.attachmentRailFocused) {
+			if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
+				this.leaveAttachmentRail();
+				return { consume: true };
+			}
+			return;
+		}
 		const escape = matchesKey(data, Key.escape);
 		if (!escape && this.lastEscapeAt !== 0) this.disarmRewind();
 		if (matchesKey(data, Key.ctrl("c"))) {
@@ -4782,6 +5337,20 @@ var TuiApplication = class {
 		}
 		if (matchesKey(data, Key.alt(Key.enter))) {
 			this.submitEditor("queue");
+			return { consume: true };
+		}
+		if (matchesKey(data, Key.ctrl("v")) || matchesKey(data, Key.alt("v"))) {
+			this.runAction(() => this.pasteImage());
+			return { consume: true };
+		}
+		if (this.attachmentDrafts.snapshot.length > 0 && matchesKey(data, Key.alt("a"))) {
+			this.attachmentRailFocused = true;
+			this.tui.setFocus(this.attachmentRail);
+			this.tui.requestRender();
+			return { consume: true };
+		}
+		if (this.attachmentDrafts.snapshot.length > 0 && matchesKey(data, Key.alt(Key.backspace))) {
+			if (!this.attachmentDrafts.removeLast()) this.controller.notice("Wait for Vision analysis to finish before removing images.");
 			return { consume: true };
 		}
 		if (this.editor.getExpandedText() === "" && matchesKey(data, Key.pageUp)) {
@@ -4807,6 +5376,10 @@ var TuiApplication = class {
 			return { consume: true };
 		}
 		if (escape && !this.tui.hasOverlay()) {
+			if (this.attachmentDrafts.busy) {
+				this.attachmentCoordinator?.cancel();
+				return { consume: true };
+			}
 			if (this.controller.current.running) {
 				this.runAction(() => this.controller.cancel());
 				return { consume: true };
@@ -4839,14 +5412,14 @@ var TuiApplication = class {
 	}
 	async submitEditor(mode) {
 		const text = this.editor.getExpandedText();
-		if (text.trim() === "") return;
+		if (text.trim() === "" && this.attachmentDrafts.snapshot.length === 0) return;
 		this.editor.setText("");
 		this.editor.addToHistory(text);
 		await this.submit(text, mode);
 	}
 	async submit(value, forcedMode) {
 		const text = value.trim();
-		if (text === "") return;
+		if (text === "" && this.attachmentDrafts.snapshot.length === 0) return;
 		try {
 			if (text.startsWith("/")) {
 				if (await this.handleCommand(text)) return;
@@ -4860,7 +5433,15 @@ var TuiApplication = class {
 			}
 			const mode = forcedMode ?? (this.controller.current.running ? "steer" : "queue");
 			this.layout.followTranscript();
-			await this.controller.prompt(value, mode);
+			if (this.attachmentDrafts.snapshot.length === 0) await this.controller.prompt(value, mode);
+			else {
+				const coordinator = this.attachmentCoordinator;
+				const state = this.controller.current;
+				const selection = state.models?.current;
+				if (coordinator === void 0) throw new Error("Vision is unavailable in this profile.");
+				if (state.sessionId === void 0 || selection === void 0) throw new Error("Wait for the active session and model before submitting images.");
+				await coordinator.submit(String(state.sessionId), selection, value, mode, state.projections.imageLimits, (displayText, submitMode, content) => this.controller.prompt(displayText, submitMode, content));
+			}
 		} catch (error) {
 			if (this.editor.getExpandedText() === "") this.editor.setText(value);
 			this.controller.notice(error instanceof Error ? error.message : String(error));
@@ -4910,6 +5491,22 @@ var TuiApplication = class {
 				}
 			},
 			{
+				name: "attach",
+				description: "Attach an image file to the next message",
+				argumentHint: "<path>",
+				handler: async (argument) => {
+					if (argument.trim() === "") throw new Error("Usage: /attach <path>");
+					this.ensureVisionAvailable();
+					if (this.attachmentDrafts.busy) throw new Error("Vision analysis is already in progress.");
+					this.attachmentDrafts.add(await imageDraftFromPath(argument.trim(), this.controller.current.cwd));
+				}
+			},
+			{
+				name: "paste-image",
+				description: "Attach the image currently on the clipboard",
+				handler: () => this.pasteImage()
+			},
+			{
 				name: "details",
 				description: "Toggle expanded tool output",
 				handler: () => {
@@ -4926,8 +5523,13 @@ var TuiApplication = class {
 			{
 				name: "config",
 				description: "Configure model, policy, and terminal preferences",
-				argumentHint: "[model|reasoning|permission|plan|interface]",
+				argumentHint: "[model|reasoning|permission|plan|vision|interface]",
 				handler: (argument) => this.openConfigRoute(argument)
+			},
+			{
+				name: "vision",
+				description: "Configure image routing and the Vision proxy",
+				handler: () => this.openVisionConfig()
 			},
 			{
 				name: "task",
@@ -4979,6 +5581,20 @@ var TuiApplication = class {
 			}
 		];
 	}
+	ensureVisionAvailable() {
+		if (this.attachmentCoordinator === void 0) throw new Error("Vision is unavailable in this profile.");
+	}
+	leaveAttachmentRail() {
+		if (!this.attachmentRailFocused) return;
+		this.attachmentRailFocused = false;
+		this.tui.setFocus(this.editor);
+		this.tui.requestRender();
+	}
+	async pasteImage() {
+		this.ensureVisionAvailable();
+		if (this.attachmentDrafts.busy) throw new Error("Vision analysis is already in progress.");
+		this.attachmentDrafts.add(await imageDraftFromClipboard());
+	}
 	refreshAutocomplete(cwd = this.controller.current.cwd, requestRender = true) {
 		if (this.disposed) return;
 		this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashAutocompleteRows(this.slashCandidates()), cwd));
@@ -5019,7 +5635,7 @@ var TuiApplication = class {
 	}
 	openPermissionConfig() {
 		const state = this.controller.current;
-		if (configurationSnapshot(state.models, state.projections, this.showDetails).permissions === void 0) {
+		if (configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus).permissions === void 0) {
 			this.controller.notice("Permission configuration is unavailable in this profile.");
 			return;
 		}
@@ -5032,8 +5648,9 @@ var TuiApplication = class {
 		if (route === "reasoning" || route === "effort") return this.openConfig("reasoning");
 		if (route === "permission" || route === "permissions") return this.openPermissionConfig();
 		if (route === "plan") return this.openConfig("plan");
+		if (route === "vision") return this.openVisionConfig();
 		if (route === "interface" || route === "details") return this.openConfig();
-		throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, or interface.`);
+		throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, vision, or interface.`);
 	}
 	openConfig(initialStage = "root") {
 		if (this.tui.hasOverlay() || this.composerModalActive) return;
@@ -5046,7 +5663,7 @@ var TuiApplication = class {
 			this.tui.requestRender();
 		};
 		const state = this.controller.current;
-		const view = new ConfigView(configurationSnapshot(state.models, state.projections, this.showDetails), this.theme, () => {
+		const view = new ConfigView(configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus), this.theme, () => {
 			close();
 			this.runAction(() => this.openModelSelector());
 		}, (effort) => {
@@ -5058,7 +5675,10 @@ var TuiApplication = class {
 			this.runAction(() => this.commands.dispatchHost(active ? "/plan" : "/plan off"));
 		}, (expanded) => {
 			this.setDetailsExpanded(expanded);
-		}, close, initialStage);
+		}, close, initialStage, () => {
+			close();
+			this.runAction(() => this.openVisionConfig());
+		});
 		this.configView = view;
 		this.composerModalActive = true;
 		this.layout.setComposerOverride(view);
@@ -5067,6 +5687,49 @@ var TuiApplication = class {
 		if ((initialStage === "root" || initialStage === "reasoning") && state.models === void 0 && state.sessionId !== void 0) this.runAction(async () => {
 			await this.controller.refreshModels();
 		});
+	}
+	async openVisionConfig() {
+		if (this.tui.hasOverlay() || this.composerModalActive) return;
+		const vision = this.vision;
+		if (vision === void 0) throw new Error("Vision is unavailable in this profile.");
+		const status = await this.refreshVisionStatus();
+		if (this.tui.hasOverlay() || this.composerModalActive || this.disposed) return;
+		const close = () => {
+			if (this.visionConfigView === void 0) return;
+			this.visionConfigView = void 0;
+			this.layout.setComposerOverride(void 0);
+			this.composerModalActive = false;
+			this.tui.setFocus(this.editor);
+			this.tui.requestRender();
+		};
+		const view = new VisionConfigView(status, this.theme, (mode) => {
+			this.runAction(async () => {
+				await vision.setMode(mode);
+				await this.refreshVisionStatus();
+			});
+		}, () => {
+			this.runAction(async () => {
+				await vision.configureRecommendedDashScope();
+				await this.refreshVisionStatus();
+				this.controller.notice("Configured dashscope-vision/qwen3.7-plus using DASHSCOPE_API_KEY.");
+			});
+		}, close);
+		this.visionConfigView = view;
+		this.composerModalActive = true;
+		this.layout.setComposerOverride(view);
+		this.tui.setFocus(view);
+		this.tui.requestRender();
+	}
+	async refreshVisionStatus() {
+		const vision = this.vision;
+		if (vision === void 0) throw new Error("Vision is unavailable in this profile.");
+		const status = await vision.status();
+		this.visionStatus = status;
+		this.visionConfigView?.setStatus(status);
+		const state = this.controller.current;
+		this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails, status));
+		this.tui.requestRender();
+		return status;
 	}
 	openTask() {
 		if (this.tui.hasOverlay() || this.composerModalActive) return;
@@ -5418,7 +6081,7 @@ var TuiApplication = class {
 		};
 		const dialog = new ModelDialog(models, this.theme, (selected) => {
 			close();
-			this.runAction(() => this.controller.selectModel(selected));
+			this.runAction(() => this.selectModel(selected));
 		}, close);
 		this.composerModalActive = true;
 		this.layout.setComposerOverride(dialog);
@@ -5451,13 +6114,19 @@ var TuiApplication = class {
 			model: model.id
 		})));
 		if (matches.length !== 1) throw new Error(matches.length === 0 ? `model "${name}" was not found` : `model "${name}" is ambiguous; use provider/model`);
-		await this.controller.selectModel(matches[0]);
+		await this.selectModel(matches[0]);
+	}
+	async selectModel(selection) {
+		if (this.attachmentDrafts.busy) throw new Error("Wait for Vision analysis to finish before changing models.");
+		while (this.controller.current.historyHasMore) if (!await this.controller.loadEarlierHistory()) break;
+		if (this.controller.current.events.some((entry) => entry.event.type === "user/message" && entry.event.data.source.kind === "user" && entry.event.data.content.some((block) => block.type === "image")) && this.vision !== void 0 && !await this.vision.supportsNativeImages(selection.provider, selection.model)) throw new Error("This session already contains native image messages. Select a multimodal model or start a new session before switching to a text-only model.");
+		await this.controller.selectModel(selection);
 	}
 	setDetailsExpanded(expanded) {
 		this.showDetails = expanded;
 		this.transcript.setDetails(expanded);
 		const state = this.controller.current;
-		this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, expanded));
+		this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, expanded, this.visionStatus));
 		this.tui.requestRender();
 	}
 	async selectReasoningEffort(reasoningEffort) {
@@ -5987,7 +6656,8 @@ const inject = [
 	"apiProxy",
 	"agents",
 	"commands",
-	"memory"
+	"memory",
+	"vision"
 ];
 function parseArgs(args, base) {
 	const config = { ...base };
@@ -6068,7 +6738,7 @@ function apply(ctx, config) {
 			return (await ctx.commands.execute(agent, line, signal))?.result;
 		},
 		subscribe: (listener) => ctx.on("commands/change", listener)
-	});
+	}, ctx.vision);
 	ctx.effect(() => {
 		let active = true;
 		const removeMemoryMutation = ctx.memory.onMutation((mutation) => {

@@ -13,7 +13,7 @@ Workplace/
 ```
 
 Keeping upstream and community code separate makes ownership explicit while
-the monorepo gives the launcher and both plugins one tested release unit.
+the monorepo gives the launcher and private workspaces one tested release unit.
 
 ## Current status
 
@@ -47,8 +47,8 @@ The initial terminal client supports:
 - reconnect and history resynchronization;
 - merged discovery of TUI-local interactions and agent-scoped Harness commands,
   with one catalog driving both autocomplete and `/help`;
-- a scoped `/config` center for model, reasoning, permissions, Plan Mode, and
-  terminal display preferences, plus a separate `/task` surface for durable
+- a scoped `/config` center for model, reasoning, permissions, Plan Mode,
+  Vision, and terminal display preferences, plus a separate `/task` surface for durable
   Goals, read-only Todos, and runtime actions;
 - effective Skill discovery and canonical `/name` invocation through the Slash
   catalog, plus a searchable `/skills` browser and safe project/user authoring;
@@ -58,6 +58,8 @@ The initial terminal client supports:
 - a responsive `/trajectory` trace explorer with paired turn, step, and tool
   lifecycles, bottleneck timing, and Summary, Input, Output, Schema, and Timing
   inspection; and
+- explicit image drafts from files or the macOS clipboard, automatic native
+  multimodal routing, and a configurable DashScope proxy for text-only models;
 - an application-owned transcript viewport with pointer and keyboard scrolling,
   stable history position, and automatic tail following.
 
@@ -118,7 +120,10 @@ After a normal exit, the restored shell prints a copyable
 | --- | --- |
 | `Enter` | Send while idle; steer while running |
 | `Alt+Enter` | Queue explicitly |
-| `Esc` | Cancel the active turn |
+| `Esc` | Cancel Vision analysis or the active turn |
+| `Ctrl+V` | Attach the current macOS clipboard image |
+| `Alt+A` | Focus and manage the attachment rail |
+| `Alt+Backspace` | Remove the latest image draft |
 | `Ctrl+C` | Cancel while running; exit while idle |
 | `Ctrl+O` | Toggle expanded tool details |
 | `Shift+Tab` | Cycle supported reasoning efforts |
@@ -142,7 +147,7 @@ an older, message-aligned history page without losing live tail events. `Ctrl+C`
 remains an interrupt while the session is running.
 
 `/config` is the unified configuration entry for the active session and TUI.
-It shows Model, Reasoning, Permission, Plan Mode, and Details with an explicit
+It shows Model, Reasoning, Permission, Plan Mode, Vision, and Details with an explicit
 `Session` or `TUI` scope. `/task` owns the current Goal, read-only Todo progress,
 and runtime cancellation. Both surfaces use `j`/`k`, arrows, `g`/`G`, `Enter`,
 and `Esc`, and neither retains a second copy of Host state.
@@ -155,6 +160,32 @@ Bare `/permission` opens the same Permission selector directly. An argued
 `/permission <preset>`, Plan actions, and every other discovered Host Command
 execute through the Host command registry rather than model prompting. Known
 Commands therefore never appear as user/assistant conversation messages.
+
+## Vision input
+
+Use `/attach <path>` for a PNG, JPEG, GIF, or WebP file, `/paste-image` for the
+macOS clipboard, or `Ctrl+V` (`Alt+V` remains a compatibility alias). Drafts stay in memory above the editor until Host
+admission succeeds. Press `Alt+A` to focus the rail, then use `h`/`l` or arrows
+to select, `Delete` to remove, and `Esc` to return to the editor.
+
+In Auto mode, a model that explicitly declares image input receives the image
+natively. A text-only or unknown route uses the configured Vision proxy and
+receives only a bounded, source-attributed, untrusted observation. Missing
+capability, credentials, validation, or provider success retains both the text
+and drafts instead of silently sending an image-less prompt.
+
+For the recommended Alibaba Cloud Bailian route:
+
+```sh
+export DASHSCOPE_API_KEY='...'
+dsh-tui
+```
+
+Then open `/config vision` (or `/vision`), select “Configure recommended
+DashScope route,” and confirm. The settings reference `DASHSCOPE_API_KEY`; the
+secret value is not copied into configuration or session events. Completed and
+failed proxy analyses appear as expandable Vision cards and timed
+`/trajectory` records.
 
 `/skills` lists effective user-invocable Skills for the current session. Use
 `j`/`k` to navigate, `Enter` to insert the canonical `/name ` gesture, `l` for
@@ -222,15 +253,16 @@ The status row shows a separate animation while quiet learning is running.
 
 `/clear` removes the visible conversation synchronously and then attaches a
 fresh session; if session creation fails, the previous view is restored. Slash
-commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/details`, `/status`,
-`/config`, `/task`, `/skills`, `/trajectory`, `/memories`, `/rewind`, and
-`/exit`.
+commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/attach`,
+`/paste-image`, `/vision`, `/details`, `/status`, `/config`, `/task`, `/skills`,
+`/trajectory`, `/memories`, `/rewind`, and `/exit`.
 
 ## Architecture
 
 ```text
 Cordis bundle entry
   -> file-backed Memory plugin (context, tools, quiet learner, mutations)
+  -> Vision plugin (routing, proxy analysis, observation staging, events)
   -> in-process ApiProxy client
      -> application/ (bootstrap orchestration and local interactions)
         ├─ runtime/ (controller, scoped session selectors, Slash and Skill catalogs)
@@ -242,7 +274,7 @@ The detailed ownership rules and staged design are recorded in
 [`docs/tui-architecture.md`](../../docs/tui-architecture.md).
 The product sequence and next-version interaction contracts are recorded in
 [`docs/tui-product-roadmap.md`](../../docs/tui-product-roadmap.md) and
-[`docs/tui-v0.1.6-design.md`](../../docs/tui-v0.1.6-design.md).
+[`docs/tui-v0.1.7-design.md`](../../docs/tui-v0.1.7-design.md).
 
 The TUI consumes tool-provided presentation intent (`generic`, `terminal`,
 `diff`, and related cards) rather than branching on tool names. New tools can

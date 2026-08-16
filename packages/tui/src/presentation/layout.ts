@@ -18,11 +18,13 @@ export class ComposerAnchoredLayout extends Container {
     private readonly editor: Component,
     private readonly footer: Component,
     private readonly viewportRows: () => number,
+    private readonly attachments?: Component,
   ) {
     super()
     this.addChild(header)
     this.addChild(transcript)
     this.addChild(status)
+    if (attachments !== undefined) this.addChild(attachments)
     this.addChild(editor)
     this.addChild(footer)
   }
@@ -103,6 +105,7 @@ export class ComposerAnchoredLayout extends Container {
     if (this.composerOverride !== undefined) return this.composerOverride.render(width)
     return [
       ...this.status.render(width),
+      ...this.attachments?.render(width) ?? [],
       ...this.editor.render(width),
       ...this.footer.render(width),
     ]

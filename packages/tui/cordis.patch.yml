@@ -48,6 +48,13 @@
         extractionMaxInputBytes: 32768
         minCandidateChars: 6
 
+    - id: vision
+      name: '@vascent/deepseek-harness-tui/vision'
+      config:
+        mode: auto
+        proxyProvider: dashscope-vision
+        proxyModel: qwen3.7-plus
+
     - id: session-projection-cache
       name: '@deepseek-ai/dsh-session-projection-cache'
       config:

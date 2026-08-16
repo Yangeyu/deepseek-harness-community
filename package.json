@@ -33,6 +33,7 @@
     "docs/tui-architecture.md",
     "docs/tui-product-roadmap.md",
     "docs/tui-v0.1.6-design.md",
+    "docs/tui-v0.1.7-design.md",
     "README.md",
     "LICENSE"
   ],
@@ -42,7 +43,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-tui run build",
+    "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-vision run build && pnpm --filter @vascent/deepseek-harness-tui run build",
     "lint": "pnpm --filter './packages/*' run lint",
     "typecheck": "pnpm --filter './packages/*' run typecheck",
     "test": "node --test tests/*.test.js && pnpm --filter './packages/*' run test",
@@ -56,10 +57,12 @@
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh": "0.1.0-rc.6",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-attachment": "0.1.0-rc.6",
     "@deepseek-ai/dsh-base": "0.1.0-rc.6",
     "@deepseek-ai/dsh-commands": "0.1.0-rc.6",
     "@deepseek-ai/dsh-code-runtime-worker-thread": "0.1.0-rc.6",
     "@deepseek-ai/dsh-cordis-host-runner": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials": "0.1.0-rc.6",
     "@deepseek-ai/dsh-host-apiproxy": "0.1.0-rc.6",
     "@deepseek-ai/dsh-host-directory-picker-browse": "0.1.0-rc.6",
     "@deepseek-ai/dsh-goal": "0.1.0-rc.6",
@@ -71,6 +74,7 @@
     "@deepseek-ai/dsh-session-projection": "0.1.0-rc.6",
     "@deepseek-ai/dsh-session-projection-cache": "0.1.0-rc.6",
     "@deepseek-ai/dsh-session-stats": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-settings": "0.1.0-rc.6",
     "@deepseek-ai/dsh-storage": "0.1.0-rc.6",
     "@deepseek-ai/dsh-storage-domain": "0.1.0-rc.6",
     "@deepseek-ai/dsh-storage-json": "0.1.0-rc.6",

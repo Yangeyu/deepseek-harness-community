@@ -32,6 +32,32 @@ function entry(value: unknown): HistoryEntry {
 }
 
 describe('TranscriptComponent', () => {
+  it('renders a compact expandable Vision analysis card', () => {
+    const transcript = new TranscriptComponent(state([entry({
+      event: {
+        type: 'vision/analysis',
+        seq: 0,
+        time: 1_500,
+        data: {
+          analysisId: 'analysis-1',
+          status: 'completed',
+          route: { strategy: 'proxy', provider: 'dashscope-vision', model: 'qwen3.7-plus' },
+          content: [{
+            type: 'image',
+            attachment: { attachmentId: 'image-1', mediaType: 'image/png', bytes: 10, width: 2, height: 2 },
+          }],
+          durationMs: 500,
+          observation: 'Visible error dialog',
+        },
+      },
+    })]), createTheme(false), true, 8)
+    transcript.setDetails(true)
+
+    const output = transcript.render(100).join('\n')
+    expect(output).toContain('Vision · 1 image · qwen3.7-plus · 500ms')
+    expect(output).toContain('dashscope-vision/qwen3.7-plus')
+  })
+
   it('renders the final assistant message instead of its superseded stream chunks', () => {
     const transcript = new TranscriptComponent(state([
       entry({

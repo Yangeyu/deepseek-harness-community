@@ -66,6 +66,12 @@ function stepKey(turn: number, step: number): string {
   return `${turn}:${step}`
 }
 
+function durationLabel(milliseconds: number): string {
+  return milliseconds < 1_000
+    ? `${String(milliseconds)}ms`
+    : `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`
+}
+
 function messageText(content: readonly { type: string; text?: string }[], reasoning: boolean): string {
   return content
     .filter(block => block.type === 'text' || (reasoning && block.type === 'reasoning'))
@@ -200,13 +206,33 @@ function rowsFromState(
         if (event.surfaceOp !== 'append') break
         const human = event.data.source.kind === 'user'
         if (!human && !showDetails) break
-        const text = messageText(event.data.content, showReasoning)
+        const rawText = messageText(event.data.content, showReasoning)
+        const imageCount = event.data.content.filter(block => block.type === 'image').length
+        const text = [rawText, imageCount === 0 ? '' : `${String(imageCount)} image${imageCount === 1 ? '' : 's'} attached`]
+          .filter(Boolean)
+          .join('\n\n')
         if (text.trim() === '') break
         rows.push({
           ...human ? { prompt: true } : { label: 'Context', labelPaint: theme.dim },
           body: text,
           markdown: human,
           dim: !human,
+        })
+        break
+      }
+      case 'vision/analysis': {
+        const failed = event.data.status !== 'completed'
+        const imageCount = event.data.content.length
+        rows.push({
+          tool: {
+            key: `vision:${event.data.analysisId}:${String(event.seq)}`,
+            title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalText(event.data.route.model)} · ${durationLabel(event.data.durationMs)}`,
+            status: failed ? 'failed' : 'completed',
+            arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${event.data.route.provider}/${event.data.route.model}`,
+            result: failed
+              ? `${event.data.error?.code ?? 'VISION_FAILED'}: ${event.data.error?.message ?? event.data.status}`
+              : event.data.observation ?? 'Vision analysis completed.',
+          },
         })
         break
       }

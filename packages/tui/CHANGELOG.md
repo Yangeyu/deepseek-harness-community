@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Add file and macOS clipboard image drafts with a fixed two-row attachment
+  rail, primary `Ctrl+V` paste, compatible `Alt+V` fallback, keyboard
+  management, retained retry state, and Host limit prechecks.
+- Add a private Vision service workspace with explicit native/proxy routing,
+  DashScope `qwen3.7-plus` configuration, credential preflight, bounded
+  untrusted observations, exact-id staging, and durable attachment evidence.
+- Add `/config vision` and `/vision`, model-switch safety for native-image
+  history, expandable Transcript cards, and timed Trajectory records that
+  participate in bottleneck detection.
+
 ## 0.1.6 - 2026-08-16
 
 - Define the `v0.1.6` Configuration, Task, and User Extensions product roadmap,

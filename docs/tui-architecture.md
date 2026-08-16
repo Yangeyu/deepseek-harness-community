@@ -8,12 +8,14 @@ state.
 
 ```text
 Harness Host
-  session log · projections · command registry · tools · persistence
+  session log · projections · LLM · attachments · commands · tools · persistence
       │
-      │ transport-neutral ApiProxy plus narrow Host-command port
+      ├── private Vision service (routing · proxy analysis · durable evidence)
+      │
+      │ transport-neutral ApiProxy plus narrow Command/Memory/Vision ports
       ▼
 Terminal runtime
-  HarnessController · session-control selectors · Slash/Skill catalogs · trajectory model
+  HarnessController · submission coordinator · Slash/Skill catalogs · trajectory model
       │
       │ immutable-by-convention state and semantic records
       ▼
@@ -64,6 +66,9 @@ reducing the number of visible files.
    clock, but completed records never infer timestamps that are absent.
 7. Stable semantic keys preserve selection across live replacement and history
    paging. UI row indexes are not identities.
+8. Image bytes become durable only through the Harness attachment service.
+   Proxy observations are source-attributed context, never rewritten as human
+   text, and a missing Vision capability never silently drops an attachment.
 
 ## Current components
 
@@ -94,7 +99,7 @@ reducing the number of visible files.
 
 Product sequencing lives in [`tui-product-roadmap.md`](tui-product-roadmap.md).
 The current milestone is specified in
-[`tui-v0.1.6-design.md`](tui-v0.1.6-design.md); this section records only the
+[`tui-v0.1.7-design.md`](tui-v0.1.7-design.md); this section records only the
 architecture required to support that sequence.
 
 ### v0.1.6 implemented architecture
@@ -111,6 +116,28 @@ architecture required to support that sequence.
   authoring safety, and terminal-editor restoration have focused test seams;
   release acceptance still includes the complete package and manual PTY gates.
 
+### v0.1.7 implemented architecture
+
+- Add `packages/vision` as a private Cordis service workspace. It depends on
+  Harness LLM, Attachment, Agent/Session, Settings, and Credentials contracts,
+  but never on the TUI or pi-tui.
+- Bundle that workspace behind the public package's `./vision` subpath and load
+  it before the terminal plugin, preserving one installable release artifact.
+- Pass a narrow `VisionPort` into the TUI application composition root. Image
+  draft state and platform clipboard adapters stay in TUI application code;
+  routing, proxy execution, observation safety, and durable Vision events stay
+  in the Vision workspace.
+- Use explicit model modality metadata for native routing. Text-only or unknown
+  routes use the configured proxy or reject without submitting partial input.
+- Preserve three durable identities in proxy mode: a log-only Vision event for
+  image evidence and timing, plugin-sourced model context for the observation,
+  and the exact human-authored user message for conversation display.
+- Extend Transcript and Trajectory from the same Vision event rather than
+  retaining a second UI-owned result store.
+- Keep provider endpoint, protocol, catalog, and credential references in
+  `dsh-llm-pi-ai`; `/config Vision` selects policy and route without duplicating
+  provider configuration.
+
 ### Following architecture work
 
 - Reuse a shared lifecycle index from Transcript and Trajectory when richer
@@ -121,6 +148,8 @@ architecture required to support that sequence.
 - Introduce an immutable terminal session snapshot containing the event window,
   semantic nodes, projection cells, and command descriptors.
 - Add Session Query-backed cross-session search and parent/child lineage views.
+- Add a remote Vision RPC only when Web or another out-of-process client becomes
+  a real consumer; the in-process service is the `v0.1.7` boundary.
 - Move workspace checkpoint policy, events, and metadata to a Host plugin while
   retaining terminal-specific preview and confirmation UI.
 

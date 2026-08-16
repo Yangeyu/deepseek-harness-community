@@ -105,6 +105,7 @@ function kindLabel(kind: TrajectoryKind): string {
     case 'assistant': return 'ASSISTANT'
     case 'tool': return 'TOOL'
     case 'command': return 'COMMAND'
+    case 'vision': return 'VISION'
     case 'context': return 'CONTEXT'
     case 'event': return 'EVENT'
   }

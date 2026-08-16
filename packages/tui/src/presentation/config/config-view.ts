@@ -41,6 +41,7 @@ export class ConfigView implements Component {
     private readonly onDetails: (expanded: boolean) => void,
     private readonly onClose: () => void,
     initialStage: ConfigEntryStage = 'root',
+    private readonly onVision?: () => void,
   ) {
     this.stage = initialStage
     this.entryStage = initialStage
@@ -162,6 +163,10 @@ export class ConfigView implements Component {
       if (row === undefined || !row.available) return
       if (row.kind === 'model') {
         this.onModel()
+        return
+      }
+      if (row.kind === 'vision') {
+        this.onVision?.()
         return
       }
       if (row.kind === 'details') {

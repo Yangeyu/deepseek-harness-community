@@ -7,6 +7,7 @@ import type { PermissionSelect } from '@deepseek-ai/dsh-permission-presets/clien
 import type { PlanProjection } from '@deepseek-ai/dsh-plan-mode/client'
 import type { GoalProjection } from '@deepseek-ai/dsh-goal/client'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
+import type { VisionStatus } from '@vascent/deepseek-harness-vision'
 
 // Load optional projection-key augmentations at the client boundary only.
 import type {} from '@deepseek-ai/dsh-permission-presets/client'
@@ -18,6 +19,7 @@ export interface ConfigurationSnapshot {
   models: SessionModels | undefined
   permissions?: PermissionSelect
   plan?: PlanProjection
+  vision?: VisionStatus
   detailsExpanded: boolean
 }
 
@@ -28,7 +30,7 @@ export interface TaskSnapshot {
   queued: number
 }
 
-export type ConfigurationRowKind = 'model' | 'reasoning' | 'permissions' | 'plan' | 'details'
+export type ConfigurationRowKind = 'model' | 'reasoning' | 'permissions' | 'plan' | 'vision' | 'details'
 export type TaskRowKind = 'goal' | 'todos' | 'runtime'
 
 export interface ControlRow<Kind extends string> {
@@ -51,11 +53,13 @@ export function configurationSnapshot(
   models: SessionModels | undefined,
   projections: Partial<SessionProjectionMap>,
   detailsExpanded: boolean,
+  vision?: VisionStatus,
 ): ConfigurationSnapshot {
   return {
     models,
     ...hasProjection(projections, 'permissions') ? { permissions: projections.permissions } : {},
     ...hasProjection(projections, 'plan') ? { plan: projections.plan } : {},
+    ...vision === undefined ? {} : { vision },
     detailsExpanded,
   }
 }
@@ -122,6 +126,16 @@ export function configurationRows(
       : `${snapshot.plan.active ? 'active' : 'off'}${snapshot.plan.pending ? ' · pending transition' : ''}`,
     scope: 'Session',
     available: snapshot.plan !== undefined,
+  }, {
+    kind: 'vision',
+    label: 'Vision',
+    value: snapshot.vision === undefined
+      ? 'Unavailable in this profile'
+      : snapshot.vision.config.mode === 'disabled'
+        ? 'disabled'
+        : `${snapshot.vision.config.mode} · ${snapshot.vision.config.proxyProvider}/${snapshot.vision.config.proxyModel}${snapshot.vision.credentialConfigured === false ? ' · credential missing' : ''}`,
+    scope: 'TUI',
+    available: snapshot.vision !== undefined,
   }, {
     kind: 'details',
     label: 'Details',

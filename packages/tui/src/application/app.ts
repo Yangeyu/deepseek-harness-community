@@ -93,6 +93,16 @@ import {
   externalEditorCommand,
   runExternalEditor,
 } from './external-editor.ts'
+import { AttachmentDraftStore } from './attachments/drafts.ts'
+import { imageDraftFromPath } from './attachments/files.ts'
+import { imageDraftFromClipboard } from './attachments/clipboard.ts'
+import {
+  AttachmentCoordinator,
+  type VisionGateway,
+} from './attachments/coordinator.ts'
+import { AttachmentRail } from '../presentation/attachments.ts'
+import { VisionConfigView } from '../presentation/config/vision-view.ts'
+import type { VisionStatus } from '@vascent/deepseek-harness-vision'
 
 const DOUBLE_ESCAPE_MS = 600
 
@@ -133,10 +143,15 @@ export class TuiApplication implements TuiControllerSink {
   private readonly footer = new Text('', 0, 0)
   private readonly editor: Editor
   private readonly transcript: TranscriptComponent
+  private readonly attachmentRail: AttachmentRail
+  private readonly attachmentDrafts = new AttachmentDraftStore()
+  private readonly attachmentCoordinator: AttachmentCoordinator | undefined
+  private readonly vision: VisionGateway | undefined
   private readonly diffLineLocator = new DiffLineLocator()
   private readonly layout: ComposerAnchoredLayout
   private trajectoryView: TrajectoryView | undefined
   private configView: ConfigView | undefined
+  private visionConfigView: VisionConfigView | undefined
   private taskView: TaskView | undefined
   private skillsView: SkillsView | undefined
   private removeInputListener?: () => void
@@ -162,6 +177,11 @@ export class TuiApplication implements TuiControllerSink {
   private readonly skillCatalog: SkillCatalog
   private readonly skillAuthoring: SkillAuthoringCoordinator
   private autocompleteCwd: string
+  private attachmentSessionId: TuiState['sessionId'] = undefined
+  private readonly removeAttachmentListener: () => void
+  private visionStatus: VisionStatus | undefined
+  private attachmentRailFocused = false
+  private readonly disclosedVisionRoutes = new Set<string>()
 
   constructor(
     api: IApiClient,
@@ -170,6 +190,7 @@ export class TuiApplication implements TuiControllerSink {
     private readonly checkpoints: WorkspaceCheckpointStore,
     private readonly memory: ProjectMemoryService,
     commandSource?: HostCommandSource,
+    vision?: VisionGateway,
   ) {
     this.theme = createTheme(config.color)
     this.tui = new TuiMainScreen(this.terminal, config.showHardwareCursor)
@@ -196,6 +217,27 @@ export class TuiApplication implements TuiControllerSink {
       config.maxToolOutputLines,
       config.thinkingMaxLines,
     )
+    this.attachmentRail = new AttachmentRail(
+      this.theme,
+      index => {
+        if (!this.attachmentDrafts.removeAt(index)) this.controller.notice('Wait for Vision analysis to finish before removing images.')
+      },
+      () => this.leaveAttachmentRail(),
+    )
+    this.vision = vision
+    this.visionStatus = vision === undefined ? undefined : {
+      config: vision.config,
+      proxyRegistered: false,
+      proxySupportsImages: false,
+    }
+    this.attachmentCoordinator = vision === undefined
+      ? undefined
+      : new AttachmentCoordinator(this.attachmentDrafts, vision, (provider, model) => {
+        const key = `${provider}/${model}`
+        if (this.disclosedVisionRoutes.has(key)) return
+        this.disclosedVisionRoutes.add(key)
+        this.controller.notice(`Attached images are being analyzed by ${key}; the primary model receives only bounded visual evidence.`)
+      })
     this.editor = new Editor(this.tui, this.theme.editor, { paddingX: 1, autocompleteMaxVisible: 10 })
     this.commands = new TerminalCommandDirectory(
       this.localCommands(),
@@ -229,6 +271,7 @@ export class TuiApplication implements TuiControllerSink {
       this.editor,
       this.footer,
       () => this.terminal.rows,
+      this.attachmentRail,
     )
     this.tui.addChild(this.layout)
     this.tui.setFocus(this.editor)
@@ -236,6 +279,12 @@ export class TuiApplication implements TuiControllerSink {
       if (this.disposed) return
       this.memoryActivity = activity
       this.updateStatus(this.controller.current)
+      this.tui.requestRender()
+    })
+    this.removeAttachmentListener = this.attachmentDrafts.onChange((drafts) => {
+      if (this.disposed) return
+      this.attachmentRail.setDrafts(drafts)
+      if (drafts.length === 0 && this.attachmentRailFocused) this.leaveAttachmentRail()
       this.tui.requestRender()
     })
   }
@@ -262,6 +311,8 @@ export class TuiApplication implements TuiControllerSink {
     this.commands.dispose()
     this.skillCatalog.dispose()
     this.removeMemoryActivity()
+    this.removeAttachmentListener()
+    this.attachmentCoordinator?.cancel()
     this.terminal.write(DISABLE_MOUSE_TRACKING)
     this.removeInputListener?.()
     this.tui.stop()
@@ -270,11 +321,16 @@ export class TuiApplication implements TuiControllerSink {
 
   render(state: Readonly<TuiState>): void {
     if (this.disposed) return
+    if (this.attachmentSessionId !== undefined && this.attachmentSessionId !== state.sessionId) {
+      this.attachmentCoordinator?.cancel()
+      this.attachmentDrafts.clear()
+    }
+    this.attachmentSessionId = state.sessionId
     const commandsChanged = this.commands.setSession(state.sessionId)
     this.skillCatalog.setSession(state.sessionId)
     this.transcript.setState(state)
     this.trajectoryView?.setState(state)
-    this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails))
+    this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus))
     this.taskView?.setSnapshot(taskSnapshot(state.projections, state.running, state.queue.length))
     this.skillsView?.setSnapshot(this.skillCatalog.current)
     this.diffLineLocator.resolve(state, () => {
@@ -296,7 +352,7 @@ export class TuiApplication implements TuiControllerSink {
     const working = state.running || state.pendingSubmissions.some(submission => submission.intent === 'working')
     const controls = working
       ? 'Enter steer · Alt+Enter queue · Esc cancel'
-      : 'Ctrl+O details · Shift+Tab effort · /help'
+      : 'Ctrl+V image · Ctrl+O details · Shift+Tab effort · /help'
     this.footer.setText([
       this.theme.dim(`${model} · ${controls}`),
       ...stats === '' ? [] : [this.theme.dim(stats)],
@@ -380,6 +436,13 @@ export class TuiApplication implements TuiControllerSink {
       return { consume: true }
     }
     if (this.composerModalActive) return undefined
+    if (this.attachmentRailFocused) {
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))) {
+        this.leaveAttachmentRail()
+        return { consume: true }
+      }
+      return undefined
+    }
     const escape = matchesKey(data, Key.escape)
     if (!escape && this.lastEscapeAt !== 0) this.disarmRewind()
     if (matchesKey(data, Key.ctrl('c'))) {
@@ -389,6 +452,20 @@ export class TuiApplication implements TuiControllerSink {
     }
     if (matchesKey(data, Key.alt(Key.enter))) {
       void this.submitEditor('queue')
+      return { consume: true }
+    }
+    if (matchesKey(data, Key.ctrl('v')) || matchesKey(data, Key.alt('v'))) {
+      void this.runAction(() => this.pasteImage())
+      return { consume: true }
+    }
+    if (this.attachmentDrafts.snapshot.length > 0 && matchesKey(data, Key.alt('a'))) {
+      this.attachmentRailFocused = true
+      this.tui.setFocus(this.attachmentRail)
+      this.tui.requestRender()
+      return { consume: true }
+    }
+    if (this.attachmentDrafts.snapshot.length > 0 && matchesKey(data, Key.alt(Key.backspace))) {
+      if (!this.attachmentDrafts.removeLast()) this.controller.notice('Wait for Vision analysis to finish before removing images.')
       return { consume: true }
     }
     if (this.editor.getExpandedText() === '' && matchesKey(data, Key.pageUp)) {
@@ -414,6 +491,10 @@ export class TuiApplication implements TuiControllerSink {
       return { consume: true }
     }
     if (escape && !this.tui.hasOverlay()) {
+      if (this.attachmentDrafts.busy) {
+        this.attachmentCoordinator?.cancel()
+        return { consume: true }
+      }
       if (this.controller.current.running) {
         void this.runAction(() => this.controller.cancel())
         return { consume: true }
@@ -458,7 +539,7 @@ export class TuiApplication implements TuiControllerSink {
 
   private async submitEditor(mode: 'queue' | 'steer'): Promise<void> {
     const text = this.editor.getExpandedText()
-    if (text.trim() === '') return
+    if (text.trim() === '' && this.attachmentDrafts.snapshot.length === 0) return
     this.editor.setText('')
     this.editor.addToHistory(text)
     await this.submit(text, mode)
@@ -466,7 +547,7 @@ export class TuiApplication implements TuiControllerSink {
 
   private async submit(value: string, forcedMode?: 'queue' | 'steer'): Promise<void> {
     const text = value.trim()
-    if (text === '') return
+    if (text === '' && this.attachmentDrafts.snapshot.length === 0) return
     try {
       if (text.startsWith('/')) {
         if (await this.handleCommand(text)) return
@@ -483,7 +564,25 @@ export class TuiApplication implements TuiControllerSink {
       }
       const mode = forcedMode ?? (this.controller.current.running ? 'steer' : 'queue')
       this.layout.followTranscript()
-      await this.controller.prompt(value, mode)
+      if (this.attachmentDrafts.snapshot.length === 0) {
+        await this.controller.prompt(value, mode)
+      } else {
+        const coordinator = this.attachmentCoordinator
+        const state = this.controller.current
+        const selection = state.models?.current
+        if (coordinator === undefined) throw new Error('Vision is unavailable in this profile.')
+        if (state.sessionId === undefined || selection === undefined) {
+          throw new Error('Wait for the active session and model before submitting images.')
+        }
+        await coordinator.submit(
+          String(state.sessionId),
+          selection,
+          value,
+          mode,
+          state.projections.imageLimits,
+          (displayText, submitMode, content) => this.controller.prompt(displayText, submitMode, content),
+        )
+      }
     } catch (error: unknown) {
       if (this.editor.getExpandedText() === '') this.editor.setText(value)
       this.controller.notice(error instanceof Error ? error.message : String(error))
@@ -527,6 +626,20 @@ export class TuiApplication implements TuiControllerSink {
         else await this.openModelSelector()
       },
     }, {
+      name: 'attach',
+      description: 'Attach an image file to the next message',
+      argumentHint: '<path>',
+      handler: async (argument) => {
+        if (argument.trim() === '') throw new Error('Usage: /attach <path>')
+        this.ensureVisionAvailable()
+        if (this.attachmentDrafts.busy) throw new Error('Vision analysis is already in progress.')
+        this.attachmentDrafts.add(await imageDraftFromPath(argument.trim(), this.controller.current.cwd))
+      },
+    }, {
+      name: 'paste-image',
+      description: 'Attach the image currently on the clipboard',
+      handler: () => this.pasteImage(),
+    }, {
       name: 'details',
       description: 'Toggle expanded tool output',
       handler: () => { this.setDetailsExpanded(!this.showDetails) },
@@ -537,8 +650,12 @@ export class TuiApplication implements TuiControllerSink {
     }, {
       name: 'config',
       description: 'Configure model, policy, and terminal preferences',
-      argumentHint: '[model|reasoning|permission|plan|interface]',
+      argumentHint: '[model|reasoning|permission|plan|vision|interface]',
       handler: argument => this.openConfigRoute(argument),
+    }, {
+      name: 'vision',
+      description: 'Configure image routing and the Vision proxy',
+      handler: () => this.openVisionConfig(),
     }, {
       name: 'task',
       description: 'Inspect and control the current task',
@@ -576,6 +693,23 @@ export class TuiApplication implements TuiControllerSink {
       description: 'Exit the terminal client',
       handler: () => this.requestExit(0),
     }]
+  }
+
+  private ensureVisionAvailable(): void {
+    if (this.attachmentCoordinator === undefined) throw new Error('Vision is unavailable in this profile.')
+  }
+
+  private leaveAttachmentRail(): void {
+    if (!this.attachmentRailFocused) return
+    this.attachmentRailFocused = false
+    this.tui.setFocus(this.editor)
+    this.tui.requestRender()
+  }
+
+  private async pasteImage(): Promise<void> {
+    this.ensureVisionAvailable()
+    if (this.attachmentDrafts.busy) throw new Error('Vision analysis is already in progress.')
+    this.attachmentDrafts.add(await imageDraftFromClipboard())
   }
 
   private refreshAutocomplete(cwd = this.controller.current.cwd, requestRender = true): void {
@@ -636,7 +770,7 @@ export class TuiApplication implements TuiControllerSink {
 
   private openPermissionConfig(): void {
     const state = this.controller.current
-    const permissions = configurationSnapshot(state.models, state.projections, this.showDetails).permissions
+    const permissions = configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus).permissions
     if (permissions === undefined) {
       this.controller.notice('Permission configuration is unavailable in this profile.')
       return
@@ -651,8 +785,9 @@ export class TuiApplication implements TuiControllerSink {
     if (route === 'reasoning' || route === 'effort') return this.openConfig('reasoning')
     if (route === 'permission' || route === 'permissions') return this.openPermissionConfig()
     if (route === 'plan') return this.openConfig('plan')
+    if (route === 'vision') return this.openVisionConfig()
     if (route === 'interface' || route === 'details') return this.openConfig()
-    throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, or interface.`)
+    throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, vision, or interface.`)
   }
 
   private openConfig(initialStage: ConfigEntryStage = 'root'): void {
@@ -667,7 +802,7 @@ export class TuiApplication implements TuiControllerSink {
     }
     const state = this.controller.current
     const view = new ConfigView(
-      configurationSnapshot(state.models, state.projections, this.showDetails),
+      configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus),
       this.theme,
       () => {
         close()
@@ -682,6 +817,10 @@ export class TuiApplication implements TuiControllerSink {
       expanded => { this.setDetailsExpanded(expanded) },
       close,
       initialStage,
+      () => {
+        close()
+        void this.runAction(() => this.openVisionConfig())
+      },
     )
     this.configView = view
     this.composerModalActive = true
@@ -693,6 +832,57 @@ export class TuiApplication implements TuiControllerSink {
       && state.sessionId !== undefined) {
       void this.runAction(async () => { await this.controller.refreshModels() })
     }
+  }
+
+  private async openVisionConfig(): Promise<void> {
+    if (this.tui.hasOverlay() || this.composerModalActive) return
+    const vision = this.vision
+    if (vision === undefined) throw new Error('Vision is unavailable in this profile.')
+    const status = await this.refreshVisionStatus()
+    if (this.tui.hasOverlay() || this.composerModalActive || this.disposed) return
+    const close = (): void => {
+      if (this.visionConfigView === undefined) return
+      this.visionConfigView = undefined
+      this.layout.setComposerOverride(undefined)
+      this.composerModalActive = false
+      this.tui.setFocus(this.editor)
+      this.tui.requestRender()
+    }
+    const view = new VisionConfigView(
+      status,
+      this.theme,
+      mode => {
+        void this.runAction(async () => {
+          await vision.setMode(mode)
+          await this.refreshVisionStatus()
+        })
+      },
+      () => {
+        void this.runAction(async () => {
+          await vision.configureRecommendedDashScope()
+          await this.refreshVisionStatus()
+          this.controller.notice('Configured dashscope-vision/qwen3.7-plus using DASHSCOPE_API_KEY.')
+        })
+      },
+      close,
+    )
+    this.visionConfigView = view
+    this.composerModalActive = true
+    this.layout.setComposerOverride(view)
+    this.tui.setFocus(view)
+    this.tui.requestRender()
+  }
+
+  private async refreshVisionStatus(): Promise<VisionStatus> {
+    const vision = this.vision
+    if (vision === undefined) throw new Error('Vision is unavailable in this profile.')
+    const status = await vision.status()
+    this.visionStatus = status
+    this.visionConfigView?.setStatus(status)
+    const state = this.controller.current
+    this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails, status))
+    this.tui.requestRender()
+    return status
   }
 
   private openTask(): void {
@@ -1133,7 +1323,7 @@ export class TuiApplication implements TuiControllerSink {
       this.theme,
       selected => {
         close()
-        void this.runAction(() => this.controller.selectModel(selected))
+        void this.runAction(() => this.selectModel(selected))
       },
       close,
     )
@@ -1176,14 +1366,29 @@ export class TuiApplication implements TuiControllerSink {
     if (matches.length !== 1) throw new Error(matches.length === 0
       ? `model "${name}" was not found`
       : `model "${name}" is ambiguous; use provider/model`)
-    await this.controller.selectModel(matches[0] as ModelSelection)
+    await this.selectModel(matches[0] as ModelSelection)
+  }
+
+  private async selectModel(selection: ModelSelection): Promise<void> {
+    if (this.attachmentDrafts.busy) throw new Error('Wait for Vision analysis to finish before changing models.')
+    while (this.controller.current.historyHasMore) {
+      if (!await this.controller.loadEarlierHistory()) break
+    }
+    const containsImages = this.controller.current.events.some(entry => entry.event.type === 'user/message'
+      && entry.event.data.source.kind === 'user'
+      && entry.event.data.content.some(block => block.type === 'image'))
+    if (containsImages && this.vision !== undefined
+      && !await this.vision.supportsNativeImages(selection.provider, selection.model)) {
+      throw new Error('This session already contains native image messages. Select a multimodal model or start a new session before switching to a text-only model.')
+    }
+    await this.controller.selectModel(selection)
   }
 
   private setDetailsExpanded(expanded: boolean): void {
     this.showDetails = expanded
     this.transcript.setDetails(expanded)
     const state = this.controller.current
-    this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, expanded))
+    this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, expanded, this.visionStatus))
     this.tui.requestRender()
   }
 

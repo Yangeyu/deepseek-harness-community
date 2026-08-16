@@ -32,6 +32,7 @@ interface AppInternals {
   composerModalActive: boolean
   tui: { requestRender(): void }
   handleGlobalInput(data: string): { consume?: boolean } | undefined
+  pasteImage(): Promise<void>
   requestRewind(): void
   performRewind(preview: RewindPreview): Promise<void>
   requestExit(code: number): Promise<void>
@@ -76,6 +77,17 @@ afterEach(() => {
 })
 
 describe('TuiApplication input routing', () => {
+  it('uses Ctrl+V as the primary image paste shortcut and keeps Alt+V compatible', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const pasteImage = vi.fn(async () => {})
+    internals.pasteImage = pasteImage
+
+    expect(internals.handleGlobalInput('\u0016')).toEqual({ consume: true })
+    expect(internals.handleGlobalInput('\u001bv')).toEqual({ consume: true })
+    expect(pasteImage).toHaveBeenCalledTimes(2)
+  })
+
   it('adds ordinary Enter submissions to up/down editor history', () => {
     const app = application()
     const internals = app as unknown as AppInternals

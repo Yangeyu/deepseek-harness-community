@@ -1,6 +1,6 @@
 # TUI v0.1.6 Design: Configuration, Task, and User Extensions
 
-- Status: implemented, unreleased
+- Status: implemented and released on 2026-08-16
 - Target: the next patch after `v0.1.5`
 - Harness baseline: `0.1.0-rc.6`, with capability-safe behavior across the
   declared `<0.2.0` range
