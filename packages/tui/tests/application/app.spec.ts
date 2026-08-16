@@ -187,7 +187,7 @@ describe('TuiApplication input routing', () => {
     expect(submit).toHaveBeenCalledWith('legacy task', 'queue')
   })
 
-  it('keeps the fixed footer focused on model information', () => {
+  it('keeps model identity on the first footer row and metrics on the second', () => {
     const app = application()
     const internals = app as unknown as AppInternals
 
@@ -200,11 +200,35 @@ describe('TuiApplication input routing', () => {
         groups: [],
         failures: [],
       },
+      projections: {
+        sessionStats: {
+          turns: 2,
+          steps: 3,
+          llmMs: 3_800,
+          toolMs: 1_200,
+          ttftMs: 1_600,
+          ttftSteps: 2,
+          decodeMs: 2_500,
+          decodeTokens: 50,
+        },
+        tokenUsage: {
+          uncachedInputTokens: 100,
+          outputTokens: 50,
+          cacheReadTokens: 900,
+          cacheWriteTokens: 0,
+        },
+        contextPressure: {
+          projectedTokens: 45_000,
+          pressureTokens: 40_000,
+          contextWindow: 100_000,
+        },
+      },
     })
 
-    const footer = internals.footer.render(100).join('\n')
-    expect(footer).toContain('deepseek-official/deepseek-v4-pro · max')
-    expect(footer).not.toMatch(/queue|newline|image|details|\/help/u)
+    const footer = internals.footer.render(240).map(line => line.trimEnd())
+    expect(footer[0]).toContain('deepseek-official/deepseek-v4-pro · max')
+    expect(footer.slice(1).join('\n')).toContain('2 turns · 3 steps')
+    expect(footer.join('\n')).not.toMatch(/queue|newline|image|details|\/help/u)
   })
 
   it('adds ordinary Enter submissions to up/down editor history', () => {

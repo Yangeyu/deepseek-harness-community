@@ -232,8 +232,9 @@ the controller and Host.
 Kitty repeat and release events for a matched shortcut are consumed but never
 emit another action. Clipboard reads are also single-flight, providing a second
 idempotency boundary for legacy terminals that repeat the same byte sequence.
-The fixed footer shows only provider/model and reasoning effort; bindings stay
-discoverable in `/keymap`, while detailed metrics live in `/status`.
+The first fixed-footer row shows only provider/model and reasoning effort;
+bindings stay discoverable in `/keymap`, while detailed metrics remain visible
+on the second footer row.
 
 ### Draft state
 

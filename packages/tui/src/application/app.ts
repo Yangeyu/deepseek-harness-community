@@ -397,7 +397,11 @@ export class TuiApplication implements TuiControllerSink {
     const model = selection === undefined
       ? 'model unavailable'
       : `${selection.provider}/${selection.model}${selection.reasoningEffort === undefined ? '' : ` · ${selection.reasoningEffort}`}`
-    this.footer.setText(this.theme.dim(model))
+    const stats = composerStats(state.projections)
+    this.footer.setText([
+      this.theme.dim(model),
+      ...(stats === '' ? [] : [this.theme.dim(stats)]),
+    ].join('\n'))
     if (state.cwd !== this.autocompleteCwd || commandsChanged) {
       this.refreshAutocomplete(state.cwd, false)
     }
@@ -722,14 +726,12 @@ export class TuiApplication implements TuiControllerSink {
       description: 'Show current session status',
       handler: () => {
         const state = this.controller.current
-        const metrics = composerStats(state.projections)
         this.controller.notice([
           `Session: ${state.sessionId === undefined ? 'none' : String(state.sessionId)}`,
           `Directory: ${state.cwd}`,
           `State: ${state.running ? 'running' : 'idle'}`,
           `Stream: ${state.connected ? 'connected' : 'reconnecting'}`,
           `Queued: ${state.queue.length}`,
-          ...metrics === '' ? [] : [`Metrics: ${metrics}`],
         ].join('\n'))
       },
     }, {

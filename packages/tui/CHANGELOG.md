@@ -11,8 +11,9 @@ All notable changes to this project are documented in this file.
   sessions, using the same validated in-memory draft path as `/attach`.
 - Normalize Kitty press/repeat/release events before shortcut dispatch and
   coalesce concurrent clipboard reads so one paste creates one image draft.
-- Keep the fixed composer footer limited to model identity and reasoning;
-  shortcut discovery stays in `/keymap` and session metrics move to `/status`.
+- Keep the first composer footer row limited to model identity and reasoning,
+  preserve session metrics on the second row, and keep shortcut discovery in
+  `/keymap`.
 - Add file and macOS clipboard image drafts with a fixed two-row attachment
   rail, primary `Ctrl+V` paste, compatible `Alt+V` fallback, keyboard
   management, retained retry state, and Host limit prechecks.

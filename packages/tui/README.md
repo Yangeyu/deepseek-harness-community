@@ -53,7 +53,7 @@ The initial terminal client supports:
 - effective Skill discovery and canonical `/name` invocation through the Slash
   catalog, plus a searchable `/skills` browser and safe project/user authoring;
 - the same durable turn/step timing, decode throughput, cache-hit, token-usage,
-  and context-pressure projections available through `/status`;
+  and context-pressure projections on the second composer footer row;
 - individually clickable tool calls with bounded Arguments and Result details;
 - a responsive `/trajectory` trace explorer with paired turn, step, and tool
   lifecycles, bottleneck timing, and Summary, Input, Output, Schema, and Timing
@@ -140,10 +140,9 @@ while preserving `Alt+Enter` for multiline input. The Legacy preset restores
 remains available. Keymap resolution is context-aware; idle `Tab` still belongs
 to the editor and autocomplete.
 
-The fixed footer intentionally shows only the active provider/model and
-reasoning effort. Shortcut discovery belongs to `/keymap`; detailed session and
-model metrics are available through `/status` instead of permanently occupying
-composer space.
+The first fixed-footer row intentionally shows only the active provider/model
+and reasoning effort. Shortcut discovery belongs to `/keymap`; the existing
+session and model metrics remain visible on the second footer row.
 
 `/trajectory` temporarily replaces the conversation composer with a full-screen,
 live execution ledger for the current session. Use `↑`/`↓` or `j`/`k` to select a
