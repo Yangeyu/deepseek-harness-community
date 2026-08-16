@@ -36,7 +36,7 @@ src/
 ├── runtime/       # transport-neutral session, control, submission, Slash, and Skill state
 ├── trajectory/    # trace records, hierarchy, timing, and interaction view
 ├── presentation/  # pi-tui components, dialogs, diffs, layout, and theme
-├── checkpoint.ts  # process-local compatibility domain awaiting Host ownership
+├── rewind/        # pure contracts/domain, application transaction, and external adapters
 ├── text.ts        # terminal-safety boundary shared across presentation modules
 └── index.ts       # stable public and Cordis plugin entry point
 ```
@@ -96,6 +96,10 @@ reducing the number of visible files.
     identical state enums: Memory activity remains a domain status signal until
     it owns a stable Job identity, while Vision exposes stable analysis facts
     for the TUI adapter.
+13. Rewind never infers ownership from elapsed time or whole-worktree state.
+    The Host adapter must correlate an authoritative filesystem observation and
+    canonical mutation outcome on the same execution identity. Unattributed or
+    non-reversible mutations remain outside the default restore transaction.
 
 ## Transcript interaction contract
 
@@ -145,14 +149,18 @@ reducing the number of visible files.
   each other's models.
   `TranscriptComponent` paints and interacts with those items, while
   `TrajectoryView` provides the diagnostic hierarchy. None owns persistence.
-- `WorkspaceCheckpointStore` remains a process-local compatibility subsystem;
-  it is not a Harness durability boundary.
+- `rewind/contracts` is independent of Cordis, Memory, Node, and pi-tui.
+  `rewind/domain` owns bounded history and pure reverse planning;
+  `rewind/application` owns restore and conversation compensation; and
+  `rewind/adapters` is the only layer that knows Host events, Memory payloads,
+  or the local filesystem. Presentation consumes only the `RewindPort`, point
+  summaries, and immutable plans.
 
 ## Planned evolution
 
 Product sequencing lives in [`tui-product-roadmap.md`](tui-product-roadmap.md).
 The current milestone is specified in
-[`tui-v0.1.8-design.md`](tui-v0.1.8-design.md); this section records only the
+[`tui-v0.1.9-design.md`](tui-v0.1.9-design.md); this section records only the
 architecture required to support that sequence.
 
 ### v0.1.6 implemented architecture
@@ -174,9 +182,9 @@ architecture required to support that sequence.
 - Add `packages/vision` as a terminal-independent Cordis service workspace. It depends on
   Harness LLM, Attachment, Agent/Session, Settings, and Credentials contracts,
   but never on the TUI or pi-tui.
-- Publish that workspace independently and also bundle it behind the TUI
-  package's `./vision` subpath, preserving the launcher’s zero-configuration
-  install while supporting custom profiles.
+- Keep the Vision workspace implementation independent while exposing its
+  public API through the root package's `./vision` subpath. Internal workspace
+  manifests remain non-publishable so releases produce one npm artifact.
 - Pass a narrow `VisionPort` into the TUI application composition root. Image
   draft state and platform clipboard adapters stay in TUI application code;
   routing, proxy execution, observation safety, and evidence provenance stay in
@@ -216,6 +224,25 @@ architecture required to support that sequence.
   missing parents, starts, results, and contradictory terminal facts remain
   inspectable through deduplicated, bounded diagnostics.
 
+### v0.1.9 implemented architecture
+
+- One `rewind` domain replaces the TUI-owned Git checkpoint subsystem; there is
+  no compatibility reader, detached index, tree snapshot, or alternate restore
+  path.
+- `rewind/adapters/host` joins `fs/observed` and `tools/result` by execution identity,
+  validates the canonical text-mutation contract, and attributes it through
+  stable root-call, session, and turn identities without parsing tool names or
+  presentation diffs.
+- `RewindJournal` retains only turn boundaries, attributed workspace facts,
+  and opaque participant references. `RewindService` builds `safe`,
+  `mergeable`, `conflict`, or `unsupported` plans through an injected workspace
+  backend; the pure planner preserves non-overlapping later edits.
+- Workspace and explicit participants form one reversible stage before
+  `RewindTransaction` commits the conversation fork. Memory payloads remain in
+  its adapter, and any failed later phase compensates completed stages.
+  Presentation defaults safe and mergeable plans to Restore,
+  defaults blocked plans to Cancel, and lists exact paths before confirmation.
+
 ### Following architecture work
 
 - Introduce an immutable terminal session snapshot containing the event window,
@@ -223,8 +250,9 @@ architecture required to support that sequence.
 - Add Session Query-backed cross-session search and parent/child lineage views.
 - Add a remote Vision RPC only when Web or another out-of-process client becomes
   a real consumer; the in-process service is the `v0.1.7` boundary.
-- Move workspace checkpoint policy, events, and metadata to a Host plugin while
-  retaining terminal-specific preview and confirmation UI.
+- Promote the execution-local canonical mutation outcome to a durable Host
+  event when another client or restart-safe Rewind becomes a real consumer;
+  retain the same domain contract and terminal-specific confirmation UI.
 
 ### Extension rule
 

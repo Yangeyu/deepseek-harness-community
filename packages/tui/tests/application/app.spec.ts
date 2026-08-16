@@ -1,13 +1,13 @@
 import { Editor, type Terminal } from '@earendil-works/pi-tui'
 import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
-import type { MemoryMutation, ProjectMemoryService } from '@vascent/deepseek-harness-memory'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   TuiApplication,
   type TuiApplicationDependencies,
+  type TuiMemoryPort,
   type TuiRuntime,
 } from '../../src/application/app.ts'
-import { WorkspaceCheckpointStore, type RewindPreview } from '../../src/checkpoint.ts'
+import type { RewindPlan, RewindPort } from '../../src/rewind/index.ts'
 import { resolveConfig } from '../../src/application/config.ts'
 import type { TuiState } from '../../src/runtime/controller.ts'
 import type { HostCommandSource } from '../../src/runtime/commands.ts'
@@ -23,7 +23,7 @@ interface AppInternals {
   controller: {
     current: Readonly<TuiState>
     prompt(text: string, mode: 'queue' | 'steer'): Promise<void>
-    rewind(preview: RewindPreview, onProgress?: (phase: 'forking' | 'reloading') => void): Promise<string>
+    rewind(plan: RewindPlan, onProgress?: (phase: 'forking' | 'reloading') => void): Promise<string>
   }
   skillCatalog: {
     current: {
@@ -48,16 +48,29 @@ interface AppInternals {
   handleGlobalInput(data: string): { consume?: boolean } | undefined
   pasteImage(): Promise<void>
   requestRewind(): void
-  performRewind(preview: RewindPreview): Promise<void>
+  performRewind(plan: RewindPlan): Promise<void>
   requestExit(code: number): Promise<void>
   submit(value: string, forcedMode?: 'queue' | 'steer'): Promise<void>
 }
 
-function memoryService(overrides: Partial<ProjectMemoryService> = {}): ProjectMemoryService {
+function memoryService(overrides: Partial<TuiMemoryPort> = {}): TuiMemoryPort {
   return {
     onActivity: () => () => {},
+    overview: async () => { throw new Error('no test Memory overview') },
+    setPolicy: () => { throw new Error('no test Memory policy') },
     ...overrides,
-  } as unknown as ProjectMemoryService
+  }
+}
+
+function rewindPort(overrides: Partial<RewindPort> = {}): RewindPort {
+  return {
+    settle: vi.fn(async () => {}),
+    list: vi.fn(() => []),
+    plan: vi.fn(async () => { throw new Error('no test Rewind plan') }),
+    restore: vi.fn(async () => async () => {}),
+    continueFrom: vi.fn(),
+    ...overrides,
+  }
 }
 
 function quietTerminal(): Terminal {
@@ -81,8 +94,8 @@ function quietTerminal(): Terminal {
 }
 
 function application(
-  checkpoints: WorkspaceCheckpointStore = new WorkspaceCheckpointStore(10),
-  memory: ProjectMemoryService = memoryService(),
+  rewind: RewindPort = rewindPort(),
+  memory: TuiMemoryPort = memoryService(),
   runtimeOverrides: Partial<TuiRuntime> = {},
   commandSource?: HostCommandSource,
   keymap?: KeymapSettingsGateway,
@@ -99,7 +112,7 @@ function application(
     {} as IApiClient,
     resolveConfig({ cwd: '/workspace', color: false }),
     runtime,
-    checkpoints,
+    rewind,
     memory,
     {
       terminal: quietTerminal(),
@@ -620,80 +633,4 @@ describe('TuiApplication input routing', () => {
     expect(write.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0] ?? 0)
   })
 
-  it('restores workspace, memory mutations, and conversation as one rewind transaction', async () => {
-    const rollback = vi.fn(async () => {})
-    const checkpoints = {
-      restore: vi.fn(async () => rollback),
-      continueFrom: vi.fn(),
-    } as unknown as WorkspaceCheckpointStore
-    const restoreMemory = vi.fn(async () => {})
-    const app = application(checkpoints, memoryService({ restore: restoreMemory }))
-    const internals = app as unknown as AppInternals
-    vi.spyOn(internals.controller, 'rewind').mockResolvedValue('forked-session')
-    const mutation = (id: string): MemoryMutation => ({
-      id,
-      scope: 'project',
-      summary: id,
-      operation: 'write',
-      files: [],
-      createdAt: 1,
-    })
-    const first = mutation('first')
-    const second = mutation('second')
-    const preview: RewindPreview = {
-      checkpointId: 'checkpoint',
-      sessionId: 'session',
-      turn: 2,
-      prompt: 'fix it again',
-      createdAt: 1,
-      files: [],
-      currentTree: 'tree',
-      memoryMutations: [first, second],
-    }
-
-    await internals.performRewind(preview)
-
-    expect(checkpoints.restore).toHaveBeenCalledWith(preview)
-    expect(restoreMemory.mock.calls).toEqual([[second, 'before'], [first, 'before']])
-    expect(internals.controller.rewind).toHaveBeenCalledWith(preview, expect.any(Function))
-    expect(checkpoints.continueFrom).toHaveBeenCalledWith(preview, 'forked-session')
-    expect(internals.editor.getExpandedText()).toBe('fix it again')
-    expect(rollback).not.toHaveBeenCalled()
-  })
-
-  it('reapplies memory and workspace state when conversation rewind fails', async () => {
-    const rollback = vi.fn(async () => {})
-    const checkpoints = {
-      restore: vi.fn(async () => rollback),
-      continueFrom: vi.fn(),
-    } as unknown as WorkspaceCheckpointStore
-    const restoreMemory = vi.fn(async () => {})
-    const app = application(checkpoints, memoryService({ restore: restoreMemory }))
-    const internals = app as unknown as AppInternals
-    vi.spyOn(internals.controller, 'rewind').mockRejectedValue(new Error('fork failed'))
-    const remembered: MemoryMutation = {
-      id: 'remembered',
-      scope: 'project',
-      summary: 'Remembered rule',
-      operation: 'write',
-      files: [],
-      createdAt: 1,
-    }
-    const preview: RewindPreview = {
-      checkpointId: 'checkpoint',
-      sessionId: 'session',
-      turn: 2,
-      prompt: 'remember this',
-      createdAt: 1,
-      files: [],
-      currentTree: 'tree',
-      memoryMutations: [remembered],
-    }
-
-    await internals.performRewind(preview)
-
-    expect(restoreMemory.mock.calls).toEqual([[remembered, 'before'], [remembered, 'after']])
-    expect(rollback).toHaveBeenCalledOnce()
-    expect(checkpoints.continueFrom).not.toHaveBeenCalled()
-  })
 })

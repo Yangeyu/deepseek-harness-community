@@ -18,7 +18,7 @@ import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/t
 // Merge the Web composer's projection keys into SessionProjectionMap.
 import type {} from '@deepseek-ai/dsh-session-stats/client'
 import type {} from '@deepseek-ai/dsh-token-meter/client'
-import type { RewindPreview } from '../checkpoint.ts'
+import type { RewindPlan } from '../rewind/index.ts'
 import {
   SubmissionTracker,
   type PendingSubmission,
@@ -205,13 +205,13 @@ export class HarnessController {
     await this.openSession(sessionId)
   }
 
-  /** Fork to the boundary before the checkpointed turn, then open and return the replacement session. */
-  async rewind(preview: RewindPreview, onPhase?: (phase: 'forking' | 'opening') => void): Promise<SessionId> {
+  /** Fork to the selected turn boundary, then open and return the replacement session. */
+  async rewind(plan: RewindPlan, onPhase?: (phase: 'forking' | 'opening') => void): Promise<SessionId> {
     const source = this.requireSession()
-    if (String(source) !== preview.sessionId) throw new Error('the active session changed before rewind')
+    if (String(source) !== plan.sessionId) throw new Error('the active session changed before rewind')
     onPhase?.('forking')
     let target: SessionId
-    if (preview.previousTurnEndSeq === undefined) {
+    if (plan.previousTurnEndSeq === undefined) {
       const created = valueOf(await this.api.sessions.create({ cwd: this.state.cwd }))
       target = created.sessionId
       const selection = this.state.models?.current
@@ -226,7 +226,7 @@ export class HarnessController {
     } else {
       target = valueOf(await this.api.sessions.fork({
         sessionId: source,
-        atSeq: preview.previousTurnEndSeq,
+        atSeq: plan.previousTurnEndSeq,
       })).sessionId
     }
     onPhase?.('opening')

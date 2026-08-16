@@ -12,7 +12,12 @@ import {
   toFetchHandler,
 } from '@deepseek-ai/dsh-host-apiproxy'
 import { TuiApplication, type TuiRuntime } from './application/app.ts'
-import { installCheckpointCapture, WorkspaceCheckpointStore } from './checkpoint.ts'
+import {
+  installRewindLifecycle,
+  LocalWorkspaceRewind,
+  MemoryRewindParticipant,
+  RewindService,
+} from './rewind/index.ts'
 import type { HostCommandSource } from './runtime/commands.ts'
 import { Config, resolveConfig, type Config as TuiConfig } from './application/config.ts'
 import { parseTuiArgs, TUI_HELP } from './application/cli.ts'
@@ -26,6 +31,14 @@ export { Config, resolveConfig }
 export type { TuiConfig, TuiRuntime }
 export { HarnessController } from './runtime/controller.ts'
 export { TerminalCommandDirectory } from './runtime/commands.ts'
+export type {
+  RewindFilePlan,
+  RewindParticipantImpact,
+  RewindPlan,
+  RewindPlanState,
+  RewindPointSummary,
+  RewindPort,
+} from './rewind/index.ts'
 export type {
   HostCommandSource,
   TerminalCommandDefinition,
@@ -79,8 +92,13 @@ export function apply(ctx: Context, config: TuiConfig): void {
   })
   const keymap = settingsKeymapGateway(keymapScope)
   const resolved = resolveConfig({ ...parsed.config, keymap: keymap.current().keymap })
-  const checkpoints = new WorkspaceCheckpointStore(resolved.rewindCheckpoints)
-  installCheckpointCapture(ctx, checkpoints)
+  const memoryRewind = new MemoryRewindParticipant(ctx.memory)
+  const rewind = new RewindService(
+    { history: resolved.rewindHistory },
+    new LocalWorkspaceRewind(),
+    [memoryRewind],
+  )
+  installRewindLifecycle(ctx, rewind)
   const commandSource: HostCommandSource = {
     list: (sessionId) => {
       if (sessionId === undefined) return []
@@ -103,7 +121,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
     api,
     resolved,
     runtime,
-    checkpoints,
+    rewind,
     ctx.memory,
     {
       commandSource,
@@ -115,7 +133,8 @@ export function apply(ctx: Context, config: TuiConfig): void {
   ctx.effect(() => {
     let active = true
     const removeMemoryMutation = ctx.memory.onMutation(mutation => {
-      checkpoints.recordMemoryMutation(mutation)
+      const effect = memoryRewind.capture(mutation)
+      if (effect !== undefined) rewind.recordEffect(effect)
     })
     void (async () => {
       await ctx.get('loader')?.await()

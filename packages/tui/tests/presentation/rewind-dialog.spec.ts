@@ -1,86 +1,101 @@
 import { visibleWidth } from '@earendil-works/pi-tui'
 import { describe, expect, it, vi } from 'vitest'
-import { RewindCheckpointDialog, RewindDialog } from '../../src/presentation/dialogs.ts'
+import { RewindDialog, RewindPointDialog } from '../../src/presentation/rewind/index.ts'
 import { createTheme } from '../../src/presentation/theme.ts'
+import type { RewindPlan } from '../../src/rewind/index.ts'
+
+function plan(overrides: Partial<RewindPlan> = {}): RewindPlan {
+  return {
+    planId: 'plan-1',
+    pointId: 'point-1',
+    sessionId: 'session-1',
+    turn: 2,
+    prompt: 'fix the parser',
+    createdAt: Date.now(),
+    previousTurnEndSeq: 15,
+    state: 'safe',
+    files: [
+      { path: 'src/parser.ts', state: 'safe', added: 4, removed: 2 },
+    ],
+    participants: [{ id: 'memory', label: 'Memory', changes: 1, state: 'safe' }],
+    ...overrides,
+  }
+}
 
 describe('RewindDialog', () => {
-  it('shows the checkpoint diff and requires an explicit confirmation', () => {
+  it('shows source-attributed files and defaults a safe plan to Restore', () => {
     const confirm = vi.fn()
     const cancel = vi.fn()
-    const dialog = new RewindDialog({
-      checkpointId: 'checkpoint-1',
-      sessionId: 'session-1',
-      turn: 2,
-      prompt: 'fix the parser',
-      createdAt: Date.now(),
-      previousTurnEndSeq: 15,
-      files: [
-        { path: 'src/parser.ts', added: 4, removed: 2 },
-        { path: 'fixtures/input.bin' },
-      ],
-      currentTree: 'tree-1',
-      memoryMutations: [{
-        id: 'memory-1',
-        sourceSessionId: 'session-1',
-        sourceTurn: 2,
-        scope: 'project',
-        summary: 'Use focused checks.',
-        operation: 'write',
-        files: [],
-        createdAt: Date.now(),
-      }],
-    }, createTheme(false), confirm, cancel)
+    const dialog = new RewindDialog(plan(), () => 24, createTheme(false), confirm, cancel)
 
     const output = dialog.render(80).join('\n')
     expect(output).toContain('Confirm you want to restore')
     expect(output).toContain('fix the parser')
-    expect(output).toContain('2 changed files will be restored')
+    expect(output).toContain('1 source-attributed file is included')
+    expect(output).toContain('● src/parser.ts')
     expect(output).toContain('1 memory update will be reverted')
-    expect(output).toContain('1. Restore workspace, memory, and conversation')
+    expect(output).toContain('› 1. Restore workspace, memory, and conversation')
 
-    dialog.handleInput('\u001b[B')
     dialog.handleInput('\r')
-    expect(cancel).toHaveBeenCalledOnce()
-    expect(confirm).not.toHaveBeenCalled()
-
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(cancel).not.toHaveBeenCalled()
     expect(dialog.render(40).every(line => visibleWidth(line) <= 40)).toBe(true)
   })
-})
 
-describe('RewindCheckpointDialog', () => {
-  it('opens on the newest checkpoint and supports bounded up/down selection', () => {
+  it('defaults a blocked plan to Cancel and does not confirm an unavailable restore', () => {
+    const confirm = vi.fn()
+    const cancel = vi.fn()
+    const dialog = new RewindDialog(plan({
+      state: 'conflict',
+      files: [{ path: 'src/parser.ts', state: 'conflict', reason: 'A later change overlaps the AI edit.' }],
+    }), () => 24, createTheme(false), confirm, cancel)
+
+    expect(dialog.render(80).join('\n')).toContain('› 2. Never mind')
+    dialog.handleInput('\u001b[A')
+    dialog.handleInput('\r')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it('keeps actions visible and pages every affected path in a short terminal', () => {
+    const files = Array.from({ length: 12 }, (_, index) => ({
+      path: `src/feature-${String(index).padStart(2, '0')}.ts`,
+      state: 'safe' as const,
+    }))
+    const dialog = new RewindDialog(plan({ files }), () => 10, createTheme(false), vi.fn(), vi.fn())
+
+    let output = dialog.render(32)
+    expect(output.length).toBeLessThanOrEqual(10)
+    expect(output.join('\n')).toContain('1. Restore workspace')
+    for (let page = 0; page < 20; page += 1) {
+      dialog.handleInput('\u001b[6~')
+      output = dialog.render(32)
+    }
+    expect(output.length).toBeLessThanOrEqual(10)
+    expect(output.join('\n')).toContain('feature-11.ts')
+    expect(output.join('\n')).toContain('1. Restore workspace')
+    expect(output.every(line => visibleWidth(line) <= 32)).toBe(true)
+  })
+})
+describe('RewindPointDialog', () => {
+  it('opens on the newest point and reports AI-attributed counts', () => {
     const select = vi.fn()
     const cancel = vi.fn()
     const summaries = [
-      { checkpointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', createdAt: 1, turnChangedFiles: 0 },
-      { checkpointId: 'two', sessionId: 'session-1', turn: 2, prompt: 'second', createdAt: 2, turnChangedFiles: 2, memoryUpdates: 1 },
-      { checkpointId: 'three', sessionId: 'session-1', turn: 3, prompt: 'third', createdAt: 3 },
+      { pointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', createdAt: 1, workspaceFiles: 0, unsupportedFiles: 0, participants: [] },
+      { pointId: 'two', sessionId: 'session-1', turn: 2, prompt: 'second', createdAt: 2, workspaceFiles: 2, unsupportedFiles: 0, participants: [{ id: 'memory', label: 'Memory', changes: 1, state: 'safe' as const }] },
+      { pointId: 'three', sessionId: 'session-1', turn: 3, prompt: 'third', createdAt: 3, workspaceFiles: 0, unsupportedFiles: 1, participants: [] },
     ]
-    const dialog = new RewindCheckpointDialog(summaries, undefined, () => 20, createTheme(false), select, cancel)
+    const dialog = new RewindPointDialog(summaries, undefined, () => 20, createTheme(false), select, cancel)
 
     expect(dialog.render(80).join('\n')).toContain('› third')
+    expect(dialog.render(80).join('\n')).toContain('No AI file edits · 1 unsupported')
     dialog.handleInput('\u001b[A')
-    expect(dialog.render(80).join('\n')).toContain('1 memory update')
+    expect(dialog.render(80).join('\n')).toContain('2 AI-edited files this turn · 1 memory update')
     dialog.handleInput('\r')
     expect(select).toHaveBeenCalledWith(summaries[1])
 
     dialog.handleInput('\u001b')
     expect(cancel).toHaveBeenCalledOnce()
-  })
-
-  it('preserves selection when changed-file counts arrive asynchronously', () => {
-    const dialog = new RewindCheckpointDialog([
-      { checkpointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', createdAt: 1 },
-      { checkpointId: 'two', sessionId: 'session-1', turn: 2, prompt: 'second', createdAt: 2 },
-    ], 'one', () => 20, createTheme(false), vi.fn(), vi.fn())
-
-    dialog.setSummaries([
-      { checkpointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', createdAt: 1, turnChangedFiles: 0 },
-      { checkpointId: 'two', sessionId: 'session-1', turn: 2, prompt: 'second', createdAt: 2, turnChangedFiles: 3 },
-    ])
-
-    const output = dialog.render(80).join('\n')
-    expect(output).toContain('› first')
-    expect(output).toContain('No code changes')
   })
 })

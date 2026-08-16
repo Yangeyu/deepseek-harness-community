@@ -28,7 +28,7 @@ as a separate npm artifact.
 
 Direct edits and file synchronization are supported because Markdown remains
 the source of truth. Only writes made through the plugin carry source-turn
-metadata and can therefore participate in client checkpoint rewind.
+metadata and can therefore participate in source-attributed Rewind.
 
 Project identity uses the normalized Git `origin` URL when available, including the repository name used in the directory prefix, so differently named clones and linked Worktrees share one memory directory on a synchronized memory root. Repositories without an origin use their Git common directory, which also unifies linked Worktrees. Non-Git directories fall back to their canonical path. Existing local-name directories are migrated into the stable directory when encountered.
 
@@ -39,7 +39,11 @@ Project identity uses the normalized Git `origin` URL when available, including 
 - `memory_forget` removes an exact summary.
 - Sessions receive durable, source-attributed snapshots when effective global or project memory changes; disabling memory publishes an explicit replacement marker.
 - Candidate correction turns are processed after the parent Agent becomes idle. A short-lived subagent is limited to the three memory tools, so the auxiliary request and writes remain in Harness session logs.
-- Every write publishes an exact before/after mutation that clients can include in their existing rewind checkpoint.
+- Every write publishes an exact before/after mutation that clients can include
+  in a source-attributed Rewind plan.
+- Clients can call `ctx.memory.settle(sessionId)` before preparing a cross-domain
+  transaction; it waits only for already-scheduled learning for that source
+  session and does not start or cancel work.
 - Secret-like values are rejected before files are created.
 
 ## Configuration

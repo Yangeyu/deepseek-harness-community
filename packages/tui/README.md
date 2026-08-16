@@ -30,8 +30,8 @@ The initial terminal client supports:
 - Claude Code-style edit cards with exact changed-line counts, contextual lines,
   absolute line numbers when the applied hunk can be located, syntax colors,
   and red/green changed-line backgrounds;
-- bounded turn checkpoints with an instant keyboard selector, changed-file
-  preview, workspace restore, conversation fork, and original-prompt refill;
+- bounded source-attributed Rewind history with exact AI-owned file plans,
+  conflict protection, workspace restore, conversation fork, and prompt refill;
 - Codex-style full-width user-message blocks with restrained background color,
   internal text padding, a stable `›` anchor, and no persistent speaker labels;
 - queueing input while a turn is running and steering the active turn;
@@ -139,7 +139,7 @@ After a normal exit, the restored shell prints a copyable
 | `Shift+Tab` | Cycle supported reasoning efforts |
 | `↑` / `↓` | Browse previously submitted input while editing |
 | `PageUp` / `PageDown` | Scroll conversation history while the editor is empty |
-| `Esc Esc` | Open the checkpoint selector; use `↑`/`↓` and `Enter` to inspect a node |
+| `Esc Esc` | Open Rewind history; use `↑`/`↓` and `Enter` to inspect a turn boundary |
 
 Open `/keymap` or `/config keybindings` to switch the persistent TUI keymap.
 The default Standard preset follows the running-turn `Enter`/`Tab` interaction
@@ -242,21 +242,27 @@ pauses automatic tail following, and PageDown or a downward wheel returns to
 live output. Hold the terminal's mouse-bypass modifier (usually Shift) when
 native terminal text selection is needed.
 
-Rewind snapshots the Git worktree immediately before the first step of each
-user-authored turn. `Esc Esc` opens the process-local checkpoint history
-immediately; per-turn changed-file counts fill in asynchronously rather than
-showing the cumulative rollback scope. `↑`/`↓` selects a prompt node, `Enter`
-opens a vertical confirmation with the target prompt and restore impact, and
-`Esc` returns to the list or closes it. One confirmation restores the selected
-workspace checkpoint, reverts memory writes attributed to that turn and every
-later turn, forks the conversation before that turn, and returns the selected
-prompt to the editor. Workspace and memory state are compensated if the
-conversation fork fails. The implementation never runs `git reset` and never
-changes the user's Git index. The history limit defaults to 20 through
-`rewindCheckpoints`. Checkpoints before the restored turn follow the forked
-conversation, so `Esc Esc` can rewind repeatedly until the retained history is
-exhausted. Checkpoints cover Git-tracked plus non-ignored untracked files;
-ignored files and submodule contents are outside the current restore scope.
+Rewind registers a process-local boundary before the first step of each
+user-authored turn. It does not diff or snapshot the Git worktree. The Host
+adapter correlates an authoritative `fs/observed` event with the same
+execution's canonical `before`/`after` result, so the history counts only file
+mutations that can be attributed to this Agent call. Files edited by another
+window are not listed and are never restored merely because they changed
+during the turn.
+
+`Esc Esc` opens the retained turn boundaries immediately. `Enter` prepares a
+stale-guarded reverse plan for the selected turn and every later turn. Exact
+matches are `safe`; non-overlapping later edits are `mergeable` and preserved;
+overlapping edits are `conflict`; provider outcomes without a reversible
+before-state are `unsupported`. Restore is selected by default only for safe
+or mergeable plans and the confirmation lists the exact affected paths.
+Successful confirmation restores those AI-owned text mutations, reverts the
+corresponding Memory mutations, forks the conversation, and refills the
+selected prompt. Workspace and Memory changes are compensated if a later phase
+fails. Native filesystem calls that do not publish the semantic mutation
+contract, including arbitrary shell-side edits, are deliberately excluded
+rather than guessed. The history limit defaults to 20 through `rewindHistory`;
+earlier boundaries follow the forked conversation for repeated Rewind.
 
 ## Memory
 

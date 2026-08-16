@@ -399,7 +399,7 @@ export class MemoryFileStore {
       const current = await Promise.all(ordered.map(file => readableFile(file.path, this.options.maxDocumentBytes)))
       for (const [index, file] of ordered.entries()) {
         if (current[index] !== expected[index]) {
-          throw new Error(`memory document changed after the checkpoint preview: ${file.path}`)
+          throw new Error(`memory document changed after the rewind plan: ${file.path}`)
         }
       }
       const applied: number[] = []

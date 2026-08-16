@@ -6,6 +6,8 @@
   release artifact.
 - Share project memory across linked Git Worktrees and differently named clones.
 - Migrate existing local-directory-based memory into the stable repository directory.
+- Add a per-session learning settlement barrier so Rewind can prepare a stable
+  workspace, Memory, and conversation transaction.
 
 ## 0.1.0
 

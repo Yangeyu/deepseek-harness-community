@@ -119,6 +119,9 @@ are in [`tui-v0.1.8-design.md`](tui-v0.1.8-design.md).
 - Remove whole-worktree inference, tool-name parsing, duplicated checkpoint
   state, compatibility bridges, and TUI-owned Git restore code after cutover.
 
+Detailed ownership, mutation contracts, restore states, and transaction rules
+are in [`tui-v0.1.9-design.md`](tui-v0.1.9-design.md).
+
 ### v0.1.10 — Session Center
 
 - Upgrade resume selection with durable titles, workspace and activity

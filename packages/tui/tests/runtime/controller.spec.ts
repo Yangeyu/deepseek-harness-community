@@ -566,7 +566,7 @@ describe('HarnessController', () => {
     controller.dispose()
   })
 
-  it('forks at the boundary before the checkpointed turn', async () => {
+  it('forks at the selected Rewind turn boundary', async () => {
     const source = 'session-source' as SessionSummary['sessionId']
     const child = 'session-child' as SessionSummary['sessionId']
     const fork = vi.fn(async () => ok({ sessionId: child }))
@@ -599,14 +599,16 @@ describe('HarnessController', () => {
     await controller.start()
     const phases: string[] = []
     const rewoundSessionId = await controller.rewind({
-      checkpointId: 'checkpoint-1',
+      planId: 'plan-1',
+      pointId: 'point-1',
       sessionId: String(source),
       turn: 3,
       prompt: 'redo this',
       createdAt: 1,
       previousTurnEndSeq: 17,
+      state: 'safe',
       files: [],
-      currentTree: 'tree',
+      participants: [],
     }, phase => { phases.push(phase) })
     controller.dispose()
 

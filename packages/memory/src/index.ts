@@ -402,7 +402,17 @@ export class ProjectMemoryService extends Service {
     return () => { this.activityListeners.delete(listener) }
   }
 
-  /** Observe writes for integration with unified rewind checkpoints. */
+  /** Wait until already-scheduled learning for one source session has settled. */
+  async settle(sessionId: string): Promise<void> {
+    let pending = this.learningTails.get(sessionId)
+    while (pending !== undefined) {
+      await pending.catch(() => {})
+      if (this.learningTails.get(sessionId) === pending) return
+      pending = this.learningTails.get(sessionId)
+    }
+  }
+
+  /** Observe reversible writes for integration with source-attributed Rewind. */
   onMutation(listener: (mutation: MemoryMutation) => void): () => void {
     this.mutationListeners.add(listener)
     return () => { this.mutationListeners.delete(listener) }

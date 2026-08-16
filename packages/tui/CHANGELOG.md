@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Replace whole-worktree Git checkpoints with source-attributed Rewind points
+  backed by correlated Host filesystem observations and canonical mutation
+  outcomes; external-window changes are no longer listed or restored.
+- Add safe, mergeable, conflict, and unsupported restore planning with exact
+  path disclosure, non-overlapping edit preservation, stale guards, and atomic
+  workspace/Memory/conversation compensation.
+- Separate pure Rewind contracts, Journal, and reverse planner from Host,
+  Memory, and local-filesystem adapters; consume the capability through a
+  narrow application port and bound retained mutation content by bytes.
+- Remove detached Git-index snapshots, asynchronous whole-tree file counts,
+  duplicate checkpoint state, and implementation-coupled checkpoint tests.
+
 ## 0.1.8 - 2026-08-16
 
 - Expose the TUI, Memory, and Vision APIs through public subpaths of the single

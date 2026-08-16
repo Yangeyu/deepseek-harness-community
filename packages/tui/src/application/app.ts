@@ -16,8 +16,8 @@ import type {
 } from '@deepseek-ai/dsh-host-apiproxy'
 import type {
   MemoryActivity,
-  MemoryMutation,
-  ProjectMemoryService,
+  MemoryOverview,
+  MemorySessionPolicy,
 } from '@vascent/deepseek-harness-memory'
 import type { ResolvedConfig } from './config.ts'
 import {
@@ -32,10 +32,9 @@ import {
   MemoryDialog,
   ModelDialog,
   MultiSelectDialog,
-  RewindCheckpointDialog,
-  RewindDialog,
   TextInputDialog,
 } from '../presentation/dialogs.ts'
+import { RewindDialog, RewindPointDialog } from '../presentation/rewind/index.ts'
 import { sanitizeTerminalText } from '../text.ts'
 import { createTheme, type TuiTheme } from '../presentation/theme.ts'
 import { composerStats } from '../presentation/stats.ts'
@@ -43,11 +42,12 @@ import { DiffLineLocator } from '../presentation/diff-location.ts'
 import { TranscriptComponent } from '../presentation/transcript.ts'
 import { ComposerAnchoredLayout } from '../presentation/layout.ts'
 import { TrajectoryView } from '../trajectory/view.ts'
-import type {
-  RewindCheckpointSummary,
-  RewindPreview,
-  WorkspaceCheckpointStore,
-} from '../checkpoint.ts'
+import {
+  RewindTransaction,
+  type RewindPlan,
+  type RewindPointSummary,
+  type RewindPort,
+} from '../rewind/index.ts'
 import {
   DISABLE_MOUSE_TRACKING,
   ENABLE_MOUSE_TRACKING,
@@ -136,6 +136,13 @@ export interface TuiRuntime {
   stderr: NodeJS.WriteStream
 }
 
+/** Memory capabilities used by the terminal application outside Rewind. */
+export interface TuiMemoryPort {
+  onActivity(listener: (activity: MemoryActivity) => void): () => void
+  overview(cwd: string, sessionId?: string): Promise<MemoryOverview>
+  setPolicy(sessionId: string, patch: Partial<MemorySessionPolicy>): MemorySessionPolicy
+}
+
 /** Optional composition ports kept separate from the stable application core. */
 export interface TuiApplicationDependencies {
   commandSource?: HostCommandSource
@@ -201,9 +208,8 @@ export class TuiApplication implements TuiControllerSink {
   private interactionActive = false
   private composerModalActive = false
   private rewindProgress: Text | undefined
-  private rewindSummaries: RewindCheckpointSummary[] | undefined
-  private rewindCheckpointDialog: RewindCheckpointDialog | undefined
-  private rewindSurfaceGeneration = 0
+  private rewindSummaries: RewindPointSummary[] | undefined
+  private rewindPointDialog: RewindPointDialog | undefined
   private memoryActivity: MemoryActivity = { state: 'idle' }
   private readonly removeMemoryActivity: () => void
   private readonly interactionQueue: Array<() => void> = []
@@ -220,13 +226,14 @@ export class TuiApplication implements TuiControllerSink {
   private readonly initialImagePaths: readonly string[]
   private readonly clipboardImage: ClipboardImageLoader
   private clipboardPastePending = false
+  private readonly rewindTransaction: RewindTransaction
 
   constructor(
     api: IApiClient,
     private readonly config: ResolvedConfig,
     private readonly runtime: TuiRuntime,
-    private readonly checkpoints: WorkspaceCheckpointStore,
-    private readonly memory: ProjectMemoryService,
+    rewind: RewindPort,
+    private readonly memory: TuiMemoryPort,
     dependencies: TuiApplicationDependencies = {},
   ) {
     const {
@@ -243,6 +250,9 @@ export class TuiApplication implements TuiControllerSink {
     this.theme = createTheme(config.color)
     this.tui = new TuiMainScreen(this.terminal, config.showHardwareCursor)
     this.controller = new HarnessController(api, this, config.cwd, config.historyMessages)
+    this.rewindTransaction = new RewindTransaction(rewind, {
+      rewind: async (plan, onPhase) => String(await this.controller.rewind(plan, onPhase)),
+    })
     const initial = this.controller.current
     this.header = new Text('', 0, 0)
     this.transcript = new TranscriptComponent(
@@ -461,7 +471,7 @@ export class TuiApplication implements TuiControllerSink {
       this.spinner = undefined
     }
     if (this.lastEscapeAt !== 0) {
-      this.status.setText(this.theme.warning(`Press Esc again to open rewind checkpoints${history}`))
+      this.status.setText(this.theme.warning(`Press Esc again to open Rewind history${history}`))
       return
     }
     if (this.memoryActivity.state === 'error') {
@@ -751,7 +761,7 @@ export class TuiApplication implements TuiControllerSink {
       handler: () => this.openMemoryDialog(),
     }, {
       name: 'rewind',
-      description: 'Open workspace and conversation checkpoints',
+      description: 'Open source-attributed Rewind history',
       handler: () => { this.requestRewind() },
     }, {
       name: 'exit',
@@ -1234,35 +1244,31 @@ export class TuiApplication implements TuiControllerSink {
     if (this.tui.hasOverlay() || this.composerModalActive) return
     const sessionId = this.controller.current.sessionId
     if (sessionId === undefined) throw new Error('no terminal session is active')
-    const surfaceGeneration = ++this.rewindSurfaceGeneration
-    this.rewindSummaries = this.checkpoints.list(String(sessionId))
-    this.showRewindCheckpointList()
-    void this.checkpoints.describe(String(sessionId)).then(summaries => {
-      if (surfaceGeneration !== this.rewindSurfaceGeneration
-        || this.controller.current.sessionId !== sessionId
-        || this.rewindSummaries === undefined) return
-      this.rewindSummaries = summaries
-      this.rewindCheckpointDialog?.setSummaries(summaries)
-      this.tui.requestRender()
-    }).catch((error: unknown) => {
-      if (surfaceGeneration !== this.rewindSurfaceGeneration) return
-      this.rewindCheckpointDialog?.setInspectionError(error instanceof Error ? error.message : String(error))
-      this.tui.requestRender()
-    })
+    this.showRewindProgress('Settling attributed Memory updates…')
+    try {
+      this.rewindSummaries = await this.rewindTransaction.list(String(sessionId))
+      if (this.controller.current.sessionId !== sessionId) {
+        throw new Error('the active session changed while Rewind was preparing')
+      }
+    } catch (error: unknown) {
+      this.closeRewindSurface()
+      throw error
+    }
+    this.showRewindPointList()
   }
 
-  private showRewindCheckpointList(selectedCheckpointId?: string): void {
+  private showRewindPointList(selectedPointId?: string): void {
     const summaries = this.rewindSummaries
     if (summaries === undefined) return
-    const dialog = new RewindCheckpointDialog(
+    const dialog = new RewindPointDialog(
       summaries,
-      selectedCheckpointId,
+      selectedPointId,
       () => this.terminal.rows,
       this.theme,
-      summary => { void this.openRewindPreview(summary) },
+      summary => { void this.openRewindPlan(summary) },
       () => this.closeRewindSurface(),
     )
-    this.rewindCheckpointDialog = dialog
+    this.rewindPointDialog = dialog
     this.rewindProgress = undefined
     this.composerModalActive = true
     this.layout.setComposerOverride(dialog)
@@ -1270,74 +1276,48 @@ export class TuiApplication implements TuiControllerSink {
     this.tui.requestRender()
   }
 
-  private async openRewindPreview(summary: RewindCheckpointSummary): Promise<void> {
+  private async openRewindPlan(summary: RewindPointSummary): Promise<void> {
     const sessionId = this.controller.current.sessionId
     if (sessionId === undefined || String(sessionId) !== summary.sessionId) {
       this.closeRewindSurface()
-      this.controller.notice('The active session changed before the checkpoint could be inspected.')
+      this.controller.notice('The active session changed before the rewind point could be inspected.')
       return
     }
-    this.showRewindProgress('Preparing selected checkpoint…')
-    let preview: RewindPreview
+    this.showRewindProgress('Preparing source-attributed restore plan…')
+    let plan: RewindPlan
     try {
-      preview = await this.checkpoints.preview(String(sessionId), summary.checkpointId)
+      plan = await this.rewindTransaction.plan(String(sessionId), summary.pointId)
     } catch (error: unknown) {
       this.closeRewindSurface()
       this.controller.notice(error instanceof Error ? error.message : String(error))
       return
     }
     const dialog = new RewindDialog(
-      preview,
+      plan,
+      () => this.terminal.rows,
       this.theme,
       () => {
-        this.showRewindProgress('Restoring workspace checkpoint…')
-        void this.performRewind(preview)
+        this.showRewindProgress('Restoring AI-owned workspace edits…')
+        void this.performRewind(plan)
       },
-      () => this.showRewindCheckpointList(summary.checkpointId),
+      () => this.showRewindPointList(summary.pointId),
     )
-    this.rewindCheckpointDialog = undefined
+    this.rewindPointDialog = undefined
     this.layout.setComposerOverride(dialog)
     this.tui.setFocus(dialog)
     this.tui.requestRender()
   }
 
-  private async performRewind(preview: RewindPreview): Promise<void> {
+  private async performRewind(plan: RewindPlan): Promise<void> {
     try {
-      const rollback = await this.checkpoints.restore(preview)
-      const revertedMemories: MemoryMutation[] = []
-      let targetSessionId: string
-      try {
-        for (const mutation of [...preview.memoryMutations ?? []].reverse()) {
-          await this.memory.restore(mutation, 'before')
-          revertedMemories.push(mutation)
-        }
-        targetSessionId = String(await this.controller.rewind(preview, phase => {
-          this.showRewindProgress(phase === 'forking'
-            ? 'Rewinding conversation…'
-            : 'Reloading rewound session…')
-        }))
-      } catch (error: unknown) {
-        this.showRewindProgress('Rewind failed; restoring the current workspace and memory…')
-        const rollbackFailures: unknown[] = []
-        for (const mutation of [...revertedMemories].reverse()) {
-          try {
-            await this.memory.restore(mutation, 'after')
-          } catch (rollbackError: unknown) {
-            rollbackFailures.push(rollbackError)
-          }
-        }
-        try {
-          await rollback()
-        } catch (rollbackError: unknown) {
-          rollbackFailures.push(rollbackError)
-        }
-        if (rollbackFailures.length > 0) {
-          throw new Error(`rewind failed (${String(error)}) and rollback also failed (${rollbackFailures.map(String).join('; ')})`)
-        }
-        throw error
-      }
-      this.checkpoints.continueFrom(preview, targetSessionId)
-      this.editor.setText(preview.prompt)
+      await this.rewindTransaction.execute(plan, (phase) => {
+        this.showRewindProgress(phase === 'forking'
+          ? 'Rewinding conversation…'
+          : phase === 'opening'
+            ? 'Reloading rewound session…'
+            : 'Rewind failed; restoring the current workspace and memory…')
+      })
+      this.editor.setText(plan.prompt)
     } catch (error: unknown) {
       this.controller.notice(error instanceof Error ? error.message : String(error))
     } finally {
@@ -1350,23 +1330,22 @@ export class TuiApplication implements TuiControllerSink {
       this.rewindProgress = new Text('', 1, 0)
     }
     this.composerModalActive = true
-    this.rewindCheckpointDialog = undefined
+    this.rewindPointDialog = undefined
     this.layout.setComposerOverride(this.rewindProgress)
     this.tui.setFocus(null)
     this.rewindProgress.setText([
       this.theme.bold('Rewind'),
       this.theme.accent(`✦ ${message}`),
-      this.theme.dim('Workspace, memory, and conversation rollback are applied as one operation.'),
+      this.theme.dim('Source-attributed workspace, Memory, and conversation state stay coordinated.'),
     ].join('\n'))
     this.tui.requestRender()
   }
 
   private closeRewindSurface(): void {
-    this.rewindSurfaceGeneration += 1
     this.layout.setComposerOverride(undefined)
     this.rewindProgress = undefined
     this.rewindSummaries = undefined
-    this.rewindCheckpointDialog = undefined
+    this.rewindPointDialog = undefined
     this.composerModalActive = false
     this.tui.setFocus(this.editor)
     this.tui.requestRender()

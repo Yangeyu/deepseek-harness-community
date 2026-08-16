@@ -79,7 +79,7 @@
       name: '@vascent/deepseek-harness-tui'
       config:
         historyMessages: 200
-        rewindCheckpoints: 20
+        rewindHistory: 20
         showReasoning: true
         thinkingMaxLines: 8
         color: true

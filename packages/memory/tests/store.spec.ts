@@ -159,7 +159,7 @@ describe('MemoryFileStore', () => {
     const mutation = await store.write({ cwd, scope: 'project', summary: 'First rule.' })
     await store.write({ cwd, scope: 'project', summary: 'Later rule.' })
 
-    await expect(store.restore(mutation.files, 'before')).rejects.toThrow('changed after the checkpoint preview')
+    await expect(store.restore(mutation.files, 'before')).rejects.toThrow('changed after the rewind plan')
     expect((await store.read(cwd, 'project')).content).toContain('Later rule.')
   })
 
@@ -177,7 +177,7 @@ describe('MemoryFileStore', () => {
     if (index === undefined || topic === undefined) throw new Error('fixture did not create both memory files')
     await writeFile(index.path, `${index.after ?? ''}- Later independent rule.\n`)
 
-    await expect(store.restore(mutation.files, 'before')).rejects.toThrow('changed after the checkpoint preview')
+    await expect(store.restore(mutation.files, 'before')).rejects.toThrow('changed after the rewind plan')
     expect(await readFile(topic.path, 'utf8')).toBe(topic.after)
   })
 })
