@@ -33,6 +33,7 @@ interface AppInternals {
   }
   editor: Editor
   attachmentDrafts: { snapshot: readonly unknown[] }
+  attachmentComposer: { render(width: number): string[] }
   footer: { render(width: number): string[] }
   status: { render(width: number): string[] }
   transcript: { render(width: number): string[] }
@@ -150,6 +151,34 @@ describe('TuiApplication input routing', () => {
     await Promise.all([first, second])
 
     expect(internals.attachmentDrafts.snapshot).toHaveLength(1)
+    expect(internals.attachmentComposer.render(80).join('\n')).toContain('[Image #1]')
+  })
+
+  it('treats the leading image marker as one removable Composer attachment', async () => {
+    const vision = {
+      config: {
+        mode: 'auto',
+        proxyProvider: 'proxy',
+        proxyModel: 'vision',
+        maxObservationChars: 12_000,
+        maxTokens: 2_048,
+      },
+    } as VisionGateway
+    const app = application(undefined, undefined, undefined, undefined, undefined, {
+      vision,
+      clipboardImage: async () => ({
+        name: 'clipboard.png',
+        mediaType: 'image/png',
+        data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
+        source: 'clipboard',
+      }),
+    })
+    const internals = app as unknown as AppInternals
+    await internals.pasteImage()
+
+    expect(internals.handleGlobalInput('\u007F')).toEqual({ consume: true })
+    expect(internals.attachmentDrafts.snapshot).toEqual([])
+    expect(internals.attachmentComposer.render(80).join('\n')).not.toContain('[Image #1]')
   })
 
   it('queues with Tab while working and leaves Alt+Enter for multiline input', () => {
@@ -316,6 +345,31 @@ describe('TuiApplication input routing', () => {
     })
     expect(internals.status.render(80).join('\n')).toContain('Working (4s · esc to interrupt)')
     expect(internals.transcript.render(80).join('\n')).not.toContain('Working')
+  })
+
+  it('uses a Vision-specific status while an image prompt is being prepared', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(3_000)
+    const app = application()
+    const internals = app as unknown as AppInternals
+
+    app.render({
+      ...internals.controller.current,
+      connected: true,
+      pendingSubmissions: [{
+        key: 1,
+        text: 'analyze this image',
+        mode: 'queue',
+        intent: 'working',
+        activity: { kind: 'vision', imageCount: 1, startedAt: 1_000 },
+      }],
+    })
+
+    const status = internals.status.render(80).join('\n')
+    expect(status).toContain('Vision · Analyzing 1 image (2s · esc to interrupt)')
+    expect(status).not.toContain(' Working')
+    expect(internals.transcript.render(80).join('\n')).toContain('Vision · 1 image · Analyzing…')
+    app.dispose()
   })
 
   it('shows compact Host task projections in the fixed ready status', () => {

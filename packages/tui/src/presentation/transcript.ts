@@ -382,6 +382,18 @@ function rowsFromState(
           ? { promptStatus: 'Steering…' }
           : {},
     })
+    if (submission.activity?.kind === 'vision') {
+      const imageCount = submission.activity.imageCount
+      const elapsed = durationLabel(Math.max(0, Date.now() - submission.activity.startedAt))
+      rows.push({
+        tool: {
+          key: `vision:pending:${String(submission.key)}`,
+          title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · Analyzing… ${elapsed}`,
+          status: 'pending',
+          arguments: `${String(imageCount)} attached image${imageCount === 1 ? '' : 's'}`,
+        },
+      })
+    }
   }
   if (state.notice !== undefined) rows.push({ label: 'Notice', labelPaint: theme.accent, body: state.notice })
   if (state.error !== undefined) rows.push({ label: 'Error', labelPaint: theme.error, body: state.error })

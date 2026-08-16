@@ -103,7 +103,10 @@ import {
   AttachmentCoordinator,
   type VisionGateway,
 } from './attachments/coordinator.ts'
-import { AttachmentRail } from '../presentation/attachments.ts'
+import {
+  AttachmentComposerFrame,
+  AttachmentRail,
+} from '../presentation/attachments.ts'
 import { VisionConfigView } from '../presentation/config/vision-view.ts'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
 import { KeymapView } from '../presentation/config/keymap-view.ts'
@@ -169,6 +172,7 @@ export class TuiApplication implements TuiControllerSink {
   private readonly editor: Editor
   private readonly transcript: TranscriptComponent
   private readonly attachmentRail: AttachmentRail
+  private readonly attachmentComposer: AttachmentComposerFrame
   private readonly attachmentDrafts = new AttachmentDraftStore()
   private readonly attachmentCoordinator: AttachmentCoordinator | undefined
   private readonly vision: VisionGateway | undefined
@@ -279,6 +283,7 @@ export class TuiApplication implements TuiControllerSink {
         this.controller.notice(`Attached images are being analyzed by ${key}; the primary model receives only bounded visual evidence.`)
       })
     this.editor = new Editor(this.tui, this.theme.editor, { paddingX: 1, autocompleteMaxVisible: 10 })
+    this.attachmentComposer = new AttachmentComposerFrame(this.editor, this.theme)
     this.commands = new TerminalCommandDirectory(
       this.localCommands(),
       commandSource,
@@ -308,7 +313,7 @@ export class TuiApplication implements TuiControllerSink {
       this.header,
       this.transcript,
       this.status,
-      this.editor,
+      this.attachmentComposer,
       this.footer,
       () => this.terminal.rows,
       this.attachmentRail,
@@ -324,6 +329,7 @@ export class TuiApplication implements TuiControllerSink {
     this.removeAttachmentListener = this.attachmentDrafts.onChange((drafts) => {
       if (this.disposed) return
       this.attachmentRail.setDrafts(drafts)
+      this.attachmentComposer.setDrafts(drafts)
       if (drafts.length === 0 && this.attachmentRailFocused) this.leaveAttachmentRail()
       this.tui.requestRender()
     })
@@ -361,7 +367,7 @@ export class TuiApplication implements TuiControllerSink {
     this.removeMemoryActivity()
     this.removeAttachmentListener()
     this.removeKeymapListener()
-    this.attachmentCoordinator?.cancel()
+    this.attachmentCoordinator?.cancel(false)
     this.terminal.write(DISABLE_MOUSE_TRACKING)
     this.removeInputListener?.()
     this.tui.stop()
@@ -371,7 +377,7 @@ export class TuiApplication implements TuiControllerSink {
   render(state: Readonly<TuiState>): void {
     if (this.disposed) return
     if (this.attachmentSessionId !== undefined && this.attachmentSessionId !== state.sessionId) {
-      this.attachmentCoordinator?.cancel()
+      this.attachmentCoordinator?.cancel(false)
       this.attachmentDrafts.clear()
     }
     this.attachmentSessionId = state.sessionId
@@ -420,6 +426,27 @@ export class TuiApplication implements TuiControllerSink {
     const history = this.layout.followsTranscriptTail ? '' : ' · Viewing history · PageDown to follow'
     const task = sessionControlSummary(state.projections)
     const taskStatus = task === '' ? '' : ` · ${task}`
+    const visionActivity = state.pendingSubmissions.find(submission => submission.activity?.kind === 'vision')?.activity
+    if (visionActivity?.kind === 'vision') {
+      this.workingStartedAt = undefined
+      this.workingSessionId = undefined
+      if (this.spinner === undefined) {
+        this.spinner = setInterval(() => {
+          this.spinnerFrame += 1
+          this.updateStatus(this.controller.current)
+          this.tui.requestRender()
+        }, 160)
+      }
+      const frames = ['·', '✢', '✳', '✦']
+      const glyph = frames[this.spinnerFrame % frames.length] ?? '·'
+      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - visionActivity.startedAt) / 1_000))
+      const images = `${String(visionActivity.imageCount)} image${visionActivity.imageCount === 1 ? '' : 's'}`
+      this.status.setText([
+        this.theme.accent(glyph),
+        this.theme.dim(` Vision · Analyzing ${images} (${String(elapsedSeconds)}s · esc to interrupt${history})`),
+      ].join(''))
+      return
+    }
     const working = isWorking(state)
     if (working) {
       if (this.workingStartedAt === undefined || this.workingSessionId !== state.sessionId) {
@@ -498,6 +525,14 @@ export class TuiApplication implements TuiControllerSink {
       if (resolution.kind === 'action') this.handleKeymapAction(resolution.action)
       return { consume: true }
     }
+    const cursor = this.editor.getCursor()
+    if (this.attachmentDrafts.snapshot.length > 0
+      && matchesKey(data, Key.backspace)
+      && cursor.line === 0
+      && cursor.col === 0) {
+      this.attachmentDrafts.removeLast()
+      return { consume: true }
+    }
     if (this.editor.getExpandedText() === '' && matchesKey(data, Key.pageUp)) {
       if (this.layout.pageTranscript(-1)) {
         this.updateStatus(this.controller.current)
@@ -513,7 +548,7 @@ export class TuiApplication implements TuiControllerSink {
       return { consume: true }
     }
     if (escape && !this.tui.hasOverlay()) {
-      if (this.attachmentDrafts.busy) {
+      if (this.imageSubmissionBusy) {
         this.attachmentCoordinator?.cancel()
         return { consume: true }
       }
@@ -538,7 +573,7 @@ export class TuiApplication implements TuiControllerSink {
   private handleKeymapAction(action: KeymapAction): void {
     switch (action) {
       case 'app.cancel-or-exit':
-        if (this.attachmentDrafts.busy) this.attachmentCoordinator?.cancel()
+        if (this.imageSubmissionBusy) this.attachmentCoordinator?.cancel()
         else if (isWorking(this.controller.current)) void this.runAction(() => this.controller.cancel())
         else void this.requestExit(0)
         return
@@ -689,7 +724,7 @@ export class TuiApplication implements TuiControllerSink {
       handler: async (argument) => {
         if (argument.trim() === '') throw new Error('Usage: /attach <path>')
         this.ensureVisionAvailable()
-        if (this.attachmentDrafts.busy) throw new Error('Vision analysis is already in progress.')
+        if (this.imageSubmissionBusy) throw new Error('Vision analysis is already in progress.')
         this.attachmentDrafts.add(await imageDraftFromPath(argument.trim(), this.controller.current.cwd))
       },
     }, {
@@ -760,6 +795,10 @@ export class TuiApplication implements TuiControllerSink {
     if (this.attachmentCoordinator === undefined) throw new Error('Vision is unavailable in this profile.')
   }
 
+  private get imageSubmissionBusy(): boolean {
+    return this.attachmentCoordinator?.busy === true
+  }
+
   private async loadInitialImages(): Promise<void> {
     if (this.initialImagePaths.length === 0) return
     this.ensureVisionAvailable()
@@ -779,7 +818,7 @@ export class TuiApplication implements TuiControllerSink {
   private async pasteImage(): Promise<void> {
     if (this.clipboardPastePending) return
     this.ensureVisionAvailable()
-    if (this.attachmentDrafts.busy) throw new Error('Vision analysis is already in progress.')
+    if (this.imageSubmissionBusy) throw new Error('Vision analysis is already in progress.')
     this.clipboardPastePending = true
     try {
       this.attachmentDrafts.add(await this.clipboardImage())
@@ -1478,7 +1517,7 @@ export class TuiApplication implements TuiControllerSink {
   }
 
   private async selectModel(selection: ModelSelection): Promise<void> {
-    if (this.attachmentDrafts.busy) throw new Error('Wait for Vision analysis to finish before changing models.')
+    if (this.imageSubmissionBusy) throw new Error('Wait for Vision analysis to finish before changing models.')
     while (this.controller.current.historyHasMore) {
       if (!await this.controller.loadEarlierHistory()) break
     }

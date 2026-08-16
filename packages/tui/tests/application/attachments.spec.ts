@@ -67,9 +67,12 @@ function addPng(store: AttachmentDraftStore): void {
   })
 }
 
-function preparedSender(onContent?: (content: PromptContentPart[]) => void) {
+function preparedSender(
+  onContent?: (content: PromptContentPart[]) => void,
+  onActivity?: (activity: { kind: 'vision'; imageCount: number } | undefined) => void,
+) {
   return vi.fn<PreparedPromptSender>(async (_text, _mode, prepareContent) => {
-    const content = await prepareContent()
+    const content = await prepareContent({ setActivity: activity => { onActivity?.(activity) } })
     onContent?.(content)
   })
 }
@@ -79,7 +82,11 @@ describe('AttachmentCoordinator', () => {
     const store = new AttachmentDraftStore()
     addPng(store)
     let submittedContent: PromptContentPart[] = []
-    const send = preparedSender(content => { submittedContent = content })
+    const activities: Array<{ kind: 'vision'; imageCount: number } | undefined> = []
+    const send = preparedSender(
+      content => { submittedContent = content },
+      activity => { activities.push(activity) },
+    )
     const coordinator = new AttachmentCoordinator(store, gateway({
       strategy: 'native', provider: 'native', model: 'vision',
     }))
@@ -97,6 +104,7 @@ describe('AttachmentCoordinator', () => {
       { type: 'text', text: 'inspect this' },
       expect.objectContaining({ type: 'image', mediaType: 'image/png', name: 'screen.png' }),
     ])
+    expect(activities).toEqual([])
     expect(store.snapshot).toHaveLength(0)
   })
 
@@ -105,7 +113,11 @@ describe('AttachmentCoordinator', () => {
     addPng(store)
     const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
     let submittedContent: PromptContentPart[] = []
-    const send = preparedSender(content => { submittedContent = content })
+    const activities: Array<{ kind: 'vision'; imageCount: number } | undefined> = []
+    const send = preparedSender(
+      content => { submittedContent = content },
+      activity => { activities.push(activity) },
+    )
 
     await new AttachmentCoordinator(store, vision).submit(
       'session',
@@ -124,6 +136,45 @@ describe('AttachmentCoordinator', () => {
       { type: 'text', text: 'marker:analysis-id' },
       { type: 'text', text: 'inspect this' },
     ])
+    expect(activities).toEqual([{ kind: 'vision', imageCount: 1 }])
+  })
+
+  it('transfers images out of the Composer while proxy analysis is still running', async () => {
+    const store = new AttachmentDraftStore()
+    addPng(store)
+    const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
+    let releaseAnalysis!: () => void
+    vision.analyze.mockImplementation(async (request: VisionRequest) => {
+      await new Promise<void>(resolve => { releaseAnalysis = resolve })
+      return {
+        analysisId: request.analysisId,
+        provider: 'proxy',
+        model: 'vision',
+        marker: `marker:${request.analysisId}`,
+        observation: 'visible evidence',
+        attachments: [],
+        durationMs: 4,
+        truncated: false,
+        finishReason: 'stop',
+      }
+    })
+    const coordinator = new AttachmentCoordinator(store, vision)
+
+    const submission = coordinator.submit(
+      'session',
+      { provider: 'deepseek', model: 'chat' },
+      'inspect this',
+      'queue',
+      undefined,
+      preparedSender(),
+    )
+
+    await vi.waitFor(() => { expect(vision.analyze).toHaveBeenCalledOnce() })
+    expect(store.snapshot).toEqual([])
+    expect(coordinator.busy).toBe(true)
+    releaseAnalysis()
+    await submission
+    expect(coordinator.busy).toBe(false)
   })
 
   it('retains failed drafts with an actionable error', async () => {

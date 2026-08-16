@@ -298,6 +298,23 @@ describe('TranscriptComponent', () => {
     expect(output).not.toContain('You')
   })
 
+  it('renders Vision loading directly after the optimistic image prompt', () => {
+    const pending = state([])
+    pending.pendingSubmissions = [{
+      key: 1,
+      text: 'analyze this image',
+      mode: 'queue',
+      intent: 'working',
+      activity: { kind: 'vision', imageCount: 1, startedAt: Date.now() - 1_500 },
+    }]
+    const transcript = new TranscriptComponent(pending, createTheme(false), true, 8)
+
+    const output = transcript.render(80).join('\n')
+    expect(output).toContain('› analyze this image')
+    expect(output).toContain('Vision · 1 image · Analyzing…')
+    expect(output.indexOf('analyze this image')).toBeLessThan(output.indexOf('Vision · 1 image'))
+  })
+
   it('hands a local prompt to a visible queue row without hiding context placement', () => {
     const queued = state([])
     queued.pendingSubmissions = [{

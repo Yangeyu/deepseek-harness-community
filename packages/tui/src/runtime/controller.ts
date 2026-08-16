@@ -18,7 +18,11 @@ import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/t
 import type {} from '@deepseek-ai/dsh-session-stats/client'
 import type {} from '@deepseek-ai/dsh-token-meter/client'
 import type { RewindPreview } from '../checkpoint.ts'
-import { SubmissionTracker, type PendingSubmission } from './submission.ts'
+import {
+  SubmissionTracker,
+  type PendingSubmission,
+  type SubmissionActivityUpdate,
+} from './submission.ts'
 
 export type { PendingSubmission } from './submission.ts'
 
@@ -55,6 +59,11 @@ export interface TuiControllerSink {
 
 interface RpcResultLike<T> {
   result: { ok: true; value: T } | { ok: false; error: { message: string } }
+}
+
+/** Progress channel used while a visible prompt prepares its final Host content. */
+export interface PromptPreparationContext {
+  setActivity(activity: SubmissionActivityUpdate | undefined): void
 }
 
 function valueOf<T>(response: RpcResultLike<T>): T {
@@ -218,7 +227,7 @@ export class HarnessController {
   async promptWithPreparation(
     text: string,
     mode: 'queue' | 'steer',
-    prepareContent: () => Promise<PromptContentPart[]>,
+    prepareContent: (context: PromptPreparationContext) => Promise<PromptContentPart[]>,
   ): Promise<void> {
     await this.submitPrompt(text, mode, prepareContent)
   }
@@ -226,7 +235,7 @@ export class HarnessController {
   private async submitPrompt(
     text: string,
     mode: 'queue' | 'steer',
-    contentOrPreparation: PromptContentPart[] | (() => Promise<PromptContentPart[]>),
+    contentOrPreparation: PromptContentPart[] | ((context: PromptPreparationContext) => Promise<PromptContentPart[]>),
   ): Promise<void> {
     const sessionId = this.requireSession()
     const generation = this.generation
@@ -241,15 +250,21 @@ export class HarnessController {
       this.submissions.reject(pending.key)
       this.patch({ pendingSubmissions: this.submissions.snapshot })
     }
+    const setActivity = (activity: SubmissionActivityUpdate | undefined): void => {
+      if (generation !== this.generation || sessionId !== this.state.sessionId) return
+      this.submissions.setActivity(pending.key, activity)
+      this.patch({ pendingSubmissions: this.submissions.snapshot })
+    }
     const clientTimeZone = terminalTimeZone()
     let response: Awaited<ReturnType<IApiClient['sessions']['prompt']>>
     try {
       const content = typeof contentOrPreparation === 'function'
-        ? await contentOrPreparation()
+        ? await contentOrPreparation({ setActivity })
         : contentOrPreparation
       if (generation !== this.generation || sessionId !== this.state.sessionId) {
         throw new Error('The active session changed while preparing the prompt.')
       }
+      if (typeof contentOrPreparation === 'function') setActivity(undefined)
       response = await this.api.sessions.prompt({
         sessionId,
         mode,

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 
 export type AttachmentSource = 'file' | 'clipboard'
-export type AttachmentDraftStatus = 'ready' | 'analyzing' | 'error'
+export type AttachmentDraftStatus = 'ready' | 'error'
 
 /** One local, session-scoped image that has not yet been accepted by the Host. */
 export interface AttachmentDraft {
@@ -28,10 +28,6 @@ export class AttachmentDraftStore {
     return this.items
   }
 
-  get busy(): boolean {
-    return this.items.some(item => item.status === 'analyzing')
-  }
-
   add(input: NewAttachmentDraft): AttachmentDraft {
     const draft: AttachmentDraft = { ...input, id: randomUUID(), status: 'ready' }
     this.items = [...this.items, draft]
@@ -40,7 +36,6 @@ export class AttachmentDraftStore {
   }
 
   remove(id: string): boolean {
-    if (this.busy) return false
     const next = this.items.filter(item => item.id !== id)
     if (next.length === this.items.length) return false
     this.items = next
@@ -58,11 +53,34 @@ export class AttachmentDraftStore {
     return draft === undefined ? false : this.remove(draft.id)
   }
 
-  setStatus(ids: readonly string[], status: AttachmentDraftStatus, error?: string): void {
+  setError(ids: readonly string[], error: string): void {
     const selected = new Set(ids)
     this.items = this.items.map(item => selected.has(item.id)
-      ? { ...item, status, ...error === undefined ? { error: undefined } : { error } }
+      ? { ...item, status: 'error', error }
       : item)
+    this.emit()
+  }
+
+  /** Transfer all drafts out of the Composer without copying their image bytes. */
+  take(): AttachmentDraft[] {
+    const drafts = this.items
+    if (drafts.length === 0) return []
+    this.items = []
+    this.emit()
+    return drafts
+  }
+
+  /** Restore a failed or cancelled submission while preserving stable attachment ids. */
+  restore(drafts: readonly AttachmentDraft[], error?: string): void {
+    if (drafts.length === 0) return
+    const currentIds = new Set(this.items.map(item => item.id))
+    const restored = drafts
+      .filter(item => !currentIds.has(item.id))
+      .map(item => error === undefined
+        ? { ...item, status: 'ready' as const, error: undefined }
+        : { ...item, status: 'error' as const, error })
+    if (restored.length === 0) return
+    this.items = [...restored, ...this.items]
     this.emit()
   }
 

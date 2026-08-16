@@ -3,6 +3,15 @@ import type {
   RpcId,
 } from '@deepseek-ai/dsh-host-apiproxy'
 
+export interface PendingVisionActivity {
+  kind: 'vision'
+  imageCount: number
+  startedAt: number
+}
+
+export type PendingSubmissionActivity = PendingVisionActivity
+export type SubmissionActivityUpdate = Omit<PendingVisionActivity, 'startedAt'>
+
 /** Locally visible prompt retained until its durable user-message event is observed. */
 export interface PendingSubmission {
   key: number
@@ -10,6 +19,7 @@ export interface PendingSubmission {
   mode: 'queue' | 'steer'
   intent: 'working' | 'queueing' | 'steering'
   rpcId?: RpcId
+  activity?: PendingSubmissionActivity
 }
 
 function userMessageRpcId(entry: HistoryEntry): RpcId | undefined {
@@ -35,6 +45,19 @@ export class SubmissionTracker {
     const submission = { key: ++this.nextKey, text, mode, intent } as const
     this.pending = [...this.pending, submission]
     return submission
+  }
+
+  /** Attach or clear a preparation phase without changing prompt reconciliation identity. */
+  setActivity(key: number, activity: SubmissionActivityUpdate | undefined): void {
+    this.pending = this.pending.map((item) => {
+      if (item.key !== key) return item
+      if (activity !== undefined) {
+        return { ...item, activity: { ...activity, startedAt: Date.now() } }
+      }
+      const next = { ...item }
+      delete next.activity
+      return next
+    })
   }
 
   /** Attach the echoed RPC identity or retire an already durable prompt. */

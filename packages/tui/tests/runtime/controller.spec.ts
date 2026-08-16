@@ -211,23 +211,26 @@ describe('HarnessController', () => {
     await controller.start()
     let releasePreparation: (() => void) | undefined
 
-    const submission = controller.promptWithPreparation('analyze this image', 'queue', async () => {
+    const submission = controller.promptWithPreparation('analyze this image', 'queue', async (preparation) => {
+      preparation.setActivity({ kind: 'vision', imageCount: 1 })
       await new Promise<void>(resolve => { releasePreparation = resolve })
       return [{ type: 'text', text: 'prepared vision evidence' }]
     })
 
-    expect(controller.current.pendingSubmissions).toEqual([{
+    expect(controller.current.pendingSubmissions).toEqual([expect.objectContaining({
       key: 1,
       text: 'analyze this image',
       mode: 'queue',
       intent: 'working',
-    }])
+      activity: expect.objectContaining({ kind: 'vision', imageCount: 1 }),
+    })])
     expect(prompt).not.toHaveBeenCalled()
     releasePreparation?.()
     await submission
     expect(prompt).toHaveBeenCalledWith(expect.objectContaining({
       content: [{ type: 'text', text: 'prepared vision evidence' }],
     }))
+    expect(controller.current.pendingSubmissions[0]?.activity).toBeUndefined()
     controller.dispose()
   })
 

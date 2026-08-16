@@ -10,6 +10,7 @@ import type {
   VisionRequest,
   VisionStatus,
 } from '@vascent/deepseek-harness-vision'
+import type { PromptPreparationContext } from '../../runtime/controller.ts'
 import { AttachmentDraftStore } from './drafts.ts'
 
 export interface VisionGateway {
@@ -27,12 +28,17 @@ export interface VisionGateway {
 export type PreparedPromptSender = (
   displayText: string,
   mode: 'queue' | 'steer',
-  prepareContent: () => Promise<PromptContentPart[]>,
+  prepareContent: (context: PromptPreparationContext) => Promise<PromptContentPart[]>,
 ) => Promise<void>
+
+interface ActiveImageSubmission {
+  abort: AbortController
+  restoreDrafts: boolean
+}
 
 /** Owns the only image submission state machine between the composer and Harness. */
 export class AttachmentCoordinator {
-  private abort: AbortController | undefined
+  private active: ActiveImageSubmission | undefined
 
   constructor(
     readonly drafts: AttachmentDraftStore,
@@ -40,8 +46,15 @@ export class AttachmentCoordinator {
     private readonly onProxyDisclosure?: (provider: string, model: string) => void,
   ) {}
 
-  cancel(): void {
-    this.abort?.abort(new Error('Vision analysis cancelled.'))
+  get busy(): boolean {
+    return this.active !== undefined
+  }
+
+  cancel(restoreDrafts = true): void {
+    const active = this.active
+    if (active === undefined) return
+    active.restoreDrafts = restoreDrafts
+    active.abort.abort(new Error('Vision analysis cancelled.'))
   }
 
   async submit(
@@ -52,23 +65,24 @@ export class AttachmentCoordinator {
     limits: ImageAttachmentLimits | undefined,
     send: PreparedPromptSender,
   ): Promise<'native' | 'proxy'> {
-    if (this.abort !== undefined) throw new Error('Vision analysis is already in progress.')
+    if (this.active !== undefined) throw new Error('Vision analysis is already in progress.')
     const images = [...this.drafts.snapshot]
     if (images.length === 0) throw new Error('No images are attached.')
     const ids = images.map(image => image.id)
     try {
       this.checkLimits(images, limits)
     } catch (error: unknown) {
-      this.drafts.setStatus(ids, 'error', error instanceof Error ? error.message : String(error))
+      this.drafts.setError(ids, error instanceof Error ? error.message : String(error))
       throw error
     }
-    this.drafts.setStatus(ids, 'analyzing')
     const abort = new AbortController()
-    this.abort = abort
+    const active = { abort, restoreDrafts: true }
+    this.active = active
     let route: 'native' | 'proxy' | undefined
     let stagedAnalysisId: string | undefined
     try {
-      await send(text.trim() === '' ? '[Image]' : text, mode, async () => {
+      await send(text.trim() === '' ? '[Image]' : text, mode, async (preparation) => {
+        this.drafts.take()
         const capability = await this.vision.capability(selection.provider, selection.model, abort.signal)
         if (capability.strategy === 'disabled') throw new Error(capability.message)
         if (capability.strategy === 'native') {
@@ -84,6 +98,7 @@ export class AttachmentCoordinator {
           ]
         }
         route = 'proxy'
+        preparation.setActivity({ kind: 'vision', imageCount: images.length })
         const status = await this.vision.status(abort.signal)
         if (!status.proxyRegistered || !status.proxySupportsImages) {
           throw new Error(`Vision proxy ${status.config.proxyProvider}/${status.config.proxyModel} is not ready. Open /config vision.`)
@@ -109,17 +124,18 @@ export class AttachmentCoordinator {
           { type: 'text', text },
         ]
       })
-      this.drafts.clear()
       if (route === undefined) throw new Error('Vision did not resolve an image route.')
       return route
     } catch (error: unknown) {
       if (stagedAnalysisId !== undefined) this.vision.discard(stagedAnalysisId)
       const message = error instanceof Error ? error.message : String(error)
-      if (abort.signal.aborted) this.drafts.setStatus(ids, 'ready')
-      else this.drafts.setStatus(ids, 'error', message)
+      if (active.restoreDrafts) {
+        if (abort.signal.aborted) this.drafts.restore(images)
+        else this.drafts.restore(images, message)
+      }
       throw error
     } finally {
-      if (this.abort === abort) this.abort = undefined
+      if (this.active === active) this.active = undefined
     }
   }
 

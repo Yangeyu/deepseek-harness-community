@@ -54,6 +54,20 @@ describe('SubmissionTracker', () => {
     expect(tracker.start('later', 'queue', true).intent).toBe('queueing')
   })
 
+  it('tracks a transient Vision phase without replacing prompt identity', () => {
+    const tracker = new SubmissionTracker()
+    const pending = tracker.start('analyze', 'queue', false)
+
+    tracker.setActivity(pending.key, { kind: 'vision', imageCount: 2 })
+    expect(tracker.snapshot[0]).toMatchObject({
+      key: pending.key,
+      activity: { kind: 'vision', imageCount: 2, startedAt: expect.any(Number) },
+    })
+
+    tracker.setActivity(pending.key, undefined)
+    expect(tracker.snapshot).toEqual([pending])
+  })
+
   it('retires command input that has no durable user-message event', () => {
     const tracker = new SubmissionTracker()
     const pending = tracker.start('/compact', 'queue', false)
