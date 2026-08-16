@@ -214,7 +214,7 @@ describe('HarnessController', () => {
     const submission = controller.promptWithPreparation('analyze this image', 'queue', async (preparation) => {
       preparation.setActivity({ kind: 'vision', analysisId: 'analysis-1', imageCount: 1 })
       await new Promise<void>(resolve => { releasePreparation = resolve })
-      return [{ type: 'text', text: 'prepared vision evidence' }]
+      return { kind: 'content', content: [{ type: 'text', text: 'prepared vision evidence' }] }
     })
 
     expect(controller.current.pendingSubmissions).toEqual([expect.objectContaining({
@@ -237,6 +237,30 @@ describe('HarnessController', () => {
     controller.dispose()
   })
 
+  it('accepts prepared Vision admission without resubmitting through Host prompt', async () => {
+    const { api, prompt } = fakeApi()
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+    const commit = vi.fn(async () => {})
+
+    await controller.promptWithPreparation('analyze this image', 'queue', async () => ({
+      kind: 'admission',
+      commit,
+    }))
+
+    expect(prompt).not.toHaveBeenCalled()
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ rpcId: expect.any(String) }))
+    expect(controller.current.pendingSubmissions[0]).toMatchObject({
+      text: 'analyze this image',
+      rpcId: expect.any(String),
+    })
+    controller.dispose()
+  })
+
   it('retires an optimistic image prompt when preparation fails', async () => {
     const { api, prompt } = fakeApi()
     const controller = new HarnessController(api, {
@@ -249,6 +273,25 @@ describe('HarnessController', () => {
     await expect(controller.promptWithPreparation('retry this image', 'queue', async () => {
       throw new Error('Vision proxy failed')
     })).rejects.toThrow('Vision proxy failed')
+
+    expect(controller.current.pendingSubmissions).toEqual([])
+    expect(prompt).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
+  it('retires an optimistic image prompt when Vision admission fails', async () => {
+    const { api, prompt } = fakeApi()
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+
+    await expect(controller.promptWithPreparation('retry this image', 'queue', async () => ({
+      kind: 'admission',
+      commit: async () => { throw new Error('Vision admission failed') },
+    }))).rejects.toThrow('Vision admission failed')
 
     expect(controller.current.pendingSubmissions).toEqual([])
     expect(prompt).not.toHaveBeenCalled()

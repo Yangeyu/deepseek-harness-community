@@ -2,7 +2,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
-import type { PromptContentPart } from '@deepseek-ai/dsh-host-apiproxy'
+import type { PromptContentPart, RpcId } from '@deepseek-ai/dsh-host-apiproxy'
 import type {
   VisionCapability,
   VisionConfig,
@@ -29,12 +29,14 @@ const config: VisionConfig = {
   maxTokens: 2_048,
 }
 
-function gateway(route: VisionCapability): VisionGateway & { analyze: ReturnType<typeof vi.fn> } {
+function gateway(route: VisionCapability): VisionGateway & {
+  analyze: ReturnType<typeof vi.fn>
+  admit: ReturnType<typeof vi.fn>
+} {
   const analyze = vi.fn(async (request: VisionRequest) => ({
     analysisId: request.analysisId,
     provider: 'proxy',
     model: 'vision',
-    marker: `marker:${request.analysisId}`,
     observation: 'visible evidence',
     attachments: [],
     durationMs: 4,
@@ -54,6 +56,7 @@ function gateway(route: VisionCapability): VisionGateway & { analyze: ReturnType
     setMode: vi.fn(async () => {}),
     configureRecommendedDashScope: vi.fn(async () => {}),
     analyze,
+    admit: vi.fn(async () => {}),
     discard: vi.fn(),
   }
 }
@@ -72,8 +75,9 @@ function preparedSender(
   onActivity?: (activity: { kind: 'vision'; analysisId: string; imageCount: number }) => void,
 ) {
   return vi.fn<PreparedPromptSender>(async (_text, _mode, prepareContent) => {
-    const content = await prepareContent({ setActivity: activity => { onActivity?.(activity) } })
-    onContent?.(content)
+    const prepared = await prepareContent({ setActivity: activity => { onActivity?.(activity) } })
+    if (prepared.kind === 'content') onContent?.(prepared.content)
+    else await prepared.commit({ rpcId: 'rpc-test' as RpcId })
   })
 }
 
@@ -115,7 +119,9 @@ describe('AttachmentCoordinator', () => {
     let submittedContent: PromptContentPart[] = []
     const send = vi.fn<PreparedPromptSender>(async (display, _mode, prepareContent) => {
       displayText = display
-      submittedContent = await prepareContent({ setActivity: () => {} })
+      const prepared = await prepareContent({ setActivity: () => {} })
+      if (prepared.kind !== 'content') throw new Error('expected native content')
+      submittedContent = prepared.content
     })
 
     await new AttachmentCoordinator(store, gateway({
@@ -133,14 +139,13 @@ describe('AttachmentCoordinator', () => {
     expect(submittedContent[0]).toEqual({ type: 'text', text: '[Image]' })
   })
 
-  it('stages proxy evidence before submitting the exact user text', async () => {
+  it('commits proxy evidence through the durable Vision admission path', async () => {
     const store = new AttachmentDraftStore()
     addPng(store)
     const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
-    let submittedContent: PromptContentPart[] = []
     const activities: Array<{ kind: 'vision'; analysisId: string; imageCount: number }> = []
     const send = preparedSender(
-      content => { submittedContent = content },
+      undefined,
       activity => { activities.push(activity) },
     )
 
@@ -157,10 +162,13 @@ describe('AttachmentCoordinator', () => {
       sessionId: 'session',
       userText: 'inspect this',
     }), expect.any(AbortSignal))
-    expect(submittedContent).toEqual([
-      { type: 'text', text: 'marker:analysis-id' },
-      { type: 'text', text: 'inspect this' },
-    ])
+    expect(vision.admit).toHaveBeenCalledWith({
+      analysisId: 'analysis-id',
+      sessionId: 'session',
+      promptText: 'inspect this',
+      mode: 'queue',
+      rpcId: 'rpc-test',
+    })
     expect(activities).toEqual([{ kind: 'vision', analysisId: 'analysis-id', imageCount: 1 }])
   })
 
@@ -175,7 +183,6 @@ describe('AttachmentCoordinator', () => {
         analysisId: request.analysisId,
         provider: 'proxy',
         model: 'vision',
-        marker: `marker:${request.analysisId}`,
         observation: 'visible evidence',
         attachments: [],
         durationMs: 4,
@@ -200,6 +207,51 @@ describe('AttachmentCoordinator', () => {
     releaseAnalysis()
     await submission
     expect(coordinator.busy).toBe(false)
+  })
+
+  it('restores drafts when durable proxy admission fails after analysis', async () => {
+    const store = new AttachmentDraftStore()
+    addPng(store)
+    const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
+    vision.admit.mockRejectedValueOnce(new Error('Session changed before admission.'))
+
+    await expect(new AttachmentCoordinator(store, vision).submit(
+      'session',
+      { provider: 'deepseek', model: 'chat' },
+      'inspect this',
+      'queue',
+      undefined,
+      preparedSender(),
+    )).rejects.toThrow('Session changed before admission.')
+
+    expect(vision.discard).toHaveBeenCalledWith('analysis-id')
+    expect(store.snapshot).toHaveLength(1)
+    expect(store.snapshot[0]?.error).toBe('Session changed before admission.')
+  })
+
+  it('does not restore drafts after durable proxy admission has committed', async () => {
+    const store = new AttachmentDraftStore()
+    addPng(store)
+    const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
+    const send = vi.fn<PreparedPromptSender>(async (_text, _mode, prepareContent) => {
+      const prepared = await prepareContent({ setActivity: () => {} })
+      if (prepared.kind !== 'admission') throw new Error('expected Vision admission')
+      await prepared.commit({ rpcId: 'rpc-test' as RpcId })
+      throw new Error('presentation failed after admission')
+    })
+
+    await expect(new AttachmentCoordinator(store, vision).submit(
+      'session',
+      { provider: 'deepseek', model: 'chat' },
+      'inspect this',
+      'queue',
+      undefined,
+      send,
+    )).rejects.toThrow('presentation failed after admission')
+
+    expect(vision.admit).toHaveBeenCalledOnce()
+    expect(vision.discard).not.toHaveBeenCalled()
+    expect(store.snapshot).toEqual([])
   })
 
   it('retains failed drafts with an actionable error', async () => {

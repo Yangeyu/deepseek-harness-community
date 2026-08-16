@@ -33,6 +33,9 @@ All notable changes to this project are documented in this file.
   `user/message` source instead of an unregistered `vision/analysis` event;
   present the user prompt before its Vision card and keep failed pre-submission
   analyses out of session history.
+- Commit proxy prompts through a two-phase, restart-safe inbox admission that
+  retains standard image blocks for authenticated lookup and session export,
+  then admits only the exact user text and untrusted observation to text models.
 - Add `/config vision` and `/vision`, model-switch safety for native-image
   history, expandable Transcript cards, and timed Trajectory records that
   participate in bottleneck detection.

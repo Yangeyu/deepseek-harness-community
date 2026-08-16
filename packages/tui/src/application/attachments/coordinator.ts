@@ -1,16 +1,17 @@
 import type { ImageAttachmentLimits } from '@deepseek-ai/dsh-attachment'
+import type { ModelSelection } from '@deepseek-ai/dsh-host-apiproxy'
 import type {
-  ModelSelection,
-  PromptContentPart,
-} from '@deepseek-ai/dsh-host-apiproxy'
-import type {
+  VisionAdmissionRequest,
   VisionAnalysis,
   VisionCapability,
   VisionConfig,
   VisionRequest,
   VisionStatus,
 } from '@vascent/deepseek-harness-vision'
-import type { PromptPreparationContext } from '../../runtime/controller.ts'
+import type {
+  PreparedPrompt,
+  PromptPreparationContext,
+} from '../../runtime/controller.ts'
 import { AttachmentDraftStore } from './drafts.ts'
 
 export interface VisionGateway {
@@ -22,13 +23,14 @@ export interface VisionGateway {
   setMode(mode: VisionConfig['mode']): Promise<void>
   configureRecommendedDashScope(): Promise<void>
   analyze(request: VisionRequest, signal?: AbortSignal): Promise<VisionAnalysis>
+  admit(request: VisionAdmissionRequest): void | Promise<void>
   discard(analysisId: string): void
 }
 
 export type PreparedPromptSender = (
   displayText: string,
   mode: 'queue' | 'steer',
-  prepareContent: (context: PromptPreparationContext) => Promise<PromptContentPart[]>,
+  prepareContent: (context: PromptPreparationContext) => Promise<PreparedPrompt>,
 ) => Promise<void>
 
 interface ActiveImageSubmission {
@@ -87,15 +89,18 @@ export class AttachmentCoordinator {
         if (capability.strategy === 'disabled') throw new Error(capability.message)
         if (capability.strategy === 'native') {
           route = 'native'
-          return [
-            { type: 'text', text: promptText },
-            ...images.map(image => ({
-              type: 'image' as const,
-              mediaType: image.mediaType,
-              data: Buffer.from(image.data).toString('base64'),
-              name: image.name,
-            })),
-          ]
+          return {
+            kind: 'content',
+            content: [
+              { type: 'text', text: promptText },
+              ...images.map(image => ({
+                type: 'image' as const,
+                mediaType: image.mediaType,
+                data: Buffer.from(image.data).toString('base64'),
+                name: image.name,
+              })),
+            ],
+          }
         }
         route = 'proxy'
         const analysisId = this.vision.newAnalysisId()
@@ -118,10 +123,23 @@ export class AttachmentCoordinator {
           })),
         }, abort.signal)
         stagedAnalysisId = analysisId
-        return [
-          { type: 'text', text: analysis.marker },
-          { type: 'text', text: promptText },
-        ]
+        abort.signal.throwIfAborted()
+        return {
+          kind: 'admission',
+          commit: async ({ rpcId, clientTimeZone }) => {
+            abort.signal.throwIfAborted()
+            await this.vision.admit({
+              analysisId: analysis.analysisId,
+              sessionId,
+              promptText,
+              mode,
+              rpcId: String(rpcId),
+              ...clientTimeZone === undefined ? {} : { clientTimeZone },
+            })
+            stagedAnalysisId = undefined
+            active.restoreDrafts = false
+          },
+        }
       })
       if (route === undefined) throw new Error('Vision did not resolve an image route.')
       return route

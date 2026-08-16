@@ -4,6 +4,11 @@ import type {
 } from '@deepseek-ai/dsh-attachment'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 
+export interface VisionObservationBlock {
+  type: 'community-vision-observation'
+  text: string
+}
+
 export type VisionMode = 'auto' | 'proxy' | 'disabled'
 
 export interface VisionConfig {
@@ -42,7 +47,6 @@ export interface VisionAnalysis {
   analysisId: string
   provider: string
   model: string
-  marker: string
   observation: string
   attachments: readonly ImageAttachmentRef[]
   durationMs: number
@@ -51,9 +55,16 @@ export interface VisionAnalysis {
   usage?: TokenUsage
 }
 
-/** Structured provenance persisted inside the supported `user/message` event. */
-export interface VisionEvidenceSource {
-  kind: 'community-vision'
+export interface VisionAdmissionRequest {
+  analysisId: string
+  sessionId: string
+  promptText: string
+  mode: 'queue' | 'steer'
+  rpcId: string
+  clientTimeZone?: string
+}
+
+interface VisionEvidence {
   analysisId: string
   provider: string
   model: string
@@ -62,6 +73,19 @@ export interface VisionEvidenceSource {
   finishReason: string
   truncated: boolean
   usage?: TokenUsage
+}
+
+/** Structured provenance persisted inside the supported `user/message` event. */
+export interface VisionEvidenceSource extends VisionEvidence {
+  kind: 'community-vision'
+}
+
+/** Durable, pre-admission carrier that keeps proxy media recoverable but model-invisible. */
+export interface VisionSubmissionSource extends VisionEvidence {
+  kind: 'community-vision-submission'
+  sessionId: string
+  rpcId: string
+  clientTimeZone?: string
 }
 
 export interface VisionStatus {

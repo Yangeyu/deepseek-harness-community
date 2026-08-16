@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { VisionObservationStage } from '../src/events.ts'
 
 const ANALYSIS_ID = '00000000-0000-4000-8000-000000000001'
+const attachment = {
+  attachmentId: 'sha256:image-1',
+  mediaType: 'image/png',
+  bytes: 128,
+  width: 16,
+  height: 8,
+  name: 'screen.png',
+} as ImageAttachmentRef
 
 function fixture(): {
   stage: VisionObservationStage
@@ -24,68 +32,100 @@ function fixture(): {
   }
 }
 
+function stageAnalysis(stage: VisionObservationStage, sessionId = 'session-1'): void {
+  stage.set(ANALYSIS_ID, {
+    sessionId,
+    observation: '<vision-observation>evidence</vision-observation>',
+    source: {
+      kind: 'community-vision',
+      analysisId: ANALYSIS_ID,
+      provider: 'proxy',
+      model: 'vision',
+      attachments: [attachment],
+      durationMs: 500,
+      finishReason: 'stop',
+      truncated: false,
+    },
+  })
+}
+
 describe('VisionObservationStage', () => {
-  it('injects untrusted evidence once and preserves the original user message identity', async () => {
+  it('persists standard image blocks before admitting text-only messages', async () => {
     const { stage, invoke } = fixture()
-    stage.set(ANALYSIS_ID, {
+    stageAnalysis(stage)
+    const submission = stage.submission({
+      analysisId: ANALYSIS_ID,
       sessionId: 'session-1',
-      observation: '<vision-observation>evidence</vision-observation>',
-      source: {
-        kind: 'community-vision',
-        analysisId: ANALYSIS_ID,
-        provider: 'proxy',
-        model: 'vision',
-        attachments: [],
-        durationMs: 500,
-        finishReason: 'stop',
-        truncated: false,
-      },
+      promptText: 'What failed?',
+      mode: 'queue',
+      rpcId: 'rpc-1',
+      clientTimeZone: 'Asia/Shanghai',
     })
-    const original = createUserMessage({
-      source: { kind: 'user' },
+
+    expect(submission).toMatchObject({
+      source: {
+        kind: 'community-vision-submission',
+        analysisId: ANALYSIS_ID,
+        attachments: [attachment],
+      },
       content: [
-        { type: 'text', text: stage.marker(ANALYSIS_ID) },
         { type: 'text', text: 'What failed?' },
+        { type: 'community-vision-observation', text: '<vision-observation>evidence</vision-observation>' },
+        { type: 'image', attachment },
       ],
     })
 
-    const result = await invoke('session-1', { kind: 'enter', messages: [original] })
+    const result = await invoke('session-1', { kind: 'enter', messages: [submission] })
 
     expect(result.kind).toBe('enter')
     if (result.kind !== 'enter') return
     expect(result.messages).toHaveLength(2)
     expect(result.messages[0]).toMatchObject({
-      id: original.id,
-      source: original.source,
+      id: submission.id,
+      source: { kind: 'user', rpcId: 'rpc-1', clientTimeZone: 'Asia/Shanghai' },
       content: [{ type: 'text', text: 'What failed?' }],
     })
-    expect(result.messages[1]?.source).toMatchObject({
-      kind: 'community-vision',
+    expect(result.messages[1]).toMatchObject({
+      source: { kind: 'community-vision', analysisId: ANALYSIS_ID, attachments: [attachment] },
+      content: [{ type: 'text', text: '<vision-observation>evidence</vision-observation>' }],
+    })
+    expect(result.messages.flatMap(message => message.content)).not.toContainEqual(expect.objectContaining({ type: 'image' }))
+  })
+
+  it('can admit a durable submission after process-local staging is gone', async () => {
+    const first = fixture()
+    stageAnalysis(first.stage)
+    const durable = first.stage.submission({
       analysisId: ANALYSIS_ID,
+      sessionId: 'session-1',
+      promptText: 'Resume safely',
+      mode: 'queue',
+      rpcId: 'rpc-resume',
+    })
+    const resumed = fixture()
+
+    const result = await resumed.invoke('session-1', { kind: 'enter', messages: [durable] })
+
+    expect(result).toMatchObject({
+      kind: 'enter',
+      messages: [
+        { source: { kind: 'user', rpcId: 'rpc-resume' } },
+        { source: { kind: 'community-vision', analysisId: ANALYSIS_ID } },
+      ],
     })
   })
 
-  it('rejects a marker that does not belong to the active session', async () => {
+  it('rejects a durable submission attached to another session', async () => {
     const { stage, invoke } = fixture()
-    stage.set(ANALYSIS_ID, {
+    stageAnalysis(stage)
+    const submission = stage.submission({
+      analysisId: ANALYSIS_ID,
       sessionId: 'session-1',
-      observation: 'evidence',
-      source: {
-        kind: 'community-vision',
-        analysisId: ANALYSIS_ID,
-        provider: 'proxy',
-        model: 'vision',
-        attachments: [],
-        durationMs: 500,
-        finishReason: 'stop',
-        truncated: false,
-      },
-    })
-    const message = createUserMessage({
-      source: { kind: 'user' },
-      content: [{ type: 'text', text: stage.marker(ANALYSIS_ID) }, { type: 'text', text: 'question' }],
+      promptText: 'question',
+      mode: 'queue',
+      rpcId: 'rpc-1',
     })
 
-    await expect(invoke('session-2', { kind: 'enter', messages: [message] })).resolves.toEqual({ kind: 'reject' })
+    await expect(invoke('session-2', { kind: 'enter', messages: [submission] })).resolves.toEqual({ kind: 'reject' })
   })
 })

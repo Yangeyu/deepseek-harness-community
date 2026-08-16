@@ -1,6 +1,6 @@
 # TUI v0.1.7 Design: Visual Input and Vision Proxy
 
-Status: implemented; release validation pending
+Status: implemented; release gates passed
 
 Target: the next feature release after `v0.1.6`
 
@@ -73,10 +73,11 @@ baseline instead of recreating them:
   adapter can prove them.
 - `LlmRuntime.stream()` accepts provider-neutral messages containing durable
   image blocks.
-- `SessionEventMap` is merge-extensible and `Session.append()` persists
-  plugin-owned JSON events.
-- Session attachment lookup and export discover image blocks stored in a custom
-  event's `data.content`, so proxy-only images remain authorized and exportable.
+- Durable `agent/inbox/spliced` events retain inserted message content before
+  step admission.
+- Session attachment lookup and export discover standard image blocks in those
+  inserted messages, so proxy-only images remain authorized and exportable
+  without adding an unsupported session-event type.
 - Agent pre-step processing can add source-attributed plugin context before a
   user request enters a model step.
 
@@ -253,7 +254,7 @@ and state: `ready`, `analyzing`, or `error`.
 - Draft bytes stay in memory. No image or temporary manifest is written into
   the user's workspace.
 - A validation or Vision failure keeps the editor text and drafts available for
-  correction or retry. Successful Host admission clears them.
+  correction or retry. Successful admission clears them.
 
 The attachment service's projected limits are used for early feedback, but
 Host validation is repeated at admission and remains authoritative.
@@ -264,7 +265,7 @@ Host validation is repeated at admission and remains authoritative.
 ready
   └─ validate ─> resolving route
                     ├─ native ─> Host admission ─> accepted
-                    └─ proxy  ─> analyzing ─> staging ─> Host admission ─> accepted
+                    └─ proxy  ─> analyzing ─> staging ─> Vision admission ─> accepted
 
 validation / capability / analysis / admission failure ─> ready + bounded error
 cancellation before admission                          ─> ready
@@ -294,7 +295,7 @@ credentials, settings, and model capability may change while the TUI is open;
 no startup snapshot is treated as permanent truth.
 
 Local model selection is serialized against an active image submission. A
-concurrent external selection change may still make Host admission fail; that
+concurrent external selection change may still make final admission fail; that
 failure is surfaced and the draft is retained rather than being retried through
 a different route without consent.
 
@@ -319,25 +320,30 @@ turn from repeatedly replaying unsupported historical blocks.
 4. Call the proxy through `ctx.llm.stream()` with no tools and a bounded output.
 5. Assemble visible text, usage, finish reason, and safe provider failure facts.
 6. Bound and wrap the result as an untrusted `VisionObservation`.
-7. Stage the observation and a structured `VisionEvidenceSource` for the exact
-   following TUI submission.
-8. Enter the user's durable message first, then the source-attributed evidence
-   message. The user's message remains the exact text they authored and
-   contains no proxy control markup.
-9. Submit the original text through the ordinary ApiProxy path so request id,
-   queue/steer semantics, optimistic reconciliation, and cancellation remain
-   unchanged.
+7. Stage the observation and structured provenance under the exact random
+   analysis id while the controller still owns cancellation and session-change
+   checks.
+8. After those checks pass, mint the same client RPC identity used for ordinary
+   optimistic reconciliation and atomically enqueue one
+   `community-vision-submission` message. Its content contains the exact prompt,
+   one plugin-owned observation block, and standard durable image blocks.
+9. The agent pre-step hook admits that self-contained message as two supported
+   `user/message` events: the original user prompt with the preserved RPC source,
+   followed by the source-attributed text observation. Image and staging blocks
+   never enter the model-visible surface.
 
-The staging mechanism must correlate by a cryptographically random analysis id,
-not by user text or timing. A reserved control block may travel only through the
-not-yet-durable inbox message so the pre-step hook can bind the observation and
-strip that block before event append. The marker must never enter the session
-log, transcript, provider request, or exported artifact. A missing or mismatched
-analysis rejects the proposed step instead of submitting the image-less prompt.
+The two-phase mechanism correlates by a cryptographically random analysis id,
+not by user text or timing. Before commit, session changes, cancellation, or an
+admission failure discard the process-local stage and restore the drafts. After
+commit, `agent/inbox/spliced` contains all data needed to finish admission after
+a process restart; it does not depend on the process-local stage. A malformed or
+cross-session submission rejects the proposed step instead of sending an
+image-less prompt.
 
-This preserves two separate durable facts inside supported `user/message`
-events:
+This preserves three durable facts through supported Harness carriers:
 
+- the `agent/inbox/spliced` insertion owns standard image blocks for attachment
+  authorization and export;
 - the user-sourced message owns the exact request displayed to the human; and
 - the `community-vision` evidence source owns image references, route, timing,
   completion metadata, and the model-facing observation.
@@ -397,10 +403,18 @@ interface VisionEvidenceSource {
 }
 ```
 
+Before pre-step admission, a separate `community-vision-submission` source and
+`community-vision-observation` content block form the durable two-phase carrier.
+They exist only inside the pending `agent/inbox/spliced` insertion. The hook
+validates the session and matching attachment ids, preserves the original
+message id/RPC id for the user prompt, and converts the observation into the
+ordinary text block shown above.
+
 The evidence message content owns the bounded observation, while its source
 owns trusted provenance and timing. Transcript and Trajectory recognize that
 source and render a Vision record after the corresponding user input. No custom
-session event is introduced, so stock Harness persistence can resume the log.
+session event is introduced, so stock Harness persistence can resume both a
+pending submission and the admitted conversation.
 
 Failure or cancellation before prompt admission does not append conversation
 history. The draft remains visible with its bounded error and can be retried
@@ -529,7 +543,7 @@ diagnostic.
 - Kitty repeat/release input and concurrent clipboard calls still create only
   one draft per physical paste;
 - repeatable CLI images are parsed in order for new and resumed sessions;
-- draft retention across validation, Vision, Host admission, and cancellation;
+- draft retention across validation, Vision, final admission, and cancellation;
 - ordinary text submission remains unchanged with no image;
 - proxy submits original visible user text and one plugin observation;
 - native submission uses existing API image parts and never calls the proxy;
@@ -558,8 +572,10 @@ diagnostic.
   `DASHSCOPE_API_KEY` is available. It is never a paid default CI step.
 
 The release gate remains `pnpm run check`, `git diff --check`, packed-file
-inspection, and manual PTY acceptance. Generated `dist/` artifacts stay out of
-Git and are rebuilt before the private Vision workspace is bundled.
+inspection, deterministic export compatibility, and manual PTY acceptance.
+Paid provider inference is intentionally excluded from the default release gate.
+Generated `dist/` artifacts stay out of Git and are rebuilt before the private
+Vision workspace is bundled.
 
 ## Delivery slices
 
@@ -597,7 +613,7 @@ send an image to a model whose capability is absent or explicitly text-only.
   never degrades into an image-less prompt.
 - [x] Original proxy images use the existing authenticated attachment carrier
   used by session lookup and export.
-- [x] Proxy observation, route, status, usage, and recorded duration are durable
+- [x] Proxy observation, route, status, usage, and recorded duration survive
   resume and appear in Transcript and Trajectory.
 - [x] The model-facing observation is source-attributed, bounded, escaped, and
   explicitly untrusted.
@@ -609,7 +625,7 @@ send an image to a model whose capability is absent or explicitly text-only.
   deep link and no `/control`-style duplicate state is introduced.
 - [x] `packages/vision` has no dependency on TUI or pi-tui, and the published
   package still has one installable public artifact.
-- [ ] Full checks, packed-file inspection, resume, export, and manual PTY gates
+- [x] Full checks, packed-file inspection, resume, export, and manual PTY gates
   pass before release.
 
 ## Deferred work

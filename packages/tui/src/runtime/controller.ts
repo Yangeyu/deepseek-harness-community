@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type {
   ClientResponse,
   HistoryEntry,
@@ -8,11 +9,11 @@ import type {
   PromptContentPart,
   MuxFrame,
   QueuedInboxItem,
-  RpcId,
   RpcRequest,
   SessionModels,
   SessionSummary,
 } from '@deepseek-ai/dsh-host-apiproxy'
+import { RpcId } from '@deepseek-ai/dsh-host-apiproxy'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 // Merge the Web composer's projection keys into SessionProjectionMap.
 import type {} from '@deepseek-ai/dsh-session-stats/client'
@@ -65,6 +66,15 @@ interface RpcResultLike<T> {
 export interface PromptPreparationContext {
   setActivity(activity: SubmissionActivityUpdate): void
 }
+
+export interface PreparedPromptCommitContext {
+  rpcId: RpcId
+  clientTimeZone?: string
+}
+
+export type PreparedPrompt =
+  | { kind: 'content'; content: PromptContentPart[] }
+  | { kind: 'admission'; commit(context: PreparedPromptCommitContext): Promise<void> }
 
 function valueOf<T>(response: RpcResultLike<T>): T {
   if (response.result.ok) return response.result.value
@@ -223,11 +233,11 @@ export class HarnessController {
     await this.submitPrompt(text, mode, content)
   }
 
-  /** Publish a prompt immediately while an attachment pipeline prepares its Host content. */
+  /** Publish a prompt immediately while an attachment pipeline prepares one atomic admission. */
   async promptWithPreparation(
     text: string,
     mode: 'queue' | 'steer',
-    prepareContent: (context: PromptPreparationContext) => Promise<PromptContentPart[]>,
+    prepareContent: (context: PromptPreparationContext) => Promise<PreparedPrompt>,
   ): Promise<void> {
     await this.submitPrompt(text, mode, prepareContent)
   }
@@ -235,7 +245,7 @@ export class HarnessController {
   private async submitPrompt(
     text: string,
     mode: 'queue' | 'steer',
-    contentOrPreparation: PromptContentPart[] | ((context: PromptPreparationContext) => Promise<PromptContentPart[]>),
+    contentOrPreparation: PromptContentPart[] | ((context: PromptPreparationContext) => Promise<PreparedPrompt>),
   ): Promise<void> {
     const sessionId = this.requireSession()
     const generation = this.generation
@@ -258,16 +268,27 @@ export class HarnessController {
     const clientTimeZone = terminalTimeZone()
     let response: Awaited<ReturnType<IApiClient['sessions']['prompt']>>
     try {
-      const content = typeof contentOrPreparation === 'function'
+      const prepared = typeof contentOrPreparation === 'function'
         ? await contentOrPreparation({ setActivity })
-        : contentOrPreparation
+        : { kind: 'content' as const, content: contentOrPreparation }
       if (generation !== this.generation || sessionId !== this.state.sessionId) {
         throw new Error('The active session changed while preparing the prompt.')
+      }
+      if (prepared.kind === 'admission') {
+        const externalRpcId = RpcId(randomUUID())
+        await prepared.commit({
+          rpcId: externalRpcId,
+          ...clientTimeZone === undefined ? {} : { clientTimeZone },
+        })
+        if (generation !== this.generation || sessionId !== this.state.sessionId) return
+        this.submissions.accept(pending.key, externalRpcId)
+        this.patch({ pendingSubmissions: this.submissions.snapshot })
+        return
       }
       response = await this.api.sessions.prompt({
         sessionId,
         mode,
-        content,
+        content: prepared.content,
         ...clientTimeZone === undefined ? {} : { clientTimeZone },
       })
     } catch (error: unknown) {

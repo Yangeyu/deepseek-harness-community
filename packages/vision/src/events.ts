@@ -2,16 +2,18 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import {
   createUserMessage,
-  type ContentBlock,
+  freezeMessage,
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
-import type { VisionEvidenceSource } from './types.ts'
+import type {
+  VisionEvidenceSource,
+  VisionAdmissionRequest,
+  VisionSubmissionSource,
+} from './types.ts'
 
-// Keep one-use observations available across long-running or queued turns while
-// still bounding abandoned process-local entries.
+// Keep completed analyses available until atomic admission while bounding
+// process-local work abandoned by cancellation or a session change.
 const STAGE_TTL_MS = 24 * 60 * 60 * 1_000
-const MARKER_PREFIX = '<!-- dsh-vision-analysis:'
-const MARKER_SUFFIX = ' -->'
 
 interface StagedObservation {
   sessionId: string
@@ -20,19 +22,59 @@ interface StagedObservation {
   source: VisionEvidenceSource
 }
 
-function markerId(block: ContentBlock): string | undefined {
-  if (block.type !== 'text' || !block.text.startsWith(MARKER_PREFIX) || !block.text.endsWith(MARKER_SUFFIX)) {
-    return undefined
+function evidenceSource(
+  source: VisionSubmissionSource,
+  attachments = source.attachments,
+): VisionEvidenceSource {
+  return {
+    kind: 'community-vision',
+    analysisId: source.analysisId,
+    provider: source.provider,
+    model: source.model,
+    attachments,
+    durationMs: source.durationMs,
+    finishReason: source.finishReason,
+    truncated: source.truncated,
+    ...source.usage === undefined ? {} : { usage: source.usage },
   }
-  const id = block.text.slice(MARKER_PREFIX.length, -MARKER_SUFFIX.length)
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(id) ? id : undefined
 }
 
-function withoutMarker(message: UserMessage, content: ContentBlock[]): UserMessage {
-  return { ...message, content }
+function isSubmission(message: UserMessage): message is UserMessage & { source: VisionSubmissionSource } {
+  return message.source.kind === 'community-vision-submission'
 }
 
-/** One-use bridge from a completed proxy analysis to the next exact user message. */
+function matchesAttachments(message: UserMessage & { source: VisionSubmissionSource }): boolean {
+  const images = message.content.slice(2)
+  return images.length === message.source.attachments.length
+    && images.every((block, index) => block.type === 'image'
+      && String(block.attachment.attachmentId) === String(message.source.attachments[index]?.attachmentId))
+}
+
+function admittedMessages(message: UserMessage & { source: VisionSubmissionSource }): UserMessage[] | undefined {
+  const prompt = message.content[0]
+  const observation = message.content[1]
+  if (prompt?.type !== 'text'
+    || observation?.type !== 'community-vision-observation'
+    || !matchesAttachments(message)) return undefined
+  const source = message.source
+  const attachments = message.content.slice(2).flatMap(block => block.type === 'image' ? [block.attachment] : [])
+  const user = freezeMessage({
+    ...message,
+    content: [prompt],
+    source: {
+      kind: 'user' as const,
+      rpcId: source.rpcId,
+      ...source.clientTimeZone === undefined ? {} : { clientTimeZone: source.clientTimeZone },
+    },
+  })
+  const evidence = createUserMessage({
+    content: [{ type: 'text', text: observation.text }],
+    source: evidenceSource(source, attachments),
+  })
+  return [user, evidence]
+}
+
+/** Two-phase bridge from process-local analysis to durable media and text-only model input. */
 export class VisionObservationStage {
   private readonly staged = new Map<string, StagedObservation>()
 
@@ -43,35 +85,51 @@ export class VisionObservationStage {
       this.expire()
       const messages: UserMessage[] = []
       for (const message of decision.messages) {
-        const ids = message.content.map(markerId).filter((id): id is string => id !== undefined)
-        if (ids.length === 0) {
+        if (!isSubmission(message)) {
           messages.push(message)
           continue
         }
-        if (ids.length !== 1) return { kind: 'reject' }
-        const analysisId = ids[0]
-        if (analysisId === undefined) return { kind: 'reject' }
-        const staged = this.staged.get(analysisId)
-        if (staged === undefined || staged.sessionId !== String(agent.id)) return { kind: 'reject' }
-        const content = message.content.filter(block => markerId(block) === undefined)
-        if (content.length === 0) return { kind: 'reject' }
-        this.staged.delete(analysisId)
-        messages.push(withoutMarker(message, content))
-        messages.push(createUserMessage({
-          content: [{ type: 'text', text: staged.observation }],
-          source: staged.source,
-        }))
+        if (message.source.sessionId !== String(agent.id)) return { kind: 'reject' }
+        const admitted = admittedMessages(message)
+        if (admitted === undefined) return { kind: 'reject' }
+        messages.push(...admitted)
       }
       return { kind: 'enter', messages }
     })
   }
 
-  marker(analysisId: string): string {
-    return `${MARKER_PREFIX}${analysisId}${MARKER_SUFFIX}`
-  }
-
   set(analysisId: string, observation: Omit<StagedObservation, 'expiresAt'>): void {
     this.staged.set(analysisId, { ...observation, expiresAt: Date.now() + STAGE_TTL_MS })
+  }
+
+  submission(request: VisionAdmissionRequest): UserMessage {
+    this.expire()
+    const staged = this.staged.get(request.analysisId)
+    if (staged === undefined || staged.sessionId !== request.sessionId) {
+      throw new Error('Vision analysis is no longer available for this session.')
+    }
+    const source: VisionSubmissionSource = {
+      kind: 'community-vision-submission',
+      sessionId: request.sessionId,
+      rpcId: request.rpcId,
+      analysisId: staged.source.analysisId,
+      provider: staged.source.provider,
+      model: staged.source.model,
+      attachments: staged.source.attachments,
+      durationMs: staged.source.durationMs,
+      finishReason: staged.source.finishReason,
+      truncated: staged.source.truncated,
+      ...request.clientTimeZone === undefined ? {} : { clientTimeZone: request.clientTimeZone },
+      ...staged.source.usage === undefined ? {} : { usage: staged.source.usage },
+    }
+    return createUserMessage({
+      source,
+      content: [
+        { type: 'text', text: request.promptText },
+        { type: 'community-vision-observation', text: staged.observation },
+        ...staged.source.attachments.map(attachment => ({ type: 'image' as const, attachment })),
+      ],
+    })
   }
 
   discard(analysisId: string): void {

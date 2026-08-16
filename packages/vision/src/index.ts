@@ -23,25 +23,30 @@ import {
 import { chooseVisionRoute } from './routing.ts'
 import { VisionObservationStage } from './events.ts'
 import type {
+  VisionAdmissionRequest,
   VisionAnalysis,
   VisionCapability,
   VisionConfig,
   VisionEvidenceSource,
   VisionImageInput,
+  VisionObservationBlock,
   VisionRequest,
   VisionStatus,
+  VisionSubmissionSource,
 } from './types.ts'
 
 export { VisionConfigSchema as Config }
 export { chooseVisionRoute } from './routing.ts'
 export { VISION_SYSTEM_PROMPT, visionUserPrompt, wrapObservation } from './observation.ts'
 export type {
+  VisionAdmissionRequest,
   VisionAnalysis,
   VisionCapability,
   VisionConfig,
   VisionEvidenceSource,
   VisionImageInput,
   VisionMode,
+  VisionObservationBlock,
   VisionRequest,
   VisionStatus,
   VisionUnavailableReason,
@@ -58,8 +63,13 @@ declare module '@deepseek-ai/cordis' {
 }
 
 declare module '@deepseek-ai/dsh-llm' {
+  interface ContentBlockMap {
+    'community-vision-observation': VisionObservationBlock
+  }
+
   interface MessageSourceMap {
     'community-vision': VisionEvidenceSource
+    'community-vision-submission': VisionSubmissionSource
   }
 }
 
@@ -199,6 +209,15 @@ export class VisionService extends Service {
     this.observations.discard(analysisId)
   }
 
+  admit(request: VisionAdmissionRequest): void {
+    const agent = this.ctx.agents.get(SessionId(request.sessionId))
+    if (agent === undefined) throw new VisionError('SESSION_UNAVAILABLE', 'The active session is no longer available.')
+    const message = this.observations.submission(request)
+    if (request.mode === 'steer') agent.steer(message)
+    else agent.followup(message)
+    this.observations.discard(request.analysisId)
+  }
+
   async analyze(request: VisionRequest, signal?: AbortSignal): Promise<VisionAnalysis> {
     if (request.images.length === 0) throw new VisionError('NO_IMAGES', 'Vision analysis requires at least one image.')
     if (this.ctx.agents.get(SessionId(request.sessionId)) === undefined) {
@@ -269,7 +288,6 @@ export class VisionService extends Service {
       analysisId: request.analysisId,
       provider: info.provider,
       model: info.id,
-      marker: this.observations.marker(request.analysisId),
       observation: wrapped.text,
       attachments: saved,
       durationMs,
