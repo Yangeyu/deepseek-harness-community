@@ -211,6 +211,23 @@ export class HarnessController {
     mode: 'queue' | 'steer',
     content: PromptContentPart[] = [{ type: 'text', text }],
   ): Promise<void> {
+    await this.submitPrompt(text, mode, content)
+  }
+
+  /** Publish a prompt immediately while an attachment pipeline prepares its Host content. */
+  async promptWithPreparation(
+    text: string,
+    mode: 'queue' | 'steer',
+    prepareContent: () => Promise<PromptContentPart[]>,
+  ): Promise<void> {
+    await this.submitPrompt(text, mode, prepareContent)
+  }
+
+  private async submitPrompt(
+    text: string,
+    mode: 'queue' | 'steer',
+    contentOrPreparation: PromptContentPart[] | (() => Promise<PromptContentPart[]>),
+  ): Promise<void> {
     const sessionId = this.requireSession()
     const generation = this.generation
     const pending = this.submissions.start(text, mode, this.state.running)
@@ -227,6 +244,12 @@ export class HarnessController {
     const clientTimeZone = terminalTimeZone()
     let response: Awaited<ReturnType<IApiClient['sessions']['prompt']>>
     try {
+      const content = typeof contentOrPreparation === 'function'
+        ? await contentOrPreparation()
+        : contentOrPreparation
+      if (generation !== this.generation || sessionId !== this.state.sessionId) {
+        throw new Error('The active session changed while preparing the prompt.')
+      }
       response = await this.api.sessions.prompt({
         sessionId,
         mode,

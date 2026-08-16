@@ -10,7 +10,11 @@ import type {
   VisionStatus,
 } from '@vascent/deepseek-harness-vision'
 import { AttachmentDraftStore } from '../../src/application/attachments/drafts.ts'
-import { AttachmentCoordinator, type VisionGateway } from '../../src/application/attachments/coordinator.ts'
+import {
+  AttachmentCoordinator,
+  type PreparedPromptSender,
+  type VisionGateway,
+} from '../../src/application/attachments/coordinator.ts'
 import {
   detectImageMediaType,
   imageDraftFromPath,
@@ -63,11 +67,19 @@ function addPng(store: AttachmentDraftStore): void {
   })
 }
 
+function preparedSender(onContent?: (content: PromptContentPart[]) => void) {
+  return vi.fn<PreparedPromptSender>(async (_text, _mode, prepareContent) => {
+    const content = await prepareContent()
+    onContent?.(content)
+  })
+}
+
 describe('AttachmentCoordinator', () => {
   it('submits bytes directly when the active model supports images', async () => {
     const store = new AttachmentDraftStore()
     addPng(store)
-    const send = vi.fn(async (_text: string, _mode: string, _content: PromptContentPart[]) => {})
+    let submittedContent: PromptContentPart[] = []
+    const send = preparedSender(content => { submittedContent = content })
     const coordinator = new AttachmentCoordinator(store, gateway({
       strategy: 'native', provider: 'native', model: 'vision',
     }))
@@ -81,7 +93,7 @@ describe('AttachmentCoordinator', () => {
       send,
     )).resolves.toBe('native')
 
-    expect(send.mock.calls[0]?.[2]).toEqual([
+    expect(submittedContent).toEqual([
       { type: 'text', text: 'inspect this' },
       expect.objectContaining({ type: 'image', mediaType: 'image/png', name: 'screen.png' }),
     ])
@@ -92,7 +104,8 @@ describe('AttachmentCoordinator', () => {
     const store = new AttachmentDraftStore()
     addPng(store)
     const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
-    const send = vi.fn(async (_text: string, _mode: string, _content: PromptContentPart[]) => {})
+    let submittedContent: PromptContentPart[] = []
+    const send = preparedSender(content => { submittedContent = content })
 
     await new AttachmentCoordinator(store, vision).submit(
       'session',
@@ -107,7 +120,7 @@ describe('AttachmentCoordinator', () => {
       sessionId: 'session',
       userText: 'inspect this',
     }), expect.any(AbortSignal))
-    expect(send.mock.calls[0]?.[2]).toEqual([
+    expect(submittedContent).toEqual([
       { type: 'text', text: 'marker:analysis-id' },
       { type: 'text', text: 'inspect this' },
     ])
@@ -126,7 +139,7 @@ describe('AttachmentCoordinator', () => {
       'inspect this',
       'queue',
       undefined,
-      vi.fn(),
+      preparedSender(),
     )).rejects.toThrow('Configure Vision first.')
     expect(store.snapshot[0]).toMatchObject({ status: 'error', error: 'Configure Vision first.' })
   })

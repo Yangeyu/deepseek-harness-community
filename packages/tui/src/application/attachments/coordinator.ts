@@ -24,10 +24,10 @@ export interface VisionGateway {
   discard(analysisId: string): void
 }
 
-export type PromptSender = (
+export type PreparedPromptSender = (
   displayText: string,
   mode: 'queue' | 'steer',
-  content: PromptContentPart[],
+  prepareContent: () => Promise<PromptContentPart[]>,
 ) => Promise<void>
 
 /** Owns the only image submission state machine between the composer and Harness. */
@@ -50,7 +50,7 @@ export class AttachmentCoordinator {
     text: string,
     mode: 'queue' | 'steer',
     limits: ImageAttachmentLimits | undefined,
-    send: PromptSender,
+    send: PreparedPromptSender,
   ): Promise<'native' | 'proxy'> {
     if (this.abort !== undefined) throw new Error('Vision analysis is already in progress.')
     const images = [...this.drafts.snapshot]
@@ -65,54 +65,55 @@ export class AttachmentCoordinator {
     this.drafts.setStatus(ids, 'analyzing')
     const abort = new AbortController()
     this.abort = abort
+    let route: 'native' | 'proxy' | undefined
+    let stagedAnalysisId: string | undefined
     try {
-      const capability = await this.vision.capability(selection.provider, selection.model, abort.signal)
-      if (capability.strategy === 'disabled') throw new Error(capability.message)
-      if (capability.strategy === 'native') {
-        const content: PromptContentPart[] = [
-          { type: 'text', text },
-          ...images.map(image => ({
-            type: 'image' as const,
+      await send(text.trim() === '' ? '[Image]' : text, mode, async () => {
+        const capability = await this.vision.capability(selection.provider, selection.model, abort.signal)
+        if (capability.strategy === 'disabled') throw new Error(capability.message)
+        if (capability.strategy === 'native') {
+          route = 'native'
+          return [
+            { type: 'text', text },
+            ...images.map(image => ({
+              type: 'image' as const,
+              mediaType: image.mediaType,
+              data: Buffer.from(image.data).toString('base64'),
+              name: image.name,
+            })),
+          ]
+        }
+        route = 'proxy'
+        const status = await this.vision.status(abort.signal)
+        if (!status.proxyRegistered || !status.proxySupportsImages) {
+          throw new Error(`Vision proxy ${status.config.proxyProvider}/${status.config.proxyModel} is not ready. Open /config vision.`)
+        }
+        if (status.credentialRef !== undefined && status.credentialConfigured !== true) {
+          throw new Error(`Vision credential ${status.credentialRef} is missing. Open /config vision after configuring it.`)
+        }
+        this.onProxyDisclosure?.(capability.provider, capability.model)
+        const analysisId = this.vision.newAnalysisId()
+        const analysis = await this.vision.analyze({
+          analysisId,
+          sessionId,
+          userText: text,
+          images: images.map(image => ({
+            data: image.data,
             mediaType: image.mediaType,
-            data: Buffer.from(image.data).toString('base64'),
             name: image.name,
           })),
-        ]
-        await send(text.trim() === '' ? '[Image]' : text, mode, content)
-        this.drafts.clear()
-        return 'native'
-      }
-      const status = await this.vision.status(abort.signal)
-      if (!status.proxyRegistered || !status.proxySupportsImages) {
-        throw new Error(`Vision proxy ${status.config.proxyProvider}/${status.config.proxyModel} is not ready. Open /config vision.`)
-      }
-      if (status.credentialRef !== undefined && status.credentialConfigured !== true) {
-        throw new Error(`Vision credential ${status.credentialRef} is missing. Open /config vision after configuring it.`)
-      }
-      this.onProxyDisclosure?.(capability.provider, capability.model)
-      const analysisId = this.vision.newAnalysisId()
-      const analysis = await this.vision.analyze({
-        analysisId,
-        sessionId,
-        userText: text,
-        images: images.map(image => ({
-          data: image.data,
-          mediaType: image.mediaType,
-          name: image.name,
-        })),
-      }, abort.signal)
-      try {
-        await send(text.trim() === '' ? '[Image]' : text, mode, [
+        }, abort.signal)
+        stagedAnalysisId = analysisId
+        return [
           { type: 'text', text: analysis.marker },
           { type: 'text', text },
-        ])
-      } catch (error: unknown) {
-        this.vision.discard(analysisId)
-        throw error
-      }
+        ]
+      })
       this.drafts.clear()
-      return 'proxy'
+      if (route === undefined) throw new Error('Vision did not resolve an image route.')
+      return route
     } catch (error: unknown) {
+      if (stagedAnalysisId !== undefined) this.vision.discard(stagedAnalysisId)
       const message = error instanceof Error ? error.message : String(error)
       if (abort.signal.aborted) this.drafts.setStatus(ids, 'ready')
       else this.drafts.setStatus(ids, 'error', message)

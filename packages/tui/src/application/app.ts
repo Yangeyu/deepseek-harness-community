@@ -538,7 +538,8 @@ export class TuiApplication implements TuiControllerSink {
   private handleKeymapAction(action: KeymapAction): void {
     switch (action) {
       case 'app.cancel-or-exit':
-        if (isWorking(this.controller.current)) void this.runAction(() => this.controller.cancel())
+        if (this.attachmentDrafts.busy) this.attachmentCoordinator?.cancel()
+        else if (isWorking(this.controller.current)) void this.runAction(() => this.controller.cancel())
         else void this.requestExit(0)
         return
       case 'turn.queue':
@@ -632,7 +633,11 @@ export class TuiApplication implements TuiControllerSink {
           value,
           mode,
           state.projections.imageLimits,
-          (displayText, submitMode, content) => this.controller.prompt(displayText, submitMode, content),
+          (displayText, submitMode, prepareContent) => this.controller.promptWithPreparation(
+            displayText,
+            submitMode,
+            prepareContent,
+          ),
         )
       }
     } catch (error: unknown) {

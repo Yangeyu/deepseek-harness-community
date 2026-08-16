@@ -201,6 +201,54 @@ describe('HarnessController', () => {
     controller.dispose()
   })
 
+  it('publishes an image prompt before its content preparation completes', async () => {
+    const { api, prompt } = fakeApi()
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+    let releasePreparation: (() => void) | undefined
+
+    const submission = controller.promptWithPreparation('analyze this image', 'queue', async () => {
+      await new Promise<void>(resolve => { releasePreparation = resolve })
+      return [{ type: 'text', text: 'prepared vision evidence' }]
+    })
+
+    expect(controller.current.pendingSubmissions).toEqual([{
+      key: 1,
+      text: 'analyze this image',
+      mode: 'queue',
+      intent: 'working',
+    }])
+    expect(prompt).not.toHaveBeenCalled()
+    releasePreparation?.()
+    await submission
+    expect(prompt).toHaveBeenCalledWith(expect.objectContaining({
+      content: [{ type: 'text', text: 'prepared vision evidence' }],
+    }))
+    controller.dispose()
+  })
+
+  it('retires an optimistic image prompt when preparation fails', async () => {
+    const { api, prompt } = fakeApi()
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+
+    await expect(controller.promptWithPreparation('retry this image', 'queue', async () => {
+      throw new Error('Vision proxy failed')
+    })).rejects.toThrow('Vision proxy failed')
+
+    expect(controller.current.pendingSubmissions).toEqual([])
+    expect(prompt).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
   it('retires the local prompt when Host admission rejects it', async () => {
     const { api, prompt } = fakeApi()
     prompt.mockResolvedValue({
