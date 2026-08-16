@@ -10,11 +10,11 @@ import { sanitizeTerminalText } from '../../src/text.ts'
 import { createTheme } from '../../src/presentation/theme.ts'
 import { TranscriptComponent } from '../../src/presentation/transcript.ts'
 
-function state(events: HistoryEntry[]): TuiState {
+function state(events: HistoryEntry[], running = false): TuiState {
   return {
     sessionId: 'session-test' as SessionSummary['sessionId'],
     cwd: '/workspace',
-    running: false,
+    running,
     connected: true,
     events,
     historyHasMore: false,
@@ -111,6 +111,36 @@ describe('TranscriptComponent', () => {
     expect(output).toContain('final answer')
     expect(output).not.toContain('partial')
     expect(output).not.toContain('Assistant')
+  })
+
+  it('settles the Thought indicator while answer text is still streaming', () => {
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'assistant/chunk',
+          seq: 0,
+          time: 1_000,
+          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'reasoning' } },
+        },
+      }),
+      entry({
+        event: {
+          type: 'assistant/chunk',
+          seq: 1,
+          time: 1_250,
+          data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 1, text: 'streaming answer' } },
+        },
+      }),
+    ], true), createTheme(false), true, 8)
+
+    const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(collapsed).toContain('› Worked for 250ms · 1 thought')
+    expect(collapsed).not.toContain('Working')
+    expect(collapsed).not.toContain('Thinking…')
+    expect(collapsed).toContain('streaming answer')
+
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › • Thought')
   })
 
   it('renders assistant Markdown without exposing code-fence syntax', () => {
@@ -248,7 +278,7 @@ describe('TranscriptComponent', () => {
 
     expect(transcript.render(80).join('\n')).toContain('› Working · 1 thought · Thinking…')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
-    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › ○ Thinking…')
+    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › ◦ Thinking…')
     expect(transcript.handlePointer(1, 'click')).toBe(true)
     const following = transcript.render(80).join('\n')
     expect(following).toContain('stream 5')

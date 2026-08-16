@@ -64,7 +64,9 @@ reducing the number of visible files.
    Command nodes remain standalone because their lifecycle is explicitly not
    wrapped by a turn, even when their events arrive during active work. A
    `turn/end` also closes unmatched streaming or tool children as failed or
-   interrupted; terminal history never remains visually live.
+   interrupted; terminal history never remains visually live. During a live
+   assistant step, the first answer text chunk completes the preceding Thought
+   immediately instead of waiting for the final assistant message.
 6. Recorded timing is authoritative. Pending records may use the current render
    clock, but completed records never infer timestamps that are absent.
 7. Stable semantic keys preserve selection across live replacement and history

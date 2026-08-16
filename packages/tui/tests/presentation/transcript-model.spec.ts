@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import type { HistoryEntry, SessionSummary } from '@deepseek-ai/dsh-host-apiproxy'
+import type { TuiState } from '../../src/runtime/controller.ts'
 import {
+  buildTranscriptItems,
   groupTranscriptActivity,
   type TranscriptDiffItem,
   type TranscriptTextItem,
@@ -7,6 +10,27 @@ import {
   type TranscriptToolItem,
   type UngroupedTranscriptItem,
 } from '../../src/presentation/transcript-model.ts'
+
+function state(events: HistoryEntry[], running = false): TuiState {
+  return {
+    sessionId: 'session-test' as SessionSummary['sessionId'],
+    cwd: '/workspace',
+    running,
+    connected: true,
+    events,
+    historyHasMore: false,
+    queue: [],
+    pendingSubmissions: [],
+    models: undefined,
+    projections: {},
+    notice: undefined,
+    error: undefined,
+  }
+}
+
+function entry(value: unknown): HistoryEntry {
+  return value as HistoryEntry
+}
 
 function thinking(
   key: string,
@@ -109,5 +133,44 @@ describe('groupTranscriptActivity', () => {
     expect(streaming[0]).toMatchObject({ kind: 'activity', status: 'running' })
     expect(failed[0]).toMatchObject({ kind: 'activity', status: 'failed', startedAt: 1, endedAt: 5 })
     expect(interrupted[0]).toMatchObject({ kind: 'activity', status: 'interrupted', startedAt: 6, endedAt: 9 })
+  })
+})
+
+describe('buildTranscriptItems', () => {
+  it('completes streaming thinking when answer text starts in the same step', () => {
+    const items = buildTranscriptItems(state([
+      entry({
+        event: {
+          type: 'assistant/chunk',
+          seq: 0,
+          time: 1_000,
+          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'reasoning' } },
+        },
+      }),
+      entry({
+        event: {
+          type: 'assistant/chunk',
+          seq: 1,
+          time: 1_250,
+          data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 1, text: 'streaming answer' } },
+        },
+      }),
+    ], true), true, false, 8)
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: 'activity',
+        status: 'completed',
+        startedAt: 1_000,
+        endedAt: 1_250,
+        items: [expect.objectContaining({
+          kind: 'thinking',
+          status: 'completed',
+          startedAt: 1_000,
+          endedAt: 1_250,
+        })],
+      }),
+      { kind: 'text', body: 'streaming answer', markdown: true },
+    ])
   })
 })

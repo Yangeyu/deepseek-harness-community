@@ -21,7 +21,8 @@ All notable changes to this project are documented in this file.
   segments with stable timing/count summaries, live latest-action context, and
   automatic failure disclosure; share terminal lifecycle and status-glyph
   semantics across Thought, tools, and Diffs, settle interrupted work at
-  `turn/end`, and keep returned file evidence in the main conversation timeline.
+  `turn/end`, settle Thought when answer streaming starts, and keep returned
+  file evidence in the main conversation timeline.
 - Add file and macOS clipboard image drafts with a fixed two-row attachment
   rail, primary `Ctrl+V` paste, compatible `Alt+V` fallback, keyboard
   management, retained retry state, and Host limit prechecks.

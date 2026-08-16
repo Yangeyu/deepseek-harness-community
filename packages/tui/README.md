@@ -225,7 +225,8 @@ inspect bounded reasoning or the recorded Arguments and Result. Successful
 groups stay compact, live groups expose their latest action in the summary, and
 failed groups open to the failed child by default without preventing a manual
 collapse. A terminal turn marks unresolved work as interrupted instead of
-leaving stale live output. Thought, tool, and Diff titles share `○` running,
+leaving stale live output. When answer text starts streaming, its preceding
+Thought settles immediately. Thought, tool, and Diff titles share `◦` running,
 `•` completed, `×` failed, and `!` interrupted status glyphs. File edits are
 hard Activity boundaries: returned Diff evidence remains a top-level
 conversation card regardless of execution status and opens by default.

@@ -271,6 +271,7 @@ export function buildTranscriptItems(
     text: string
     reasoning: string
     reasoningStartedAt: number | undefined
+    reasoningEndedAt: number | undefined
   }>()
   for (const entry of state.events) {
     const event = entry.event
@@ -320,6 +321,7 @@ export function buildTranscriptItems(
             text: '',
             reasoning: '',
             reasoningStartedAt: undefined,
+            reasoningEndedAt: undefined,
           }
           partials.set(key, partial)
         }
@@ -328,26 +330,37 @@ export function buildTranscriptItems(
           partial.reasoning += chunk.text
           partial.reasoningStartedAt ??= event.time
           const terminal = turnEnds.get(event.data.turn)
+          const endedAt = partial.reasoningEndedAt ?? terminal?.endedAt
+          const status: TranscriptExecutionStatus = partial.reasoningEndedAt === undefined
+            ? terminal?.status ?? 'running'
+            : 'completed'
+          const thinking: TranscriptThinkingItem = {
+            kind: 'thinking',
+            key: `${key}:thinking`,
+            text: partial.reasoning,
+            status,
+            startedAt: partial.reasoningStartedAt,
+            ...endedAt === undefined ? {} : { endedAt },
+          }
           if (partial.thinkingIndex === undefined) {
             partial.thinkingIndex = items.length
-            items.push({
-              kind: 'thinking',
-              key: `${key}:thinking`,
-              text: '',
-              status: terminal?.status ?? 'running',
-              startedAt: partial.reasoningStartedAt,
-              ...terminal === undefined ? {} : { endedAt: terminal.endedAt },
-            })
+            items.push(thinking)
+          } else {
+            items[partial.thinkingIndex] = thinking
           }
+          break
+        }
+        if (chunk.text !== '' && partial.thinkingIndex !== undefined &&
+          partial.reasoningStartedAt !== undefined && partial.reasoningEndedAt === undefined) {
+          partial.reasoningEndedAt = event.time
           items[partial.thinkingIndex] = {
             kind: 'thinking',
             key: `${key}:thinking`,
             text: partial.reasoning,
-            status: terminal?.status ?? 'running',
+            status: 'completed',
             startedAt: partial.reasoningStartedAt,
-            ...terminal === undefined ? {} : { endedAt: terminal.endedAt },
+            endedAt: event.time,
           }
-          break
         }
         partial.text += chunk.text
         if (partial.textIndex === undefined) {

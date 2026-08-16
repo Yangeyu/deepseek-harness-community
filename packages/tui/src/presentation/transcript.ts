@@ -513,7 +513,7 @@ export class TranscriptComponent implements Component {
 
   private executionVisual(status: TranscriptExecutionStatus): ExecutionVisual {
     switch (status) {
-      case 'running': return { glyph: '○', paint: this.theme.warning, bold: false }
+      case 'running': return { glyph: '◦', paint: this.theme.warning, bold: false }
       case 'completed': return { glyph: '•', paint: this.theme.success, bold: true }
       case 'failed': return { glyph: '×', paint: this.theme.error, bold: false }
       case 'interrupted': return { glyph: '!', paint: this.theme.warning, bold: false }
