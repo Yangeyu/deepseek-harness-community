@@ -10,7 +10,7 @@ state.
 Harness Host
   session log · projections · LLM · attachments · commands · tools · persistence
       │
-      ├── private Vision service (routing · proxy analysis · staged evidence)
+      ├── Vision service (routing · proxy analysis · staged evidence)
       │
       │ transport-neutral ApiProxy plus narrow Command/Memory/Vision ports
       ▼
@@ -88,6 +88,14 @@ reducing the number of visible files.
    are hard boundaries. Returned file Diff evidence remains top-level
    regardless of execution status. Thought, tool, Diff, and Activity summaries
    consume one shared running/completed/failed/interrupted state model.
+12. Memory, Vision, and TUI remain independent implementations but use the same
+    lifecycle conventions: stable identity, monotonic terminal state, explicit
+    recorded boundaries, explicit failure, snapshot-before-notify publication,
+    and symmetric cleanup. Domain packages never import terminal lifecycle or
+    renderer types. This is a behavioral convention, not a requirement for
+    identical state enums: Memory activity remains a domain status signal until
+    it owns a stable Job identity, while Vision exposes stable analysis facts
+    for the TUI adapter.
 
 ## Transcript interaction contract
 
@@ -98,6 +106,8 @@ reducing the number of visible files.
   Activity title reveals its ordered children, clicking a child title toggles
   its bounded details, and `Ctrl+O` changes the default for both levels.
   Explicit pointer choices override that default until the next global toggle.
+  Activity-level choices are indexed by their semantic child keys, preserving
+  them when older history changes the visible adjacency group.
 - Failed Activity and child nodes disclose once by default and remain manually
   collapsible. Interrupted nodes are terminal but stay compact unless the user
   opens them.
@@ -111,7 +121,8 @@ reducing the number of visible files.
 ## Current components
 
 - `HarnessController` owns session switching, stream reconciliation, history
-  paging, projection watermarks, and pending submissions.
+  paging, projection watermarks, pending submissions, and atomic publication of
+  one resolved lifecycle snapshot with every state update.
 - `TerminalCommandDirectory` merges local interaction commands with the
   effective agent-scoped `ctx.commands` descriptors. Help and autocomplete read
   the same descriptor list, while a narrow application port executes resolved
@@ -123,13 +134,15 @@ reducing the number of visible files.
   `SlashCatalog` merges them with Commands while preserving dispatch semantics.
 - `SkillAuthoringCoordinator` keeps file creation, editor handoff, validation,
   and effective-catalog settlement outside presentation components.
-- `TrajectoryModel` indexes semantic parents once per event snapshot and
+- `TrajectoryModel` indexes lifecycle parent keys once per event snapshot and
   computes offsets, durations, parent share, sibling bottlenecks, and the global
   bottleneck in linear time.
-- `buildTrajectoryRecords` in `trajectory/records.ts` pairs durable lifecycle
-  events without importing the terminal rendering toolkit.
-- `buildTranscriptItems` pairs visible tool lifecycles and assembles stable
-  Activity, text, and diff items without importing the terminal toolkit.
+- `runtime/lifecycle` is the only module that pairs execution facts and enforces
+  transition legality. It exposes one immutable snapshot for Turn, Step,
+  Thought, Tool, Command, and Vision nodes.
+- `buildTrajectoryRecords` and `buildTranscriptItems` join presentation payloads
+  to resolved lifecycle nodes without re-pairing execution events or importing
+  each other's models.
   `TranscriptComponent` paints and interacts with those items, while
   `TrajectoryView` provides the diagnostic hierarchy. None owns persistence.
 - `WorkspaceCheckpointStore` remains a process-local compatibility subsystem;
@@ -139,7 +152,7 @@ reducing the number of visible files.
 
 Product sequencing lives in [`tui-product-roadmap.md`](tui-product-roadmap.md).
 The current milestone is specified in
-[`tui-v0.1.7-design.md`](tui-v0.1.7-design.md); this section records only the
+[`tui-v0.1.8-design.md`](tui-v0.1.8-design.md); this section records only the
 architecture required to support that sequence.
 
 ### v0.1.6 implemented architecture
@@ -158,11 +171,12 @@ architecture required to support that sequence.
 
 ### v0.1.7 implemented architecture
 
-- Add `packages/vision` as a private Cordis service workspace. It depends on
+- Add `packages/vision` as a terminal-independent Cordis service workspace. It depends on
   Harness LLM, Attachment, Agent/Session, Settings, and Credentials contracts,
   but never on the TUI or pi-tui.
-- Bundle that workspace behind the public package's `./vision` subpath and load
-  it before the terminal plugin, preserving one installable release artifact.
+- Publish that workspace independently and also bundle it behind the TUI
+  package's `./vision` subpath, preserving the launcher’s zero-configuration
+  install while supporting custom profiles.
 - Pass a narrow `VisionPort` into the TUI application composition root. Image
   draft state and platform clipboard adapters stay in TUI application code;
   routing, proxy execution, observation safety, and evidence provenance stay in
@@ -187,13 +201,23 @@ architecture required to support that sequence.
   images enter the same validated draft store as interactive file attachment;
   command-line intake does not create a parallel submission path.
 
+### v0.1.8 implemented architecture
+
+- One private `runtime/lifecycle` module rebuilds the current event window into
+  immutable semantic nodes and generation-scoped Vision activity.
+- Controller updates reuse the existing lifecycle snapshot unless the event
+  window, Host running state, Session generation, or Vision overlay changes.
+- Transcript, Trajectory, composer status, Diff, and Activity consume that one
+  snapshot; copied statuses, consumer pairing Maps, and child-running fallbacks
+  have been removed.
+- One presentation policy owns execution glyphs, labels, aggregate precedence,
+  duration formatting, and automatic failure disclosure.
+- Reducer open-node indexes keep sequential long-history replay linear while
+  missing parents, starts, results, and contradictory terminal facts remain
+  inspectable through deduplicated, bounded diagnostics.
+
 ### Following architecture work
 
-- Reuse a shared lifecycle index from Transcript and Trajectory when richer
-  inline trace summaries need semantic records, avoiding a second event fold
-  without forcing chat rows into the Trajectory record model.
-- Replace central event switches with small registered event definitions only
-  when a second independent consumer exists.
 - Introduce an immutable terminal session snapshot containing the event window,
   semantic nodes, projection cells, and command descriptors.
 - Add Session Query-backed cross-session search and parent/child lineage views.

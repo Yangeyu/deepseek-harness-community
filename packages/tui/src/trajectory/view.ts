@@ -12,9 +12,13 @@ import type { TuiTheme } from '../presentation/theme.ts'
 import { TrajectoryModel, type TrajectoryMetrics } from './model.ts'
 import {
   buildTrajectoryRecords,
+  trajectoryParentKey,
+  trajectoryTiming,
   type TrajectoryKind,
   type TrajectoryRecord,
 } from './records.ts'
+import { executionVisual, formatExecutionDuration } from '../presentation/execution-style.ts'
+import { executionStatus } from '../runtime/lifecycle/index.ts'
 
 type TrajectoryTab = 'summary' | 'payload' | 'result' | 'schema' | 'timing'
 
@@ -33,20 +37,13 @@ function stepKey(turn: number, step: number): string {
   return `${String(turn)}:${String(step)}`
 }
 
-function formatDuration(milliseconds: number): string {
-  if (milliseconds < 1_000) return `${String(Math.max(0, Math.round(milliseconds)))} ms`
-  if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 2 : 1)} s`
-  const minutes = Math.floor(milliseconds / 60_000)
-  const seconds = Math.floor(milliseconds % 60_000 / 1_000)
-  return `${String(minutes)}m ${String(seconds)}s`
-}
-
 function tabValue(record: TrajectoryRecord, tab: TrajectoryTab, metrics: TrajectoryMetrics): string[] {
+  const timing = trajectoryTiming(record)
   switch (tab) {
     case 'summary':
       return [
-        `Status       ${record.status}`,
-        `Duration     ${metrics.durationMs === undefined ? 'Not measured' : formatDuration(metrics.durationMs)}`,
+        `Status       ${timing.status}`,
+        `Duration     ${metrics.durationMs === undefined ? 'Not measured' : formatExecutionDuration(metrics.durationMs, 'detail')}`,
         ...metrics.shareOfParent === undefined ? [] : [
           `Share        ${(metrics.shareOfParent * 100).toFixed(1)}% of ${metrics.parentTitle ?? 'parent'}`,
         ],
@@ -61,8 +58,8 @@ function tabValue(record: TrajectoryRecord, tab: TrajectoryTab, metrics: Traject
         record.title,
         ...(record.detail ?? record.summary).split('\n'),
         '',
-        `Started      ${new Date(record.startedAt).toISOString()}`,
-        `Completed    ${record.completedAt === undefined ? 'Still running or not applicable' : new Date(record.completedAt).toISOString()}`,
+        `Started      ${timing.startedAt === undefined ? 'Not recorded' : new Date(timing.startedAt).toISOString()}`,
+        `Completed    ${timing.completedAt === undefined ? 'Still running or not applicable' : new Date(timing.completedAt).toISOString()}`,
       ]
     case 'payload':
       return record.payload === undefined ? ['No payload recorded for this event.'] : displayUnknown(record.payload).split('\n')
@@ -71,17 +68,17 @@ function tabValue(record: TrajectoryRecord, tab: TrajectoryTab, metrics: Traject
     case 'schema':
       return record.schema === undefined ? ['Schema unavailable for this event.'] : displayUnknown(record.schema).split('\n')
     case 'timing': {
-      const end = record.completedAt
+      const end = timing.completedAt
       return [
-        `Started: ${new Date(record.startedAt).toISOString()}`,
+        `Started: ${timing.startedAt === undefined ? 'not recorded' : new Date(timing.startedAt).toISOString()}`,
         ...end === undefined ? ['Completed: still running or not applicable'] : [
           `Completed: ${new Date(end).toISOString()}`,
-          `Duration: ${formatDuration(metrics.durationMs ?? Math.max(0, end - record.startedAt))}`,
+          `Duration: ${metrics.durationMs === undefined ? 'not measured' : formatExecutionDuration(metrics.durationMs, 'detail')}`,
         ],
         ...metrics.shareOfParent === undefined ? [] : [
           `Parent share: ${(metrics.shareOfParent * 100).toFixed(1)}% of ${metrics.parentTitle ?? 'parent'}`,
         ],
-        `Start offset: +${formatDuration(metrics.offsetMs)}`,
+        `Start offset: +${formatExecutionDuration(metrics.offsetMs, 'detail')}`,
         '',
         'Timing source: durable session event timestamps',
       ]
@@ -118,11 +115,14 @@ function padVisible(text: string, width: number): string {
 
 function compactDuration(milliseconds: number | undefined): string {
   if (milliseconds === undefined) return '—'
-  if (milliseconds < 1_000) return `${String(Math.round(milliseconds))}ms`
-  if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`
-  const minutes = Math.floor(milliseconds / 60_000)
-  const seconds = Math.floor(milliseconds % 60_000 / 1_000)
-  return `${String(minutes)}m${String(seconds).padStart(2, '0')}s`
+  return formatExecutionDuration(milliseconds, 'compact')
+}
+
+function recordGlyph(record: TrajectoryRecord, theme: TuiTheme): string {
+  if (!('lifecycle' in record)) return record.tone === 'warning' ? theme.warning('!') : theme.dim('·')
+  const visual = executionVisual(executionStatus(record.lifecycle), theme)
+  const painted = visual.paint(visual.glyph)
+  return visual.bold ? theme.bold(painted) : painted
 }
 
 /** Full-screen, keyboard-first execution ledger and event detail surface. */
@@ -154,8 +154,8 @@ export class TrajectoryView implements Component {
     private readonly onChange: () => void,
   ) {
     this.state = state
-    this.records = buildTrajectoryRecords(state.events)
-    this.model = new TrajectoryModel(this.records)
+    this.records = buildTrajectoryRecords(state.events, state.lifecycle)
+    this.model = new TrajectoryModel(this.records, trajectoryTiming, trajectoryParentKey)
     this.index = Math.max(0, this.records.length - 1)
   }
 
@@ -164,8 +164,8 @@ export class TrajectoryView implements Component {
     const sessionChanged = state.sessionId !== this.state.sessionId
     const selectedKey = this.records[this.index]?.key
     this.state = state
-    this.records = buildTrajectoryRecords(state.events)
-    this.model = new TrajectoryModel(this.records)
+    this.records = buildTrajectoryRecords(state.events, state.lifecycle)
+    this.model = new TrajectoryModel(this.records, trajectoryTiming, trajectoryParentKey)
     if (sessionChanged) {
       this.mode = 'list'
       this.followTail = true
@@ -432,13 +432,13 @@ export class TrajectoryView implements Component {
       'Trajectory',
       this.state.running ? 'Live' : 'Idle',
       activeTurn?.title,
-      total === undefined ? undefined : formatDuration(total),
+      total === undefined ? undefined : formatExecutionDuration(total, 'detail'),
       recordCount,
     ].filter(value => value !== undefined).join(' · ')
     const bottleneckMetrics = bottleneck === undefined ? undefined : metrics.get(bottleneck.key)
     const bottleneckLine = bottleneck === undefined || bottleneckMetrics?.durationMs === undefined
       ? 'Bottleneck · no timed operation available yet'
-      : `Bottleneck · ${bottleneck.title} · ${formatDuration(bottleneckMetrics.durationMs)}${
+      : `Bottleneck · ${bottleneck.title} · ${formatExecutionDuration(bottleneckMetrics.durationMs, 'detail')}${
         bottleneckMetrics.shareOfParent === undefined
           ? ''
           : ` · ${(bottleneckMetrics.shareOfParent * 100).toFixed(1)}% of ${bottleneckMetrics.parentTitle ?? 'parent'}`
@@ -501,15 +501,7 @@ export class TrajectoryView implements Component {
         : record.step === undefined
           ? '  ├─'
           : '  │ ├─'
-    const glyph = record.status === 'pending'
-      ? this.theme.warning('○')
-      : record.status === 'warning'
-        ? this.theme.warning('!')
-      : record.status === 'failed'
-        ? this.theme.error('×')
-        : record.status === 'completed'
-          ? this.theme.success('●')
-          : this.theme.dim('·')
+    const glyph = recordGlyph(record, this.theme)
     const turnCollapsed = record.turn !== undefined && this.collapsedTurns.has(record.turn)
     const stepCollapsed = record.turn !== undefined
       && record.step !== undefined

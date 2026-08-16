@@ -10,6 +10,12 @@ import {
   type TranscriptToolItem,
   type UngroupedTranscriptItem,
 } from '../../src/presentation/transcript-model.ts'
+import {
+  buildLifecycleSnapshot,
+  executionStatus,
+  type ExecutionStatus,
+  type LifecycleNode,
+} from '../../src/runtime/lifecycle/index.ts'
 
 function state(events: HistoryEntry[], running = false): TuiState {
   return {
@@ -21,6 +27,12 @@ function state(events: HistoryEntry[], running = false): TuiState {
     historyHasMore: false,
     queue: [],
     pendingSubmissions: [],
+    lifecycle: buildLifecycleSnapshot({
+      sessionId: 'session-test',
+      generation: 0,
+      entries: events,
+      sessionRunning: running,
+    }),
     models: undefined,
     projections: {},
     notice: undefined,
@@ -34,7 +46,7 @@ function entry(value: unknown): HistoryEntry {
 
 function thinking(
   key: string,
-  status: TranscriptThinkingItem['status'],
+  status: ExecutionStatus,
   startedAt: number,
   endedAt?: number,
 ): TranscriptThinkingItem {
@@ -42,15 +54,13 @@ function thinking(
     kind: 'thinking',
     key,
     text: key,
-    status,
-    startedAt,
-    ...endedAt === undefined ? {} : { endedAt },
+    lifecycle: lifecycle(key, 'thought', status, startedAt, endedAt),
   }
 }
 
 function tool(
   key: string,
-  status: TranscriptToolItem['status'],
+  status: ExecutionStatus,
   startedAt: number,
   endedAt?: number,
 ): TranscriptToolItem {
@@ -58,9 +68,31 @@ function tool(
     kind: 'tool',
     key,
     title: key,
-    status,
-    startedAt,
-    ...endedAt === undefined ? {} : { endedAt },
+    lifecycle: lifecycle(key, 'tool', status, startedAt, endedAt),
+  }
+}
+
+function lifecycle(
+  key: string,
+  kind: LifecycleNode['kind'],
+  status: ExecutionStatus,
+  startedAt: number,
+  endedAt?: number,
+): LifecycleNode {
+  return {
+    key: key as LifecycleNode['key'],
+    kind,
+    durability: 'durable',
+    state: status === 'pending'
+      ? { phase: 'pending', declared: { time: startedAt, source: 'event' } }
+      : status === 'running'
+        ? { phase: 'running', started: { time: startedAt, source: 'event' } }
+        : {
+            phase: 'settled',
+            outcome: status,
+            started: { time: startedAt, source: 'event' },
+            ended: { ...endedAt === undefined ? {} : { time: endedAt }, source: 'event' },
+          },
   }
 }
 
@@ -69,70 +101,76 @@ const diff: TranscriptDiffItem = {
   kind: 'diff',
   key: 'edit:diff',
   title: 'Edit src/app.ts',
-  status: 'completed',
+  lifecycle: lifecycle('tool:edit', 'tool', 'completed', 1, 2),
   diffs: [{ path: 'src/app.ts', oldText: 'old', newText: 'new' }],
 }
 
 describe('groupTranscriptActivity', () => {
   it('keeps the group identity stable while its live tail grows', () => {
     const initial: UngroupedTranscriptItem[] = [
-      thinking('1:1:thinking', 'completed', 1_000, 1_200),
-      tool('read:tool', 'completed', 1_250, 1_500),
+      thinking('thought:1:1', 'completed', 1_000, 1_200),
+      tool('tool:read', 'completed', 1_250, 1_500),
     ]
-    const first = groupTranscriptActivity(initial, false)
-    const extended = groupTranscriptActivity([...initial, tool('test:tool', 'completed', 1_600, 2_000)], false)
+    const first = groupTranscriptActivity(initial)
+    const extended = groupTranscriptActivity([...initial, tool('tool:test', 'completed', 1_600, 2_000)])
 
     expect(first).toEqual([expect.objectContaining({
       kind: 'activity',
-      key: 'activity:1:1:thinking',
-      status: 'completed',
-      startedAt: 1_000,
-      endedAt: 1_500,
+      key: 'activity:thought:1:1',
+      lifecycle: { status: 'completed', startedAt: 1_000, endedAt: 1_500 },
       items: initial,
     })])
-    expect(extended[0]).toMatchObject({ key: 'activity:1:1:thinking', status: 'completed' })
+    expect(extended[0]).toMatchObject({
+      key: 'activity:thought:1:1',
+      lifecycle: { status: 'completed' },
+    })
   })
 
   it('keeps diffs and visible text as ordered hard boundaries', () => {
     const grouped = groupTranscriptActivity([
-      thinking('before:thinking', 'completed', 1, 2),
-      tool('before:tool', 'completed', 2, 3),
+      thinking('thought:before', 'completed', 1, 2),
+      tool('tool:before', 'completed', 2, 3),
       diff,
-      tool('after:tool', 'completed', 4, 5),
+      tool('tool:after', 'completed', 4, 5),
       text,
-      thinking('final:thinking', 'completed', 6, 7),
-    ], false)
+      thinking('thought:final', 'completed', 6, 7),
+    ])
 
     expect(grouped.map(item => item.kind)).toEqual(['activity', 'diff', 'activity', 'text', 'activity'])
     expect(grouped[1]).toBe(diff)
     expect(grouped[3]).toBe(text)
   })
 
-  it('marks only the trailing activity as live while the session is running', () => {
+  it('does not let session liveness override settled child nodes', () => {
     const grouped = groupTranscriptActivity([
-      tool('before:tool', 'completed', 1, 2),
+      tool('tool:before', 'completed', 1, 2),
       text,
-      tool('tail:tool', 'completed', 3, 4),
-    ], true)
+      tool('tool:tail', 'completed', 3, 4),
+    ])
 
-    expect(grouped[0]).toMatchObject({ kind: 'activity', status: 'completed' })
-    expect(grouped[2]).toMatchObject({ kind: 'activity', status: 'running' })
-    expect(grouped[2]).not.toHaveProperty('endedAt')
+    expect(grouped[0]).toMatchObject({ kind: 'activity', lifecycle: { status: 'completed' } })
+    expect(grouped[2]).toMatchObject({ kind: 'activity', lifecycle: { status: 'completed' } })
   })
 
   it('preserves running, failed, and interrupted terminal states', () => {
-    const streaming = groupTranscriptActivity([thinking('live:thinking', 'running', 1)], false)
+    const streaming = groupTranscriptActivity([thinking('thought:live', 'running', 1)])
     const failed = groupTranscriptActivity([
-      tool('read:tool', 'completed', 1, 2),
-      tool('test:tool', 'failed', 3, 5),
-    ], true)
+      tool('tool:read', 'completed', 1, 2),
+      tool('tool:test', 'failed', 3, 5),
+    ])
     const interrupted = groupTranscriptActivity([
-      thinking('limited:thinking', 'interrupted', 6, 9),
-    ], false)
+      thinking('thought:limited', 'interrupted', 6, 9),
+    ])
 
-    expect(streaming[0]).toMatchObject({ kind: 'activity', status: 'running' })
-    expect(failed[0]).toMatchObject({ kind: 'activity', status: 'failed', startedAt: 1, endedAt: 5 })
-    expect(interrupted[0]).toMatchObject({ kind: 'activity', status: 'interrupted', startedAt: 6, endedAt: 9 })
+    expect(streaming[0]).toMatchObject({ kind: 'activity', lifecycle: { status: 'running' } })
+    expect(failed[0]).toMatchObject({
+      kind: 'activity',
+      lifecycle: { status: 'failed', startedAt: 1, endedAt: 5 },
+    })
+    expect(interrupted[0]).toMatchObject({
+      kind: 'activity',
+      lifecycle: { status: 'interrupted', startedAt: 6, endedAt: 9 },
+    })
   })
 })
 
@@ -160,17 +198,17 @@ describe('buildTranscriptItems', () => {
     expect(items).toEqual([
       expect.objectContaining({
         kind: 'activity',
-        status: 'completed',
-        startedAt: 1_000,
-        endedAt: 1_250,
+        lifecycle: { status: 'completed', startedAt: 1_000, endedAt: 1_250 },
         items: [expect.objectContaining({
           kind: 'thinking',
-          status: 'completed',
-          startedAt: 1_000,
-          endedAt: 1_250,
+          lifecycle: expect.any(Object),
         })],
       }),
       { kind: 'text', body: 'streaming answer', markdown: true },
     ])
+    const activity = items[0]
+    expect(activity?.kind === 'activity'
+      ? executionStatus(activity.items[0]!.lifecycle)
+      : undefined).toBe('completed')
   })
 })

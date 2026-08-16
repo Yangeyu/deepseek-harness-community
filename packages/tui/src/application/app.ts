@@ -7,6 +7,7 @@ import {
   TuiMainScreen,
   matchesKey,
   type OverlayHandle,
+  type Terminal,
 } from '@earendil-works/pi-tui'
 import type {
   IApiClient,
@@ -118,8 +119,14 @@ import {
   resolveKeymapInput,
   type KeymapAction,
 } from '../input/keymap.ts'
+import { composerExecutionActivity } from '../presentation/composer-activity.ts'
+import { formatExecutionDuration } from '../presentation/execution-style.ts'
 
 const DOUBLE_ESCAPE_MS = 600
+
+function isWorking(state: Readonly<TuiState>): boolean {
+  return composerExecutionActivity(state) !== undefined
+}
 
 /** Launcher-owned exit function used instead of calling process.exit from raw mode. */
 export interface TuiRuntime {
@@ -136,6 +143,7 @@ export interface TuiApplicationDependencies {
   keymap?: KeymapSettingsGateway
   initialImagePaths?: readonly string[]
   clipboardImage?: ClipboardImageLoader
+  terminal?: Terminal
 }
 
 function sessionDescription(session: SessionSummary): string {
@@ -156,13 +164,9 @@ function resumeHint(sessionId: TuiState['sessionId']): string | undefined {
   return `\nResume this session with:\n  dsh-tui --resume ${shellArgument(String(sessionId))}\n\n`
 }
 
-function isWorking(state: Readonly<TuiState>): boolean {
-  return state.running || state.pendingSubmissions.some(submission => submission.intent === 'working')
-}
-
 /** Main-screen pi-tui application for one in-process Harness API client. */
 export class TuiApplication implements TuiControllerSink {
-  private readonly terminal = new ProcessTerminal()
+  private readonly terminal: Terminal
   private readonly tui: TuiMainScreen
   private readonly theme: TuiTheme
   private readonly controller: HarnessController
@@ -188,7 +192,7 @@ export class TuiApplication implements TuiControllerSink {
   private spinner: ReturnType<typeof setInterval> | undefined
   private spinnerFrame = 0
   private workingStartedAt: number | undefined
-  private workingSessionId: TuiState['sessionId'] = undefined
+  private workingActivityKey: string | undefined
   private showDetails = false
   private lastEscapeAt = 0
   private rewindArmTimer: ReturnType<typeof setTimeout> | undefined
@@ -231,26 +235,15 @@ export class TuiApplication implements TuiControllerSink {
       keymap,
       initialImagePaths = [],
       clipboardImage = imageDraftFromClipboard,
+      terminal = new ProcessTerminal(),
     } = dependencies
+    this.terminal = terminal
     this.initialImagePaths = initialImagePaths
     this.clipboardImage = clipboardImage
     this.theme = createTheme(config.color)
     this.tui = new TuiMainScreen(this.terminal, config.showHardwareCursor)
-    const initial: TuiState = {
-      sessionId: undefined,
-      cwd: config.cwd,
-      running: false,
-      connected: false,
-      events: [],
-      historyHasMore: false,
-      queue: [],
-      pendingSubmissions: [],
-      models: undefined,
-      projections: {},
-      notice: undefined,
-      error: undefined,
-    }
     this.controller = new HarnessController(api, this, config.cwd, config.historyMessages)
+    const initial = this.controller.current
     this.header = new Text('', 0, 0)
     this.transcript = new TranscriptComponent(
       initial,
@@ -418,32 +411,15 @@ export class TuiApplication implements TuiControllerSink {
     const history = this.layout.followsTranscriptTail ? '' : ' · Viewing history · PageDown to follow'
     const task = sessionControlSummary(state.projections)
     const taskStatus = task === '' ? '' : ` · ${task}`
-    const visionActivity = state.pendingSubmissions.find(submission => submission.activity?.kind === 'vision')?.activity
-    if (visionActivity?.kind === 'vision') {
-      this.workingStartedAt = undefined
-      this.workingSessionId = undefined
-      if (this.spinner === undefined) {
-        this.spinner = setInterval(() => {
-          this.spinnerFrame += 1
-          this.updateStatus(this.controller.current)
-          this.tui.requestRender()
-        }, 160)
-      }
-      const frames = ['·', '✢', '✳', '✦']
-      const glyph = frames[this.spinnerFrame % frames.length] ?? '·'
-      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - visionActivity.startedAt) / 1_000))
-      const images = `${String(visionActivity.imageCount)} image${visionActivity.imageCount === 1 ? '' : 's'}`
-      this.status.setText([
-        this.theme.accent(glyph),
-        this.theme.dim(` Vision · Analyzing ${images} (${String(elapsedSeconds)}s · esc to interrupt${history})`),
-      ].join(''))
-      return
-    }
-    const working = isWorking(state)
-    if (working) {
-      if (this.workingStartedAt === undefined || this.workingSessionId !== state.sessionId) {
-        this.workingStartedAt = Date.now()
-        this.workingSessionId = state.sessionId
+    const activity = composerExecutionActivity(state)
+    if (activity !== undefined) {
+      if (activity.key !== this.workingActivityKey) {
+        const hostHandoff = this.workingActivityKey?.startsWith('submission:') === true
+          && activity.key.startsWith('session:')
+        this.workingActivityKey = activity.key
+        this.workingStartedAt = activity.startedAt
+          ?? (hostHandoff ? this.workingStartedAt : undefined)
+          ?? Date.now()
       }
       if (this.spinner === undefined) {
         this.spinner = setInterval(() => {
@@ -454,15 +430,19 @@ export class TuiApplication implements TuiControllerSink {
       }
       const frames = ['·', '✢', '✳', '✦']
       const glyph = frames[this.spinnerFrame % frames.length] ?? '·'
-      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - this.workingStartedAt) / 1_000))
+      const startedAt = activity.startedAt ?? this.workingStartedAt ?? Date.now()
+      const elapsed = formatExecutionDuration(Date.now() - startedAt, 'elapsed')
+      const label = activity.kind === 'vision'
+        ? `Vision · Analyzing ${String(activity.imageCount)} image${activity.imageCount === 1 ? '' : 's'}`
+        : 'Working'
       this.status.setText([
         this.theme.accent(glyph),
-        this.theme.dim(` Working (${elapsedSeconds}s · esc to interrupt${history})`),
+        this.theme.dim(` ${label} (${elapsed} · esc to interrupt${history})`),
       ].join(''))
       return
     }
     this.workingStartedAt = undefined
-    this.workingSessionId = undefined
+    this.workingActivityKey = undefined
     if (this.memoryActivity.state === 'learning') {
       if (this.spinner === undefined) {
         this.spinner = setInterval(() => {

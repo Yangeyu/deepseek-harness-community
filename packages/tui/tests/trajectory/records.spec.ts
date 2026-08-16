@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type { TuiState } from '../../src/runtime/controller.ts'
-import { buildTrajectoryRecords } from '../../src/trajectory/records.ts'
+import {
+  buildTrajectoryRecords,
+  trajectoryTiming,
+} from '../../src/trajectory/records.ts'
+import { buildLifecycleSnapshot } from '../../src/runtime/lifecycle/index.ts'
 import { toolEvents } from './fixtures.ts'
+
+function records(entries: TuiState['events']) {
+  const lifecycle = buildLifecycleSnapshot({
+    sessionId: 'session-trajectory',
+    generation: 0,
+    entries,
+    sessionRunning: false,
+  })
+  return buildTrajectoryRecords(entries, lifecycle)
+}
 
 describe('trajectory records', () => {
   it('turns a supported Vision evidence message into a timed trace record after the user input', () => {
@@ -43,19 +57,17 @@ describe('trajectory records', () => {
       },
     }] as TuiState['events']
 
-    const records = buildTrajectoryRecords(entries)
-    expect(records.map(record => record.kind)).toEqual(['user', 'vision'])
-    expect(records[1]).toEqual(expect.objectContaining({
+    const result = records(entries)
+    expect(result.map(record => record.kind)).toEqual(['user', 'vision'])
+    expect(result[1]).toEqual(expect.objectContaining({
       kind: 'vision',
       title: 'Vision analysis',
-      status: 'completed',
-      startedAt: 1_000,
-      completedAt: 2_500,
       detail: 'Visible warning banner',
     }))
+    expect(trajectoryTiming(result[1]!)).toEqual({ status: 'completed', startedAt: 1_000, completedAt: 2_500 })
   })
 
-  it('pairs turn, step, and tool boundaries while preserving request schema and timing', () => {
+  it('projects resolved turn, step, and tool lifecycles with request schema and timing', () => {
     const entries = [{
       event: { type: 'turn/start', seq: 0, time: 1_000, data: { turn: 1 } },
     }, {
@@ -97,19 +109,18 @@ describe('trajectory records', () => {
       event: { type: 'turn/end', seq: 7, time: 1_900, data: { turn: 1, reason: { kind: 'completed' } } },
     }] as TuiState['events']
 
-    const records = buildTrajectoryRecords(entries)
+    const result = records(entries)
 
-    expect(records.map(record => record.kind)).toEqual(['turn', 'step', 'request', 'tool', 'assistant'])
-    expect(records[0]).toMatchObject({ status: 'completed', completedAt: 1_900 })
-    expect(records[1]).toMatchObject({ status: 'completed', completedAt: 1_800 })
-    expect(records[2]).toMatchObject({ turn: 1, step: 1 })
-    expect(records[3]).toMatchObject({
+    expect(result.map(record => record.kind)).toEqual(['turn', 'step', 'request', 'tool', 'assistant'])
+    expect(trajectoryTiming(result[0]!)).toEqual({ status: 'completed', startedAt: 1_000, completedAt: 1_900 })
+    expect(trajectoryTiming(result[1]!)).toEqual({ status: 'completed', startedAt: 1_100, completedAt: 1_800 })
+    expect(result[2]).toMatchObject({ turn: 1, step: 1 })
+    expect(result[3]).toMatchObject({
       title: 'echo NAVIGATION_OK',
-      status: 'completed',
-      completedAt: 1_500,
       result: 'NAVIGATION_OK',
       schema: { name: 'bash' },
     })
+    expect(trajectoryTiming(result[3]!)).toEqual({ status: 'completed', startedAt: 1_200, completedAt: 1_500 })
   })
 
   it('keeps complete semantic detail while limiting only the ledger preview', () => {
@@ -135,15 +146,15 @@ describe('trajectory records', () => {
       },
     }] as TuiState['events']
 
-    const record = buildTrajectoryRecords(entries).at(-1)
+    const record = records(entries).at(-1)
 
     expect(record?.summary.endsWith('…')).toBe(true)
     expect(record?.detail).toBe(detail)
     expect(record?.detail).toContain('VISIBLE_TAIL')
   })
 
-  it('pairs durable command lifecycle events into one semantic record', () => {
-    const records = buildTrajectoryRecords([{
+  it('projects a durable command lifecycle into one semantic record', () => {
+    const result = records([{
       event: { type: 'turn/start', seq: 0, time: 900, data: { turn: 1 } },
     }, {
       event: { type: 'step/start', seq: 1, time: 950, data: { turn: 1, step: 1 } },
@@ -172,16 +183,42 @@ describe('trajectory records', () => {
       },
     }] as TuiState['events'])
 
-    const command = records.find(record => record.kind === 'command')
+    const command = result.find(record => record.kind === 'command')
     expect(command).toMatchObject({
       kind: 'command',
       title: '/compact',
-      status: 'completed',
       completionType: 'command/done',
-      completedAt: 1_250,
       detail: 'Context compacted',
+    })
+    expect(command === undefined ? undefined : trajectoryTiming(command)).toEqual({
+      status: 'completed',
+      startedAt: 1_000,
+      completedAt: 1_250,
     })
     expect(command).not.toHaveProperty('turn')
     expect(command).not.toHaveProperty('step')
+  })
+
+  it('resets semantic location when a new turn starts before a malformed prior tail closes', () => {
+    const result = records([{
+      event: { type: 'turn/start', seq: 0, time: 1_000, data: { turn: 1 } },
+    }, {
+      event: { type: 'step/start', seq: 1, time: 1_100, data: { turn: 1, step: 9 } },
+    }, {
+      event: { type: 'turn/start', seq: 2, time: 1_200, data: { turn: 2 } },
+    }, {
+      event: {
+        type: 'request/header',
+        seq: 3,
+        time: 1_250,
+        data: {
+          reason: 'initial',
+          header: { config: { provider: 'deepseek', model: 'chat' } },
+        },
+      },
+    }] as TuiState['events'])
+
+    expect(result.at(-1)).toMatchObject({ kind: 'request', turn: 2 })
+    expect(result.at(-1)).not.toHaveProperty('step')
   })
 })

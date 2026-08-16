@@ -1,6 +1,7 @@
 import type { HistoryEntry, SessionSummary } from '@deepseek-ai/dsh-host-apiproxy'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type { TuiState } from '../../src/runtime/controller.ts'
+import { buildLifecycleSnapshot } from '../../src/runtime/lifecycle/index.ts'
 
 export function toolEvents(completed: boolean): HistoryEntry[] {
   return [{
@@ -102,7 +103,7 @@ export function timedTraceEvents(): HistoryEntry[] {
 }
 
 export function state(events: HistoryEntry[], overrides: Partial<TuiState> = {}): TuiState {
-  return {
+  const value = {
     sessionId: 'session-trajectory' as SessionSummary['sessionId'],
     cwd: '/workspace',
     running: false,
@@ -116,5 +117,14 @@ export function state(events: HistoryEntry[], overrides: Partial<TuiState> = {})
     notice: undefined,
     error: undefined,
     ...overrides,
+  }
+  return {
+    ...value,
+    lifecycle: buildLifecycleSnapshot({
+      sessionId: value.sessionId === undefined ? undefined : String(value.sessionId),
+      generation: 0,
+      entries: value.events,
+      sessionRunning: value.running,
+    }),
   }
 }

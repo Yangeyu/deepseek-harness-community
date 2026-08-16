@@ -5,11 +5,18 @@ import type {
 } from '@deepseek-ai/dsh-host-apiproxy'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type { TuiState } from '../runtime/controller.ts'
+import {
+  aggregateLifecycle,
+  commandLifecycleKey,
+  thoughtLifecycleKey,
+  toolLifecycleKey,
+  visionLifecycleKey,
+  type LifecycleAggregate,
+  type LifecycleNode,
+} from '../runtime/lifecycle/index.ts'
 import { displayUnknown, sanitizeTerminalText } from '../text.ts'
 
 export type TranscriptTone = 'accent' | 'dim' | 'error' | 'warning'
-
-export type TranscriptExecutionStatus = 'running' | 'completed' | 'failed' | 'interrupted'
 
 export interface TranscriptTextItem {
   kind: 'text'
@@ -30,20 +37,16 @@ export interface TranscriptThinkingItem {
   kind: 'thinking'
   key: string
   text: string
-  status: TranscriptExecutionStatus
-  startedAt: number
-  endedAt?: number
+  lifecycle: LifecycleNode
 }
 
 export interface TranscriptToolItem {
   kind: 'tool'
   key: string
   title: string
-  status: TranscriptExecutionStatus
+  lifecycle: LifecycleNode
   arguments?: string
   result?: string
-  startedAt: number
-  endedAt?: number
 }
 
 export type TranscriptActivityItem = TranscriptThinkingItem | TranscriptToolItem
@@ -52,30 +55,22 @@ export interface TranscriptActivityGroup {
   kind: 'activity'
   key: string
   items: readonly TranscriptActivityItem[]
-  status: TranscriptExecutionStatus
-  startedAt: number
-  endedAt?: number
+  lifecycle: LifecycleAggregate
 }
 
 export interface TranscriptDiffItem {
   kind: 'diff'
   key: string
   title: string
-  status: TranscriptExecutionStatus
+  lifecycle: LifecycleNode
   diffs: Extract<ToolResultView, { card: 'diff' }>['diffs']
 }
 
 export type UngroupedTranscriptItem = TranscriptTextItem | TranscriptPromptItem | TranscriptActivityItem | TranscriptDiffItem
 export type TranscriptItem = TranscriptTextItem | TranscriptPromptItem | TranscriptActivityGroup | TranscriptDiffItem
 
-function stepKey(turn: number, step: number): string {
+function contentStepKey(turn: number, step: number): string {
   return `${turn}:${step}`
-}
-
-export function formatTranscriptDuration(milliseconds: number): string {
-  return milliseconds < 1_000
-    ? `${String(milliseconds)}ms`
-    : `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`
 }
 
 function messageText(content: readonly { type: string; text?: string }[], reasoning: boolean): string {
@@ -125,13 +120,6 @@ function rawResultText(entry: HistoryEntry): string {
   const result = entry.event.data.message.content[0]
   if (result?.type !== 'tool-result') return ''
   return messageText(result.content, true)
-}
-
-function toolResultFailed(entry: HistoryEntry): boolean {
-  if (entry.event.type !== 'tool/result') return false
-  if (entry.event.data.error !== undefined) return true
-  const result = entry.event.data.message.content[0]
-  return result?.type === 'tool-result' && result.isError === true
 }
 
 function resultTitle(view: ToolResultView | undefined): string | undefined {
@@ -185,38 +173,22 @@ function isActivityItem(item: UngroupedTranscriptItem): item is TranscriptActivi
   return item.kind === 'thinking' || item.kind === 'tool'
 }
 
-function activityStatus(
-  items: readonly TranscriptActivityItem[],
-  runningTail: boolean,
-): TranscriptActivityGroup['status'] {
-  if (items.some(item => item.status === 'failed')) return 'failed'
-  if (items.some(item => item.status === 'interrupted')) return 'interrupted'
-  if (runningTail || items.some(item => item.status === 'running')) return 'running'
-  return 'completed'
-}
-
 /** Group only adjacent model activity. Any user-visible transcript item is a hard boundary. */
 export function groupTranscriptActivity(
   items: readonly UngroupedTranscriptItem[],
-  sessionRunning: boolean,
 ): TranscriptItem[] {
   const grouped: TranscriptItem[] = []
   let activity: TranscriptActivityItem[] = []
 
-  const flush = (runningTail: boolean): void => {
+  const flush = (): void => {
     if (activity.length === 0) return
     const first = activity[0]
     if (first === undefined) return
-    const status = activityStatus(activity, runningTail)
-    const endTimes = activity.map(item => item.endedAt).filter(value => value !== undefined)
-    const hasEndTiming = status !== 'running' && endTimes.length === activity.length
     grouped.push({
       kind: 'activity',
       key: `activity:${first.key}`,
       items: activity,
-      status,
-      startedAt: Math.min(...activity.map(item => item.startedAt)),
-      ...hasEndTiming ? { endedAt: Math.max(...endTimes) } : {},
+      lifecycle: aggregateLifecycle(activity.map(item => item.lifecycle)),
     })
     activity = []
   }
@@ -226,10 +198,10 @@ export function groupTranscriptActivity(
       activity.push(item)
       continue
     }
-    flush(false)
+    flush()
     grouped.push(item)
   }
-  flush(sessionRunning)
+  flush()
   return grouped
 }
 
@@ -242,27 +214,9 @@ export function buildTranscriptItems(
 ): TranscriptItem[] {
   const items: UngroupedTranscriptItem[] = []
   const finalSteps = new Set<string>()
-  const reasoningStarts = new Map<string, number>()
-  const results = new Map<string, HistoryEntry>()
-  const turnEnds = new Map<number, { status: 'failed' | 'interrupted'; endedAt: number }>()
-  const commandRuns = new Set<string>()
-  const commandResults = new Map<string, HistoryEntry>()
   for (const entry of state.events) {
     const event = entry.event
-    if (event.type === 'assistant/message') finalSteps.add(stepKey(event.data.turn, event.data.step))
-    if (event.type === 'assistant/chunk' && event.data.chunk.type === 'reasoning-delta') {
-      const key = stepKey(event.data.turn, event.data.step)
-      if (!reasoningStarts.has(key)) reasoningStarts.set(key, event.time)
-    }
-    if (event.type === 'tool/result') results.set(String(event.data.message.source.callId), entry)
-    if (event.type === 'turn/end') {
-      turnEnds.set(event.data.turn, {
-        status: event.data.reason.kind === 'error' ? 'failed' : 'interrupted',
-        endedAt: event.time,
-      })
-    }
-    if (event.type === 'command/run') commandRuns.add(String(event.data.commandId))
-    if (event.type === 'command/done') commandResults.set(String(event.data.commandId), entry)
+    if (event.type === 'assistant/message') finalSteps.add(contentStepKey(event.data.turn, event.data.step))
   }
 
   const partials = new Map<string, {
@@ -270,8 +224,6 @@ export function buildTranscriptItems(
     thinkingIndex: number | undefined
     text: string
     reasoning: string
-    reasoningStartedAt: number | undefined
-    reasoningEndedAt: number | undefined
   }>()
   for (const entry of state.events) {
     const event = entry.event
@@ -281,16 +233,16 @@ export function buildTranscriptItems(
         const source = event.data.source
         const rawText = messageText(event.data.content, showReasoning)
         if (source.kind === 'community-vision') {
+          const lifecycle = state.lifecycle.get(visionLifecycleKey(source.analysisId))
+          if (lifecycle === undefined) break
           const imageCount = source.attachments.length
           items.push({
             kind: 'tool',
-            key: `vision:${source.analysisId}`,
-            title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalText(source.model)} · ${formatTranscriptDuration(source.durationMs)}`,
-            status: 'completed',
+            key: String(lifecycle.key),
+            title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalText(source.model)}`,
+            lifecycle,
             arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${source.provider}/${source.model}`,
             result: rawText === '' ? 'Vision analysis completed.' : rawText,
-            startedAt: Math.max(0, event.time - source.durationMs),
-            endedAt: event.time,
           })
           break
         }
@@ -309,7 +261,7 @@ export function buildTranscriptItems(
         break
       }
       case 'assistant/chunk': {
-        const key = stepKey(event.data.turn, event.data.step)
+        const key = contentStepKey(event.data.turn, event.data.step)
         if (finalSteps.has(key)) break
         const chunk = event.data.chunk
         if (chunk.type !== 'text-delta' && chunk.type !== 'reasoning-delta') break
@@ -320,27 +272,19 @@ export function buildTranscriptItems(
             thinkingIndex: undefined,
             text: '',
             reasoning: '',
-            reasoningStartedAt: undefined,
-            reasoningEndedAt: undefined,
           }
           partials.set(key, partial)
         }
         if (chunk.type === 'reasoning-delta') {
           if (!showReasoning) break
           partial.reasoning += chunk.text
-          partial.reasoningStartedAt ??= event.time
-          const terminal = turnEnds.get(event.data.turn)
-          const endedAt = partial.reasoningEndedAt ?? terminal?.endedAt
-          const status: TranscriptExecutionStatus = partial.reasoningEndedAt === undefined
-            ? terminal?.status ?? 'running'
-            : 'completed'
+          const lifecycle = state.lifecycle.get(thoughtLifecycleKey(event.data.turn, event.data.step))
+          if (lifecycle === undefined) break
           const thinking: TranscriptThinkingItem = {
             kind: 'thinking',
-            key: `${key}:thinking`,
+            key: String(lifecycle.key),
             text: partial.reasoning,
-            status,
-            startedAt: partial.reasoningStartedAt,
-            ...endedAt === undefined ? {} : { endedAt },
+            lifecycle,
           }
           if (partial.thinkingIndex === undefined) {
             partial.thinkingIndex = items.length
@@ -349,18 +293,6 @@ export function buildTranscriptItems(
             items[partial.thinkingIndex] = thinking
           }
           break
-        }
-        if (chunk.text !== '' && partial.thinkingIndex !== undefined &&
-          partial.reasoningStartedAt !== undefined && partial.reasoningEndedAt === undefined) {
-          partial.reasoningEndedAt = event.time
-          items[partial.thinkingIndex] = {
-            kind: 'thinking',
-            key: `${key}:thinking`,
-            text: partial.reasoning,
-            status: 'completed',
-            startedAt: partial.reasoningStartedAt,
-            endedAt: event.time,
-          }
         }
         partial.text += chunk.text
         if (partial.textIndex === undefined) {
@@ -375,42 +307,41 @@ export function buildTranscriptItems(
           items.push({ kind: 'text', label: 'Context', tone: 'dim', body: 'Earlier model context was compacted.', dim: true })
           break
         }
-        const key = stepKey(event.data.turn, event.data.step)
         const reasoning = reasoningText(event.data.message.content)
         if (showReasoning && reasoning.trim() !== '') {
-          items.push({
-            kind: 'thinking',
-            key: `${key}:thinking`,
-            text: reasoning,
-            status: 'completed',
-            startedAt: reasoningStarts.get(key) ?? event.time,
-            endedAt: event.time,
-          })
+          const lifecycle = state.lifecycle.get(thoughtLifecycleKey(event.data.turn, event.data.step))
+          if (lifecycle !== undefined) {
+            items.push({
+              kind: 'thinking',
+              key: String(lifecycle.key),
+              text: reasoning,
+              lifecycle,
+            })
+          }
         }
         const text = messageText(event.data.message.content, false)
         if (text.trim() !== '') items.push({ kind: 'text', body: text, markdown: true })
         break
       }
       case 'tool/call': {
+        const lifecycle = state.lifecycle.get(toolLifecycleKey(String(event.data.callId)))
+        if (lifecycle === undefined) break
         const callView = entry.view?.for === 'call' ? entry.view.view : undefined
-        const result = results.get(String(event.data.callId))
-        const resultView = result?.view?.for === 'result' ? result.view.view : undefined
-        const failed = result !== undefined && toolResultFailed(result)
-        const terminal = turnEnds.get(event.data.turn)
-        const status: TranscriptExecutionStatus = result !== undefined
-          ? failed ? 'failed' : 'completed'
-          : terminal?.status ?? 'running'
-        const endedAt = result?.event.time ?? terminal?.endedAt
+        const result = lifecycle.state.phase === 'settled'
+          ? state.lifecycle.entry(lifecycle.state.ended.seq)
+          : undefined
+        const toolResult = result?.event.type === 'tool/result' ? result : undefined
+        const resultView = toolResult?.view?.for === 'result' ? toolResult.view.view : undefined
         const title = resultTitle(resultView) ?? callTitle(event.data.name, callView)
         const diffView = resultView?.card === 'diff'
           ? resultView
-          : result === undefined && callView?.card === 'diff' ? callView : undefined
+          : toolResult === undefined && callView?.card === 'diff' ? callView : undefined
         if (diffView !== undefined && diffView.diffs.length > 0) {
           items.push({
             kind: 'diff',
             key: `${String(event.data.callId)}:diff`,
             title: sanitizeTerminalText(title),
-            status,
+            lifecycle,
             diffs: diffView.diffs,
           })
           break
@@ -418,24 +349,29 @@ export function buildTranscriptItems(
         const argumentsBody = toolArguments(event.data.arguments, maxToolOutputLines)
         items.push({
           kind: 'tool',
-          key: `${String(event.data.callId)}:tool`,
+          key: String(lifecycle.key),
           title: sanitizeTerminalText(title),
-          status,
+          lifecycle,
           ...argumentsBody === undefined ? {} : { arguments: argumentsBody },
-          ...result === undefined ? {} : { result: resultBody(resultView, rawResultText(result), maxToolOutputLines) },
-          startedAt: event.time,
-          ...endedAt === undefined ? {} : { endedAt },
+          ...toolResult === undefined ? {} : { result: resultBody(resultView, rawResultText(toolResult), maxToolOutputLines) },
         })
         break
       }
       case 'command/run': {
-        const completed = commandResults.get(String(event.data.commandId))
+        const lifecycle = state.lifecycle.get(commandLifecycleKey(String(event.data.commandId)))
+        if (lifecycle === undefined) break
+        const completed = lifecycle.state.phase === 'settled'
+          ? state.lifecycle.entry(lifecycle.state.ended.seq)
+          : undefined
         const result = completed?.event.type === 'command/done' ? completed.event.data : undefined
-        const failed = result?.kind === 'error'
         items.push({
           kind: 'text',
-          label: failed ? 'Command failed' : result === undefined ? 'Command running' : 'Command',
-          tone: failed ? 'error' : result === undefined ? 'warning' : 'accent',
+          label: lifecycle.state.phase !== 'settled'
+            ? 'Command running'
+            : lifecycle.state.outcome === 'failed' ? 'Command failed' : 'Command',
+          tone: lifecycle.state.phase !== 'settled'
+            ? 'warning'
+            : lifecycle.state.outcome === 'failed' ? 'error' : 'accent',
           body: [
             `/${event.data.name}${event.data.args ?? ''}`,
             result?.text,
@@ -443,8 +379,9 @@ export function buildTranscriptItems(
         })
         break
       }
-      case 'command/done':
-        if (!commandRuns.has(String(event.data.commandId))) {
+      case 'command/done': {
+        const lifecycle = state.lifecycle.get(commandLifecycleKey(String(event.data.commandId)))
+        if (lifecycle?.state.phase === 'settled' && lifecycle.state.started === undefined) {
           items.push({
             kind: 'text',
             label: event.data.kind === 'error' ? 'Command failed' : 'Command',
@@ -453,6 +390,7 @@ export function buildTranscriptItems(
           })
         }
         break
+      }
       case 'turn/end':
         if (event.data.reason.kind === 'error') {
           items.push({ kind: 'text', label: 'Error', tone: 'error', body: event.data.reason.error.message })
@@ -470,7 +408,7 @@ export function buildTranscriptItems(
     }
   }
 
-  const grouped = groupTranscriptActivity(items, state.running)
+  const grouped = groupTranscriptActivity(items)
   const visibleQueueRpcIds = new Set<string>()
   for (const item of state.queue) {
     if (item.placement === 'context') continue
@@ -499,16 +437,16 @@ export function buildTranscriptItems(
       })
     }
     if (submission.activity?.kind === 'vision') {
+      const lifecycle = state.lifecycle.get(visionLifecycleKey(submission.activity.analysisId))
+      if (lifecycle === undefined || lifecycle.durability !== 'ephemeral') continue
       const imageCount = submission.activity.imageCount
-      const elapsed = formatTranscriptDuration(Math.max(0, Date.now() - submission.activity.startedAt))
       grouped.push(...groupTranscriptActivity([{
         kind: 'tool',
-        key: `vision:${submission.activity.analysisId}`,
-        title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · Analyzing… ${elapsed}`,
-        status: 'running',
+        key: String(lifecycle.key),
+        title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · Analyzing…`,
+        lifecycle,
         arguments: `${String(imageCount)} attached image${imageCount === 1 ? '' : 's'}`,
-        startedAt: submission.activity.startedAt,
-      }], true))
+      }]))
     }
   }
   if (state.notice !== undefined) grouped.push({ kind: 'text', label: 'Notice', tone: 'accent', body: state.notice })

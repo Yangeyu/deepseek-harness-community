@@ -34,8 +34,9 @@ permissions · vision  ->  goal · todos · agents -> changes · trace   -> skil
 
 The TUI is already strong in the middle of one session: streaming output,
 tool and diff rendering, memory, rewind, and trajectory inspection. The next
-milestones add visual evidence, then complete the session, parallel-work,
-review, and reuse loops around that execution core.
+milestones add visual evidence, unify the execution lifecycle beneath every
+inspection surface, then complete the session, parallel-work, review, and reuse
+loops around that execution core.
 
 ## Milestones
 
@@ -66,7 +67,7 @@ Detailed decisions and acceptance criteria are in
   new-session, and resumed-session image intake.
 - Add explicit image drafts from files and the system clipboard with a compact,
   keyboard-first attachment rail above the composer.
-- Introduce a private, TUI-independent Vision workspace that routes explicit
+- Introduce a public, TUI-independent Vision workspace that routes explicit
   image-capable models natively and text-only models through a configured proxy.
 - Use the existing generic LLM adapter for Alibaba Cloud Bailian and recommend
   `qwen3.7-plus` as the first proxy route while DeepSeek remains the primary
@@ -79,7 +80,30 @@ Detailed decisions and acceptance criteria are in
 Detailed decisions and acceptance criteria are in
 [`tui-v0.1.7-design.md`](tui-v0.1.7-design.md).
 
-### v0.1.8 — Session Center
+### v0.1.8 — Unified Execution Lifecycle
+
+- Replace independent Transcript and Trajectory event pairing with one typed,
+  replayable lifecycle snapshot for Turn, Step, Thought, Tool, Command, and
+  Vision execution.
+- Use stable semantic identities, monotonic transitions, recorded timing,
+  parent settlement, and bounded diagnostics across live streaming, resume,
+  and older-history prepend.
+- Keep pre-admission runtime activity in a generation-scoped overlay that
+  reconciles with durable evidence without creating fake Session events.
+- Make Diff a Tool-result presentation facet and Activity an adjacency
+  projection so neither owns a second lifecycle.
+- Centralize execution status aggregation, glyphs, timing, and failure
+  disclosure while keeping layout and interaction in presentation code.
+- Cut every execution consumer over atomically, then delete the old pairing
+  Maps, copied status types, timing fallbacks, duplicate visual switches, stale
+  comments, and implementation-coupled tests; do not ship a dual-read bridge.
+- Borrow Cordis's contract, ownership, scope, and cleanup principles without
+  introducing a lifecycle plugin API, service, or second persistence format.
+
+Detailed decisions, transition rules, migration slices, and acceptance criteria
+are in [`tui-v0.1.8-design.md`](tui-v0.1.8-design.md).
+
+### v0.1.9 — Session Center
 
 - Upgrade resume selection with durable titles, workspace and activity
   metadata, running state, and parent/child lineage.

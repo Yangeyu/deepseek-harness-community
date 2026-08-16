@@ -38,13 +38,6 @@ export type {
   TuiControllerSink,
   TuiState,
 } from './runtime/controller.ts'
-export { TranscriptComponent } from './presentation/transcript.ts'
-export { buildTrajectoryRecords } from './trajectory/records.ts'
-export type { TrajectoryRecord } from './trajectory/records.ts'
-export { TrajectoryView } from './trajectory/view.ts'
-export { TrajectoryModel } from './trajectory/model.ts'
-export type { TrajectoryMeasurement, TrajectoryMetrics, TrajectoryNode } from './trajectory/model.ts'
-export { sanitizeTerminalText } from './text.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

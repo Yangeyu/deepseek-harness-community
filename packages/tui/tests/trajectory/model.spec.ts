@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { TrajectoryModel, type TrajectoryNode } from '../../src/trajectory/model.ts'
+import {
+  TrajectoryModel,
+  type TrajectoryNode,
+  type TrajectoryNodeTiming,
+} from '../../src/trajectory/model.ts'
 
-function node(overrides: Partial<TrajectoryNode> & Pick<TrajectoryNode, 'key' | 'kind' | 'title'>): TrajectoryNode {
+type TimedNode = TrajectoryNode & TrajectoryNodeTiming
+
+function node(overrides: Partial<TimedNode> & Pick<TimedNode, 'key' | 'kind' | 'title'>): TimedNode {
   return {
     status: 'completed',
     startedAt: 1_000,
@@ -13,10 +19,10 @@ function node(overrides: Partial<TrajectoryNode> & Pick<TrajectoryNode, 'key' | 
 describe('TrajectoryModel', () => {
   it('indexes semantic parents and measures sibling bottlenecks', () => {
     const turn = node({ key: 'turn', kind: 'turn', turn: 1, title: 'Turn 1', completedAt: 3_000 })
-    const step = node({ key: 'step', kind: 'step', turn: 1, step: 1, title: 'Step 1', startedAt: 1_100, completedAt: 2_900 })
-    const slow = node({ key: 'slow', kind: 'tool', turn: 1, step: 1, title: 'Slow', startedAt: 1_200, completedAt: 2_200 })
-    const fast = node({ key: 'fast', kind: 'tool', turn: 1, step: 1, title: 'Fast', startedAt: 2_300, completedAt: 2_500 })
-    const model = new TrajectoryModel([turn, step, slow, fast])
+    const step = node({ key: 'step', parentKey: 'turn', kind: 'step', turn: 1, step: 1, title: 'Step 1', startedAt: 1_100, completedAt: 2_900 })
+    const slow = node({ key: 'slow', parentKey: 'step', kind: 'tool', turn: 1, step: 1, title: 'Slow', startedAt: 1_200, completedAt: 2_200 })
+    const fast = node({ key: 'fast', parentKey: 'step', kind: 'tool', turn: 1, step: 1, title: 'Fast', startedAt: 2_300, completedAt: 2_500 })
+    const model = new TrajectoryModel([turn, step, slow, fast], record => record, record => record.parentKey)
 
     const measurement = model.measure(4_000)
 
@@ -33,21 +39,25 @@ describe('TrajectoryModel', () => {
   })
 
   it('measures pending records from the render clock without inventing completed timing', () => {
-    const pending: TrajectoryNode = {
+    const pending: TimedNode = {
       key: 'pending',
       kind: 'tool',
       title: 'Pending',
       status: 'pending',
       startedAt: 2_000,
     }
-    const informational: TrajectoryNode = {
+    const informational: TimedNode = {
       key: 'info',
       kind: 'event',
       title: 'Info',
       status: 'info',
       startedAt: 2_000,
     }
-    const measurement = new TrajectoryModel([pending, informational]).measure(2_750)
+    const measurement = new TrajectoryModel(
+      [pending, informational],
+      record => record,
+      record => record.parentKey,
+    ).measure(2_750)
 
     expect(measurement.metrics.get('pending')?.durationMs).toBe(750)
     expect(measurement.metrics.get('info')?.durationMs).toBeUndefined()

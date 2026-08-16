@@ -24,6 +24,11 @@ import {
   type PendingSubmission,
   type SubmissionActivityUpdate,
 } from './submission.ts'
+import {
+  buildLifecycleSnapshot,
+  type LifecycleSnapshot,
+  type RuntimeLifecycleActivity,
+} from './lifecycle/index.ts'
 
 export type { PendingSubmission } from './submission.ts'
 
@@ -45,11 +50,14 @@ export interface TuiState {
   historyHasMore: boolean
   queue: QueuedInboxItem[]
   pendingSubmissions: PendingSubmission[]
+  lifecycle: LifecycleSnapshot
   models: SessionModels | undefined
   projections: Partial<SessionProjectionMap>
   notice: string | undefined
   error: string | undefined
 }
+
+type TuiStateData = Omit<TuiState, 'lifecycle'>
 
 /** UI callbacks kept independent from the concrete pi-tui renderer. */
 export interface TuiControllerSink {
@@ -106,6 +114,8 @@ export class HarnessController {
   private state: TuiState
   private resyncTask: { generation: number; promise: Promise<void> } | undefined
   private generation = 0
+  private sessionOpenAttempt = 0
+  private hiddenSession: { attempt: number; sessionId: SessionId } | undefined
   private projectionSeqs: Record<string, number> = {}
   private readonly submissions = new SubmissionTracker()
 
@@ -115,7 +125,7 @@ export class HarnessController {
     cwd: string,
     private readonly historyMessages: number,
   ) {
-    this.state = {
+    this.state = this.createState({
       sessionId: undefined,
       cwd,
       running: false,
@@ -128,7 +138,7 @@ export class HarnessController {
       projections: {},
       notice: undefined,
       error: undefined,
-    }
+    })
   }
 
   /** Current immutable-by-convention state snapshot. */
@@ -256,14 +266,14 @@ export class HarnessController {
       error: undefined,
     })
     const rejectPending = (): void => {
-      if (generation !== this.generation || sessionId !== this.state.sessionId) return
+      if (!this.ownsSubmission(generation, sessionId)) return
       this.submissions.reject(pending.key)
-      this.patch({ pendingSubmissions: this.submissions.snapshot })
+      this.publishSubmissions(sessionId)
     }
     const setActivity = (activity: SubmissionActivityUpdate): void => {
-      if (generation !== this.generation || sessionId !== this.state.sessionId) return
+      if (!this.ownsSubmission(generation, sessionId)) return
       this.submissions.setActivity(pending.key, activity)
-      this.patch({ pendingSubmissions: this.submissions.snapshot })
+      this.publishSubmissions(sessionId)
     }
     const clientTimeZone = terminalTimeZone()
     let response: Awaited<ReturnType<IApiClient['sessions']['prompt']>>
@@ -280,9 +290,9 @@ export class HarnessController {
           rpcId: externalRpcId,
           ...clientTimeZone === undefined ? {} : { clientTimeZone },
         })
-        if (generation !== this.generation || sessionId !== this.state.sessionId) return
+        if (!this.ownsSubmission(generation, sessionId)) return
         this.submissions.accept(pending.key, externalRpcId)
-        this.patch({ pendingSubmissions: this.submissions.snapshot })
+        this.publishSubmissions(sessionId)
         return
       }
       response = await this.api.sessions.prompt({
@@ -299,14 +309,14 @@ export class HarnessController {
       rejectPending()
       throw new Error(response.result.error.message)
     }
-    if (generation !== this.generation || sessionId !== this.state.sessionId) return
+    if (!this.ownsSubmission(generation, sessionId)) return
     if (response.result.value.command !== undefined) {
       this.submissions.settle(pending.key)
-      this.patch({ pendingSubmissions: this.submissions.snapshot })
+      this.publishSubmissions(sessionId)
       return
     }
     this.submissions.accept(pending.key, response.rpcId)
-    this.patch({ pendingSubmissions: this.submissions.snapshot })
+    this.publishSubmissions(sessionId)
   }
 
   /** Create a durable Goal; the read side remains the goal projection. */
@@ -429,9 +439,15 @@ export class HarnessController {
   private async openSession(resumeSessionId?: string, clearImmediately = false): Promise<void> {
     const previousState = this.state
     const previousProjectionSeqs = this.projectionSeqs
-    const generation = ++this.generation
+    const previousGeneration = this.generation
+    const attempt = ++this.sessionOpenAttempt
+    this.hiddenSession = undefined
+    let committed = false
     if (clearImmediately) {
-      this.state = this.emptySessionState(previousState.cwd, previousState.connected)
+      if (previousState.sessionId !== undefined) {
+        this.hiddenSession = { attempt, sessionId: previousState.sessionId }
+      }
+      this.state = this.createState(this.emptySessionData(previousState.cwd, previousState.connected))
       this.projectionSeqs = {}
       this.emit()
     }
@@ -450,18 +466,25 @@ export class HarnessController {
         cwd,
         ...requested === undefined ? {} : { sessionId: requested },
       }))
-      if (generation !== this.generation) return
+      if (attempt !== this.sessionOpenAttempt) return
+      this.hiddenSession = undefined
+      this.generation = previousGeneration + 1
       this.submissions.reset()
-      this.state = {
-        ...this.emptySessionState(cwd, this.state.connected),
+      this.state = this.createState({
+        ...this.emptySessionData(cwd, this.state.connected),
         sessionId: created.sessionId,
-      }
+      })
+      committed = true
       this.emit()
       this.projectionSeqs = {}
       await Promise.all([this.resync(), this.refreshModels().catch(() => undefined)])
     } catch (error: unknown) {
-      if (clearImmediately && generation === this.generation) {
-        this.state = previousState
+      if (clearImmediately && !committed && attempt === this.sessionOpenAttempt) {
+        this.hiddenSession = undefined
+        this.state = this.createState({
+          ...this.dataOf(previousState),
+          pendingSubmissions: this.submissions.snapshot,
+        })
         this.projectionSeqs = previousProjectionSeqs
         this.emit()
       }
@@ -626,7 +649,7 @@ export class HarnessController {
     })
   }
 
-  private emptySessionState(cwd: string, connected: boolean): TuiState {
+  private emptySessionData(cwd: string, connected: boolean): TuiStateData {
     return {
       sessionId: undefined,
       cwd,
@@ -643,9 +666,74 @@ export class HarnessController {
     }
   }
 
-  private patch(change: Partial<TuiState>): void {
-    this.state = { ...this.state, ...change }
+  private patch(change: Partial<TuiStateData>): void {
+    const current = this.dataOf(this.state)
+    const next = { ...current, ...change }
+    const lifecycleChanged = next.sessionId !== current.sessionId
+      || next.events !== current.events
+      || next.running !== current.running
+      || !this.sameRuntimeActivities(next.pendingSubmissions, current.pendingSubmissions)
+      || this.state.lifecycle.generation !== this.generation
+    this.state = lifecycleChanged
+      ? this.createState(next)
+      : { ...next, lifecycle: this.state.lifecycle }
     this.emit()
+  }
+
+  private createState(state: TuiStateData): TuiState {
+    const runtimeActivities = this.runtimeActivities(state.pendingSubmissions)
+    return {
+      ...state,
+      lifecycle: buildLifecycleSnapshot({
+        sessionId: state.sessionId === undefined ? undefined : String(state.sessionId),
+        generation: this.generation,
+        entries: state.events,
+        sessionRunning: state.running,
+        runtimeActivities,
+      }),
+    }
+  }
+
+  private runtimeActivities(submissions: readonly PendingSubmission[]): RuntimeLifecycleActivity[] {
+    return submissions.flatMap((submission): RuntimeLifecycleActivity[] => {
+      const activity = submission.activity
+      return activity?.kind === 'vision'
+        ? [{ kind: 'vision', analysisId: activity.analysisId, startedAt: activity.startedAt }]
+        : []
+    })
+  }
+
+  private sameRuntimeActivities(
+    left: readonly PendingSubmission[],
+    right: readonly PendingSubmission[],
+  ): boolean {
+    const leftActivities = this.runtimeActivities(left)
+    const rightActivities = this.runtimeActivities(right)
+    return leftActivities.length === rightActivities.length
+      && leftActivities.every((activity, index) => {
+        const candidate = rightActivities[index]
+        return candidate?.kind === activity.kind
+          && candidate.analysisId === activity.analysisId
+          && candidate.startedAt === activity.startedAt
+      })
+  }
+
+  private dataOf(state: TuiState): TuiStateData {
+    const { lifecycle: _lifecycle, ...data } = state
+    return data
+  }
+
+  private ownsSubmission(generation: number, sessionId: SessionId): boolean {
+    return generation === this.generation
+      && (sessionId === this.state.sessionId
+        || (this.hiddenSession?.attempt === this.sessionOpenAttempt
+          && sessionId === this.hiddenSession.sessionId))
+  }
+
+  private publishSubmissions(sessionId: SessionId): void {
+    if (sessionId === this.state.sessionId) {
+      this.patch({ pendingSubmissions: this.submissions.snapshot })
+    }
   }
 
   private emit(): void {

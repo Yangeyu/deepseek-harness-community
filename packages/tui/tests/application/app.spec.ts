@@ -1,4 +1,4 @@
-import { Editor } from '@earendil-works/pi-tui'
+import { Editor, type Terminal } from '@earendil-works/pi-tui'
 import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
 import type { MemoryMutation, ProjectMemoryService } from '@vascent/deepseek-harness-memory'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +17,7 @@ import {
 } from '../../src/application/keymap-settings.ts'
 import type { VisionGateway } from '../../src/application/attachments/coordinator.ts'
 import type { NewAttachmentDraft } from '../../src/application/attachments/drafts.ts'
+import { buildLifecycleSnapshot } from '../../src/runtime/lifecycle/index.ts'
 
 interface AppInternals {
   controller: {
@@ -59,6 +60,26 @@ function memoryService(overrides: Partial<ProjectMemoryService> = {}): ProjectMe
   } as unknown as ProjectMemoryService
 }
 
+function quietTerminal(): Terminal {
+  return {
+    columns: 80,
+    rows: 24,
+    kittyProtocolActive: false,
+    start: vi.fn(),
+    stop: vi.fn(),
+    drainInput: vi.fn(async () => {}),
+    write: vi.fn(),
+    moveBy: vi.fn(),
+    hideCursor: vi.fn(),
+    showCursor: vi.fn(),
+    clearLine: vi.fn(),
+    clearFromCursor: vi.fn(),
+    clearScreen: vi.fn(),
+    setTitle: vi.fn(),
+    setProgress: vi.fn(),
+  }
+}
+
 function application(
   checkpoints: WorkspaceCheckpointStore = new WorkspaceCheckpointStore(10),
   memory: ProjectMemoryService = memoryService(),
@@ -81,6 +102,7 @@ function application(
     checkpoints,
     memory,
     {
+      terminal: quietTerminal(),
       ...dependencies,
       ...commandSource === undefined ? {} : { commandSource },
       ...keymap === undefined ? {} : { keymap },
@@ -347,22 +369,61 @@ describe('TuiApplication input routing', () => {
     expect(internals.transcript.render(80).join('\n')).not.toContain('Working')
   })
 
+  it('restarts fallback elapsed time for each optimistic activity', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const base = internals.controller.current
+
+    app.render({
+      ...base,
+      pendingSubmissions: [{
+        key: 1,
+        text: 'first task',
+        mode: 'queue',
+        intent: 'working',
+      }],
+    })
+    vi.setSystemTime(5_000)
+    app.render({
+      ...base,
+      pendingSubmissions: [{
+        key: 2,
+        text: 'second task',
+        mode: 'queue',
+        intent: 'working',
+      }],
+    })
+
+    expect(internals.status.render(80).join('\n')).toContain('Working (0s · esc to interrupt)')
+    app.dispose()
+  })
+
   it('uses a Vision-specific status while an image prompt is being prepared', () => {
     vi.useFakeTimers()
     vi.setSystemTime(3_000)
     const app = application()
     const internals = app as unknown as AppInternals
 
+    const pendingSubmissions: TuiState['pendingSubmissions'] = [{
+      key: 1,
+      text: 'analyze this image',
+      mode: 'queue',
+      intent: 'working',
+      activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: 1_000 },
+    }]
     app.render({
       ...internals.controller.current,
       connected: true,
-      pendingSubmissions: [{
-        key: 1,
-        text: 'analyze this image',
-        mode: 'queue',
-        intent: 'working',
-        activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: 1_000 },
-      }],
+      pendingSubmissions,
+      lifecycle: buildLifecycleSnapshot({
+        sessionId: undefined,
+        generation: 0,
+        entries: [],
+        sessionRunning: false,
+        runtimeActivities: [{ kind: 'vision', analysisId: 'analysis-1', startedAt: 1_000 }],
+      }),
     })
 
     const status = internals.status.render(80).join('\n')

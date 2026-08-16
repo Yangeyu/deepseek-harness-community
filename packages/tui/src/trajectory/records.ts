@@ -1,12 +1,26 @@
 import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
 import type {} from '@deepseek-ai/dsh-commands/types'
+import type {} from '@vascent/deepseek-harness-vision'
 import { displayUnknown, sanitizeTerminalText } from '../text.ts'
+import {
+  commandLifecycleKey,
+  executionStatus,
+  lifecycleEndedAt,
+  lifecycleStartedAt,
+  stepLifecycleKey,
+  toolLifecycleKey,
+  turnLifecycleKey,
+  visionLifecycleKey,
+  type ExecutionStatus,
+  type LifecycleNode,
+  type LifecycleSnapshot,
+} from '../runtime/lifecycle/index.ts'
 
 export type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'command' | 'vision' | 'context' | 'event'
-export type TrajectoryStatus = 'pending' | 'completed' | 'warning' | 'failed' | 'info'
+export type TrajectoryPresentationTone = 'warning' | 'info'
+export type TrajectoryStatus = ExecutionStatus | TrajectoryPresentationTone
 
-/** One semantic execution record assembled from the durable session event log. */
-export interface TrajectoryRecord {
+interface TrajectoryRecordBase {
   key: string
   kind: TrajectoryKind
   type: string
@@ -16,16 +30,50 @@ export interface TrajectoryRecord {
   turn?: number
   step?: number
   title: string
-  /** Compact, single-line preview used only by the execution ledger. */
   summary: string
-  /** Complete semantic text shown by the Summary tab. */
   detail?: string
-  status: TrajectoryStatus
-  startedAt: number
-  completedAt?: number
   payload?: unknown
   result?: unknown
   schema?: unknown
+}
+
+export interface TrajectoryExecutionRecord extends TrajectoryRecordBase {
+  lifecycle: LifecycleNode
+}
+
+export interface TrajectoryEventRecord extends TrajectoryRecordBase {
+  tone: TrajectoryPresentationTone
+  occurredAt: number
+}
+
+export type TrajectoryRecord = TrajectoryExecutionRecord | TrajectoryEventRecord
+
+export interface TrajectoryRecordTiming {
+  status: TrajectoryStatus
+  startedAt?: number
+  completedAt?: number
+}
+
+export function trajectoryTiming(record: TrajectoryRecord): TrajectoryRecordTiming {
+  if ('lifecycle' in record) {
+    const startedAt = lifecycleStartedAt(record.lifecycle)
+    const completedAt = lifecycleEndedAt(record.lifecycle)
+    return {
+      status: executionStatus(record.lifecycle),
+      ...startedAt === undefined ? {} : { startedAt },
+      ...completedAt === undefined ? {} : { completedAt },
+    }
+  }
+  return { status: record.tone, startedAt: record.occurredAt }
+}
+
+/** Use lifecycle topology for executions and semantic location only for informational records. */
+export function trajectoryParentKey(record: TrajectoryRecord): string | undefined {
+  if ('lifecycle' in record) return record.lifecycle.parentKey
+  if (record.turn === undefined) return undefined
+  return record.step === undefined
+    ? String(turnLifecycleKey(record.turn))
+    : String(stepLifecycleKey(record.turn, record.step))
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
@@ -39,7 +87,7 @@ function numericField(value: unknown, field: string): number | undefined {
   return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : undefined
 }
 
-function position(entry: HistoryEntry): Pick<TrajectoryRecord, 'turn' | 'step'> {
+function position(entry: HistoryEntry): Pick<TrajectoryRecordBase, 'turn' | 'step'> {
   const turn = numericField(entry.event.data, 'turn')
   const step = numericField(entry.event.data, 'step')
   return {
@@ -52,7 +100,7 @@ function locatedPosition(
   entry: HistoryEntry,
   activeTurn: number | undefined,
   activeStep: number | undefined,
-): Pick<TrajectoryRecord, 'turn' | 'step'> {
+): Pick<TrajectoryRecordBase, 'turn' | 'step'> {
   const explicit = position(entry)
   const turn = explicit.turn ?? activeTurn
   const step = explicit.step ?? activeStep
@@ -60,10 +108,6 @@ function locatedPosition(
     ...turn === undefined ? {} : { turn },
     ...step === undefined ? {} : { step },
   }
-}
-
-function stepKey(turn: number, step: number): string {
-  return `${String(turn)}:${String(step)}`
 }
 
 function contentText(value: unknown): string {
@@ -100,30 +144,15 @@ function parsedJson(value: string): unknown {
 }
 
 function resultTitle(entry: HistoryEntry | undefined): string | undefined {
-  if (entry?.view?.for !== 'result') return undefined
-  return entry.view.view.title
+  return entry?.view?.for === 'result' ? entry.view.view.title : undefined
 }
 
 function callTitle(entry: HistoryEntry): string | undefined {
-  if (entry.view?.for !== 'call') return undefined
-  return entry.view.view.title
+  return entry.view?.for === 'call' ? entry.view.view.title : undefined
 }
 
-function turnStatus(reason: unknown): TrajectoryStatus {
-  const kind = recordValue(reason)?.kind
-  if (kind === 'completed') return 'completed'
-  if (kind === 'error') return 'failed'
-  return 'warning'
-}
-
-function resultFailed(entry: HistoryEntry): boolean {
-  if (entry.event.type !== 'tool/result') return false
-  const block = entry.event.data.message.content[0]
-  return entry.event.data.error !== undefined || block?.isError === true
-}
-
-function toolResult(entry: HistoryEntry): unknown {
-  if (entry.event.type !== 'tool/result') return undefined
+function toolResult(entry: HistoryEntry | undefined): unknown {
+  if (entry?.event.type !== 'tool/result') return undefined
   const text = messageText(entry.event.data.message)
   if (entry.event.data.error === undefined) return text === '' ? entry.event.data.message.content : text
   return {
@@ -139,95 +168,163 @@ function toolSchemaMap(entry: HistoryEntry): Map<string, unknown> | undefined {
   return schemas
 }
 
-/** Pair lifecycle boundaries and tool call/results into an ordered diagnostic ledger. */
-export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): TrajectoryRecord[] {
-  const turnEnds = new Map<number, HistoryEntry>()
-  const stepEnds = new Map<string, HistoryEntry>()
-  const stepStarts = new Map<string, HistoryEntry>()
-  const toolResults = new Map<string, HistoryEntry>()
-  const commandRuns = new Set<string>()
-  const commandResults = new Map<string, HistoryEntry>()
-  for (const entry of entries) {
-    const event = entry.event
-    if (event.type === 'turn/end') turnEnds.set(event.data.turn, entry)
-    if (event.type === 'step/start') stepStarts.set(stepKey(event.data.turn, event.data.step), entry)
-    if (event.type === 'step/end') stepEnds.set(stepKey(event.data.turn, event.data.step), entry)
-    if (event.type === 'tool/result') toolResults.set(String(event.data.message.source.callId), entry)
-    if (event.type === 'command/run') commandRuns.add(String(event.data.commandId))
-    if (event.type === 'command/done') commandResults.set(String(event.data.commandId), entry)
-  }
+function settledEntry(node: LifecycleNode, lifecycle: LifecycleSnapshot): HistoryEntry | undefined {
+  return node.state.phase === 'settled' ? lifecycle.entry(node.state.ended.seq) : undefined
+}
 
+function completionFields(node: LifecycleNode, lifecycle: LifecycleSnapshot): {
+  completionType?: string
+  completionSeq?: number
+} {
+  const completed = settledEntry(node, lifecycle)
+  return completed === undefined
+    ? {}
+    : { completionType: completed.event.type, completionSeq: completed.event.seq }
+}
+
+function stateWord(node: LifecycleNode): string {
+  const status = executionStatus(node)
+  return status.charAt(0).toUpperCase() + status.slice(1)
+}
+
+function trajectoryKind(node: LifecycleNode): Extract<TrajectoryKind, LifecycleNode['kind']> {
+  switch (node.kind) {
+    case 'turn': return 'turn'
+    case 'step': return 'step'
+    case 'tool': return 'tool'
+    case 'command': return 'command'
+    case 'vision': return 'vision'
+    case 'thought': throw new Error('Thought lifecycle nodes belong to the transcript, not the trajectory ledger')
+  }
+}
+
+function executionRecord(
+  node: LifecycleNode,
+  values: Omit<TrajectoryExecutionRecord, 'key' | 'kind' | 'lifecycle'>,
+): TrajectoryExecutionRecord {
+  return { ...values, key: String(node.key), kind: trajectoryKind(node), lifecycle: node }
+}
+
+/** Build presentation records by joining payloads to the one lifecycle snapshot. */
+export function buildTrajectoryRecords(
+  entries: readonly HistoryEntry[],
+  lifecycle: LifecycleSnapshot,
+): TrajectoryRecord[] {
   let schemas = new Map<string, unknown>()
   let activeTurn: number | undefined
   let activeStep: number | undefined
   const records: TrajectoryRecord[] = []
+
   for (const entry of entries) {
     const event = entry.event
-    if (event.type === 'turn/start') activeTurn = event.data.turn
-    if (event.type === 'step/start') activeStep = event.data.step
+    if (event.type === 'turn/start') {
+      activeTurn = event.data.turn
+      activeStep = undefined
+    }
+    if (event.type === 'step/start') {
+      activeTurn = event.data.turn
+      activeStep = event.data.step
+    }
     const at = locatedPosition(entry, activeTurn, activeStep)
     const schemaSnapshot = toolSchemaMap(entry)
     if (schemaSnapshot !== undefined) schemas = schemaSnapshot
+
     switch (event.type) {
       case 'assistant/chunk':
-      case 'turn/end':
-      case 'step/end':
-      case 'tool/result':
         break
+      case 'turn/end': {
+        const node = lifecycle.get(turnLifecycleKey(event.data.turn))
+        if (node?.state.phase !== 'settled' || node.state.started !== undefined) break
+        records.push(executionRecord(node, {
+          type: event.type,
+          seq: event.seq,
+          turn: event.data.turn,
+          title: `Turn ${String(event.data.turn)}`,
+          summary: stateWord(node),
+          result: event.data.reason,
+          payload: event.data,
+        }))
+        break
+      }
+      case 'step/end': {
+        const node = lifecycle.get(stepLifecycleKey(event.data.turn, event.data.step))
+        if (node?.state.phase !== 'settled' || node.state.started !== undefined) break
+        records.push(executionRecord(node, {
+          type: event.type,
+          seq: event.seq,
+          turn: event.data.turn,
+          step: event.data.step,
+          title: `Step ${String(event.data.step)}`,
+          summary: stateWord(node),
+          result: event.data,
+          payload: event.data,
+        }))
+        break
+      }
+      case 'tool/result': {
+        const node = lifecycle.get(toolLifecycleKey(String(event.data.message.source.callId)))
+        if (node?.state.phase !== 'settled' || node.state.started !== undefined) break
+        records.push(executionRecord(node, {
+          type: event.type,
+          seq: event.seq,
+          turn: event.data.turn,
+          step: event.data.step,
+          title: resultTitle(entry) ?? 'Tool completion',
+          summary: stateWord(node),
+          result: toolResult(entry),
+          payload: event.data,
+        }))
+        break
+      }
       case 'command/done': {
-        if (commandRuns.has(String(event.data.commandId))) break
+        const node = lifecycle.get(commandLifecycleKey(String(event.data.commandId)))
+        if (node?.state.phase !== 'settled' || node.state.started !== undefined) break
         const detail = event.data.text ?? `${event.data.kind} command completion`
-        records.push({
-          key: `command:${String(event.data.commandId)}:${String(event.seq)}`,
-          kind: 'command',
+        records.push(executionRecord(node, {
           type: event.type,
           seq: event.seq,
           title: 'Command completion',
           summary: oneLine(detail),
           detail,
-          status: event.data.kind === 'error' ? 'failed' : 'completed',
-          startedAt: event.time,
           result: event.data,
-        })
+        }))
         break
       }
       case 'turn/start': {
-        const completed = turnEnds.get(event.data.turn)
+        const node = lifecycle.get(turnLifecycleKey(event.data.turn))
+        if (node === undefined) break
+        const completed = settledEntry(node, lifecycle)
         const reason = completed?.event.type === 'turn/end' ? completed.event.data.reason : undefined
         const reasonKind = recordValue(reason)?.kind
-        records.push({
-          key: `turn:${String(event.data.turn)}:${String(event.seq)}`,
-          kind: 'turn',
+        records.push(executionRecord(node, {
           type: event.type,
-          ...completed === undefined ? {} : { completionType: completed.event.type, completionSeq: completed.event.seq },
+          ...completionFields(node, lifecycle),
           seq: event.seq,
           turn: event.data.turn,
           title: `Turn ${String(event.data.turn)}`,
-          summary: completed === undefined ? 'Running' : `Finished · ${typeof reasonKind === 'string' ? reasonKind : 'completed'}`,
-          status: completed === undefined ? 'pending' : turnStatus(reason),
-          startedAt: event.time,
-          ...completed === undefined ? {} : { completedAt: completed.event.time, result: reason },
+          summary: reason === undefined
+            ? stateWord(node)
+            : `Finished · ${typeof reasonKind === 'string' ? reasonKind : executionStatus(node)}`,
+          ...reason === undefined ? {} : { result: reason },
           payload: event.data,
-        })
+        }))
         break
       }
       case 'step/start': {
-        const completed = stepEnds.get(stepKey(event.data.turn, event.data.step))
-        records.push({
-          key: `step:${String(event.data.turn)}:${String(event.data.step)}:${String(event.seq)}`,
-          kind: 'step',
+        const node = lifecycle.get(stepLifecycleKey(event.data.turn, event.data.step))
+        if (node === undefined) break
+        const completed = settledEntry(node, lifecycle)
+        records.push(executionRecord(node, {
           type: event.type,
-          ...completed === undefined ? {} : { completionType: completed.event.type, completionSeq: completed.event.seq },
+          ...completionFields(node, lifecycle),
           seq: event.seq,
           turn: event.data.turn,
           step: event.data.step,
           title: `Step ${String(event.data.step)}`,
-          summary: completed === undefined ? 'Running' : 'Completed',
-          status: completed === undefined ? 'pending' : 'completed',
-          startedAt: event.time,
-          ...completed === undefined ? {} : { completedAt: completed.event.time, result: completed.event.data },
+          summary: stateWord(node),
+          ...completed?.event.type === 'step/end' ? { result: completed.event.data } : {},
           payload: event.data,
-        })
+        }))
         break
       }
       case 'user/message': {
@@ -235,18 +332,15 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
         const source = event.data.source
         const detail = text === '' ? displayUnknown(event.data.content) : text
         if (source.kind === 'community-vision') {
-          records.push({
-            key: `vision:${source.analysisId}:${String(event.seq)}`,
-            kind: 'vision',
+          const node = lifecycle.get(visionLifecycleKey(source.analysisId))
+          if (node === undefined) break
+          records.push(executionRecord(node, {
             type: event.type,
             seq: event.seq,
             ...at,
             title: 'Vision analysis',
-            summary: `${source.provider}/${source.model} · ${String(source.durationMs)}ms · completed`,
+            summary: `${source.provider}/${source.model} · ${stateWord(node)}`,
             detail,
-            status: 'completed',
-            startedAt: Math.max(0, event.time - source.durationMs),
-            completedAt: event.time,
             payload: {
               analysisId: source.analysisId,
               route: { strategy: 'proxy', provider: source.provider, model: source.model },
@@ -258,7 +352,7 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
               finishReason: source.finishReason,
               ...source.usage === undefined ? {} : { usage: source.usage },
             },
-          })
+          }))
           break
         }
         records.push({
@@ -270,14 +364,13 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
           title: source.kind === 'user' ? 'User input' : 'Context input',
           summary: oneLine(detail),
           detail,
-          status: 'info',
-          startedAt: event.time,
+          tone: 'info',
+          occurredAt: event.time,
           payload: event.data,
         })
         break
       }
       case 'assistant/message': {
-        const start = stepStarts.get(stepKey(event.data.turn, event.data.step))
         const text = messageText(event.data.message)
         const detail = text === '' ? '(empty response)' : text
         records.push({
@@ -290,9 +383,8 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
           title: 'Assistant response',
           summary: oneLine(detail),
           detail,
-          status: 'completed',
-          startedAt: start?.event.time ?? event.time,
-          completedAt: event.time,
+          tone: 'info',
+          occurredAt: event.time,
           payload: { source: event.data.message.source },
           result: {
             content: text === '' ? event.data.message.content : text,
@@ -302,60 +394,54 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
         break
       }
       case 'tool/call': {
-        const completed = toolResults.get(String(event.data.callId))
-        const displayTitle = resultTitle(completed) ?? callTitle(entry) ?? event.data.name
-        const failed = completed === undefined ? false : resultFailed(completed)
-        records.push({
-          key: `tool:${String(event.data.callId)}:${String(event.seq)}`,
-          kind: 'tool',
+        const node = lifecycle.get(toolLifecycleKey(String(event.data.callId)))
+        if (node === undefined) break
+        const completed = settledEntry(node, lifecycle)
+        const result = completed?.event.type === 'tool/result' ? completed : undefined
+        const displayTitle = resultTitle(result) ?? callTitle(entry) ?? event.data.name
+        records.push(executionRecord(node, {
           type: event.type,
-          ...completed === undefined ? {} : { completionType: completed.event.type, completionSeq: completed.event.seq },
+          ...completionFields(node, lifecycle),
           seq: event.seq,
           turn: event.data.turn,
           step: event.data.step,
           title: displayTitle,
-          summary: `${event.data.name} · ${completed === undefined ? 'Running' : failed ? 'Failed' : 'Completed'}`,
+          summary: `${event.data.name} · ${stateWord(node)}`,
           detail: displayTitle,
-          status: completed === undefined ? 'pending' : failed ? 'failed' : 'completed',
-          startedAt: event.time,
-          ...completed === undefined ? {} : { completedAt: completed.event.time, result: toolResult(completed) },
+          ...result === undefined ? {} : { result: toolResult(result) },
           payload: {
             callId: event.data.callId,
             name: event.data.name,
             arguments: parsedJson(event.data.arguments),
           },
           ...schemas.get(event.data.name) === undefined ? {} : { schema: schemas.get(event.data.name) },
-        })
+        }))
         break
       }
       case 'command/run': {
-        const completed = commandResults.get(String(event.data.commandId))
-        const failed = completed?.event.type === 'command/done' && completed.event.data.kind === 'error'
+        const node = lifecycle.get(commandLifecycleKey(String(event.data.commandId)))
+        if (node === undefined) break
+        const completed = settledEntry(node, lifecycle)
         const result = completed?.event.type === 'command/done' ? completed.event.data : undefined
         const commandLine = `/${event.data.name}${event.data.args ?? ''}`
         const detail = result?.text ?? commandLine
-        records.push({
-          key: `command:${String(event.data.commandId)}:${String(event.seq)}`,
-          kind: 'command',
+        records.push(executionRecord(node, {
           type: event.type,
-          ...completed === undefined ? {} : { completionType: completed.event.type, completionSeq: completed.event.seq },
+          ...completionFields(node, lifecycle),
           seq: event.seq,
           title: `/${event.data.name}`,
-          summary: completed === undefined
-            ? 'Running'
-            : failed ? `Failed${result?.text === undefined ? '' : ` · ${oneLine(result.text)}`}`
-              : `Completed${result?.text === undefined ? '' : ` · ${oneLine(result.text)}`}`,
+          summary: result?.text === undefined
+            ? stateWord(node)
+            : `${stateWord(node)} · ${oneLine(result.text)}`,
           detail,
-          status: completed === undefined ? 'pending' : failed ? 'failed' : 'completed',
-          startedAt: event.time,
-          ...completed === undefined ? {} : { completedAt: completed.event.time, result },
+          ...result === undefined ? {} : { result },
           payload: {
             commandId: event.data.commandId,
             name: event.data.name,
             ...event.data.args === undefined ? {} : { arguments: event.data.args },
             source: event.data.source,
           },
-        })
+        }))
         break
       }
       case 'request/header': {
@@ -369,8 +455,8 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
           title: 'Model request',
           summary: `${config.provider}/${config.model}${config.reasoningEffort === undefined ? '' : ` · ${String(config.reasoningEffort)}`}`,
           detail: `Model request to ${config.provider}/${config.model}${config.reasoningEffort === undefined ? '' : ` with ${String(config.reasoningEffort)} reasoning`}`,
-          status: 'info',
-          startedAt: event.time,
+          tone: 'info',
+          occurredAt: event.time,
           payload: event.data.header,
           ...event.data.header.tools === undefined ? {} : { schema: event.data.header.tools },
         })
@@ -386,8 +472,8 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
           title: 'Request context',
           summary: `${event.data.provider}/${event.data.model}${event.data.contextWindow === undefined ? '' : ` · ${String(event.data.contextWindow)} context`}`,
           detail: `Request context for ${event.data.provider}/${event.data.model}${event.data.contextWindow === undefined ? '' : ` with a ${String(event.data.contextWindow)} token window`}`,
-          status: 'info',
-          startedAt: event.time,
+          tone: 'info',
+          occurredAt: event.time,
           payload: event.data,
         })
         break
@@ -402,14 +488,16 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
           title: event.type,
           summary: oneLine(detail),
           detail,
-          status: 'info',
-          startedAt: event.time,
+          tone: 'info',
+          occurredAt: event.time,
           payload: event.data,
         })
       }
     }
-    if (event.type === 'step/end') activeStep = undefined
-    if (event.type === 'turn/end') {
+    if (event.type === 'step/end'
+      && activeTurn === event.data.turn
+      && activeStep === event.data.step) activeStep = undefined
+    if (event.type === 'turn/end' && activeTurn === event.data.turn) {
       activeStep = undefined
       activeTurn = undefined
     }

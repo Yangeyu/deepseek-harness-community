@@ -9,8 +9,13 @@ import type { TuiState } from '../../src/runtime/controller.ts'
 import { sanitizeTerminalText } from '../../src/text.ts'
 import { createTheme } from '../../src/presentation/theme.ts'
 import { TranscriptComponent } from '../../src/presentation/transcript.ts'
+import { buildLifecycleSnapshot } from '../../src/runtime/lifecycle/index.ts'
 
-function state(events: HistoryEntry[], running = false): TuiState {
+function state(
+  events: HistoryEntry[],
+  running = false,
+  pendingSubmissions: TuiState['pendingSubmissions'] = [],
+): TuiState {
   return {
     sessionId: 'session-test' as SessionSummary['sessionId'],
     cwd: '/workspace',
@@ -19,7 +24,19 @@ function state(events: HistoryEntry[], running = false): TuiState {
     events,
     historyHasMore: false,
     queue: [],
-    pendingSubmissions: [],
+    pendingSubmissions,
+    lifecycle: buildLifecycleSnapshot({
+      sessionId: 'session-test',
+      generation: 0,
+      entries: events,
+      sessionRunning: running,
+      runtimeActivities: pendingSubmissions.flatMap((submission) => {
+        const activity = submission.activity
+        return activity?.kind === 'vision'
+          ? [{ kind: 'vision' as const, analysisId: activity.analysisId, startedAt: activity.startedAt }]
+          : []
+      }),
+    }),
     models: undefined,
     projections: {},
     notice: undefined,
@@ -72,7 +89,8 @@ describe('TranscriptComponent', () => {
     transcript.setDetails(true)
 
     const output = transcript.render(100).join('\n')
-    expect(output).toContain('Vision · 1 image · qwen3.7-plus · 500ms')
+    expect(output).toContain('Worked for 500ms · 1 tool')
+    expect(output).toContain('Vision · 1 image · qwen3.7-plus')
     expect(output).toContain('dashscope-vision/qwen3.7-plus')
     expect(output.indexOf('What failed?')).toBeLessThan(output.indexOf('Vision · 1 image'))
   })
@@ -264,6 +282,39 @@ describe('TranscriptComponent', () => {
     expect(transcript.render(80).join('\n')).not.toContain('thought 5')
   })
 
+  it('preserves manual Activity disclosure when older execution children are prepended', () => {
+    const tool = entry({
+      event: {
+        type: 'tool/call',
+        seq: 2,
+        time: 1_200,
+        data: { turn: 1, step: 1, callId: 'call-visible', name: 'read', arguments: '{}' },
+      },
+      view: { for: 'call', view: { card: 'generic', title: 'Read project' } },
+    })
+    const transcript = new TranscriptComponent(state([tool], true), createTheme(false), true, 8)
+
+    transcript.render(80)
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › ◦ Read project')
+
+    transcript.setState(state([
+      entry({
+        event: {
+          type: 'assistant/chunk',
+          seq: 1,
+          time: 1_100,
+          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'earlier reasoning' } },
+        },
+      }),
+      tool,
+    ], true))
+    const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(expanded).toContain('⌄ Working · 1 thought · 1 tool')
+    expect(expanded).toContain('├─ › ◦ Thinking…')
+    expect(expanded).toContain('└─ › ◦ Read project')
+  })
+
   it('follows streaming thinking until the user scrolls upward', () => {
     const reasoningChunk = (seq: number, text: string): HistoryEntry => entry({
       event: {
@@ -274,7 +325,7 @@ describe('TranscriptComponent', () => {
       },
     })
     const events = Array.from({ length: 5 }, (_, index) => reasoningChunk(index, `- stream ${index + 1}\n`))
-    const transcript = new TranscriptComponent(state(events), createTheme(false), true, 8, 3)
+    const transcript = new TranscriptComponent(state(events, true), createTheme(false), true, 8, 3)
 
     expect(transcript.render(80).join('\n')).toContain('› Working · 1 thought · Thinking…')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
@@ -285,7 +336,7 @@ describe('TranscriptComponent', () => {
     expect(following).not.toContain('stream 1')
 
     expect(transcript.handlePointer(2, 'wheel-up')).toBe(true)
-    transcript.setState(state([...events, reasoningChunk(5, '- stream 6\n')]))
+    transcript.setState(state([...events, reasoningChunk(5, '- stream 6\n')], true))
     const paused = transcript.render(80).join('\n')
     expect(paused).toContain('stream 1')
     expect(paused).not.toContain('stream 6')
@@ -454,13 +505,12 @@ describe('TranscriptComponent', () => {
   })
 
   it('renders a local prompt block without transport phases', () => {
-    const pending = state([])
-    pending.pendingSubmissions = [{
+    const pending = state([], false, [{
       key: 1,
       text: 'render before the network round trip',
       mode: 'queue',
       intent: 'working',
-    }]
+    }])
     const transcript = new TranscriptComponent(pending, createTheme(true), true, 8)
 
     const output = transcript.render(80).join('\n')
@@ -471,14 +521,13 @@ describe('TranscriptComponent', () => {
   })
 
   it('renders Vision loading directly after the optimistic image prompt', () => {
-    const pending = state([])
-    pending.pendingSubmissions = [{
+    const pending = state([], false, [{
       key: 1,
       text: 'analyze this image',
       mode: 'queue',
       intent: 'working',
       activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: Date.now() - 1_500 },
-    }]
+    }])
     const transcript = new TranscriptComponent(pending, createTheme(false), true, 8)
 
     const output = transcript.render(80).join('\n')
@@ -501,8 +550,7 @@ describe('TranscriptComponent', () => {
           content: [{ type: 'text', text: 'analyze this image' }],
         },
       },
-    })])
-    transitioning.pendingSubmissions = [{
+    })], false, [{
       key: 1,
       text: 'analyze this image',
       mode: 'queue',
@@ -510,7 +558,7 @@ describe('TranscriptComponent', () => {
       rpcId: 'rpc-image' as never,
       durablePromptObserved: true,
       activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: Date.now() },
-    }]
+    }])
 
     const output = new TranscriptComponent(transitioning, createTheme(false), true, 8).render(80).join('\n')
     expect(output.match(/analyze this image/g)).toHaveLength(1)

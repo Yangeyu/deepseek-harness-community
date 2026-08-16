@@ -15,10 +15,8 @@ import {
 } from './diff.ts'
 import {
   buildTranscriptItems,
-  formatTranscriptDuration,
   type TranscriptActivityGroup,
   type TranscriptDiffItem,
-  type TranscriptExecutionStatus,
   type TranscriptTextItem,
   type TranscriptThinkingItem,
   type TranscriptTone,
@@ -26,6 +24,17 @@ import {
 } from './transcript-model.ts'
 import { sanitizeTerminalText } from '../text.ts'
 import type { TuiTheme } from './theme.ts'
+import {
+  executionStatus,
+  type ExecutionStatus,
+} from '../runtime/lifecycle/index.ts'
+import {
+  activityLabel,
+  executionLabel,
+  executionVisual,
+  ExecutionDisclosureState,
+  type ExecutionVisual,
+} from './execution-style.ts'
 
 interface BlockHit {
   key: string
@@ -35,25 +44,10 @@ interface BlockHit {
   lastLine: number
 }
 
-interface ExecutionVisual {
-  glyph: string
-  paint: (text: string) => string
-  bold: boolean
-}
-
 const DIFF_CONTENT_INDENT = '  '
 const ACTIVITY_CHILD_INDENT = 3
 const DISCLOSURE_COLLAPSED = '›'
 const DISCLOSURE_EXPANDED = '⌄'
-
-function thinkingLabel(status: TranscriptExecutionStatus): string {
-  switch (status) {
-    case 'running': return 'Thinking…'
-    case 'completed': return 'Thought'
-    case 'failed': return 'Thought failed'
-    case 'interrupted': return 'Thought interrupted'
-  }
-}
 
 function padToWidth(value: string, width: number): string {
   const clipped = truncateToWidth(value, width, '…', true)
@@ -64,16 +58,13 @@ function padToWidth(value: string, width: number): string {
 export class TranscriptComponent implements Component {
   private state: Readonly<TuiState>
   private showDetails = false
-  private readonly activityExpansion = new Map<string, boolean>()
-  private readonly activityStatuses = new Map<string, TranscriptActivityGroup['status']>()
-  private readonly failedActivities = new Set<string>()
-  private readonly failedChildren = new Set<string>()
-  private readonly childExpansion = new Map<string, boolean>()
+  private readonly disclosure = new ExecutionDisclosureState()
   private readonly collapsedDiffs = new Set<string>()
   private readonly pausedThinking = new Set<string>()
   private readonly blockOffsets = new Map<string, number>()
   private readonly blockMaxOffsets = new Map<string, number>()
   private blockHits: BlockHit[] = []
+  private activityExecutionKeys = new Map<string, readonly string[]>()
   private hoveredBlockKey: string | undefined
   private diffLineStarts: DiffLineStarts = new Map()
 
@@ -89,11 +80,7 @@ export class TranscriptComponent implements Component {
 
   setState(state: Readonly<TuiState>): void {
     if (state.sessionId !== this.state.sessionId) {
-      this.activityExpansion.clear()
-      this.activityStatuses.clear()
-      this.failedActivities.clear()
-      this.failedChildren.clear()
-      this.childExpansion.clear()
+      this.disclosure.clear()
       this.collapsedDiffs.clear()
       this.pausedThinking.clear()
       this.blockOffsets.clear()
@@ -105,8 +92,7 @@ export class TranscriptComponent implements Component {
 
   setDetails(show: boolean): void {
     this.showDetails = show
-    this.activityExpansion.clear()
-    this.childExpansion.clear()
+    this.disclosure.clearOverrides()
     this.pausedThinking.clear()
   }
 
@@ -130,9 +116,9 @@ export class TranscriptComponent implements Component {
       if (hit === undefined || hit.titleLine !== line) return false
       this.hoveredBlockKey = hit.key
       if (hit.kind === 'activity') {
-        this.activityExpansion.set(hit.key, !this.isActivityExpanded(hit.key))
+        this.disclosure.toggleActivity(this.activityExecutionKeys.get(hit.key) ?? [], this.showDetails)
       } else if (hit.kind === 'thinking' || hit.kind === 'tool') {
-        this.childExpansion.set(hit.key, !this.isChildExpanded(hit.key))
+        this.disclosure.toggle(hit.key, this.showDetails)
         if (hit.kind === 'thinking') {
           this.pausedThinking.delete(hit.key)
           this.blockOffsets.delete(hit.key)
@@ -159,19 +145,13 @@ export class TranscriptComponent implements Component {
       this.maxToolOutputLines,
     )
     this.blockHits = []
-    this.failedActivities.clear()
-    this.failedChildren.clear()
-    const nextActivityStatuses = new Map<string, TranscriptActivityGroup['status']>()
+    this.activityExecutionKeys = new Map()
     for (const item of items) {
       if (item.kind !== 'activity') continue
-      if (item.status === 'failed') {
-        this.failedActivities.add(item.key)
-        if (this.activityStatuses.get(item.key) !== 'failed') this.activityExpansion.delete(item.key)
-      }
-      nextActivityStatuses.set(item.key, item.status)
+      const keys = item.items.map(child => child.key)
+      this.activityExecutionKeys.set(item.key, keys)
+      this.disclosure.observeActivity(keys, item.lifecycle.status)
     }
-    this.activityStatuses.clear()
-    for (const [key, status] of nextActivityStatuses) this.activityStatuses.set(key, status)
     for (const [index, item] of items.entries()) {
       if (index > 0) lines.push('')
       if (item.kind === 'activity') {
@@ -234,12 +214,12 @@ export class TranscriptComponent implements Component {
       activity.key,
       'activity',
     )
-    if (!this.isActivityExpanded(activity.key)) return
+    if (!this.isActivityExpanded(activity)) return
 
     const childWidth = Math.max(1, contentWidth - ACTIVITY_CHILD_INDENT)
     for (const [index, item] of activity.items.entries()) {
       const last = index === activity.items.length - 1
-      if (item.status === 'failed') this.failedChildren.add(item.key)
+      this.disclosure.observe(item.key, executionStatus(item.lifecycle))
       const rendered = item.kind === 'thinking'
         ? this.renderThinking(item, childWidth)
         : this.renderTool(item, childWidth)
@@ -253,55 +233,43 @@ export class TranscriptComponent implements Component {
   }
 
   private renderActivityTitle(activity: TranscriptActivityGroup, width: number): string {
-    const expanded = this.isActivityExpanded(activity.key)
+    const expanded = this.isActivityExpanded(activity)
     const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
-    const elapsed = activity.endedAt === undefined
-      ? undefined
-      : Math.max(0, activity.endedAt - activity.startedAt)
-    const duration = elapsed === undefined || elapsed === 0 ? undefined : elapsed
-    const lead = this.activityLead(activity.status, duration)
+    const status = activity.lifecycle.status
+    const lead = activityLabel(activity.lifecycle)
     const thoughts = activity.items.filter(item => item.kind === 'thinking').length
     const tools = activity.items.length - thoughts
     const counts = [
       ...thoughts === 0 ? [] : [`${String(thoughts)} thought${thoughts === 1 ? '' : 's'}`],
       ...tools === 0 ? [] : [`${String(tools)} tool${tools === 1 ? '' : 's'}`],
     ]
-    const latest = activity.status === 'running'
+    const latest = status === 'running' || status === 'pending'
       ? activity.items.at(-1)
-      : activity.status === 'failed'
-        ? activity.items.findLast(item => item.status === 'failed')
-        : activity.status === 'interrupted'
-          ? activity.items.findLast(item => item.status === 'interrupted')
+      : status === 'failed'
+        ? activity.items.findLast(item => executionStatus(item.lifecycle) === 'failed')
+        : status === 'interrupted'
+          ? activity.items.findLast(item => executionStatus(item.lifecycle) === 'interrupted')
           : undefined
     const latestLabel = latest === undefined
       ? undefined
-      : latest.kind === 'thinking' ? thinkingLabel(latest.status) : latest.title
+      : latest.kind === 'thinking'
+        ? executionLabel('thought', executionStatus(latest.lifecycle))
+        : latest.title
     const title = [lead, ...counts, latestLabel].filter(value => value !== undefined).join(' · ')
-    const paint = activity.status === 'failed'
+    const paint = status === 'failed'
       ? this.theme.error
-      : activity.status === 'running' || activity.status === 'interrupted'
+      : status === 'running' || status === 'pending' || status === 'interrupted'
         ? this.theme.warning
         : this.theme.reasoning
     return this.renderBlockTitle(`${marker} ${title}`, activity.key, width, paint)
-  }
-
-  private activityLead(status: TranscriptActivityGroup['status'], duration: number | undefined): string {
-    if (status === 'running') return 'Working'
-    if (status === 'failed') {
-      return duration === undefined ? 'Failed' : `Failed after ${formatTranscriptDuration(duration)}`
-    }
-    if (status === 'interrupted') {
-      return duration === undefined ? 'Interrupted' : `Interrupted after ${formatTranscriptDuration(duration)}`
-    }
-    return duration === undefined ? 'Worked' : `Worked for ${formatTranscriptDuration(duration)}`
   }
 
   private indentActivityChild(lines: string[], last: boolean): string[] {
     return lines.map((line, index) => `${index === 0 ? last ? '└─ ' : '├─ ' : last ? '   ' : '│  '}${line}`)
   }
 
-  private isActivityExpanded(key: string): boolean {
-    return this.activityExpansion.get(key) ?? (this.showDetails || this.failedActivities.has(key))
+  private isActivityExpanded(activity: TranscriptActivityGroup): boolean {
+    return this.disclosure.activityExpanded(activity.items.map(item => item.key), this.showDetails)
   }
 
   private renderPromptBlock(body: string, status: string | undefined, width: number): string[] {
@@ -352,9 +320,10 @@ export class TranscriptComponent implements Component {
   ): string[] {
     const expanded = this.isChildExpanded(thinking.key)
     const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
-    const label = thinkingLabel(thinking.status)
+    const status = executionStatus(thinking.lifecycle)
+    const label = executionLabel('thought', status)
     if (!expanded) {
-      return [this.renderExecutionTitle(marker, thinking.status, label, thinking.key, width, this.theme.reasoning)]
+      return [this.renderExecutionTitle(marker, status, label, thinking.key, width, this.theme.reasoning)]
     }
 
     const contentWidth = Math.max(1, width - 2)
@@ -369,12 +338,12 @@ export class TranscriptComponent implements Component {
       thinking.key,
       content.length,
       this.thinkingMaxLines,
-      thinking.status === 'running' && !this.pausedThinking.has(thinking.key),
+      status === 'running' && !this.pausedThinking.has(thinking.key),
     )
     const visible = content.slice(offset, offset + this.thinkingMaxLines)
     const range = maxOffset === 0 ? '' : ` · ${offset + 1}-${Math.min(content.length, offset + this.thinkingMaxLines)}/${content.length}`
     return [
-      this.renderExecutionTitle(marker, thinking.status, `${label}${range}`, thinking.key, width, this.theme.reasoning),
+      this.renderExecutionTitle(marker, status, `${label}${range}`, thinking.key, width, this.theme.reasoning),
       ...visible.map(line => truncateToWidth(`${this.theme.reasoning('│')} ${line}`, width)),
     ]
   }
@@ -382,7 +351,14 @@ export class TranscriptComponent implements Component {
   private renderTool(tool: TranscriptToolItem, width: number): string[] {
     const expanded = this.isChildExpanded(tool.key)
     const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
-    const renderedTitle = this.renderExecutionTitle(marker, tool.status, tool.title, tool.key, width, this.theme.tool)
+    const renderedTitle = this.renderExecutionTitle(
+      marker,
+      executionStatus(tool.lifecycle),
+      tool.title,
+      tool.key,
+      width,
+      this.theme.tool,
+    )
     if (!expanded) return [renderedTitle]
 
     const sections = [
@@ -407,13 +383,20 @@ export class TranscriptComponent implements Component {
   }
 
   private isChildExpanded(key: string): boolean {
-    return this.childExpansion.get(key) ?? (this.showDetails || this.failedChildren.has(key))
+    return this.disclosure.expanded(key, this.showDetails)
   }
 
   private renderDiff(diff: TranscriptDiffItem, width: number): string[] {
     const model = buildDiffDisplay(diff.title, diff.diffs, this.diffLineStarts.get(diff.key) ?? [])
     const collapsed = this.collapsedDiffs.has(diff.key)
-    const title = this.renderDiffTitle(model.operation, model.target, diff.status, collapsed, diff.key, width)
+    const title = this.renderDiffTitle(
+      model.operation,
+      model.target,
+      executionStatus(diff.lifecycle),
+      collapsed,
+      diff.key,
+      width,
+    )
     if (collapsed) return [title]
     const { offset } = this.resolveBlockOffset(diff.key, model.lines.length, this.maxToolOutputLines, false)
     const visible = model.lines.slice(offset, offset + this.maxToolOutputLines)
@@ -430,7 +413,7 @@ export class TranscriptComponent implements Component {
   private renderDiffTitle(
     operation: string,
     target: string,
-    status: TranscriptExecutionStatus,
+    status: ExecutionStatus,
     collapsed: boolean,
     key: string,
     width: number,
@@ -438,7 +421,7 @@ export class TranscriptComponent implements Component {
     const marker = `${collapsed ? DISCLOSURE_COLLAPSED : DISCLOSURE_EXPANDED} `
     const cleanOperation = sanitizeTerminalText(operation)
     const cleanTarget = sanitizeTerminalText(target)
-    const visual = this.executionVisual(status)
+    const visual = executionVisual(status, this.theme)
     const plain = `${marker}${visual.glyph} ${cleanOperation}(${cleanTarget})`
     if (this.hoveredBlockKey === key) return this.theme.hover(truncateToWidth(plain, width, '…'))
     return truncateToWidth([
@@ -495,13 +478,13 @@ export class TranscriptComponent implements Component {
 
   private renderExecutionTitle(
     marker: string,
-    status: TranscriptExecutionStatus,
+    status: ExecutionStatus,
     label: string,
     key: string,
     width: number,
     labelPaint: (text: string) => string,
   ): string {
-    const visual = this.executionVisual(status)
+    const visual = executionVisual(status, this.theme)
     const plain = `${marker} ${visual.glyph} ${label}`
     if (this.hoveredBlockKey === key) return this.theme.hover(truncateToWidth(plain, width, '…'))
     return truncateToWidth(
@@ -509,15 +492,6 @@ export class TranscriptComponent implements Component {
       width,
       '…',
     )
-  }
-
-  private executionVisual(status: TranscriptExecutionStatus): ExecutionVisual {
-    switch (status) {
-      case 'running': return { glyph: '◦', paint: this.theme.warning, bold: false }
-      case 'completed': return { glyph: '•', paint: this.theme.success, bold: true }
-      case 'failed': return { glyph: '×', paint: this.theme.error, bold: false }
-      case 'interrupted': return { glyph: '!', paint: this.theme.warning, bold: false }
-    }
   }
 
   private renderExecutionGlyph(visual: ExecutionVisual): string {

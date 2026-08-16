@@ -166,13 +166,13 @@ describe('TrajectoryView', () => {
     view.handleInput('h')
     const collapsed = view.render(100).join('\n')
     expect(collapsed).toContain('1/4 visible')
-    expect(collapsed).toContain('▸ ● TURN')
+    expect(collapsed).toContain('▸ • TURN')
     expect(collapsed).not.toContain('fast tool · bash')
 
     view.handleInput('l')
     const expanded = view.render(100).join('\n')
     expect(expanded).toContain('4 records')
-    expect(expanded).toContain('▾ ● TURN')
+    expect(expanded).toContain('▾ • TURN')
     expect(expanded).toContain('fast tool · bash')
   })
 
@@ -211,7 +211,7 @@ describe('TrajectoryView', () => {
     view.handleInput('\r')
     const output = view.render(70).join('\n')
 
-    expect(output).toContain('Duration     1.50 s')
+    expect(output).toContain('Duration     Not measured')
     expect(output).toContain('VISIBLE_TAIL')
   })
 

@@ -13,6 +13,10 @@ import {
   HarnessController,
   type TuiControllerSink,
 } from '../../src/runtime/controller.ts'
+import {
+  executionStatus,
+  visionLifecycleKey,
+} from '../../src/runtime/lifecycle/index.ts'
 
 const rpcId = 'rpc-test' as RpcId
 
@@ -85,6 +89,23 @@ describe('HarnessController', () => {
       mode: 'steer',
       content: [{ type: 'text', text: 'insert next step' }],
     }))
+  })
+
+  it('reuses the lifecycle snapshot for controller patches without lifecycle inputs', async () => {
+    const { api } = fakeApi()
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+    const lifecycle = controller.current.lifecycle
+
+    controller.notice('Saved')
+
+    expect(controller.current.lifecycle).toBe(lifecycle)
+    expect(controller.current.notice).toBe('Saved')
+    controller.dispose()
   })
 
   it('leaves Host command feedback to the durable command lifecycle', async () => {
@@ -169,6 +190,93 @@ describe('HarnessController', () => {
     controller.dispose()
   })
 
+  it('restores prompt admission that completes while an optimistic clear rolls back', async () => {
+    const { api, prompt } = fakeApi()
+    let releasePrompt: (() => void) | undefined
+    prompt.mockImplementation(async () => {
+      await new Promise<void>(resolve => { releasePrompt = resolve })
+      return ok({ accepted: true as const })
+    })
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+    const previousSessionId = controller.current.sessionId
+    const submission = controller.prompt('finish during clear', 'queue')
+
+    let rejectDescribe: (() => void) | undefined
+    api.host.describe = async () => {
+      await new Promise<void>(resolve => { rejectDescribe = resolve })
+      throw new Error('host unavailable')
+    }
+    const clearing = controller.clearSession()
+    expect(controller.current.sessionId).toBeUndefined()
+
+    releasePrompt?.()
+    await submission
+    expect(controller.current.pendingSubmissions).toEqual([])
+
+    await vi.waitFor(() => { expect(rejectDescribe).toBeTypeOf('function') })
+    rejectDescribe?.()
+    await expect(clearing).rejects.toThrow('host unavailable')
+    expect(controller.current.sessionId).toBe(previousSessionId)
+    expect(controller.current.pendingSubmissions[0]).toMatchObject({
+      text: 'finish during clear',
+      rpcId,
+    })
+    controller.dispose()
+  })
+
+  it('keeps a created replacement session when its initial history refresh fails', async () => {
+    const { api } = fakeApi()
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+    const previousGeneration = controller.current.lifecycle.generation
+    api.sessions.create = async () => ok({ sessionId: 'session-created' as SessionSummary['sessionId'] })
+    api.sessions.history = async () => { throw new Error('history unavailable') }
+
+    await expect(controller.clearSession()).rejects.toThrow('history unavailable')
+
+    expect(controller.current.sessionId).toBe('session-created')
+    expect(controller.current.lifecycle.generation).toBe(previousGeneration + 1)
+    controller.dispose()
+  })
+
+  it('keeps the active generation valid when a session resume fails', async () => {
+    const { api, prompt } = fakeApi()
+    let releasePrompt: (() => void) | undefined
+    prompt.mockImplementation(async () => {
+      await new Promise<void>(resolve => { releasePrompt = resolve })
+      return ok({ accepted: true as const })
+    })
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+    }, '/workspace', 100)
+    await controller.start()
+    const generation = controller.current.lifecycle.generation
+
+    const submission = controller.prompt('keep this prompt', 'queue')
+    await expect(controller.resume('missing-session')).rejects.toThrow('was not found')
+    expect(controller.current.lifecycle.generation).toBe(generation)
+    expect(controller.current.pendingSubmissions).toHaveLength(1)
+
+    releasePrompt?.()
+    await submission
+    expect(controller.current.pendingSubmissions[0]).toMatchObject({
+      text: 'keep this prompt',
+      rpcId,
+    })
+    controller.dispose()
+  })
+
   it('publishes a local prompt before host admission completes', async () => {
     const { api, prompt } = fakeApi()
     let releasePrompt: (() => void) | undefined
@@ -224,6 +332,10 @@ describe('HarnessController', () => {
       intent: 'working',
       activity: expect.objectContaining({ kind: 'vision', analysisId: 'analysis-1', imageCount: 1 }),
     })])
+    const vision = controller.current.lifecycle.get(visionLifecycleKey('analysis-1'))
+    expect(vision).toMatchObject({ durability: 'ephemeral' })
+    expect(vision === undefined ? undefined : executionStatus(vision)).toBe('running')
+    expect(controller.current.lifecycle.sessionId).toBe(String(controller.current.sessionId))
     expect(prompt).not.toHaveBeenCalled()
     releasePreparation?.()
     await submission
