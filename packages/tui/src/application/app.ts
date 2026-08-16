@@ -95,7 +95,10 @@ import {
 } from './external-editor.ts'
 import { AttachmentDraftStore } from './attachments/drafts.ts'
 import { imageDraftFromPath } from './attachments/files.ts'
-import { imageDraftFromClipboard } from './attachments/clipboard.ts'
+import {
+  imageDraftFromClipboard,
+  type ClipboardImageLoader,
+} from './attachments/clipboard.ts'
 import {
   AttachmentCoordinator,
   type VisionGateway,
@@ -103,6 +106,15 @@ import {
 import { AttachmentRail } from '../presentation/attachments.ts'
 import { VisionConfigView } from '../presentation/config/vision-view.ts'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
+import { KeymapView } from '../presentation/config/keymap-view.ts'
+import {
+  memoryKeymapGateway,
+  type KeymapSettingsGateway,
+} from './keymap-settings.ts'
+import {
+  resolveKeymapInput,
+  type KeymapAction,
+} from '../input/keymap.ts'
 
 const DOUBLE_ESCAPE_MS = 600
 
@@ -112,6 +124,15 @@ export interface TuiRuntime {
   stdin: NodeJS.ReadStream
   stdout: NodeJS.WriteStream
   stderr: NodeJS.WriteStream
+}
+
+/** Optional composition ports kept separate from the stable application core. */
+export interface TuiApplicationDependencies {
+  commandSource?: HostCommandSource
+  vision?: VisionGateway
+  keymap?: KeymapSettingsGateway
+  initialImagePaths?: readonly string[]
+  clipboardImage?: ClipboardImageLoader
 }
 
 function sessionDescription(session: SessionSummary): string {
@@ -130,6 +151,10 @@ function shellArgument(value: string): string {
 function resumeHint(sessionId: TuiState['sessionId']): string | undefined {
   if (sessionId === undefined) return undefined
   return `\nResume this session with:\n  dsh-tui --resume ${shellArgument(String(sessionId))}\n\n`
+}
+
+function isWorking(state: Readonly<TuiState>): boolean {
+  return state.running || state.pendingSubmissions.some(submission => submission.intent === 'working')
 }
 
 /** Main-screen pi-tui application for one in-process Harness API client. */
@@ -152,6 +177,7 @@ export class TuiApplication implements TuiControllerSink {
   private trajectoryView: TrajectoryView | undefined
   private configView: ConfigView | undefined
   private visionConfigView: VisionConfigView | undefined
+  private keymapView: KeymapView | undefined
   private taskView: TaskView | undefined
   private skillsView: SkillsView | undefined
   private removeInputListener?: () => void
@@ -179,9 +205,14 @@ export class TuiApplication implements TuiControllerSink {
   private autocompleteCwd: string
   private attachmentSessionId: TuiState['sessionId'] = undefined
   private readonly removeAttachmentListener: () => void
+  private readonly keymap: KeymapSettingsGateway
+  private readonly removeKeymapListener: () => void
   private visionStatus: VisionStatus | undefined
   private attachmentRailFocused = false
   private readonly disclosedVisionRoutes = new Set<string>()
+  private readonly initialImagePaths: readonly string[]
+  private readonly clipboardImage: ClipboardImageLoader
+  private clipboardPastePending = false
 
   constructor(
     api: IApiClient,
@@ -189,9 +220,17 @@ export class TuiApplication implements TuiControllerSink {
     private readonly runtime: TuiRuntime,
     private readonly checkpoints: WorkspaceCheckpointStore,
     private readonly memory: ProjectMemoryService,
-    commandSource?: HostCommandSource,
-    vision?: VisionGateway,
+    dependencies: TuiApplicationDependencies = {},
   ) {
+    const {
+      commandSource,
+      vision,
+      keymap,
+      initialImagePaths = [],
+      clipboardImage = imageDraftFromClipboard,
+    } = dependencies
+    this.initialImagePaths = initialImagePaths
+    this.clipboardImage = clipboardImage
     this.theme = createTheme(config.color)
     this.tui = new TuiMainScreen(this.terminal, config.showHardwareCursor)
     const initial: TuiState = {
@@ -225,6 +264,7 @@ export class TuiApplication implements TuiControllerSink {
       () => this.leaveAttachmentRail(),
     )
     this.vision = vision
+    this.keymap = keymap ?? memoryKeymapGateway({ keymap: config.keymap })
     this.visionStatus = vision === undefined ? undefined : {
       config: vision.config,
       proxyRegistered: false,
@@ -287,6 +327,13 @@ export class TuiApplication implements TuiControllerSink {
       if (drafts.length === 0 && this.attachmentRailFocused) this.leaveAttachmentRail()
       this.tui.requestRender()
     })
+    this.removeKeymapListener = this.keymap.subscribe((settings) => {
+      if (this.disposed) return
+      this.keymapView?.setPreset(settings.keymap)
+      this.refreshConfigurationSurface()
+      this.updateStatus(this.controller.current)
+      this.tui.requestRender()
+    })
   }
 
   /** Start raw-mode rendering and bind or resume the configured session. */
@@ -299,6 +346,7 @@ export class TuiApplication implements TuiControllerSink {
     this.tui.start()
     this.terminal.write(ENABLE_MOUSE_TRACKING)
     await this.controller.start(this.config.sessionId)
+    await this.loadInitialImages()
   }
 
   /** Restore the terminal and stop controller streams. Idempotent. */
@@ -312,6 +360,7 @@ export class TuiApplication implements TuiControllerSink {
     this.skillCatalog.dispose()
     this.removeMemoryActivity()
     this.removeAttachmentListener()
+    this.removeKeymapListener()
     this.attachmentCoordinator?.cancel()
     this.terminal.write(DISABLE_MOUSE_TRACKING)
     this.removeInputListener?.()
@@ -330,7 +379,7 @@ export class TuiApplication implements TuiControllerSink {
     this.skillCatalog.setSession(state.sessionId)
     this.transcript.setState(state)
     this.trajectoryView?.setState(state)
-    this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus))
+    this.configView?.setSnapshot(this.configurationSnapshot(state))
     this.taskView?.setSnapshot(taskSnapshot(state.projections, state.running, state.queue.length))
     this.skillsView?.setSnapshot(this.skillCatalog.current)
     this.diffLineLocator.resolve(state, () => {
@@ -348,15 +397,7 @@ export class TuiApplication implements TuiControllerSink {
     const model = selection === undefined
       ? 'model unavailable'
       : `${selection.provider}/${selection.model}${selection.reasoningEffort === undefined ? '' : ` · ${selection.reasoningEffort}`}`
-    const stats = composerStats(state.projections)
-    const working = state.running || state.pendingSubmissions.some(submission => submission.intent === 'working')
-    const controls = working
-      ? 'Enter steer · Alt+Enter queue · Esc cancel'
-      : 'Ctrl+V image · Ctrl+O details · Shift+Tab effort · /help'
-    this.footer.setText([
-      this.theme.dim(`${model} · ${controls}`),
-      ...stats === '' ? [] : [this.theme.dim(stats)],
-    ].join('\n'))
+    this.footer.setText(this.theme.dim(model))
     if (state.cwd !== this.autocompleteCwd || commandsChanged) {
       this.refreshAutocomplete(state.cwd, false)
     }
@@ -375,7 +416,7 @@ export class TuiApplication implements TuiControllerSink {
     const history = this.layout.followsTranscriptTail ? '' : ' · Viewing history · PageDown to follow'
     const task = sessionControlSummary(state.projections)
     const taskStatus = task === '' ? '' : ` · ${task}`
-    const working = state.running || state.pendingSubmissions.some(submission => submission.intent === 'working')
+    const working = isWorking(state)
     if (working) {
       if (this.workingStartedAt === undefined || this.workingSessionId !== state.sessionId) {
         this.workingStartedAt = Date.now()
@@ -445,27 +486,12 @@ export class TuiApplication implements TuiControllerSink {
     }
     const escape = matchesKey(data, Key.escape)
     if (!escape && this.lastEscapeAt !== 0) this.disarmRewind()
-    if (matchesKey(data, Key.ctrl('c'))) {
-      if (this.controller.current.running) void this.runAction(() => this.controller.cancel())
-      else void this.requestExit(0)
-      return { consume: true }
-    }
-    if (matchesKey(data, Key.alt(Key.enter))) {
-      void this.submitEditor('queue')
-      return { consume: true }
-    }
-    if (matchesKey(data, Key.ctrl('v')) || matchesKey(data, Key.alt('v'))) {
-      void this.runAction(() => this.pasteImage())
-      return { consume: true }
-    }
-    if (this.attachmentDrafts.snapshot.length > 0 && matchesKey(data, Key.alt('a'))) {
-      this.attachmentRailFocused = true
-      this.tui.setFocus(this.attachmentRail)
-      this.tui.requestRender()
-      return { consume: true }
-    }
-    if (this.attachmentDrafts.snapshot.length > 0 && matchesKey(data, Key.alt(Key.backspace))) {
-      if (!this.attachmentDrafts.removeLast()) this.controller.notice('Wait for Vision analysis to finish before removing images.')
+    const resolution = resolveKeymapInput(data, {
+      working: isWorking(this.controller.current),
+      hasAttachments: this.attachmentDrafts.snapshot.length > 0,
+    }, this.keymap.current().keymap)
+    if (resolution.kind !== 'unmatched') {
+      if (resolution.kind === 'action') this.handleKeymapAction(resolution.action)
       return { consume: true }
     }
     if (this.editor.getExpandedText() === '' && matchesKey(data, Key.pageUp)) {
@@ -482,20 +508,12 @@ export class TuiApplication implements TuiControllerSink {
       }
       return { consume: true }
     }
-    if (matchesKey(data, Key.ctrl('o'))) {
-      this.setDetailsExpanded(!this.showDetails)
-      return { consume: true }
-    }
-    if (matchesKey(data, Key.shift(Key.tab))) {
-      void this.cycleReasoningEffort()
-      return { consume: true }
-    }
     if (escape && !this.tui.hasOverlay()) {
       if (this.attachmentDrafts.busy) {
         this.attachmentCoordinator?.cancel()
         return { consume: true }
       }
-      if (this.controller.current.running) {
+      if (isWorking(this.controller.current)) {
         void this.runAction(() => this.controller.cancel())
         return { consume: true }
       }
@@ -511,6 +529,36 @@ export class TuiApplication implements TuiControllerSink {
       }
     }
     return undefined
+  }
+
+  private handleKeymapAction(action: KeymapAction): void {
+    switch (action) {
+      case 'app.cancel-or-exit':
+        if (isWorking(this.controller.current)) void this.runAction(() => this.controller.cancel())
+        else void this.requestExit(0)
+        return
+      case 'turn.queue':
+        void this.submitEditor('queue')
+        return
+      case 'vision.paste':
+        void this.runAction(() => this.pasteImage())
+        return
+      case 'attachments.focus':
+        this.attachmentRailFocused = true
+        this.tui.setFocus(this.attachmentRail)
+        this.tui.requestRender()
+        return
+      case 'attachments.remove-last':
+        if (!this.attachmentDrafts.removeLast()) {
+          this.controller.notice('Wait for Vision analysis to finish before removing images.')
+        }
+        return
+      case 'details.toggle':
+        this.setDetailsExpanded(!this.showDetails)
+        return
+      case 'reasoning.cycle':
+        void this.cycleReasoningEffort()
+    }
   }
 
   private handleMouse(mouse: MouseReport): void {
@@ -562,7 +610,7 @@ export class TuiApplication implements TuiControllerSink {
           throw new Error(`Unknown command or Skill "/${resolution.name}". Use /help or /skills to discover available entries.`)
         }
       }
-      const mode = forcedMode ?? (this.controller.current.running ? 'steer' : 'queue')
+      const mode = forcedMode ?? (isWorking(this.controller.current) ? 'steer' : 'queue')
       this.layout.followTranscript()
       if (this.attachmentDrafts.snapshot.length === 0) {
         await this.controller.prompt(value, mode)
@@ -650,8 +698,12 @@ export class TuiApplication implements TuiControllerSink {
     }, {
       name: 'config',
       description: 'Configure model, policy, and terminal preferences',
-      argumentHint: '[model|reasoning|permission|plan|vision|interface]',
+      argumentHint: '[model|reasoning|permission|plan|vision|keybindings|interface]',
       handler: argument => this.openConfigRoute(argument),
+    }, {
+      name: 'keymap',
+      description: 'Configure persistent terminal keybindings',
+      handler: () => { this.openKeymap() },
     }, {
       name: 'vision',
       description: 'Configure image routing and the Vision proxy',
@@ -670,12 +722,14 @@ export class TuiApplication implements TuiControllerSink {
       description: 'Show current session status',
       handler: () => {
         const state = this.controller.current
+        const metrics = composerStats(state.projections)
         this.controller.notice([
           `Session: ${state.sessionId === undefined ? 'none' : String(state.sessionId)}`,
           `Directory: ${state.cwd}`,
           `State: ${state.running ? 'running' : 'idle'}`,
           `Stream: ${state.connected ? 'connected' : 'reconnecting'}`,
           `Queued: ${state.queue.length}`,
+          ...metrics === '' ? [] : [`Metrics: ${metrics}`],
         ].join('\n'))
       },
     }, {
@@ -699,6 +753,15 @@ export class TuiApplication implements TuiControllerSink {
     if (this.attachmentCoordinator === undefined) throw new Error('Vision is unavailable in this profile.')
   }
 
+  private async loadInitialImages(): Promise<void> {
+    if (this.initialImagePaths.length === 0) return
+    this.ensureVisionAvailable()
+    const drafts = await Promise.all(this.initialImagePaths.map(path => (
+      imageDraftFromPath(path, this.controller.current.cwd)
+    )))
+    for (const draft of drafts) this.attachmentDrafts.add(draft)
+  }
+
   private leaveAttachmentRail(): void {
     if (!this.attachmentRailFocused) return
     this.attachmentRailFocused = false
@@ -707,9 +770,15 @@ export class TuiApplication implements TuiControllerSink {
   }
 
   private async pasteImage(): Promise<void> {
+    if (this.clipboardPastePending) return
     this.ensureVisionAvailable()
     if (this.attachmentDrafts.busy) throw new Error('Vision analysis is already in progress.')
-    this.attachmentDrafts.add(await imageDraftFromClipboard())
+    this.clipboardPastePending = true
+    try {
+      this.attachmentDrafts.add(await this.clipboardImage())
+    } finally {
+      this.clipboardPastePending = false
+    }
   }
 
   private refreshAutocomplete(cwd = this.controller.current.cwd, requestRender = true): void {
@@ -770,7 +839,7 @@ export class TuiApplication implements TuiControllerSink {
 
   private openPermissionConfig(): void {
     const state = this.controller.current
-    const permissions = configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus).permissions
+    const permissions = this.configurationSnapshot(state).permissions
     if (permissions === undefined) {
       this.controller.notice('Permission configuration is unavailable in this profile.')
       return
@@ -786,8 +855,9 @@ export class TuiApplication implements TuiControllerSink {
     if (route === 'permission' || route === 'permissions') return this.openPermissionConfig()
     if (route === 'plan') return this.openConfig('plan')
     if (route === 'vision') return this.openVisionConfig()
+    if (route === 'keymap' || route === 'keybinding' || route === 'keybindings') return this.openKeymap()
     if (route === 'interface' || route === 'details') return this.openConfig()
-    throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, vision, or interface.`)
+    throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, vision, keybindings, or interface.`)
   }
 
   private openConfig(initialStage: ConfigEntryStage = 'root'): void {
@@ -802,7 +872,7 @@ export class TuiApplication implements TuiControllerSink {
     }
     const state = this.controller.current
     const view = new ConfigView(
-      configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus),
+      this.configurationSnapshot(state),
       this.theme,
       () => {
         close()
@@ -820,6 +890,10 @@ export class TuiApplication implements TuiControllerSink {
       () => {
         close()
         void this.runAction(() => this.openVisionConfig())
+      },
+      () => {
+        close()
+        this.openKeymap()
       },
     )
     this.configView = view
@@ -873,14 +947,41 @@ export class TuiApplication implements TuiControllerSink {
     this.tui.requestRender()
   }
 
+  private openKeymap(): void {
+    if (this.tui.hasOverlay() || this.composerModalActive) return
+    const close = (): void => {
+      if (this.keymapView === undefined) return
+      this.keymapView = undefined
+      this.layout.setComposerOverride(undefined)
+      this.composerModalActive = false
+      this.tui.setFocus(this.editor)
+      this.tui.requestRender()
+    }
+    const view = new KeymapView(
+      this.keymap.current().keymap,
+      this.theme,
+      preset => {
+        void this.runAction(async () => {
+          await this.keymap.setPreset(preset)
+          this.controller.notice(`Keybindings changed to ${preset}.`)
+        })
+      },
+      close,
+    )
+    this.keymapView = view
+    this.composerModalActive = true
+    this.layout.setComposerOverride(view)
+    this.tui.setFocus(view)
+    this.tui.requestRender()
+  }
+
   private async refreshVisionStatus(): Promise<VisionStatus> {
     const vision = this.vision
     if (vision === undefined) throw new Error('Vision is unavailable in this profile.')
     const status = await vision.status()
     this.visionStatus = status
     this.visionConfigView?.setStatus(status)
-    const state = this.controller.current
-    this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails, status))
+    this.refreshConfigurationSurface()
     this.tui.requestRender()
     return status
   }
@@ -1387,9 +1488,22 @@ export class TuiApplication implements TuiControllerSink {
   private setDetailsExpanded(expanded: boolean): void {
     this.showDetails = expanded
     this.transcript.setDetails(expanded)
-    const state = this.controller.current
-    this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, expanded, this.visionStatus))
+    this.refreshConfigurationSurface()
     this.tui.requestRender()
+  }
+
+  private configurationSnapshot(state: Readonly<TuiState> = this.controller.current) {
+    return configurationSnapshot(
+      state.models,
+      state.projections,
+      this.showDetails,
+      this.visionStatus,
+      this.keymap.current().keymap,
+    )
+  }
+
+  private refreshConfigurationSurface(): void {
+    this.configView?.setSnapshot(this.configurationSnapshot())
   }
 
   private async selectReasoningEffort(reasoningEffort: string | undefined): Promise<void> {

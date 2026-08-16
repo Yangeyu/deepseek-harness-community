@@ -54,7 +54,7 @@ pnpm dev
 bundle through an isolated `tui-dev` profile. It does not use the globally
 installed `dsh-tui` package or modify the regular `tui` profile. Run it from the
 project you want the agent to edit; pass TUI arguments after `--`, for example
-`pnpm dev -- --resume <session-id>`.
+`pnpm dev -- --resume <session-id> --image screenshot.png`.
 
 `pnpm start` remains the production-equivalent local launcher and uses the
 regular `tui` profile.

@@ -15,6 +15,12 @@ import { TuiApplication, type TuiRuntime } from './application/app.ts'
 import { installCheckpointCapture, WorkspaceCheckpointStore } from './checkpoint.ts'
 import type { HostCommandSource } from './runtime/commands.ts'
 import { Config, resolveConfig, type Config as TuiConfig } from './application/config.ts'
+import { parseTuiArgs, TUI_HELP } from './application/cli.ts'
+import {
+  settingsKeymapGateway,
+  TUI_SETTINGS_NAMESPACE,
+  TuiSettingsSchema,
+} from './application/keymap-settings.ts'
 
 export { Config, resolveConfig }
 export type { TuiConfig, TuiRuntime }
@@ -55,61 +61,15 @@ declare module '@deepseek-ai/cordis' {
 export const name = 'community-tui'
 
 /** The in-process API gateway must exist before the terminal can activate. */
-export const inject = ['apiProxy', 'agents', 'commands', 'memory', 'vision']
-
-interface ParsedArgs {
-  help: boolean
-  config: TuiConfig
-}
-
-function parseArgs(args: readonly string[], base: TuiConfig): ParsedArgs {
-  const config: TuiConfig = { ...base }
-  let help = false
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index]
-    if (argument === '--help' || argument === '-h') {
-      help = true
-      continue
-    }
-    if (argument === '--resume') {
-      const value = args[index + 1]
-      if (value === undefined) throw new Error('--resume requires a session id')
-      config.sessionId = value
-      index += 1
-      continue
-    }
-    if (argument === '--cwd') {
-      const value = args[index + 1]
-      if (value === undefined) throw new Error('--cwd requires a path')
-      config.cwd = value
-      index += 1
-      continue
-    }
-    if (argument === '--no-color') {
-      config.color = false
-      continue
-    }
-    throw new Error(`unknown TUI option: ${argument}`)
-  }
-  return { help, config }
-}
-
-const HELP = `Usage: dsh-tui [options]
-
-Options:
-  --resume <session-id>  Resume an existing session
-  --cwd <path>           Start a new session in this directory
-  --no-color             Disable ANSI color
-  -h, --help             Show this help
-`
+export const inject = ['apiProxy', 'agents', 'commands', 'memory', 'settings', 'vision']
 
 /** Mount the terminal application and bind its lifetime to the plugin effect. */
 export function apply(ctx: Context, config: TuiConfig): void {
   const exit = ctx.get('appExit')
   if (exit === undefined) throw new Error('community-tui requires the dsh launcher appExit service')
-  const parsed = parseArgs(ctx.get('cmdlineArgs')?.get() ?? [], config)
+  const parsed = parseTuiArgs(ctx.get('cmdlineArgs')?.get() ?? [], config)
   if (parsed.help) {
-    process.stdout.write(HELP)
+    process.stdout.write(TUI_HELP)
     exit(0)
     return
   }
@@ -120,7 +80,12 @@ export function apply(ctx: Context, config: TuiConfig): void {
     exit,
   }
   const api = new InProcessApiClient(toFetchHandler(ctx.apiProxy))
-  const resolved = resolveConfig(parsed.config)
+  const keymapScope = ctx.settings.register(TUI_SETTINGS_NAMESPACE, TuiSettingsSchema, {
+    base: { keymap: parsed.config.keymap ?? 'standard' },
+    applies: 'live',
+  })
+  const keymap = settingsKeymapGateway(keymapScope)
+  const resolved = resolveConfig({ ...parsed.config, keymap: keymap.current().keymap })
   const checkpoints = new WorkspaceCheckpointStore(resolved.rewindCheckpoints)
   installCheckpointCapture(ctx, checkpoints)
   const commandSource: HostCommandSource = {
@@ -141,7 +106,19 @@ export function apply(ctx: Context, config: TuiConfig): void {
     },
     subscribe: listener => ctx.on('commands/change', listener),
   }
-  const app = new TuiApplication(api, resolved, runtime, checkpoints, ctx.memory, commandSource, ctx.vision)
+  const app = new TuiApplication(
+    api,
+    resolved,
+    runtime,
+    checkpoints,
+    ctx.memory,
+    {
+      commandSource,
+      vision: ctx.vision,
+      keymap,
+      initialImagePaths: parsed.imagePaths,
+    },
+  )
   ctx.effect(() => {
     let active = true
     const removeMemoryMutation = ctx.memory.onMutation(mutation => {

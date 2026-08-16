@@ -1,5 +1,5 @@
 import { InProcessApiClient, toFetchHandler } from "@deepseek-ai/dsh-host-apiproxy";
-import { CombinedAutocompleteProvider, Container, Editor, Key, Markdown, ProcessTerminal, SelectList, Text, TuiMainScreen, matchesKey, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { CombinedAutocompleteProvider, Container, Editor, Key, Markdown, ProcessTerminal, SelectList, Text, TuiMainScreen, isKeyRelease, isKeyRepeat, matchesKey, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, rmdir, stat, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { highlight, supportsLanguage } from "cli-highlight";
@@ -10,8 +10,9 @@ import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
-import { constants } from "node:fs";
 import z from "@deepseek-ai/schemastery";
+import { settingsNamespace } from "@deepseek-ai/dsh-settings";
+import { constants } from "node:fs";
 //#region src/runtime/submission.ts
 function userMessageRpcId(entry) {
 	const event = entry.event;
@@ -3335,17 +3336,139 @@ var TerminalCommandDirectory = class {
 	}
 };
 //#endregion
+//#region src/input/keymap.ts
+/** Stable keymap identifiers persisted in user settings. */
+const KEYMAP_PRESET_IDS = ["standard", "legacy"];
+const ALWAYS = () => true;
+const WHEN_WORKING = (context) => context.working;
+const WITH_ATTACHMENTS = (context) => context.hasAttachments;
+const COMMON_BINDINGS = [
+	{
+		action: "app.cancel-or-exit",
+		key: Key.ctrl("c"),
+		label: "Ctrl+C",
+		available: ALWAYS
+	},
+	{
+		action: "vision.paste",
+		key: Key.ctrl("v"),
+		label: "Ctrl+V",
+		available: ALWAYS
+	},
+	{
+		action: "vision.paste",
+		key: Key.alt("v"),
+		label: "Alt+V",
+		available: ALWAYS
+	},
+	{
+		action: "attachments.focus",
+		key: Key.alt("a"),
+		label: "Alt+A",
+		available: WITH_ATTACHMENTS
+	},
+	{
+		action: "attachments.remove-last",
+		key: Key.alt(Key.backspace),
+		label: "Alt+Backspace",
+		available: WITH_ATTACHMENTS
+	},
+	{
+		action: "details.toggle",
+		key: Key.ctrl("o"),
+		label: "Ctrl+O",
+		available: ALWAYS
+	},
+	{
+		action: "reasoning.cycle",
+		key: Key.shift(Key.tab),
+		label: "Shift+Tab",
+		available: ALWAYS
+	}
+];
+const PRESET_BINDINGS = {
+	standard: [{
+		action: "turn.queue",
+		key: Key.tab,
+		label: "Tab",
+		available: WHEN_WORKING
+	}],
+	legacy: [{
+		action: "turn.queue",
+		key: Key.alt(Key.enter),
+		label: "Alt+Enter",
+		available: WHEN_WORKING
+	}]
+};
+const KEYMAP_BINDINGS = {
+	standard: [...PRESET_BINDINGS.standard, ...COMMON_BINDINGS],
+	legacy: [...PRESET_BINDINGS.legacy, ...COMMON_BINDINGS]
+};
+const KEYMAP_PRESETS = [{
+	id: "standard",
+	label: "Standard",
+	description: "Use Tab to queue while a turn is running and leave Alt+Enter available for multiline input."
+}, {
+	id: "legacy",
+	label: "Legacy",
+	description: "Use Alt+Enter to queue while a turn is running. Idle Alt+Enter still inserts a newline."
+}];
+function bindings(preset) {
+	return KEYMAP_BINDINGS[preset];
+}
+/** Normalize raw press/repeat/release input before emitting one semantic action. */
+function resolveKeymapInput(data, context, preset) {
+	const binding = bindings(preset).find((candidate) => candidate.available(context) && matchesKey(data, candidate.key));
+	if (binding === void 0) return { kind: "unmatched" };
+	if (isKeyRelease(data) || isKeyRepeat(data)) return { kind: "suppressed" };
+	return {
+		kind: "action",
+		action: binding.action
+	};
+}
+/** Human-readable bindings used by configuration and help surfaces. */
+function keymapBindingSummaries(preset) {
+	const summaries = /* @__PURE__ */ new Map();
+	for (const binding of bindings(preset)) {
+		const existing = summaries.get(binding.action);
+		if (existing === void 0) summaries.set(binding.action, {
+			label: actionLabel(binding.action),
+			keys: [binding.label]
+		});
+		else existing.keys.push(binding.label);
+	}
+	return [...summaries].map(([action, summary]) => ({
+		action,
+		...summary
+	}));
+}
+function keymapShortcut(preset, action) {
+	return bindings(preset).find((binding) => binding.action === action)?.label;
+}
+function actionLabel(action) {
+	switch (action) {
+		case "app.cancel-or-exit": return "Cancel task or exit";
+		case "turn.queue": return "Queue next message";
+		case "vision.paste": return "Paste image";
+		case "attachments.focus": return "Focus attachments";
+		case "attachments.remove-last": return "Remove latest attachment";
+		case "details.toggle": return "Toggle details";
+		case "reasoning.cycle": return "Cycle reasoning effort";
+	}
+}
+//#endregion
 //#region src/runtime/session-controls.ts
 function hasProjection(projections, key) {
 	return Object.hasOwn(projections, key);
 }
 /** Read current configuration values without introducing a second state store. */
-function configurationSnapshot(models, projections, detailsExpanded, vision) {
+function configurationSnapshot(models, projections, detailsExpanded, vision, keymap = "standard") {
 	return {
 		models,
 		...hasProjection(projections, "permissions") ? { permissions: projections.permissions } : {},
 		...hasProjection(projections, "plan") ? { plan: projections.plan } : {},
 		...vision === void 0 ? {} : { vision },
+		keymap,
 		detailsExpanded
 	};
 }
@@ -3409,6 +3532,13 @@ function configurationRows(snapshot) {
 			value: snapshot.vision === void 0 ? "Unavailable in this profile" : snapshot.vision.config.mode === "disabled" ? "disabled" : `${snapshot.vision.config.mode} · ${snapshot.vision.config.proxyProvider}/${snapshot.vision.config.proxyModel}${snapshot.vision.credentialConfigured === false ? " · credential missing" : ""}`,
 			scope: "TUI",
 			available: snapshot.vision !== void 0
+		},
+		{
+			kind: "keymap",
+			label: "Keybindings",
+			value: `${snapshot.keymap} · ${keymapShortcut(snapshot.keymap, "turn.queue") ?? "unbound"} queues while working`,
+			scope: "TUI",
+			available: true
 		},
 		{
 			kind: "details",
@@ -3487,11 +3617,12 @@ var ConfigView = class {
 	onDetails;
 	onClose;
 	onVision;
+	onKeymap;
 	stage;
 	entryStage;
 	index = 0;
 	pendingPermission;
-	constructor(snapshot, theme, onModel, onReasoning, onPermission, onPlan, onDetails, onClose, initialStage = "root", onVision) {
+	constructor(snapshot, theme, onModel, onReasoning, onPermission, onPlan, onDetails, onClose, initialStage = "root", onVision, onKeymap) {
 		this.snapshot = snapshot;
 		this.theme = theme;
 		this.onModel = onModel;
@@ -3501,6 +3632,7 @@ var ConfigView = class {
 		this.onDetails = onDetails;
 		this.onClose = onClose;
 		this.onVision = onVision;
+		this.onKeymap = onKeymap;
 		this.stage = initialStage;
 		this.entryStage = initialStage;
 	}
@@ -3609,6 +3741,10 @@ var ConfigView = class {
 			}
 			if (row.kind === "vision") {
 				this.onVision?.();
+				return;
+			}
+			if (row.kind === "keymap") {
+				this.onKeymap?.();
 				return;
 			}
 			if (row.kind === "details") {
@@ -5054,6 +5190,90 @@ var VisionConfigView = class {
 	}
 };
 //#endregion
+//#region src/presentation/config/keymap-view.ts
+/** Persistent keymap selector with a preview of the semantic action bindings. */
+var KeymapView = class {
+	current;
+	theme;
+	onPreset;
+	onClose;
+	index;
+	constructor(current, theme, onPreset, onClose) {
+		this.current = current;
+		this.theme = theme;
+		this.onPreset = onPreset;
+		this.onClose = onClose;
+		this.index = Math.max(0, KEYMAP_PRESETS.findIndex((option) => option.id === current));
+	}
+	setPreset(preset) {
+		this.current = preset;
+	}
+	handleInput(data) {
+		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) return this.onClose();
+		if (matchesKey(data, Key.up) || data === "k") return this.move(-1);
+		if (matchesKey(data, Key.down) || data === "j") return this.move(1);
+		if (data === "g") this.index = 0;
+		else if (data === "G") this.index = KEYMAP_PRESETS.length - 1;
+		else if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) this.select();
+	}
+	invalidate() {}
+	render(width) {
+		const selectedPreset = KEYMAP_PRESETS[this.index] ?? KEYMAP_PRESETS[0];
+		const lines = [
+			this.theme.bold("Keybindings"),
+			this.theme.dim("TUI · Saved in the active Harness settings profile"),
+			""
+		];
+		for (const [index, option] of KEYMAP_PRESETS.entries()) {
+			const selected = index === this.index;
+			const cursor = selected ? this.theme.accent("›") : " ";
+			const label = selected ? this.theme.bold(option.label) : option.label;
+			lines.push(`${cursor} ${label}${option.id === this.current ? this.theme.dim(" (current)") : ""}`);
+			if (selected) lines.push(...wrapTextWithAnsi(this.theme.dim(option.description), Math.max(1, width - 4)).map((line) => `    ${line}`));
+		}
+		if (selectedPreset !== void 0) {
+			lines.push("", this.theme.bold(`${selectedPreset.label} bindings`));
+			for (const binding of keymapBindingSummaries(selectedPreset.id)) lines.push(`  ${binding.keys.join(" / ").padEnd(20)} ${binding.label}`);
+		}
+		lines.push("", this.theme.dim("j/k move · enter apply · g/G first/last · esc close"));
+		return lines.map((line) => truncateToWidth(line, Math.max(1, width)));
+	}
+	move(offset) {
+		this.index = Math.max(0, Math.min(KEYMAP_PRESETS.length - 1, this.index + offset));
+	}
+	select() {
+		const preset = KEYMAP_PRESETS[this.index]?.id;
+		if (preset !== void 0 && preset !== this.current) this.onPreset(preset);
+	}
+};
+//#endregion
+//#region src/application/keymap-settings.ts
+const TUI_SETTINGS_NAMESPACE = settingsNamespace("community-tui");
+const TuiSettingsSchema = z.object({ keymap: z.union(KEYMAP_PRESET_IDS).default("standard") });
+function settingsKeymapGateway(scope) {
+	return {
+		current: () => scope.get(),
+		setPreset: (preset) => scope.update({ keymap: preset }),
+		subscribe: (listener) => scope.watch((next) => listener(next))
+	};
+}
+function memoryKeymapGateway(initial) {
+	let current = initial;
+	const listeners = /* @__PURE__ */ new Set();
+	return {
+		current: () => current,
+		setPreset: async (keymap) => {
+			if (keymap === current.keymap) return;
+			current = { keymap };
+			for (const listener of listeners) listener(current);
+		},
+		subscribe: (listener) => {
+			listeners.add(listener);
+			return () => listeners.delete(listener);
+		}
+	};
+}
+//#endregion
 //#region src/application/app.ts
 const DOUBLE_ESCAPE_MS = 600;
 function sessionDescription(session) {
@@ -5069,6 +5289,9 @@ function shellArgument(value) {
 function resumeHint(sessionId) {
 	if (sessionId === void 0) return void 0;
 	return `\nResume this session with:\n  dsh-tui --resume ${shellArgument(String(sessionId))}\n\n`;
+}
+function isWorking(state) {
+	return state.running || state.pendingSubmissions.some((submission) => submission.intent === "working");
 }
 /** Main-screen pi-tui application for one in-process Harness API client. */
 var TuiApplication = class {
@@ -5094,6 +5317,7 @@ var TuiApplication = class {
 	trajectoryView;
 	configView;
 	visionConfigView;
+	keymapView;
 	taskView;
 	skillsView;
 	removeInputListener;
@@ -5121,14 +5345,22 @@ var TuiApplication = class {
 	autocompleteCwd;
 	attachmentSessionId = void 0;
 	removeAttachmentListener;
+	keymap;
+	removeKeymapListener;
 	visionStatus;
 	attachmentRailFocused = false;
 	disclosedVisionRoutes = /* @__PURE__ */ new Set();
-	constructor(api, config, runtime, checkpoints, memory, commandSource, vision) {
+	initialImagePaths;
+	clipboardImage;
+	clipboardPastePending = false;
+	constructor(api, config, runtime, checkpoints, memory, dependencies = {}) {
 		this.config = config;
 		this.runtime = runtime;
 		this.checkpoints = checkpoints;
 		this.memory = memory;
+		const { commandSource, vision, keymap, initialImagePaths = [], clipboardImage = imageDraftFromClipboard } = dependencies;
+		this.initialImagePaths = initialImagePaths;
+		this.clipboardImage = clipboardImage;
 		this.theme = createTheme(config.color);
 		this.tui = new TuiMainScreen(this.terminal, config.showHardwareCursor);
 		const initial = {
@@ -5152,6 +5384,7 @@ var TuiApplication = class {
 			if (!this.attachmentDrafts.removeAt(index)) this.controller.notice("Wait for Vision analysis to finish before removing images.");
 		}, () => this.leaveAttachmentRail());
 		this.vision = vision;
+		this.keymap = keymap ?? memoryKeymapGateway({ keymap: config.keymap });
 		this.visionStatus = vision === void 0 ? void 0 : {
 			config: vision.config,
 			proxyRegistered: false,
@@ -5194,6 +5427,13 @@ var TuiApplication = class {
 			if (drafts.length === 0 && this.attachmentRailFocused) this.leaveAttachmentRail();
 			this.tui.requestRender();
 		});
+		this.removeKeymapListener = this.keymap.subscribe((settings) => {
+			if (this.disposed) return;
+			this.keymapView?.setPreset(settings.keymap);
+			this.refreshConfigurationSurface();
+			this.updateStatus(this.controller.current);
+			this.tui.requestRender();
+		});
 	}
 	/** Start raw-mode rendering and bind or resume the configured session. */
 	async start() {
@@ -5203,6 +5443,7 @@ var TuiApplication = class {
 		this.tui.start();
 		this.terminal.write(ENABLE_MOUSE_TRACKING);
 		await this.controller.start(this.config.sessionId);
+		await this.loadInitialImages();
 	}
 	/** Restore the terminal and stop controller streams. Idempotent. */
 	async dispose() {
@@ -5215,6 +5456,7 @@ var TuiApplication = class {
 		this.skillCatalog.dispose();
 		this.removeMemoryActivity();
 		this.removeAttachmentListener();
+		this.removeKeymapListener();
 		this.attachmentCoordinator?.cancel();
 		this.terminal.write(DISABLE_MOUSE_TRACKING);
 		this.removeInputListener?.();
@@ -5232,7 +5474,7 @@ var TuiApplication = class {
 		this.skillCatalog.setSession(state.sessionId);
 		this.transcript.setState(state);
 		this.trajectoryView?.setState(state);
-		this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus));
+		this.configView?.setSnapshot(this.configurationSnapshot(state));
 		this.taskView?.setSnapshot(taskSnapshot(state.projections, state.running, state.queue.length));
 		this.skillsView?.setSnapshot(this.skillCatalog.current);
 		this.diffLineLocator.resolve(state, () => {
@@ -5245,9 +5487,7 @@ var TuiApplication = class {
 		this.updateStatus(state);
 		const selection = state.models?.current;
 		const model = selection === void 0 ? "model unavailable" : `${selection.provider}/${selection.model}${selection.reasoningEffort === void 0 ? "" : ` · ${selection.reasoningEffort}`}`;
-		const stats = composerStats(state.projections);
-		const controls = state.running || state.pendingSubmissions.some((submission) => submission.intent === "working") ? "Enter steer · Alt+Enter queue · Esc cancel" : "Ctrl+V image · Ctrl+O details · Shift+Tab effort · /help";
-		this.footer.setText([this.theme.dim(`${model} · ${controls}`), ...stats === "" ? [] : [this.theme.dim(stats)]].join("\n"));
+		this.footer.setText(this.theme.dim(model));
 		if (state.cwd !== this.autocompleteCwd || commandsChanged) this.refreshAutocomplete(state.cwd, false);
 		this.tui.requestRender();
 	}
@@ -5261,7 +5501,7 @@ var TuiApplication = class {
 		const history = this.layout.followsTranscriptTail ? "" : " · Viewing history · PageDown to follow";
 		const task = sessionControlSummary(state.projections);
 		const taskStatus = task === "" ? "" : ` · ${task}`;
-		if (state.running || state.pendingSubmissions.some((submission) => submission.intent === "working")) {
+		if (isWorking(state)) {
 			if (this.workingStartedAt === void 0 || this.workingSessionId !== state.sessionId) {
 				this.workingStartedAt = Date.now();
 				this.workingSessionId = state.sessionId;
@@ -5330,27 +5570,12 @@ var TuiApplication = class {
 		}
 		const escape = matchesKey(data, Key.escape);
 		if (!escape && this.lastEscapeAt !== 0) this.disarmRewind();
-		if (matchesKey(data, Key.ctrl("c"))) {
-			if (this.controller.current.running) this.runAction(() => this.controller.cancel());
-			else this.requestExit(0);
-			return { consume: true };
-		}
-		if (matchesKey(data, Key.alt(Key.enter))) {
-			this.submitEditor("queue");
-			return { consume: true };
-		}
-		if (matchesKey(data, Key.ctrl("v")) || matchesKey(data, Key.alt("v"))) {
-			this.runAction(() => this.pasteImage());
-			return { consume: true };
-		}
-		if (this.attachmentDrafts.snapshot.length > 0 && matchesKey(data, Key.alt("a"))) {
-			this.attachmentRailFocused = true;
-			this.tui.setFocus(this.attachmentRail);
-			this.tui.requestRender();
-			return { consume: true };
-		}
-		if (this.attachmentDrafts.snapshot.length > 0 && matchesKey(data, Key.alt(Key.backspace))) {
-			if (!this.attachmentDrafts.removeLast()) this.controller.notice("Wait for Vision analysis to finish before removing images.");
+		const resolution = resolveKeymapInput(data, {
+			working: isWorking(this.controller.current),
+			hasAttachments: this.attachmentDrafts.snapshot.length > 0
+		}, this.keymap.current().keymap);
+		if (resolution.kind !== "unmatched") {
+			if (resolution.kind === "action") this.handleKeymapAction(resolution.action);
 			return { consume: true };
 		}
 		if (this.editor.getExpandedText() === "" && matchesKey(data, Key.pageUp)) {
@@ -5367,20 +5592,12 @@ var TuiApplication = class {
 			}
 			return { consume: true };
 		}
-		if (matchesKey(data, Key.ctrl("o"))) {
-			this.setDetailsExpanded(!this.showDetails);
-			return { consume: true };
-		}
-		if (matchesKey(data, Key.shift(Key.tab))) {
-			this.cycleReasoningEffort();
-			return { consume: true };
-		}
 		if (escape && !this.tui.hasOverlay()) {
 			if (this.attachmentDrafts.busy) {
 				this.attachmentCoordinator?.cancel();
 				return { consume: true };
 			}
-			if (this.controller.current.running) {
+			if (isWorking(this.controller.current)) {
 				this.runAction(() => this.controller.cancel());
 				return { consume: true };
 			}
@@ -5392,6 +5609,32 @@ var TuiApplication = class {
 				} else this.armRewind(now);
 				return { consume: true };
 			}
+		}
+	}
+	handleKeymapAction(action) {
+		switch (action) {
+			case "app.cancel-or-exit":
+				if (isWorking(this.controller.current)) this.runAction(() => this.controller.cancel());
+				else this.requestExit(0);
+				return;
+			case "turn.queue":
+				this.submitEditor("queue");
+				return;
+			case "vision.paste":
+				this.runAction(() => this.pasteImage());
+				return;
+			case "attachments.focus":
+				this.attachmentRailFocused = true;
+				this.tui.setFocus(this.attachmentRail);
+				this.tui.requestRender();
+				return;
+			case "attachments.remove-last":
+				if (!this.attachmentDrafts.removeLast()) this.controller.notice("Wait for Vision analysis to finish before removing images.");
+				return;
+			case "details.toggle":
+				this.setDetailsExpanded(!this.showDetails);
+				return;
+			case "reasoning.cycle": this.cycleReasoningEffort();
 		}
 	}
 	handleMouse(mouse) {
@@ -5431,7 +5674,7 @@ var TuiApplication = class {
 				const catalogSettled = this.skillCatalog.current.status === "ready" || this.skillCatalog.current.status === "stale";
 				if (resolution.kind === "unknown" && catalogSettled) throw new Error(`Unknown command or Skill "/${resolution.name}". Use /help or /skills to discover available entries.`);
 			}
-			const mode = forcedMode ?? (this.controller.current.running ? "steer" : "queue");
+			const mode = forcedMode ?? (isWorking(this.controller.current) ? "steer" : "queue");
 			this.layout.followTranscript();
 			if (this.attachmentDrafts.snapshot.length === 0) await this.controller.prompt(value, mode);
 			else {
@@ -5523,8 +5766,15 @@ var TuiApplication = class {
 			{
 				name: "config",
 				description: "Configure model, policy, and terminal preferences",
-				argumentHint: "[model|reasoning|permission|plan|vision|interface]",
+				argumentHint: "[model|reasoning|permission|plan|vision|keybindings|interface]",
 				handler: (argument) => this.openConfigRoute(argument)
+			},
+			{
+				name: "keymap",
+				description: "Configure persistent terminal keybindings",
+				handler: () => {
+					this.openKeymap();
+				}
 			},
 			{
 				name: "vision",
@@ -5551,12 +5801,14 @@ var TuiApplication = class {
 				description: "Show current session status",
 				handler: () => {
 					const state = this.controller.current;
+					const metrics = composerStats(state.projections);
 					this.controller.notice([
 						`Session: ${state.sessionId === void 0 ? "none" : String(state.sessionId)}`,
 						`Directory: ${state.cwd}`,
 						`State: ${state.running ? "running" : "idle"}`,
 						`Stream: ${state.connected ? "connected" : "reconnecting"}`,
-						`Queued: ${state.queue.length}`
+						`Queued: ${state.queue.length}`,
+						...metrics === "" ? [] : [`Metrics: ${metrics}`]
 					].join("\n"));
 				}
 			},
@@ -5584,6 +5836,12 @@ var TuiApplication = class {
 	ensureVisionAvailable() {
 		if (this.attachmentCoordinator === void 0) throw new Error("Vision is unavailable in this profile.");
 	}
+	async loadInitialImages() {
+		if (this.initialImagePaths.length === 0) return;
+		this.ensureVisionAvailable();
+		const drafts = await Promise.all(this.initialImagePaths.map((path) => imageDraftFromPath(path, this.controller.current.cwd)));
+		for (const draft of drafts) this.attachmentDrafts.add(draft);
+	}
 	leaveAttachmentRail() {
 		if (!this.attachmentRailFocused) return;
 		this.attachmentRailFocused = false;
@@ -5591,9 +5849,15 @@ var TuiApplication = class {
 		this.tui.requestRender();
 	}
 	async pasteImage() {
+		if (this.clipboardPastePending) return;
 		this.ensureVisionAvailable();
 		if (this.attachmentDrafts.busy) throw new Error("Vision analysis is already in progress.");
-		this.attachmentDrafts.add(await imageDraftFromClipboard());
+		this.clipboardPastePending = true;
+		try {
+			this.attachmentDrafts.add(await this.clipboardImage());
+		} finally {
+			this.clipboardPastePending = false;
+		}
 	}
 	refreshAutocomplete(cwd = this.controller.current.cwd, requestRender = true) {
 		if (this.disposed) return;
@@ -5635,7 +5899,7 @@ var TuiApplication = class {
 	}
 	openPermissionConfig() {
 		const state = this.controller.current;
-		if (configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus).permissions === void 0) {
+		if (this.configurationSnapshot(state).permissions === void 0) {
 			this.controller.notice("Permission configuration is unavailable in this profile.");
 			return;
 		}
@@ -5649,8 +5913,9 @@ var TuiApplication = class {
 		if (route === "permission" || route === "permissions") return this.openPermissionConfig();
 		if (route === "plan") return this.openConfig("plan");
 		if (route === "vision") return this.openVisionConfig();
+		if (route === "keymap" || route === "keybinding" || route === "keybindings") return this.openKeymap();
 		if (route === "interface" || route === "details") return this.openConfig();
-		throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, vision, or interface.`);
+		throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, vision, keybindings, or interface.`);
 	}
 	openConfig(initialStage = "root") {
 		if (this.tui.hasOverlay() || this.composerModalActive) return;
@@ -5663,7 +5928,7 @@ var TuiApplication = class {
 			this.tui.requestRender();
 		};
 		const state = this.controller.current;
-		const view = new ConfigView(configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus), this.theme, () => {
+		const view = new ConfigView(this.configurationSnapshot(state), this.theme, () => {
 			close();
 			this.runAction(() => this.openModelSelector());
 		}, (effort) => {
@@ -5678,6 +5943,9 @@ var TuiApplication = class {
 		}, close, initialStage, () => {
 			close();
 			this.runAction(() => this.openVisionConfig());
+		}, () => {
+			close();
+			this.openKeymap();
 		});
 		this.configView = view;
 		this.composerModalActive = true;
@@ -5720,14 +5988,35 @@ var TuiApplication = class {
 		this.tui.setFocus(view);
 		this.tui.requestRender();
 	}
+	openKeymap() {
+		if (this.tui.hasOverlay() || this.composerModalActive) return;
+		const close = () => {
+			if (this.keymapView === void 0) return;
+			this.keymapView = void 0;
+			this.layout.setComposerOverride(void 0);
+			this.composerModalActive = false;
+			this.tui.setFocus(this.editor);
+			this.tui.requestRender();
+		};
+		const view = new KeymapView(this.keymap.current().keymap, this.theme, (preset) => {
+			this.runAction(async () => {
+				await this.keymap.setPreset(preset);
+				this.controller.notice(`Keybindings changed to ${preset}.`);
+			});
+		}, close);
+		this.keymapView = view;
+		this.composerModalActive = true;
+		this.layout.setComposerOverride(view);
+		this.tui.setFocus(view);
+		this.tui.requestRender();
+	}
 	async refreshVisionStatus() {
 		const vision = this.vision;
 		if (vision === void 0) throw new Error("Vision is unavailable in this profile.");
 		const status = await vision.status();
 		this.visionStatus = status;
 		this.visionConfigView?.setStatus(status);
-		const state = this.controller.current;
-		this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, this.showDetails, status));
+		this.refreshConfigurationSurface();
 		this.tui.requestRender();
 		return status;
 	}
@@ -6125,9 +6414,14 @@ var TuiApplication = class {
 	setDetailsExpanded(expanded) {
 		this.showDetails = expanded;
 		this.transcript.setDetails(expanded);
-		const state = this.controller.current;
-		this.configView?.setSnapshot(configurationSnapshot(state.models, state.projections, expanded, this.visionStatus));
+		this.refreshConfigurationSurface();
 		this.tui.requestRender();
+	}
+	configurationSnapshot(state = this.controller.current) {
+		return configurationSnapshot(state.models, state.projections, this.showDetails, this.visionStatus, this.keymap.current().keymap);
+	}
+	refreshConfigurationSurface() {
+		this.configView?.setSnapshot(this.configurationSnapshot());
 	}
 	async selectReasoningEffort(reasoningEffort) {
 		const current = (this.controller.current.models ?? await this.controller.refreshModels()).current;
@@ -6628,6 +6922,7 @@ const Config = z.object({
 	showReasoning: z.boolean().default(true),
 	showHardwareCursor: z.boolean().default(false),
 	color: z.boolean().default(true),
+	keymap: z.union(KEYMAP_PRESET_IDS).default("standard"),
 	title: z.string().default("DeepSeek Harness"),
 	cwd: z.string(),
 	sessionId: z.string()
@@ -6642,44 +6937,50 @@ function resolveConfig(config) {
 		showReasoning: config.showReasoning ?? true,
 		showHardwareCursor: config.showHardwareCursor ?? false,
 		color: config.color ?? true,
+		keymap: config.keymap ?? "standard",
 		title: config.title ?? "DeepSeek Harness",
 		cwd: config.cwd ?? process.cwd(),
 		...config.sessionId === void 0 ? {} : { sessionId: config.sessionId }
 	};
 }
 //#endregion
-//#region src/index.ts
-/** Stable Cordis plugin name. */
-const name = "community-tui";
-/** The in-process API gateway must exist before the terminal can activate. */
-const inject = [
-	"apiProxy",
-	"agents",
-	"commands",
-	"memory",
-	"vision"
-];
-function parseArgs(args, base) {
+//#region src/application/cli.ts
+function requiredValue(args, index, option) {
+	const value = args[index + 1];
+	if (value === void 0 || value === "" || value.startsWith("-")) throw new Error(`${option} requires a value`);
+	return value;
+}
+/** Parse terminal-only options separately from Cordis plugin construction. */
+function parseTuiArgs(args, base) {
 	const config = { ...base };
+	const imagePaths = [];
 	let help = false;
 	for (let index = 0; index < args.length; index += 1) {
 		const argument = args[index];
+		if (argument === void 0) continue;
 		if (argument === "--help" || argument === "-h") {
 			help = true;
 			continue;
 		}
 		if (argument === "--resume") {
-			const value = args[index + 1];
-			if (value === void 0) throw new Error("--resume requires a session id");
-			config.sessionId = value;
+			config.sessionId = requiredValue(args, index, "--resume");
 			index += 1;
 			continue;
 		}
 		if (argument === "--cwd") {
-			const value = args[index + 1];
-			if (value === void 0) throw new Error("--cwd requires a path");
-			config.cwd = value;
+			config.cwd = requiredValue(args, index, "--cwd");
 			index += 1;
+			continue;
+		}
+		if (argument === "--image" || argument === "-i") {
+			imagePaths.push(requiredValue(args, index, argument));
+			index += 1;
+			continue;
+		}
+		if (argument.startsWith("--image=")) {
+			const value = argument.slice(8);
+			if (value === "") throw new Error("--image requires a value");
+			imagePaths.push(value);
 			continue;
 		}
 		if (argument === "--no-color") {
@@ -6690,24 +6991,39 @@ function parseArgs(args, base) {
 	}
 	return {
 		help,
-		config
+		config,
+		imagePaths
 	};
 }
-const HELP = `Usage: dsh-tui [options]
+const TUI_HELP = `Usage: dsh-tui [options]
 
 Options:
   --resume <session-id>  Resume an existing session
   --cwd <path>           Start a new session in this directory
+  -i, --image <path>     Attach an image at startup (repeatable)
   --no-color             Disable ANSI color
   -h, --help             Show this help
 `;
+//#endregion
+//#region src/index.ts
+/** Stable Cordis plugin name. */
+const name = "community-tui";
+/** The in-process API gateway must exist before the terminal can activate. */
+const inject = [
+	"apiProxy",
+	"agents",
+	"commands",
+	"memory",
+	"settings",
+	"vision"
+];
 /** Mount the terminal application and bind its lifetime to the plugin effect. */
 function apply(ctx, config) {
 	const exit = ctx.get("appExit");
 	if (exit === void 0) throw new Error("community-tui requires the dsh launcher appExit service");
-	const parsed = parseArgs(ctx.get("cmdlineArgs")?.get() ?? [], config);
+	const parsed = parseTuiArgs(ctx.get("cmdlineArgs")?.get() ?? [], config);
 	if (parsed.help) {
-		process.stdout.write(HELP);
+		process.stdout.write(TUI_HELP);
 		exit(0);
 		return;
 	}
@@ -6718,27 +7034,39 @@ function apply(ctx, config) {
 		exit
 	};
 	const api = new InProcessApiClient(toFetchHandler(ctx.apiProxy));
-	const resolved = resolveConfig(parsed.config);
+	const keymap = settingsKeymapGateway(ctx.settings.register(TUI_SETTINGS_NAMESPACE, TuiSettingsSchema, {
+		base: { keymap: parsed.config.keymap ?? "standard" },
+		applies: "live"
+	}));
+	const resolved = resolveConfig({
+		...parsed.config,
+		keymap: keymap.current().keymap
+	});
 	const checkpoints = new WorkspaceCheckpointStore(resolved.rewindCheckpoints);
 	installCheckpointCapture(ctx, checkpoints);
 	const app = new TuiApplication(api, resolved, runtime, checkpoints, ctx.memory, {
-		list: (sessionId) => {
-			if (sessionId === void 0) return [];
-			const agent = ctx.agents.get(sessionId);
-			if (agent === void 0) return [];
-			return ctx.commands.list(agent).map((command) => ({
-				name: command.name,
-				description: command.description,
-				...command.input === void 0 ? {} : { argumentHint: command.input.hint }
-			}));
+		commandSource: {
+			list: (sessionId) => {
+				if (sessionId === void 0) return [];
+				const agent = ctx.agents.get(sessionId);
+				if (agent === void 0) return [];
+				return ctx.commands.list(agent).map((command) => ({
+					name: command.name,
+					description: command.description,
+					...command.input === void 0 ? {} : { argumentHint: command.input.hint }
+				}));
+			},
+			execute: async (sessionId, line, signal) => {
+				const agent = ctx.agents.get(sessionId);
+				if (agent === void 0) return void 0;
+				return (await ctx.commands.execute(agent, line, signal))?.result;
+			},
+			subscribe: (listener) => ctx.on("commands/change", listener)
 		},
-		execute: async (sessionId, line, signal) => {
-			const agent = ctx.agents.get(sessionId);
-			if (agent === void 0) return void 0;
-			return (await ctx.commands.execute(agent, line, signal))?.result;
-		},
-		subscribe: (listener) => ctx.on("commands/change", listener)
-	}, ctx.vision);
+		vision: ctx.vision,
+		keymap,
+		initialImagePaths: parsed.imagePaths
+	});
 	ctx.effect(() => {
 		let active = true;
 		const removeMemoryMutation = ctx.memory.onMutation((mutation) => {

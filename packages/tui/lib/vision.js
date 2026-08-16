@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import z from "@deepseek-ai/schemastery";
+import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import { Service } from "@deepseek-ai/cordis";
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
-import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 //#region ../vision/lib/index.js
 const DEFAULT_VISION_PROVIDER = "dashscope-vision";
 const DEFAULT_VISION_MODEL = "qwen3.7-plus";

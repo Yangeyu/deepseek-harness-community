@@ -2,11 +2,21 @@ import { Editor } from '@earendil-works/pi-tui'
 import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
 import type { MemoryMutation, ProjectMemoryService } from '@vascent/deepseek-harness-memory'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { TuiApplication, type TuiRuntime } from '../../src/application/app.ts'
+import {
+  TuiApplication,
+  type TuiApplicationDependencies,
+  type TuiRuntime,
+} from '../../src/application/app.ts'
 import { WorkspaceCheckpointStore, type RewindPreview } from '../../src/checkpoint.ts'
 import { resolveConfig } from '../../src/application/config.ts'
 import type { TuiState } from '../../src/runtime/controller.ts'
 import type { HostCommandSource } from '../../src/runtime/commands.ts'
+import {
+  memoryKeymapGateway,
+  type KeymapSettingsGateway,
+} from '../../src/application/keymap-settings.ts'
+import type { VisionGateway } from '../../src/application/attachments/coordinator.ts'
+import type { NewAttachmentDraft } from '../../src/application/attachments/drafts.ts'
 
 interface AppInternals {
   controller: {
@@ -22,11 +32,13 @@ interface AppInternals {
     refresh(force?: boolean): Promise<readonly unknown[]>
   }
   editor: Editor
+  attachmentDrafts: { snapshot: readonly unknown[] }
   footer: { render(width: number): string[] }
   status: { render(width: number): string[] }
   transcript: { render(width: number): string[] }
   trajectoryView?: { handleInput(data: string): void; render(width: number): string[] }
   configView?: { handleInput(data: string): void; render(width: number): string[] }
+  keymapView?: { handleInput(data: string): void; render(width: number): string[] }
   taskView?: { handleInput(data: string): void; render(width: number): string[] }
   skillsView?: { handleInput(data: string): void; render(width: number): string[] }
   composerModalActive: boolean
@@ -51,6 +63,8 @@ function application(
   memory: ProjectMemoryService = memoryService(),
   runtimeOverrides: Partial<TuiRuntime> = {},
   commandSource?: HostCommandSource,
+  keymap?: KeymapSettingsGateway,
+  dependencies: TuiApplicationDependencies = {},
 ): TuiApplication {
   const runtime: TuiRuntime = {
     stdin: process.stdin,
@@ -65,7 +79,11 @@ function application(
     runtime,
     checkpoints,
     memory,
-    commandSource,
+    {
+      ...dependencies,
+      ...commandSource === undefined ? {} : { commandSource },
+      ...keymap === undefined ? {} : { keymap },
+    },
   )
   ;(app as unknown as AppInternals).tui.requestRender = vi.fn()
   return app
@@ -86,6 +104,107 @@ describe('TuiApplication input routing', () => {
     expect(internals.handleGlobalInput('\u0016')).toEqual({ consume: true })
     expect(internals.handleGlobalInput('\u001bv')).toEqual({ consume: true })
     expect(pasteImage).toHaveBeenCalledTimes(2)
+  })
+
+  it('suppresses key repeat and release events before invoking image paste', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const pasteImage = vi.fn(async () => {})
+    internals.pasteImage = pasteImage
+
+    expect(internals.handleGlobalInput('\u001b[118;5u')).toEqual({ consume: true })
+    expect(internals.handleGlobalInput('\u001b[118;5:2u')).toEqual({ consume: true })
+    expect(internals.handleGlobalInput('\u001b[118;5:3u')).toEqual({ consume: true })
+    expect(pasteImage).toHaveBeenCalledOnce()
+  })
+
+  it('coalesces concurrent clipboard events into one attachment draft', async () => {
+    let resolveClipboard!: (draft: NewAttachmentDraft) => void
+    const clipboardImage = vi.fn(() => new Promise<NewAttachmentDraft>((resolve) => {
+      resolveClipboard = resolve
+    }))
+    const vision = {
+      config: {
+        mode: 'auto',
+        proxyProvider: 'proxy',
+        proxyModel: 'vision',
+        maxObservationChars: 12_000,
+        maxTokens: 2_048,
+      },
+    } as VisionGateway
+    const app = application(undefined, undefined, undefined, undefined, undefined, {
+      vision,
+      clipboardImage,
+    })
+    const internals = app as unknown as AppInternals
+
+    const first = internals.pasteImage()
+    const second = internals.pasteImage()
+    expect(clipboardImage).toHaveBeenCalledOnce()
+    resolveClipboard({
+      name: 'clipboard.png',
+      mediaType: 'image/png',
+      data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
+      source: 'clipboard',
+    })
+    await Promise.all([first, second])
+
+    expect(internals.attachmentDrafts.snapshot).toHaveLength(1)
+  })
+
+  it('queues with Tab while working and leaves Alt+Enter for multiline input', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const submit = vi.fn(async () => {})
+    internals.submit = submit
+    const idleState = internals.controller.current
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue({
+      ...idleState,
+      running: true,
+    })
+    internals.editor.setText('next task')
+
+    expect(internals.handleGlobalInput('\u001b\r')).toBeUndefined()
+    expect(internals.handleGlobalInput('\t')).toEqual({ consume: true })
+    expect(submit).toHaveBeenCalledWith('next task', 'queue')
+  })
+
+  it('keeps legacy Alt+Enter queueing configurable without consuming it while idle', () => {
+    const keymap = memoryKeymapGateway({ keymap: 'legacy' })
+    const app = application(undefined, undefined, undefined, undefined, keymap)
+    const internals = app as unknown as AppInternals
+    const submit = vi.fn(async () => {})
+    internals.submit = submit
+    const idleState = internals.controller.current
+
+    expect(internals.handleGlobalInput('\u001b\r')).toBeUndefined()
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue({
+      ...idleState,
+      running: true,
+    })
+    internals.editor.setText('legacy task')
+    expect(internals.handleGlobalInput('\u001b\r')).toEqual({ consume: true })
+    expect(submit).toHaveBeenCalledWith('legacy task', 'queue')
+  })
+
+  it('keeps the fixed footer focused on model information', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+
+    app.render({
+      ...internals.controller.current,
+      running: true,
+      models: {
+        current: { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' },
+        routable: true,
+        groups: [],
+        failures: [],
+      },
+    })
+
+    const footer = internals.footer.render(100).join('\n')
+    expect(footer).toContain('deepseek-official/deepseek-v4-pro · max')
+    expect(footer).not.toMatch(/queue|newline|image|details|\/help/u)
   })
 
   it('adds ordinary Enter submissions to up/down editor history', () => {
@@ -140,7 +259,9 @@ describe('TuiApplication input routing', () => {
 
     expect(internals.status.render(80).join('\n')).toContain('Working (0s · esc to interrupt)')
     expect(internals.transcript.render(80).join('\n')).not.toContain('Working')
-    expect(internals.footer.render(80).join('\n')).toContain('Esc cancel')
+    const footer = internals.footer.render(80).join('\n')
+    expect(footer).toContain('model unavailable')
+    expect(footer).not.toMatch(/queue|newline|image|details|\/help/u)
 
     vi.setSystemTime(5_000)
     app.render({
@@ -227,6 +348,11 @@ describe('TuiApplication input routing', () => {
     expect(internals.skillsView?.render(80).join('\n')).toContain('Skills')
     internals.skillsView?.handleInput('\u001b')
     expect(internals.skillsView).toBeUndefined()
+
+    await internals.submit('/keymap')
+    expect(internals.keymapView?.render(80).join('\n')).toContain('Keybindings')
+    internals.keymapView?.handleInput('\u001b')
+    expect(internals.keymapView).toBeUndefined()
   })
 
   it('opens bare /permission as a picker and executes selections outside model input', async () => {

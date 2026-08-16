@@ -32,10 +32,11 @@ describe('session control selectors', () => {
     const config = configurationSnapshot(undefined, projections, false)
     const task = taskSnapshot(projections, false, 0)
 
-    expect(config).toEqual({ models: undefined, detailsExpanded: false })
+    expect(config).toEqual({ models: undefined, keymap: 'standard', detailsExpanded: false })
     expect(task).toEqual({ goal: null, todos: null, running: false, queued: 0 })
     expect(configurationRows(config)).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'permissions', available: false }),
+      expect.objectContaining({ kind: 'keymap', value: 'standard · Tab queues while working' }),
       expect.objectContaining({ kind: 'details', available: true, scope: 'TUI' }),
     ]))
     expect(taskRows(task)).toEqual(expect.arrayContaining([

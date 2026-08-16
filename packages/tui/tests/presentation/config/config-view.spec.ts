@@ -33,6 +33,7 @@ function snapshot() {
       ],
     },
     plan: { active: false, pending: false },
+    keymap: 'standard' as const,
     detailsExpanded: false,
   }
 }
@@ -41,6 +42,7 @@ function view(overrides: {
   onReasoning?: (effort: string | undefined) => void
   onPermission?: (value: string) => void
   onDetails?: (expanded: boolean) => void
+  onKeymap?: () => void
   onClose?: () => void
 } = {}, initialStage: 'root' | 'reasoning' | 'permissions' | 'plan' = 'root') {
   return new ConfigView(
@@ -53,6 +55,8 @@ function view(overrides: {
     overrides.onDetails ?? vi.fn(),
     overrides.onClose ?? vi.fn(),
     initialStage,
+    undefined,
+    overrides.onKeymap,
   )
 }
 
@@ -64,6 +68,7 @@ describe('ConfigView', () => {
     expect(initial).toContain('Config')
     expect(initial).toContain('› Model')
     expect(initial).toContain('Session')
+    expect(initial).toContain('Keybindings')
     config.handleInput('j')
     expect(config.render(80).join('\n')).toContain('› Reasoning')
     config.handleInput('G')
@@ -107,6 +112,17 @@ describe('ConfigView', () => {
     const direct = view({ onClose }, 'permissions')
     direct.handleInput('\u001b')
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('opens the persistent keymap surface from Config', () => {
+    const onKeymap = vi.fn()
+    const config = view({ onKeymap })
+
+    config.handleInput('G')
+    config.handleInput('k')
+    config.handleInput('\r')
+
+    expect(onKeymap).toHaveBeenCalledOnce()
   })
 
   it('bounds every rendered row in narrow terminals', () => {

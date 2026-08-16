@@ -42,6 +42,7 @@ export class ConfigView implements Component {
     private readonly onClose: () => void,
     initialStage: ConfigEntryStage = 'root',
     private readonly onVision?: () => void,
+    private readonly onKeymap?: () => void,
   ) {
     this.stage = initialStage
     this.entryStage = initialStage
@@ -167,6 +168,10 @@ export class ConfigView implements Component {
       }
       if (row.kind === 'vision') {
         this.onVision?.()
+        return
+      }
+      if (row.kind === 'keymap') {
+        this.onKeymap?.()
         return
       }
       if (row.kind === 'details') {

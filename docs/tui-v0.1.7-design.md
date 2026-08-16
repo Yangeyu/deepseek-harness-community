@@ -195,7 +195,9 @@ than an assumption about ordinary `Cmd+V` or bracketed paste.
 
 ### Entry points
 
-- `/attach <path>` is the portable and scriptable canonical action.
+- Repeatable `-i`/`--image <path>` arguments create startup drafts for a new or
+  resumed session through the same file-validation path as `/attach`.
+- `/attach <path>` is the portable interactive action.
 - `Ctrl+V` reads one supported image from the system clipboard when a platform
   adapter is available. The first adapter targets macOS; unsupported platforms
   show a bounded explanation and keep the editor unchanged.
@@ -206,6 +208,32 @@ than an assumption about ordinary `Cmd+V` or bracketed paste.
 - Dragging a file into a terminal usually pastes a path. It remains plain text
   until the user explicitly invokes `/attach`; the TUI must not upload arbitrary
   path-like text.
+
+### Composer and keymap contract
+
+Raw terminal input is resolved to semantic actions before application behavior
+runs. The application handles actions such as `turn.queue`, `vision.paste`, and
+`details.toggle`; it does not own the corresponding escape sequences.
+
+The persisted Standard preset is the default:
+
+- idle `Enter` submits and running `Enter` steers;
+- running `Tab` queues the next message, while idle `Tab` remains available to
+  the editor and autocomplete;
+- `Alt+Enter` remains available for multiline input in every state;
+- `Ctrl+V` pastes an image, with `Alt+V` as a compatibility binding.
+
+The optional Legacy preset maps running-turn queueing to `Alt+Enter` but does
+not consume it while idle. `/keymap` and `/config keybindings` edit the same
+Host-backed `community-tui` settings namespace. Presets contain presentation
+preferences only; queue state and submission behavior remain authoritative in
+the controller and Host.
+
+Kitty repeat and release events for a matched shortcut are consumed but never
+emit another action. Clipboard reads are also single-flight, providing a second
+idempotency boundary for legacy terminals that repeat the same byte sequence.
+The fixed footer shows only provider/model and reasoning effort; bindings stay
+discoverable in `/keymap`, while detailed metrics live in `/status`.
 
 ### Draft state
 
@@ -496,6 +524,11 @@ diagnostic.
 
 - file and clipboard intake, basename stripping, limits, duplicate images, and
   unsupported platform behavior;
+- context matrices prove idle editor input is not captured by running-turn
+  bindings and persisted keymap changes update the live surface;
+- Kitty repeat/release input and concurrent clipboard calls still create only
+  one draft per physical paste;
+- repeatable CLI images are parsed in order for new and resumed sessions;
 - draft retention across validation, Vision, Host admission, and cancellation;
 - ordinary text submission remains unchanged with no image;
 - proxy submits original visible user text and one plugin observation;
@@ -549,6 +582,10 @@ send an image to a model whose capability is absent or explicitly text-only.
 
 - [x] `/attach <path>`, `/paste-image`, and macOS `Ctrl+V` create validated image
   drafts without modifying the workspace.
+- [x] Repeatable `-i`/`--image` arguments create the same validated drafts for
+  new and resumed sessions.
+- [x] Standard keybindings use running `Tab` for queueing and preserve
+  `Alt+Enter` multiline input; `/keymap` persists the selected preset.
 - [x] The attachment rail remains readable at 80 columns and fully keyboard
   operable without breaking editor input.
 - [x] Text-only submissions follow the existing controller path unchanged.

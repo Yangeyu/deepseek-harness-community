@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Add a semantic, context-aware keymap layer with persisted Standard and Legacy
+  presets, `/keymap` and `/config keybindings`, `Tab` queueing while working,
+  and restored `Alt+Enter` multiline input under the default preset.
+- Add repeatable `-i`/`--image` startup attachments for new and resumed
+  sessions, using the same validated in-memory draft path as `/attach`.
+- Normalize Kitty press/repeat/release events before shortcut dispatch and
+  coalesce concurrent clipboard reads so one paste creates one image draft.
+- Keep the fixed composer footer limited to model identity and reasoning;
+  shortcut discovery stays in `/keymap` and session metrics move to `/status`.
 - Add file and macOS clipboard image drafts with a fixed two-row attachment
   rail, primary `Ctrl+V` paste, compatible `Alt+V` fallback, keyboard
   management, retained retry state, and Host limit prechecks.

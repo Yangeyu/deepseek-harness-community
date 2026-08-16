@@ -3,9 +3,15 @@ import "./index-BFrW5xpj.js";
 import { GoalRef, HistoryEntry, IApiClient, ModelSelection, MuxFrame, PromptContentPart, QueuedInboxItem, RpcId, SessionModels, SessionSummary } from "@deepseek-ai/dsh-host-apiproxy";
 import { Component, EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
 import z from "@deepseek-ai/schemastery";
+import "@deepseek-ai/dsh-settings";
 import { Context } from "@deepseek-ai/cordis";
 import { SessionProjectionMap } from "@deepseek-ai/dsh-session-projection/types";
 import { ImageMediaType } from "@deepseek-ai/dsh-attachment";
+//#region src/input/keymap.d.ts
+/** Stable keymap identifiers persisted in user settings. */
+declare const KEYMAP_PRESET_IDS: readonly ["standard", "legacy"];
+type KeymapPreset = typeof KEYMAP_PRESET_IDS[number];
+//#endregion
 //#region src/application/config.d.ts
 /** User-configurable TUI presentation and history bounds. */
 interface Config {
@@ -16,6 +22,7 @@ interface Config {
   showReasoning?: boolean;
   showHardwareCursor?: boolean;
   color?: boolean;
+  keymap?: KeymapPreset;
   title?: string;
   cwd?: string;
   sessionId?: string;
@@ -31,6 +38,7 @@ interface ResolvedConfig {
   showReasoning: boolean;
   showHardwareCursor: boolean;
   color: boolean;
+  keymap: KeymapPreset;
   title: string;
   cwd: string;
   sessionId?: string;

@@ -15,7 +15,7 @@ Harness Host
       │ transport-neutral ApiProxy plus narrow Command/Memory/Vision ports
       ▼
 Terminal runtime
-  HarnessController · submission coordinator · Slash/Skill catalogs · trajectory model
+  HarnessController · semantic keymap · submission coordinator · Slash/Skill catalogs · trajectory model
       │
       │ immutable-by-convention state and semantic records
       ▼
@@ -32,6 +32,7 @@ layout, colors, focus, keyboard handling, pointer handling, and scrolling.
 ```text
 src/
 ├── application/   # composition, configuration, and top-level UI orchestration
+├── input/         # semantic actions, keymap presets, and context-aware resolution
 ├── runtime/       # transport-neutral session, control, submission, Slash, and Skill state
 ├── trajectory/    # trace records, hierarchy, timing, and interaction view
 ├── presentation/  # pi-tui components, dialogs, diffs, layout, and theme
@@ -69,6 +70,14 @@ reducing the number of visible files.
 8. Image bytes become durable only through the Harness attachment service.
    Proxy observations are source-attributed context, never rewritten as human
    text, and a missing Vision capability never silently drops an attachment.
+9. Raw terminal sequences resolve to semantic actions before application
+   behavior runs. Context owns gesture availability: idle editor input is never
+   consumed by a running-turn binding, and persisted keymap choices contain no
+   task or session state.
+10. Kitty repeat and release events are consumed without emitting another
+    semantic action. Asynchronous clipboard intake is single-flight, so one
+    physical paste cannot create duplicate drafts even when a terminal emits
+    more than one matching sequence.
 
 ## Current components
 
@@ -79,7 +88,7 @@ reducing the number of visible files.
   the same descriptor list, while a narrow application port executes resolved
   Host commands and supports bare-invocation UI decorations.
 - Session-control selectors derive separate Config rows (model, reasoning,
-  Permission, Plan, and TUI display) and Task rows (Goal, Todos, and runtime)
+  Permission, Plan, keymap, and TUI display) and Task rows (Goal, Todos, and runtime)
   without retaining a second copy of Host state.
 - `SkillCatalog` generation-binds effective RPC rows to one session;
   `SlashCatalog` merges them with Commands while preserving dispatch semantics.
@@ -137,6 +146,14 @@ architecture required to support that sequence.
 - Keep provider endpoint, protocol, catalog, and credential references in
   `dsh-llm-pi-ai`; `/config Vision` selects policy and route without duplicating
   provider configuration.
+- Keep key sequences in `input/keymap.ts`, durable preference access behind a
+  narrow application gateway, and selection UI in `presentation/config`.
+  `TuiApplication` handles semantic actions only. Standard and Legacy are data
+  presets, so future presets or per-action overrides do not require changing
+  submission, Vision, or Config behavior.
+- Parse launcher options in an application-owned CLI module. Repeatable startup
+  images enter the same validated draft store as interactive file attachment;
+  command-line intake does not create a parallel submission path.
 
 ### Following architecture work
 

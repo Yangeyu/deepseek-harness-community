@@ -58,6 +58,12 @@ Detailed decisions and acceptance criteria are in
 
 ### v0.1.7 — Visual Input and Vision Proxy
 
+- Align composer semantics with established terminal-agent interaction:
+  `Enter` steers, `Tab` queues while working, and `Alt+Enter` remains multiline.
+  Resolve semantic actions through a persistent, context-aware keymap instead
+  of hard-coding gestures in the application shell.
+- Support repeatable `-i`/`--image` startup attachments for portable scripted,
+  new-session, and resumed-session image intake.
 - Add explicit image drafts from files and the system clipboard with a compact,
   keyboard-first attachment rail above the composer.
 - Introduce a private, TUI-independent Vision workspace that routes explicit

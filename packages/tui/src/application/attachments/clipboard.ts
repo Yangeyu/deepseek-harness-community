@@ -20,6 +20,7 @@ const COPY_PNG_SCRIPT = [
 ].join('\n')
 
 export type ClipboardCommand = (file: string) => Promise<void>
+export type ClipboardImageLoader = () => Promise<NewAttachmentDraft>
 
 async function copyMacClipboard(file: string): Promise<void> {
   await execFile('osascript', ['-e', COPY_PNG_SCRIPT, file])

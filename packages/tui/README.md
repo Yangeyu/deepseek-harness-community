@@ -53,7 +53,7 @@ The initial terminal client supports:
 - effective Skill discovery and canonical `/name` invocation through the Slash
   catalog, plus a searchable `/skills` browser and safe project/user authoring;
 - the same durable turn/step timing, decode throughput, cache-hit, token-usage,
-  and context-pressure projections shown below the Harness Web composer;
+  and context-pressure projections available through `/status`;
 - individually clickable tool calls with bounded Arguments and Result details;
 - a responsive `/trajectory` trace explorer with paired turn, step, and tool
   lifecycles, bottleneck timing, and Summary, Input, Output, Schema, and Timing
@@ -107,6 +107,7 @@ dsh-tui [options]
 
 --resume <session-id>  Resume an existing session
 --cwd <path>           Start a new session in this directory
+-i, --image <path>     Attach an image at startup; repeat for multiple images
 --no-color             Disable ANSI color
 -h, --help             Show help
 ```
@@ -119,7 +120,8 @@ After a normal exit, the restored shell prints a copyable
 | Input | Behavior |
 | --- | --- |
 | `Enter` | Send while idle; steer while running |
-| `Alt+Enter` | Queue explicitly |
+| `Tab` | Queue explicitly while a turn is running |
+| `Alt+Enter` | Insert a newline with the default keymap |
 | `Esc` | Cancel Vision analysis or the active turn |
 | `Ctrl+V` | Attach the current macOS clipboard image |
 | `Alt+A` | Focus and manage the attachment rail |
@@ -130,6 +132,18 @@ After a normal exit, the restored shell prints a copyable
 | `↑` / `↓` | Browse previously submitted input while editing |
 | `PageUp` / `PageDown` | Scroll conversation history while the editor is empty |
 | `Esc Esc` | Open the checkpoint selector; use `↑`/`↓` and `Enter` to inspect a node |
+
+Open `/keymap` or `/config keybindings` to switch the persistent TUI keymap.
+The default Standard preset follows the running-turn `Enter`/`Tab` interaction
+while preserving `Alt+Enter` for multiline input. The Legacy preset restores
+`Alt+Enter` queueing only while a turn is running, so idle multiline input
+remains available. Keymap resolution is context-aware; idle `Tab` still belongs
+to the editor and autocomplete.
+
+The fixed footer intentionally shows only the active provider/model and
+reasoning effort. Shortcut discovery belongs to `/keymap`; detailed session and
+model metrics are available through `/status` instead of permanently occupying
+composer space.
 
 `/trajectory` temporarily replaces the conversation composer with a full-screen,
 live execution ledger for the current session. Use `↑`/`↓` or `j`/`k` to select a
@@ -147,7 +161,7 @@ an older, message-aligned history page without losing live tail events. `Ctrl+C`
 remains an interrupt while the session is running.
 
 `/config` is the unified configuration entry for the active session and TUI.
-It shows Model, Reasoning, Permission, Plan Mode, Vision, and Details with an explicit
+It shows Model, Reasoning, Permission, Plan Mode, Vision, Keybindings, and Details with an explicit
 `Session` or `TUI` scope. `/task` owns the current Goal, read-only Todo progress,
 and runtime cancellation. Both surfaces use `j`/`k`, arrows, `g`/`G`, `Enter`,
 and `Esc`, and neither retains a second copy of Host state.
@@ -163,8 +177,9 @@ Commands therefore never appear as user/assistant conversation messages.
 
 ## Vision input
 
-Use `/attach <path>` for a PNG, JPEG, GIF, or WebP file, `/paste-image` for the
-macOS clipboard, or `Ctrl+V` (`Alt+V` remains a compatibility alias). Drafts stay in memory above the editor until Host
+Use repeatable `-i`/`--image <path>` at startup, `/attach <path>` while the TUI
+is open, `/paste-image` for the macOS clipboard, or `Ctrl+V` (`Alt+V` remains a
+compatibility alias). Drafts stay in memory above the editor until Host
 admission succeeds. Press `Alt+A` to focus the rail, then use `h`/`l` or arrows
 to select, `Delete` to remove, and `Esc` to return to the editor.
 
@@ -254,7 +269,7 @@ The status row shows a separate animation while quiet learning is running.
 `/clear` removes the visible conversation synchronously and then attaches a
 fresh session; if session creation fails, the previous view is restored. Slash
 commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/attach`,
-`/paste-image`, `/vision`, `/details`, `/status`, `/config`, `/task`, `/skills`,
+`/paste-image`, `/vision`, `/keymap`, `/details`, `/status`, `/config`, `/task`, `/skills`,
 `/trajectory`, `/memories`, `/rewind`, and `/exit`.
 
 ## Architecture
@@ -265,6 +280,7 @@ Cordis bundle entry
   -> Vision plugin (routing, proxy analysis, observation staging, events)
   -> in-process ApiProxy client
      -> application/ (bootstrap orchestration and local interactions)
+        ├─ input/ (semantic keymap actions and context-aware binding resolution)
         ├─ runtime/ (controller, scoped session selectors, Slash and Skill catalogs)
         ├─ trajectory/ (semantic hierarchy, timing, and trace view)
         └─ presentation/ (config/task/skill surfaces, transcript, diffs, and dialogs)

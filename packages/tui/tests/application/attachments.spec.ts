@@ -1,5 +1,6 @@
-import { dirname } from 'node:path'
-import { access, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
 import type { PromptContentPart } from '@deepseek-ai/dsh-host-apiproxy'
 import type {
@@ -10,7 +11,10 @@ import type {
 } from '@vascent/deepseek-harness-vision'
 import { AttachmentDraftStore } from '../../src/application/attachments/drafts.ts'
 import { AttachmentCoordinator, type VisionGateway } from '../../src/application/attachments/coordinator.ts'
-import { detectImageMediaType } from '../../src/application/attachments/files.ts'
+import {
+  detectImageMediaType,
+  imageDraftFromPath,
+} from '../../src/application/attachments/files.ts'
 import { imageDraftFromClipboard } from '../../src/application/attachments/clipboard.ts'
 
 const config: VisionConfig = {
@@ -133,6 +137,23 @@ describe('image intake', () => {
     expect(detectImageMediaType(Uint8Array.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))).toBe('image/png')
     expect(detectImageMediaType(Uint8Array.from([0xFF, 0xD8, 0xFF]))).toBe('image/jpeg')
     expect(detectImageMediaType(new TextEncoder().encode('not an image'))).toBeUndefined()
+  })
+
+  it('loads explicit relative paths into validated in-memory drafts', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'dsh-tui-image-'))
+    try {
+      await writeFile(join(cwd, 'screen.png'), Uint8Array.from([
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+      ]))
+
+      await expect(imageDraftFromPath('screen.png', cwd)).resolves.toMatchObject({
+        name: 'screen.png',
+        mediaType: 'image/png',
+        source: 'file',
+      })
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
   })
 
   it('cleans the clipboard temporary directory after reading', async () => {

@@ -83,3 +83,4 @@
         showReasoning: true
         thinkingMaxLines: 8
         color: true
+        keymap: standard
