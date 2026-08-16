@@ -23,8 +23,9 @@ The initial terminal client supports:
 - streaming assistant text, reasoning, tool calls, and tool results;
 - terminal Markdown rendering for headings, emphasis, lists, links, quotes,
   tables, and fenced code blocks;
-- collapsed-by-default thinking blocks with a readable secondary foreground,
-  an eight-line viewport, hover highlighting, click-to-toggle, and wheel scrolling;
+- collapsed-by-default Activity groups for adjacent thinking and ordinary tool
+  calls, with stable live summaries, nested details, failure expansion, and
+  bounded reasoning viewports;
 - Claude Code-style edit cards with exact changed-line counts, contextual lines,
   absolute line numbers when the applied hunk can be located, syntax colors,
   and red/green changed-line backgrounds;
@@ -54,6 +55,8 @@ The initial terminal client supports:
   catalog, plus a searchable `/skills` browser and safe project/user authoring;
 - the same durable turn/step timing, decode throughput, cache-hit, token-usage,
   and context-pressure projections on the second composer footer row;
+- compact, expandable Activity segments for adjacent thinking and non-diff
+  tools, while applied file changes stay in the main conversation timeline;
 - individually clickable tool calls with bounded Arguments and Result details;
 - a responsive `/trajectory` trace explorer with paired turn, step, and tool
   lifecycles, bottleneck timing, and Summary, Input, Output, Schema, and Timing
@@ -128,7 +131,7 @@ After a normal exit, the restored shell prints a copyable
 | `Alt+A` | Focus and manage the attachment rail |
 | `Alt+Backspace` | Remove the latest image draft |
 | `Ctrl+C` | Cancel while running; exit while idle |
-| `Ctrl+O` | Toggle expanded tool details |
+| `Ctrl+O` | Toggle Activity and tool details |
 | `Shift+Tab` | Cycle supported reasoning efforts |
 | `↑` / `↓` | Browse previously submitted input while editing |
 | `PageUp` / `PageDown` | Scroll conversation history while the editor is empty |
@@ -216,15 +219,19 @@ effort steps. `Enter` advances or applies the complete selection to the current 
 the Harness Host also saves it as the default for new sessions, matching the
 current Web client behavior.
 
-Thinking and ordinary tool-call titles highlight on pointer hover and toggle on
-click. Tool details show both the recorded Arguments and Result; `Ctrl+O`
-remains the keyboard shortcut for expanding or collapsing them together. The
-pointer wheel scrolls expanded thinking and long inline diffs inside their
-bounded viewports; at a block boundary or over ordinary output, the same wheel
-scrolls the conversation. Scrolling upward pauses automatic tail following,
-and PageDown or a downward wheel returns to live output. Hold the terminal's
-mouse-bypass modifier (usually Shift) when native terminal text selection is
-needed.
+Adjacent Thinking and ordinary tool calls form one collapsed Activity group.
+Click its summary to reveal the ordered child titles, then click a child to
+inspect bounded reasoning or the recorded Arguments and Result. Successful
+groups stay compact, live groups expose their latest action in the summary, and
+failed groups open to the failed tool by default without preventing a manual
+collapse. File edits are hard Activity boundaries: their applied diffs remain
+top-level conversation cards and open by default. `Ctrl+O` expands or collapses
+Activity and tool details together. The pointer wheel scrolls expanded thinking
+and long inline diffs inside their bounded viewports; at a block boundary or
+over ordinary output, the same wheel scrolls the conversation. Scrolling upward
+pauses automatic tail following, and PageDown or a downward wheel returns to
+live output. Hold the terminal's mouse-bypass modifier (usually Shift) when
+native terminal text selection is needed.
 
 Rewind snapshots the Git worktree immediately before the first step of each
 user-authored turn. `Esc Esc` opens the process-local checkpoint history

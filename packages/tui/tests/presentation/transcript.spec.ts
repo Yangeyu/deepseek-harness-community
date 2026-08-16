@@ -176,7 +176,7 @@ describe('TranscriptComponent', () => {
     expect(output.startsWith(' Production CORS')).toBe(true)
   })
 
-  it('collapses thinking by default and scrolls within its bounded viewport', () => {
+  it('collapses activity by default and scrolls expanded thinking within its bounded viewport', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
@@ -202,15 +202,21 @@ describe('TranscriptComponent', () => {
     ]), createTheme(true), true, 8, 3)
 
     const collapsed = transcript.render(80).join('\n')
-    expect(collapsed).toContain('› Thought')
+    expect(collapsed).toContain('› Worked · 1 thought')
     expect(collapsed).not.toContain('thought 1')
     expect(collapsed).toContain('final answer')
 
     expect(transcript.handlePointer(0, 'move')).toBe(true)
     const hovered = transcript.render(80).join('\n')
-    expect(hovered).toContain('\u001b[1m\u001b[36m› Thought\u001b[39m\u001b[22m')
+    expect(hovered).toContain('\u001b[1m\u001b[36m› Worked · 1 thought\u001b[39m\u001b[22m')
     expect(hovered).not.toContain('\u001b[7m')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
+    const activity = transcript.render(80).join('\n')
+    expect(stripTerminalSequences(activity)).toContain('└─ › Thought')
+    expect(activity).not.toContain('thought 1')
+
+    expect(transcript.handlePointer(1, 'move')).toBe(true)
+    expect(transcript.handlePointer(1, 'click')).toBe(true)
     const expanded = transcript.render(80).join('\n')
     expect(expanded).toContain('⌄ Thought')
     expect(expanded).toContain('thought 1')
@@ -218,13 +224,13 @@ describe('TranscriptComponent', () => {
     expect(expanded).not.toContain('thought 8')
     expect(expanded.split('\n').filter(line => line.includes('│'))).toHaveLength(3)
 
-    expect(transcript.handlePointer(1, 'wheel-down')).toBe(true)
+    expect(transcript.handlePointer(2, 'wheel-down')).toBe(true)
     const scrolled = transcript.render(80).join('\n')
     expect(scrolled).toContain('thought 4')
     expect(scrolled).toContain('thought 6')
     expect(scrolled).not.toContain('thought 8')
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'click')).toBe(true)
     expect(transcript.render(80).join('\n')).not.toContain('thought 5')
   })
 
@@ -240,13 +246,15 @@ describe('TranscriptComponent', () => {
     const events = Array.from({ length: 5 }, (_, index) => reasoningChunk(index, `- stream ${index + 1}\n`))
     const transcript = new TranscriptComponent(state(events), createTheme(false), true, 8, 3)
 
-    expect(transcript.render(80).join('\n')).toContain('› Thinking…')
+    expect(transcript.render(80).join('\n')).toContain('› Working · 1 thought · Thinking…')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › Thinking…')
+    expect(transcript.handlePointer(1, 'click')).toBe(true)
     const following = transcript.render(80).join('\n')
     expect(following).toContain('stream 5')
     expect(following).not.toContain('stream 1')
 
-    expect(transcript.handlePointer(1, 'wheel-up')).toBe(true)
+    expect(transcript.handlePointer(2, 'wheel-up')).toBe(true)
     transcript.setState(state([...events, reasoningChunk(5, '- stream 6\n')]))
     const paused = transcript.render(80).join('\n')
     expect(paused).toContain('stream 1')
@@ -419,7 +427,7 @@ describe('TranscriptComponent', () => {
     expect(output).not.toContain('opaque-name')
   })
 
-  it('expands one tool call on title click to reveal its arguments and result', () => {
+  it('reveals a grouped tool title before its arguments and result', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
@@ -466,14 +474,20 @@ describe('TranscriptComponent', () => {
 
     const collapsedOutput = transcript.render(80).join('\n')
     const collapsed = stripTerminalSequences(collapsedOutput)
-    expect(collapsed).toContain('› • Search project')
-    expect(collapsedOutput).toContain('\u001b[1m\u001b[32m•\u001b[39m\u001b[22m')
-    expect(collapsedOutput).toContain('\u001b[38;2;125;211;252mSearch project\u001b[39m')
+    expect(collapsed).toContain('› Worked for 1ms · 1 tool')
     expect(collapsed).not.toContain('render details')
     expect(collapsed).not.toContain('3 matches')
 
     expect(transcript.handlePointer(0, 'move')).toBe(true)
     expect(transcript.handlePointer(0, 'click')).toBe(true)
+    const activityOutput = transcript.render(80).join('\n')
+    const activity = stripTerminalSequences(activityOutput)
+    expect(activity).toContain('└─ › • Search project')
+    expect(activityOutput).toContain('\u001b[1m\u001b[32m•\u001b[39m\u001b[22m')
+    expect(activityOutput).toContain('\u001b[38;2;125;211;252mSearch project\u001b[39m')
+
+    expect(transcript.handlePointer(1, 'move')).toBe(true)
+    expect(transcript.handlePointer(1, 'click')).toBe(true)
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(expanded).toContain('⌄ • Search project')
     expect(expanded).toContain('Arguments')
@@ -481,8 +495,65 @@ describe('TranscriptComponent', () => {
     expect(expanded).toContain('Result')
     expect(expanded).toContain('3 matches')
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'click')).toBe(true)
     expect(transcript.render(80).join('\n')).not.toContain('3 matches')
+    expect(transcript.render(32).every(line => visibleWidth(line) === 32)).toBe(true)
+  })
+
+  it('opens failed activity and the failed tool by default without trapping it open', () => {
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'tool/call',
+          seq: 0,
+          time: 1_000,
+          data: {
+            turn: 1,
+            step: 1,
+            callId: 'call-failed',
+            name: 'bash',
+            arguments: '{"command":"pnpm test"}',
+          },
+        },
+        view: { for: 'call', view: { card: 'terminal', title: 'pnpm test', cwd: '/workspace' } },
+      }),
+      entry({
+        event: {
+          type: 'tool/result',
+          seq: 1,
+          time: 1_250,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'm-tool-failed',
+              role: 'user',
+              source: { kind: 'tool', callId: 'call-failed' },
+              content: [{
+                type: 'tool-result',
+                toolCallId: 'call-failed',
+                content: [{ type: 'text', text: '1 test failed' }],
+                isError: true,
+              }],
+            },
+            error: { name: 'Error', code: 'TEST_FAILED' },
+          },
+        },
+        view: { for: 'result', view: { card: 'terminal', title: 'pnpm test', output: '1 test failed', exitCode: 1 } },
+      }),
+    ]), createTheme(false), true, 8)
+
+    const failed = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(failed).toContain('⌄ Failed after 250ms · 1 tool')
+    expect(failed).toContain('└─ ⌄ × pnpm test')
+    expect(failed).toContain('1 test failed')
+    expect(failed).toContain('[exit 1]')
+
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(collapsed).toContain('› Failed after 250ms · 1 tool')
+    expect(collapsed).not.toContain('1 test failed')
   })
 
   it('shows applied file diffs by default and scrolls them with the pointer', () => {

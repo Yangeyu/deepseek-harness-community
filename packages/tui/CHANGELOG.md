@@ -17,6 +17,10 @@ All notable changes to this project are documented in this file.
 - Keep the first composer footer row limited to model identity and reasoning,
   preserve session metrics on the second row, and keep shortcut discovery in
   `/keymap`.
+- Group adjacent thinking and non-diff tools into compact, expandable Activity
+  segments with stable timing/count summaries, live latest-action context, and
+  automatic failure disclosure, while keeping applied file diffs in the main
+  conversation timeline.
 - Add file and macOS clipboard image drafts with a fixed two-row attachment
   rail, primary `Ctrl+V` paste, compatible `Alt+V` fallback, keyboard
   management, retained retry state, and Host limit prechecks.

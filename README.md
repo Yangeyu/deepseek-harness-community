@@ -31,7 +31,7 @@ The first launch creates or updates the `tui` Harness profile under `~/.dsh`; la
 
 ## Packages
 
-- [`packages/tui`](packages/tui) is the private terminal-client workspace with the profile patch, streaming transcript, diffs, scoped Config and Task surfaces, Skills, rewind checkpoints, model selection, and memory UI.
+- [`packages/tui`](packages/tui) is the private terminal-client workspace with the profile patch, grouped execution Activity, top-level file diffs, scoped Config and Task surfaces, Skills, rewind checkpoints, model selection, and memory UI.
 - [`packages/memory`](packages/memory) is the private file-backed memory workspace with explicit remember/forget tools and correction learning.
 - [`packages/vision`](packages/vision) is the private, terminal-independent Vision workspace for native/proxy routing, safe visual observations, and source-attributed evidence.
 

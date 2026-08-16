@@ -5,12 +5,6 @@ import {
   wrapTextWithAnsi,
   type Component,
 } from '@earendil-works/pi-tui'
-import type {
-  HistoryEntry,
-  ToolCallView,
-  ToolResultView,
-} from '@deepseek-ai/dsh-host-apiproxy'
-import type {} from '@deepseek-ai/dsh-commands/types'
 import type { TuiState } from '../runtime/controller.ts'
 import type { DiffLineStarts } from './diff-location.ts'
 import {
@@ -19,394 +13,45 @@ import {
   highlightDiffText,
   type DiffDisplayLine,
 } from './diff.ts'
-import { displayUnknown, sanitizeTerminalText } from '../text.ts'
+import {
+  buildTranscriptItems,
+  formatTranscriptDuration,
+  type TranscriptActivityGroup,
+  type TranscriptDiffItem,
+  type TranscriptTextItem,
+  type TranscriptThinkingItem,
+  type TranscriptTone,
+  type TranscriptToolItem,
+} from './transcript-model.ts'
+import { sanitizeTerminalText } from '../text.ts'
 import type { TuiTheme } from './theme.ts'
-
-interface TranscriptRow {
-  label?: string
-  labelPaint?: (text: string) => string
-  body?: string
-  markdown?: boolean
-  dim?: boolean
-  prompt?: boolean
-  promptStatus?: string
-  thinking?: {
-    key: string
-    text: string
-    streaming: boolean
-  }
-  tool?: {
-    key: string
-    title: string
-    status: 'pending' | 'completed' | 'failed'
-    arguments?: string
-    result?: string
-  }
-  diff?: {
-    key: string
-    title: string
-    settled: boolean
-    diffs: Extract<ToolResultView, { card: 'diff' }>['diffs']
-  }
-}
 
 interface BlockHit {
   key: string
-  kind: 'thinking' | 'tool' | 'diff'
+  kind: 'activity' | 'thinking' | 'tool' | 'diff'
   titleLine: number
   firstLine: number
   lastLine: number
 }
 
 const DIFF_CONTENT_INDENT = '  '
+const ACTIVITY_CHILD_INDENT = 3
 const DISCLOSURE_COLLAPSED = '›'
 const DISCLOSURE_EXPANDED = '⌄'
-
-function stepKey(turn: number, step: number): string {
-  return `${turn}:${step}`
-}
-
-function durationLabel(milliseconds: number): string {
-  return milliseconds < 1_000
-    ? `${String(milliseconds)}ms`
-    : `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`
-}
-
-function messageText(content: readonly { type: string; text?: string }[], reasoning: boolean): string {
-  return content
-    .filter(block => block.type === 'text' || (reasoning && block.type === 'reasoning'))
-    .map(block => block.type === 'reasoning' ? `> ${block.text ?? ''}` : block.text ?? '')
-    .join('\n')
-}
-
-function reasoningText(content: readonly { type: string; text?: string }[]): string {
-  return content
-    .filter(block => block.type === 'reasoning')
-    .map(block => block.text ?? '')
-    .join('\n')
-}
-
-function callTitle(name: string, view: ToolCallView | undefined): string {
-  if (view === undefined) return name
-  if (view.card === 'terminal') return `$ ${view.title}`
-  return view.title
-}
-
-function boundedLines(value: string, limit: number): string {
-  const lines = sanitizeTerminalText(value).split('\n')
-  if (lines.length <= limit) return lines.join('\n')
-  const head = Math.max(1, Math.ceil(limit / 2))
-  const tail = Math.max(1, Math.floor(limit / 2))
-  return [...lines.slice(0, head), `… ${lines.length - head - tail} lines hidden …`, ...lines.slice(-tail)].join('\n')
-}
 
 function padToWidth(value: string, width: number): string {
   const clipped = truncateToWidth(value, width, '…', true)
   return `${clipped}${' '.repeat(Math.max(0, width - visibleWidth(clipped)))}`
 }
 
-function toolArguments(value: string, limit: number): string | undefined {
-  const clean = sanitizeTerminalText(value).trim()
-  if (clean === '') return undefined
-  try {
-    const parsed = JSON.parse(clean) as unknown
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) && Object.keys(parsed).length === 0) {
-      return undefined
-    }
-    return boundedLines(displayUnknown(parsed), limit)
-  } catch {
-    return boundedLines(clean, limit)
-  }
-}
-
-function rawResultText(entry: HistoryEntry): string {
-  if (entry.event.type !== 'tool/result') return ''
-  const result = entry.event.data.message.content[0]
-  if (result?.type !== 'tool-result') return ''
-  return messageText(result.content, true)
-}
-
-function resultTitle(view: ToolResultView | undefined): string | undefined {
-  return view?.title
-}
-
-function resultBody(view: ToolResultView | undefined, fallback: string, limit: number): string {
-  if (view === undefined) return boundedLines(fallback, limit)
-  switch (view.card) {
-    case 'terminal': {
-      const status = view.signal !== undefined
-        ? `[${view.signal}]`
-        : view.exitCode === undefined ? '' : `[exit ${view.exitCode}]`
-      return boundedLines([view.output ?? '', status].filter(Boolean).join('\n'), limit)
-    }
-    case 'diff':
-      return boundedLines(view.diffs.flatMap(diff => [
-        `--- ${diff.path}`,
-        `+++ ${diff.path}`,
-        ...diff.oldText === null ? [] : diff.oldText.split('\n').map(line => `- ${line}`),
-        ...diff.newText.split('\n').map(line => `+ ${line}`),
-      ]).join('\n'), limit)
-    case 'search':
-      if (view.shape === 'paths') {
-        return boundedLines([
-          ...view.paths,
-          ...view.truncated ? [`… ${view.total - view.paths.length} more results …`] : [],
-        ].join('\n'), limit)
-      }
-      return boundedLines(view.files.flatMap(file => [
-        file.path,
-        ...file.matches.map(match => `  ${match.lineNumber}: ${match.line}`),
-      ]).join('\n'), limit)
-    case 'read':
-      return boundedLines(view.lines.map(line => `${String(line.number).padStart(4)}  ${line.text}`).join('\n'), limit)
-    case 'web':
-      if (view.kind === 'fetch') {
-        return boundedLines(`${view.statusCode} ${view.url}${view.truncated ? '\n… content truncated …' : ''}`, limit)
-      }
-      return boundedLines([
-        view.answer ?? '',
-        ...view.sources.map(source => `- ${source.title ?? source.url} — ${source.url}`),
-        ...view.truncated ? ['… sources truncated …'] : [],
-      ].filter(Boolean).join('\n'), limit)
-    case 'generic':
-      return boundedLines(view.content === undefined ? fallback : messageText(view.content, true), limit)
-  }
-}
-
-function rowsFromState(
-  state: Readonly<TuiState>,
-  theme: TuiTheme,
-  showReasoning: boolean,
-  showDetails: boolean,
-  maxToolOutputLines: number,
-): TranscriptRow[] {
-  const rows: TranscriptRow[] = []
-  const finalSteps = new Set<string>()
-  const results = new Map<string, HistoryEntry>()
-  const commandRuns = new Set<string>()
-  const commandResults = new Map<string, HistoryEntry>()
-  for (const entry of state.events) {
-    const event = entry.event
-    if (event.type === 'assistant/message') finalSteps.add(stepKey(event.data.turn, event.data.step))
-    if (event.type === 'tool/result') results.set(String(event.data.message.source.callId), entry)
-    if (event.type === 'command/run') commandRuns.add(String(event.data.commandId))
-    if (event.type === 'command/done') commandResults.set(String(event.data.commandId), entry)
-  }
-
-  const partials = new Map<string, {
-    textIndex: number | undefined
-    thinkingIndex: number | undefined
-    text: string
-    reasoning: string
-  }>()
-  for (const entry of state.events) {
-    const event = entry.event
-    switch (event.type) {
-      case 'user/message': {
-        if (event.surfaceOp !== 'append') break
-        const source = event.data.source
-        const rawText = messageText(event.data.content, showReasoning)
-        if (source.kind === 'community-vision') {
-          const imageCount = source.attachments.length
-          rows.push({
-            tool: {
-              key: `vision:${source.analysisId}`,
-              title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalText(source.model)} · ${durationLabel(source.durationMs)}`,
-              status: 'completed',
-              arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${source.provider}/${source.model}`,
-              result: rawText === '' ? 'Vision analysis completed.' : rawText,
-            },
-          })
-          break
-        }
-        const human = source.kind === 'user'
-        if (!human && !showDetails) break
-        const imageCount = event.data.content.filter(block => block.type === 'image').length
-        const text = [rawText, imageCount === 0 ? '' : `${String(imageCount)} image${imageCount === 1 ? '' : 's'} attached`]
-          .filter(Boolean)
-          .join('\n\n')
-        if (text.trim() === '') break
-        rows.push({
-          ...human ? { prompt: true } : { label: 'Context', labelPaint: theme.dim },
-          body: text,
-          markdown: human,
-          dim: !human,
-        })
-        break
-      }
-      case 'assistant/chunk': {
-        const key = stepKey(event.data.turn, event.data.step)
-        if (finalSteps.has(key)) break
-        const chunk = event.data.chunk
-        if (chunk.type !== 'text-delta' && chunk.type !== 'reasoning-delta') break
-        let partial = partials.get(key)
-        if (partial === undefined) {
-          partial = { textIndex: undefined, thinkingIndex: undefined, text: '', reasoning: '' }
-          partials.set(key, partial)
-        }
-        if (chunk.type === 'reasoning-delta') {
-          if (!showReasoning) break
-          partial.reasoning += chunk.text
-          if (partial.thinkingIndex === undefined) {
-            partial.thinkingIndex = rows.length
-            rows.push({})
-          }
-          rows[partial.thinkingIndex] = {
-            thinking: { key: `${key}:thinking`, text: partial.reasoning, streaming: true },
-          }
-          break
-        }
-        partial.text += chunk.text
-        if (partial.textIndex === undefined) {
-          partial.textIndex = rows.length
-          rows.push({})
-        }
-        rows[partial.textIndex] = { body: partial.text, markdown: true }
-        break
-      }
-      case 'assistant/message': {
-        if (event.surfaceOp !== 'append') {
-          rows.push({ label: 'Context', labelPaint: theme.dim, body: 'Earlier model context was compacted.', dim: true })
-          break
-        }
-        const reasoning = reasoningText(event.data.message.content)
-        if (showReasoning && reasoning.trim() !== '') {
-          rows.push({
-            thinking: { key: `${stepKey(event.data.turn, event.data.step)}:thinking`, text: reasoning, streaming: false },
-          })
-        }
-        const text = messageText(event.data.message.content, false)
-        if (text.trim() !== '') {
-          rows.push({ body: text, markdown: true })
-        }
-        break
-      }
-      case 'tool/call': {
-        const callView = entry.view?.for === 'call' ? entry.view.view : undefined
-        const result = results.get(String(event.data.callId))
-        const resultView = result?.view?.for === 'result' ? result.view.view : undefined
-        const failed = result?.event.type === 'tool/result' && result.event.data.error !== undefined
-        const title = resultTitle(resultView) ?? callTitle(event.data.name, callView)
-        const diffView = resultView?.card === 'diff'
-          ? resultView
-          : result === undefined && callView?.card === 'diff' ? callView : undefined
-        if (!failed && diffView !== undefined && diffView.diffs.length > 0) {
-          rows.push({
-            diff: {
-              key: `${String(event.data.callId)}:diff`,
-              title: sanitizeTerminalText(title),
-              settled: result !== undefined,
-              diffs: diffView.diffs,
-            },
-          })
-          break
-        }
-        const argumentsBody = toolArguments(event.data.arguments, maxToolOutputLines)
-        rows.push({
-          tool: {
-            key: `${String(event.data.callId)}:tool`,
-            title: sanitizeTerminalText(title),
-            status: result === undefined ? 'pending' : failed ? 'failed' : 'completed',
-            ...argumentsBody === undefined ? {} : { arguments: argumentsBody },
-            ...result === undefined
-              ? {}
-              : { result: resultBody(resultView, rawResultText(result), maxToolOutputLines) },
-          },
-        })
-        break
-      }
-      case 'command/run': {
-        const completed = commandResults.get(String(event.data.commandId))
-        const result = completed?.event.type === 'command/done' ? completed.event.data : undefined
-        const failed = result?.kind === 'error'
-        rows.push({
-          label: failed ? 'Command failed' : result === undefined ? 'Command running' : 'Command',
-          labelPaint: failed ? theme.error : result === undefined ? theme.warning : theme.accent,
-          body: [
-            `/${event.data.name}${event.data.args ?? ''}`,
-            result?.text,
-          ].filter(value => value !== undefined && value !== '').join('\n'),
-        })
-        break
-      }
-      case 'command/done':
-        if (!commandRuns.has(String(event.data.commandId))) {
-          rows.push({
-            label: event.data.kind === 'error' ? 'Command failed' : 'Command',
-            labelPaint: event.data.kind === 'error' ? theme.error : theme.accent,
-            body: event.data.text ?? `${event.data.kind} command completion`,
-          })
-        }
-        break
-      case 'turn/end':
-        if (event.data.reason.kind === 'error') {
-          rows.push({
-            label: 'Error',
-            labelPaint: theme.error,
-            body: event.data.reason.error.message,
-          })
-        } else if (event.data.reason.kind === 'max-tokens') {
-          rows.push({
-            label: 'Notice',
-            labelPaint: theme.warning,
-            body: 'The response reached the model output limit. Send “continue” to proceed.',
-          })
-        }
-        break
-      default:
-        break
-    }
-  }
-
-  const visibleQueueRpcIds = new Set<string>()
-  for (const item of state.queue) {
-    if (item.placement === 'context') continue
-    const body = messageText(item.message.content, false)
-    if (body.trim() === '') continue
-    const source = item.message.source
-    if (source.kind === 'user' && 'rpcId' in source) visibleQueueRpcIds.add(String(source.rpcId))
-    rows.push({
-      prompt: true,
-      body,
-      promptStatus: item.placement === 'steering' ? 'Steering next step…' : 'Queued',
-    })
-  }
-  for (const submission of state.pendingSubmissions) {
-    const promptVisible = submission.durablePromptObserved === true
-      || (submission.rpcId !== undefined && visibleQueueRpcIds.has(String(submission.rpcId)))
-    if (!promptVisible) {
-      rows.push({
-        prompt: true,
-        body: submission.text,
-        ...submission.intent === 'queueing'
-          ? { promptStatus: 'Queueing…' }
-          : submission.intent === 'steering'
-            ? { promptStatus: 'Steering…' }
-            : {},
-      })
-    }
-    if (submission.activity?.kind === 'vision') {
-      const imageCount = submission.activity.imageCount
-      const elapsed = durationLabel(Math.max(0, Date.now() - submission.activity.startedAt))
-      rows.push({
-        tool: {
-          key: `vision:${submission.activity.analysisId}`,
-          title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · Analyzing… ${elapsed}`,
-          status: 'pending',
-          arguments: `${String(imageCount)} attached image${imageCount === 1 ? '' : 's'}`,
-        },
-      })
-    }
-  }
-  if (state.notice !== undefined) rows.push({ label: 'Notice', labelPaint: theme.accent, body: state.notice })
-  if (state.error !== undefined) rows.push({ label: 'Error', labelPaint: theme.error, body: state.error })
-  return rows
-}
-
 /** Scrollback-first transcript component rebuilt from the current API event window. */
 export class TranscriptComponent implements Component {
   private state: Readonly<TuiState>
   private showDetails = false
+  private readonly activityExpansion = new Map<string, boolean>()
+  private readonly activityStatuses = new Map<string, TranscriptActivityGroup['status']>()
+  private readonly failedActivities = new Set<string>()
+  private readonly failedTools = new Set<string>()
   private readonly expandedThinking = new Set<string>()
   private readonly toolExpansion = new Map<string, boolean>()
   private readonly collapsedDiffs = new Set<string>()
@@ -429,6 +74,10 @@ export class TranscriptComponent implements Component {
 
   setState(state: Readonly<TuiState>): void {
     if (state.sessionId !== this.state.sessionId) {
+      this.activityExpansion.clear()
+      this.activityStatuses.clear()
+      this.failedActivities.clear()
+      this.failedTools.clear()
       this.expandedThinking.clear()
       this.toolExpansion.clear()
       this.collapsedDiffs.clear()
@@ -442,6 +91,7 @@ export class TranscriptComponent implements Component {
 
   setDetails(show: boolean): void {
     this.showDetails = show
+    this.activityExpansion.clear()
     this.toolExpansion.clear()
   }
 
@@ -464,7 +114,9 @@ export class TranscriptComponent implements Component {
     if (action === 'click') {
       if (hit === undefined || hit.titleLine !== line) return false
       this.hoveredBlockKey = hit.key
-      if (hit.kind === 'thinking') {
+      if (hit.kind === 'activity') {
+        this.activityExpansion.set(hit.key, !this.isActivityExpanded(hit.key))
+      } else if (hit.kind === 'thinking') {
         if (this.expandedThinking.delete(hit.key)) {
           this.followingThinking.delete(hit.key)
           this.blockOffsets.delete(hit.key)
@@ -480,7 +132,8 @@ export class TranscriptComponent implements Component {
       }
       return true
     }
-    if (hit === undefined || hit.kind === 'tool' || (hit.kind === 'thinking' && !this.expandedThinking.has(hit.key)) ||
+    if (hit === undefined || hit.kind === 'activity' || hit.kind === 'tool' ||
+      (hit.kind === 'thinking' && !this.expandedThinking.has(hit.key)) ||
       (hit.kind === 'diff' && this.collapsedDiffs.has(hit.key))) return false
     return this.scrollBlock(hit.key, action === 'wheel-up' ? -3 : 3, hit.kind === 'thinking')
   }
@@ -488,71 +141,149 @@ export class TranscriptComponent implements Component {
   render(width: number): string[] {
     const safeWidth = Math.max(1, width)
     const lines: string[] = []
-    const rows = rowsFromState(
+    const items = buildTranscriptItems(
       this.state,
-      this.theme,
       this.showReasoning,
       this.showDetails,
       this.maxToolOutputLines,
     )
     this.blockHits = []
-    for (const [index, row] of rows.entries()) {
+    this.failedActivities.clear()
+    this.failedTools.clear()
+    const nextActivityStatuses = new Map<string, TranscriptActivityGroup['status']>()
+    for (const item of items) {
+      if (item.kind !== 'activity') continue
+      if (item.status === 'failed') {
+        this.failedActivities.add(item.key)
+        if (this.activityStatuses.get(item.key) !== 'failed') this.activityExpansion.delete(item.key)
+      }
+      nextActivityStatuses.set(item.key, item.status)
+    }
+    this.activityStatuses.clear()
+    for (const [key, status] of nextActivityStatuses) this.activityStatuses.set(key, status)
+    for (const [index, item] of items.entries()) {
       if (index > 0) lines.push('')
-      if (row.thinking !== undefined) {
-        const contentWidth = this.contentWidth(safeWidth)
-        this.pushBlock(
-          lines,
-          this.frameContent(this.renderThinking(row.thinking, contentWidth), safeWidth),
-          row.thinking.key,
-          'thinking',
-        )
+      if (item.kind === 'activity') {
+        this.renderActivity(lines, item, safeWidth)
         continue
       }
-      if (row.tool !== undefined) {
+      if (item.kind === 'diff') {
         const contentWidth = this.contentWidth(safeWidth)
         this.pushBlock(
           lines,
-          this.frameContent(this.renderTool(row.tool, contentWidth), safeWidth),
-          row.tool.key,
-          'tool',
-        )
-        continue
-      }
-      if (row.diff !== undefined) {
-        const contentWidth = this.contentWidth(safeWidth)
-        this.pushBlock(
-          lines,
-          this.frameContent(this.renderDiff(row.diff, contentWidth), safeWidth),
-          row.diff.key,
+          this.frameContent(this.renderDiff(item, contentWidth), safeWidth),
+          item.key,
           'diff',
         )
         continue
       }
-      if (row.prompt && row.body !== undefined) {
-        lines.push(...this.renderPromptBlock(row.body, row.promptStatus, safeWidth))
+      if (item.kind === 'prompt') {
+        lines.push(...this.renderPromptBlock(item.body, item.promptStatus, safeWidth))
         continue
       }
-      const contentWidth = this.contentWidth(safeWidth)
-      const contentLines: string[] = []
-      if (row.label !== undefined) {
-        contentLines.push(truncateToWidth((row.labelPaint ?? (text => text))(row.label), contentWidth))
-      }
-      if (row.body !== undefined && row.body !== '') {
-        const body = sanitizeTerminalText(row.body)
-        if (row.markdown) {
-          const markdown = new Markdown(body, 0, 0, this.theme.markdown, row.dim ? { color: this.theme.dim } : undefined)
-          contentLines.push(...markdown.render(contentWidth))
-        } else {
-          const styled = row.dim ? this.theme.dim(body) : body
-          contentLines.push(...wrapTextWithAnsi(styled, contentWidth))
-        }
-      }
-      lines.push(...this.frameContent(contentLines, safeWidth))
+      lines.push(...this.frameContent(this.renderText(item, this.contentWidth(safeWidth)), safeWidth))
     }
     if (this.hoveredBlockKey !== undefined && !this.blockHits.some(hit => hit.key === this.hoveredBlockKey)) {
       this.hoveredBlockKey = undefined
     }
     return lines
+  }
+
+  private renderText(item: TranscriptTextItem, width: number): string[] {
+    const lines: string[] = []
+    if (item.label !== undefined) {
+      lines.push(truncateToWidth(this.paintTone(item.tone)(item.label), width))
+    }
+    if (item.body === undefined || item.body === '') return lines
+    const body = sanitizeTerminalText(item.body)
+    if (item.markdown) {
+      const markdown = new Markdown(body, 0, 0, this.theme.markdown, item.dim ? { color: this.theme.dim } : undefined)
+      lines.push(...markdown.render(width))
+    } else {
+      lines.push(...wrapTextWithAnsi(item.dim ? this.theme.dim(body) : body, width))
+    }
+    return lines
+  }
+
+  private paintTone(tone: TranscriptTone | undefined): (text: string) => string {
+    switch (tone) {
+      case 'accent': return this.theme.accent
+      case 'dim': return this.theme.dim
+      case 'error': return this.theme.error
+      case 'warning': return this.theme.warning
+      case undefined: return text => text
+    }
+  }
+
+  private renderActivity(lines: string[], activity: TranscriptActivityGroup, width: number): void {
+    const contentWidth = this.contentWidth(width)
+    this.pushBlock(
+      lines,
+      this.frameContent([this.renderActivityTitle(activity, contentWidth)], width),
+      activity.key,
+      'activity',
+    )
+    if (!this.isActivityExpanded(activity.key)) return
+
+    const childWidth = Math.max(1, contentWidth - ACTIVITY_CHILD_INDENT)
+    for (const [index, item] of activity.items.entries()) {
+      const last = index === activity.items.length - 1
+      if (item.kind === 'tool' && item.status === 'failed') this.failedTools.add(item.key)
+      const rendered = item.kind === 'thinking'
+        ? this.renderThinking(item, childWidth)
+        : this.renderTool(item, childWidth)
+      this.pushBlock(
+        lines,
+        this.frameContent(this.indentActivityChild(rendered, last), width),
+        item.key,
+        item.kind,
+      )
+    }
+  }
+
+  private renderActivityTitle(activity: TranscriptActivityGroup, width: number): string {
+    const expanded = this.isActivityExpanded(activity.key)
+    const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
+    const elapsed = activity.completedAt === undefined
+      ? undefined
+      : Math.max(0, activity.completedAt - activity.startedAt)
+    const duration = elapsed === undefined || elapsed === 0 ? undefined : elapsed
+    const lead = this.activityLead(activity.status, duration)
+    const thoughts = activity.items.filter(item => item.kind === 'thinking').length
+    const tools = activity.items.length - thoughts
+    const counts = [
+      ...thoughts === 0 ? [] : [`${String(thoughts)} thought${thoughts === 1 ? '' : 's'}`],
+      ...tools === 0 ? [] : [`${String(tools)} tool${tools === 1 ? '' : 's'}`],
+    ]
+    const latest = activity.status === 'running'
+      ? activity.items.at(-1)
+      : activity.status === 'failed'
+        ? activity.items.findLast(item => item.kind === 'tool' && item.status === 'failed')
+        : undefined
+    const latestLabel = latest === undefined
+      ? undefined
+      : latest.kind === 'thinking' ? 'Thinking…' : latest.title
+    const title = [lead, ...counts, latestLabel].filter(value => value !== undefined).join(' · ')
+    const paint = activity.status === 'failed'
+      ? this.theme.error
+      : activity.status === 'running' ? this.theme.warning : this.theme.reasoning
+    return this.renderBlockTitle(`${marker} ${title}`, activity.key, width, paint)
+  }
+
+  private activityLead(status: TranscriptActivityGroup['status'], duration: number | undefined): string {
+    if (status === 'running') return 'Working'
+    if (status === 'failed') {
+      return duration === undefined ? 'Failed' : `Failed after ${formatTranscriptDuration(duration)}`
+    }
+    return duration === undefined ? 'Worked' : `Worked for ${formatTranscriptDuration(duration)}`
+  }
+
+  private indentActivityChild(lines: string[], last: boolean): string[] {
+    return lines.map((line, index) => `${index === 0 ? last ? '└─ ' : '├─ ' : last ? '   ' : '│  '}${line}`)
+  }
+
+  private isActivityExpanded(key: string): boolean {
+    return this.activityExpansion.get(key) ?? (this.showDetails || this.failedActivities.has(key))
   }
 
   private renderPromptBlock(body: string, status: string | undefined, width: number): string[] {
@@ -598,7 +329,7 @@ export class TranscriptComponent implements Component {
   }
 
   private renderThinking(
-    thinking: NonNullable<TranscriptRow['thinking']>,
+    thinking: TranscriptThinkingItem,
     width: number,
   ): string[] {
     const expanded = this.expandedThinking.has(thinking.key)
@@ -628,7 +359,7 @@ export class TranscriptComponent implements Component {
     ]
   }
 
-  private renderTool(tool: NonNullable<TranscriptRow['tool']>, width: number): string[] {
+  private renderTool(tool: TranscriptToolItem, width: number): string[] {
     const expanded = this.isToolExpanded(tool.key)
     const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
     const glyph = tool.status === 'pending' ? '○' : tool.status === 'failed' ? '×' : '•'
@@ -664,10 +395,10 @@ export class TranscriptComponent implements Component {
   }
 
   private isToolExpanded(key: string): boolean {
-    return this.toolExpansion.get(key) ?? this.showDetails
+    return this.toolExpansion.get(key) ?? (this.showDetails || this.failedTools.has(key))
   }
 
-  private renderDiff(diff: NonNullable<TranscriptRow['diff']>, width: number): string[] {
+  private renderDiff(diff: TranscriptDiffItem, width: number): string[] {
     const model = buildDiffDisplay(diff.title, diff.diffs, this.diffLineStarts.get(diff.key) ?? [])
     const collapsed = this.collapsedDiffs.has(diff.key)
     const title = this.renderDiffTitle(model.operation, model.target, diff.settled, collapsed, diff.key, width)

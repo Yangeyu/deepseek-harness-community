@@ -78,6 +78,10 @@ reducing the number of visible files.
     semantic action. Asynchronous clipboard intake is single-flight, so one
     physical paste cannot create duplicate drafts even when a terminal emits
     more than one matching sequence.
+11. Transcript Activity groups are a replayable presentation projection, not a
+   session event. Only adjacent reasoning and non-diff tool nodes group
+   together. Prompts, assistant text, Commands, errors, notices, and file diffs
+   are hard boundaries; applied file changes remain top-level review evidence.
 
 ## Current components
 
@@ -99,8 +103,10 @@ reducing the number of visible files.
   bottleneck in linear time.
 - `buildTrajectoryRecords` in `trajectory/records.ts` pairs durable lifecycle
   events without importing the terminal rendering toolkit.
-- `TranscriptComponent` and `TrajectoryView` render different views of the
-  event window. Neither owns persistence.
+- `buildTranscriptItems` pairs visible tool lifecycles and assembles stable
+  Activity, text, and diff items without importing the terminal toolkit.
+  `TranscriptComponent` paints and interacts with those items, while
+  `TrajectoryView` provides the diagnostic hierarchy. None owns persistence.
 - `WorkspaceCheckpointStore` remains a process-local compatibility subsystem;
   it is not a Harness durability boundary.
 
