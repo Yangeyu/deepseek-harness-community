@@ -114,6 +114,10 @@ are in [`tui-v0.1.8-design.md`](tui-v0.1.8-design.md).
   AI-owned mutations participate in the default restore plan.
 - Restore workspace mutations, Memory mutations, and the conversation fork as
   one preflighted transaction with compensation on partial failure.
+- Persist one active editing lineage per canonical workspace so the owner
+  session can resume after TUI restart with the same bounded Rewind history.
+- Retain a durable cursor and future segment after restore; discard that future
+  only when the forked session begins a new durable turn.
 - Keep `Restore` selected by default for safe plans, disable it for unresolved
   conflicts, and show exact affected paths and ownership before confirmation.
 - Remove whole-worktree inference, tool-name parsing, duplicated checkpoint
@@ -132,6 +136,9 @@ are in [`tui-v0.1.9-design.md`](tui-v0.1.9-design.md).
   is live, persisted, blank, or unavailable.
 - Preserve stable navigation across search, history paging, resume, fork, and
   rewind.
+- Add explicit backward/forward timeline navigation with a clear current-node
+  marker and branch-discard confirmation when a new message is sent from the
+  past.
 
 ### v0.2.0 — Parallel Execution Console
 

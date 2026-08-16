@@ -14,7 +14,8 @@ export class RewindTransaction {
     private readonly conversation: RewindConversationPort,
   ) {}
 
-  async list(sessionId: string): Promise<RewindPointSummary[]> {
+  async list(sessionId: string, workspaceRoot: string): Promise<RewindPointSummary[]> {
+    await this.rewind.activate(sessionId, workspaceRoot)
     await this.rewind.settle(sessionId)
     return this.rewind.list(sessionId)
   }
@@ -40,7 +41,7 @@ export class RewindTransaction {
       }
       throw error
     }
-    this.rewind.continueFrom(plan, targetSessionId)
+    await this.rewind.continueFrom(plan, targetSessionId)
     return targetSessionId
   }
 }

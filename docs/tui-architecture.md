@@ -151,10 +151,11 @@ reducing the number of visible files.
   `TrajectoryView` provides the diagnostic hierarchy. None owns persistence.
 - `rewind/contracts` is independent of Cordis, Memory, Node, and pi-tui.
   `rewind/domain` owns bounded history and pure reverse planning;
-  `rewind/application` owns restore and conversation compensation; and
+  `rewind/application` owns the active timeline Repository port, restore, and
+  conversation compensation; and
   `rewind/adapters` is the only layer that knows Host events, Memory payloads,
-  or the local filesystem. Presentation consumes only the `RewindPort`, point
-  summaries, and immutable plans.
+  durable Harness-home files, or the local workspace. Presentation consumes
+  only the `RewindPort`, point summaries, and immutable plans.
 
 ## Planned evolution
 
@@ -234,14 +235,25 @@ architecture required to support that sequence.
   stable root-call, session, and turn identities without parsing tool names or
   presentation diffs.
 - `RewindJournal` retains only turn boundaries, attributed workspace facts,
-  and opaque participant references. `RewindService` builds `safe`,
+  opaque participant references, and a cursor over one active workspace
+  lineage. `RewindService` builds `safe`,
   `mergeable`, `conflict`, or `unsupported` plans through an injected workspace
   backend; the pure planner preserves non-overlapping later edits.
+- The injected `RewindRepository` persists that lineage independently of UI
+  state. Its local adapter stores a versioned manifest plus content-addressed
+  objects under the Harness home, uses atomic writes, a cross-process lock, and
+  optimistic revision checks, quarantines invalid state, applies byte budgets,
+  and conditionally removes stale history if a newer snapshot cannot be
+  committed.
 - Workspace and explicit participants form one reversible stage before
   `RewindTransaction` commits the conversation fork. Memory payloads remain in
   its adapter, and any failed later phase compensates completed stages.
   Presentation defaults safe and mergeable plans to Restore,
   defaults blocked plans to Cancel, and lists exact paths before confirmation.
+- Session resume reactivates the same owner lineage. Another session does not
+  replace it until its first attributed edit. Rewind moves a durable cursor and
+  retains the future segment until a new turn branches from the restored point;
+  only backward navigation is exposed in this milestone.
 
 ### Following architecture work
 
@@ -250,9 +262,9 @@ architecture required to support that sequence.
 - Add Session Query-backed cross-session search and parent/child lineage views.
 - Add a remote Vision RPC only when Web or another out-of-process client becomes
   a real consumer; the in-process service is the `v0.1.7` boundary.
-- Promote the execution-local canonical mutation outcome to a durable Host
-  event when another client or restart-safe Rewind becomes a real consumer;
-  retain the same domain contract and terminal-specific confirmation UI.
+- Add backward/forward timeline navigation on top of the retained cursor only
+  when its interaction and branch-discard policy are exposed as one coherent
+  Session Center workflow.
 
 ### Extension rule
 

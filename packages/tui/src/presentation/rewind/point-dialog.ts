@@ -8,7 +8,7 @@ import type { RewindPointSummary } from '../../rewind/index.ts'
 import { sanitizeTerminalText } from '../../text.ts'
 import type { TuiTheme } from '../theme.ts'
 
-/** Bounded keyboard selector for process-local user-turn rewind points. */
+/** Bounded keyboard selector for retained user-turn Rewind points. */
 export class RewindPointDialog implements Component {
   private readonly summaries: RewindPointSummary[]
   private index: number

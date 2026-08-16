@@ -7,6 +7,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { CommandDescriptor } from '@deepseek-ai/dsh-commands'
+import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import {
   InProcessApiClient,
   toFetchHandler,
@@ -14,6 +15,7 @@ import {
 import { TuiApplication, type TuiRuntime } from './application/app.ts'
 import {
   installRewindLifecycle,
+  FileRewindRepository,
   LocalWorkspaceRewind,
   MemoryRewindParticipant,
   RewindService,
@@ -93,10 +95,17 @@ export function apply(ctx: Context, config: TuiConfig): void {
   const keymap = settingsKeymapGateway(keymapScope)
   const resolved = resolveConfig({ ...parsed.config, keymap: keymap.current().keymap })
   const memoryRewind = new MemoryRewindParticipant(ctx.memory)
+  const rewindRepository = new FileRewindRepository(dshHomePath('rewind', 'v1'), {
+    onWarning: message => { ctx.logger.warn(message) },
+  })
   const rewind = new RewindService(
-    { history: resolved.rewindHistory },
+    {
+      history: resolved.rewindHistory,
+      onPersistenceError: error => { ctx.logger.warn(`durable Rewind failed: ${String(error)}`) },
+    },
     new LocalWorkspaceRewind(),
     [memoryRewind],
+    rewindRepository,
   )
   installRewindLifecycle(ctx, rewind)
   const commandSource: HostCommandSource = {
@@ -143,12 +152,16 @@ export function apply(ctx: Context, config: TuiConfig): void {
     })().catch((error: unknown) => {
       if (!active) return
       runtime.stderr.write(`dsh tui: ${error instanceof Error ? error.message : String(error)}\n`)
-      void app.dispose().finally(() => exit(1))
+      void app.dispose().then(() => rewind.close()).finally(() => exit(1))
     })
     return async () => {
       active = false
-      removeMemoryMutation()
-      await app.dispose()
+      try {
+        await app.dispose()
+        await rewind.close()
+      } finally {
+        removeMemoryMutation()
+      }
     }
   })
 }

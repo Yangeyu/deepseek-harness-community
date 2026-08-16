@@ -82,11 +82,11 @@ function sourceFor(exec: Readonly<ToolExecution>): MutationSource | undefined {
 export function installRewindLifecycle(ctx: Context, sink: RewindLifecycleSink): void {
   const observed = new WeakMap<object, { readonly target: FsTarget; readonly order: number }>()
   let mutationOrder = 0
-  ctx.on('agent/pre-step', ({ agent, messages, turn, step }, next): Promise<PreStepDecision> => {
+  ctx.on('agent/pre-step', async ({ agent, messages, turn, step }, next): Promise<PreStepDecision> => {
     const prompt = step === 1 ? promptText(messages) : undefined
     if (prompt !== undefined) {
       const previous = agent.session.events.findLast(event => event.type === 'turn/end' && event.data.turn < turn)
-      sink.beginTurn({
+      await sink.beginTurn({
         sessionId: String(agent.session.id),
         turn,
         workspaceRoot: agent.session.header.cwd ?? process.cwd(),

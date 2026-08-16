@@ -4,6 +4,9 @@ export type RewindPlanState = 'safe' | 'mergeable' | 'conflict' | 'unsupported'
 export type RewindApplicableState = Extract<RewindPlanState, 'safe' | 'mergeable'>
 export type RewindBlockedState = Extract<RewindPlanState, 'conflict' | 'unsupported'>
 
+/** Direction along the retained editing timeline. */
+export type RewindDirection = 'backward' | 'forward'
+
 interface WorkspaceMutationSource {
   readonly sessionId: string
   readonly turn: number
@@ -84,6 +87,12 @@ export interface RewindEffectInput {
 
 export interface RewindEffectReference extends RewindEffectInput {}
 
+/** JSON-compatible participant payload kept opaque outside its adapter. */
+export interface RewindEffectPayload {
+  readonly effectId: string
+  readonly payload: unknown
+}
+
 /** Summary of one non-workspace participant in a point or plan. */
 export type RewindParticipantImpact =
   | {
@@ -144,16 +153,18 @@ export type RewindCompensation = () => Promise<void>
 
 /** Read and command surface consumed by an application. */
 export interface RewindPort {
+  activate(sessionId: string, workspaceRoot: string): Promise<void>
   settle(sessionId: string): Promise<void>
   list(sessionId: string): RewindPointSummary[]
   plan(sessionId: string, pointId: string): Promise<RewindPlan>
   restore(plan: RewindPlan): Promise<RewindCompensation>
-  continueFrom(plan: RewindPlan, targetSessionId: string): void
+  continueFrom(plan: RewindPlan, targetSessionId: string): Promise<void>
+  close(): Promise<void>
 }
 
 /** Single lifecycle intake consumed by a Host adapter. */
 export interface RewindLifecycleSink {
-  beginTurn(input: RewindPointInput): void
+  beginTurn(input: RewindPointInput): Promise<void>
   recordWorkspaceMutation(input: WorkspaceMutationInput): void
 }
 
@@ -187,7 +198,10 @@ export interface RewindParticipant {
   readonly id: string
   readonly label: string
   settle(sessionId: string): Promise<void>
-  prepare(effectIds: readonly string[]): Promise<PreparedRewindParticipant>
+  prepare(effectIds: readonly string[], direction: RewindDirection): Promise<PreparedRewindParticipant>
+  snapshot(effectIds: readonly string[]): readonly RewindEffectPayload[]
+  /** Validate the complete batch before changing adapter state. */
+  hydrate(payloads: readonly RewindEffectPayload[]): void
   release(effectIds: readonly string[]): void
 }
 

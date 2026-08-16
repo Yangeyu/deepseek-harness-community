@@ -242,8 +242,8 @@ pauses automatic tail following, and PageDown or a downward wheel returns to
 live output. Hold the terminal's mouse-bypass modifier (usually Shift) when
 native terminal text selection is needed.
 
-Rewind registers a process-local boundary before the first step of each
-user-authored turn. It does not diff or snapshot the Git worktree. The Host
+Rewind registers a boundary before the first step of each user-authored turn.
+It does not diff or snapshot the Git worktree. The Host
 adapter correlates an authoritative `fs/observed` event with the same
 execution's canonical `before`/`after` result, so the history counts only file
 mutations that can be attributed to this Agent call. Files edited by another
@@ -263,6 +263,20 @@ fails. Native filesystem calls that do not publish the semantic mutation
 contract, including arbitrary shell-side edits, are deliberately excluded
 rather than guessed. The history limit defaults to 20 through `rewindHistory`;
 earlier boundaries follow the forked conversation for repeated Rewind.
+
+The active editing timeline survives TUI shutdown under
+`$DSH_HOME/rewind/v1`, so `dsh-tui --resume <session-id>` can Rewind edits made
+before restart. Storage is scoped to one canonical workspace lineage, uses
+private versioned manifests and content-addressed objects, and is bounded to 16
+MiB per object, 64 MiB per timeline, and 512 MiB globally. Invalid history is
+quarantined. Opening another session does not take ownership until that session
+produces its first attributed edit.
+
+After a successful Rewind, the forked session owns a cursor before the selected
+turn. The future segment remains durable until a new turn is sent from that
+point, when it is discarded as a new branch. This release exposes backward
+Rewind only; forward timeline navigation is reserved for the next interaction
+iteration.
 
 ## Memory
 

@@ -1244,9 +1244,9 @@ export class TuiApplication implements TuiControllerSink {
     if (this.tui.hasOverlay() || this.composerModalActive) return
     const sessionId = this.controller.current.sessionId
     if (sessionId === undefined) throw new Error('no terminal session is active')
-    this.showRewindProgress('Settling attributed Memory updates…')
+    this.showRewindProgress('Loading Rewind history…')
     try {
-      this.rewindSummaries = await this.rewindTransaction.list(String(sessionId))
+      this.rewindSummaries = await this.rewindTransaction.list(String(sessionId), this.controller.current.cwd)
       if (this.controller.current.sessionId !== sessionId) {
         throw new Error('the active session changed while Rewind was preparing')
       }

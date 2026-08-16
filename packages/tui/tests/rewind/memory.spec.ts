@@ -27,6 +27,23 @@ describe('MemoryRewindParticipant', () => {
     })
   })
 
+  it('hydrates durable payloads and can apply them in the forward direction', async () => {
+    const calls: Array<[string, 'before' | 'after']> = []
+    const original = new MemoryRewindParticipant({ settle: vi.fn(async () => {}), restore: vi.fn(async () => {}) })
+    original.capture(mutation('memory-1', 2))
+    const payloads = original.snapshot(['memory-1'])
+    const restored = new MemoryRewindParticipant({
+      settle: vi.fn(async () => {}),
+      restore: vi.fn(async (item: MemoryMutation, direction: 'before' | 'after') => { calls.push([item.id, direction]) }),
+    })
+
+    restored.hydrate(payloads)
+    const prepared = await restored.prepare(['memory-1'], 'forward')
+    await prepared.apply()
+
+    expect(calls).toEqual([['memory-1', 'after']])
+  })
+
   it('reverts newest-first and compensates oldest-first', async () => {
     const calls: Array<[string, 'before' | 'after']> = []
     const restore = vi.fn(async (item: MemoryMutation, direction: 'before' | 'after') => {
@@ -35,7 +52,7 @@ describe('MemoryRewindParticipant', () => {
     const participant = new MemoryRewindParticipant({ settle: vi.fn(async () => {}), restore })
     participant.capture(mutation('first', 1))
     participant.capture(mutation('second', 2))
-    const prepared = await participant.prepare(['first', 'second'])
+    const prepared = await participant.prepare(['first', 'second'], 'backward')
 
     const compensate = await prepared.apply()
     expect(calls).toEqual([
@@ -57,7 +74,7 @@ describe('MemoryRewindParticipant', () => {
     participant.capture(mutation('memory-1', 1))
     participant.release(['memory-1'])
 
-    const prepared = await participant.prepare(['memory-1'])
+    const prepared = await participant.prepare(['memory-1'], 'backward')
 
     expect(prepared.impact).toMatchObject({ state: 'conflict' })
     await expect(prepared.apply()).rejects.toThrow('incomplete')
@@ -72,7 +89,7 @@ describe('MemoryRewindParticipant', () => {
     const participant = new MemoryRewindParticipant({ settle: vi.fn(async () => {}), restore })
     participant.capture(mutation('first', 1))
     participant.capture(mutation('second', 2))
-    const prepared = await participant.prepare(['first', 'second'])
+    const prepared = await participant.prepare(['first', 'second'], 'backward')
 
     await expect(prepared.apply()).rejects.toThrow('stale memory')
 

@@ -5,7 +5,7 @@
 Rewind restores only workspace mutations that the Host can attribute to the
 active Agent execution. It never treats “changed during a turn” as ownership.
 The same confirmation coordinates workspace, Memory, and conversation rollback
-without introducing another session log or persistence format.
+without copying Rewind policy into the session log or presentation layer.
 
 ## Ownership
 
@@ -22,7 +22,9 @@ RewindService ───────── MemoryRewindParticipant
   application policy      opaque payloads · settle · restore
         │
         ├── RewindJournal
-        │     turn boundaries · mutation order · effect references
+        │     active timeline · cursor · mutation order · effect references
+        ├── RewindRepository ─── FileRewindRepository
+        │     opaque snapshot      versioned manifests · content objects
         └── LocalWorkspaceRewind
               path safety · pure planner · guarded file transaction
                   │ RewindPointSummary / immutable RewindPlan
@@ -40,6 +42,8 @@ TUI application and dialogs
   types.
 - The Rewind service owns history, restore classification, participant order,
   and reversible compensation through injected ports.
+- The Repository port owns no domain decisions. Its file adapter supplies
+  atomic, bounded, integrity-checked storage below the Harness home.
 - The application transaction owns the final conversation commit boundary.
 - Presentation owns no mutation detection or restore policy.
 
@@ -92,20 +96,50 @@ would discard unowned work.
 4. Revert Memory mutations newest-first using Memory's stale guards.
 5. Fork or recreate the conversation before the selected turn.
 6. If Memory or conversation fails, reapply Memory and compensate workspace.
-7. Move only earlier Rewind points to the new session and refill the prompt.
+7. Move the timeline cursor before the selected point, assign the forked
+   session as owner, retain the future segment, and refill the prompt.
 
 No step changes the Git index, executes `git reset`, or scans unrelated files.
 Workspace mutation content is bounded per mutation and per session; an edit
 that exceeds either byte budget is explicitly `unsupported` rather than being
 retained without limit.
 
+## Durable timeline
+
+Rewind persists one active editing lineage per canonical workspace under
+`$DSH_HOME/rewind/v1`. A versioned manifest contains identities, ordering,
+cursor state, and content hashes; workspace states and opaque participant
+payloads live in SHA-256-addressed objects. Writes are atomic and serialized by
+a cross-process lock. Each save also compares the revision loaded by its
+process, so a stale TUI cannot overwrite or delete a newer process's lineage.
+Invalid manifests are quarantined instead of repaired by guessing, and a failed
+newer save conditionally invalidates its older revision so a restart cannot
+expose that stale history as current.
+
+The default limits are 20 points, 16 MiB per content object, 64 MiB per
+timeline, and 512 MiB globally. Global compaction evicts the least recently
+updated workspace lineage. The manifest and objects are private Harness data,
+not project files and not Git state.
+
+Resuming the owner session activates the durable lineage before Rewind is
+listed. Merely opening another session does not discard it; that session claims
+the workspace lineage only when it records its first attributed workspace or
+participant mutation. After Rewind, future nodes remain behind the cursor until
+the forked session starts a new durable turn, at which point that future is
+discarded as a new branch. Forward navigation is intentionally not presented in
+this version.
+
+The Host session log remains authoritative for conversation events. A custom
+downstream Rewind event is not appended because the current session event
+registry cannot safely register that event as a required or ignorable durable
+type. The Repository therefore stores only Rewind-owned facts through an
+injected boundary; it is not a second conversation log.
+
 ## Scope and evolution
 
-The journal is process-local because the upstream canonical tool value is
-execution-local by design. Restart-safe Rewind should add one durable Host
-mutation event carrying the same semantic contract; it should not reintroduce
-whole-worktree snapshots or a TUI persistence format. Binary mutation support,
-renames, and remote filesystem identities require explicit provider contracts
-before they can participate. A second real client can move contracts, domain,
-and application modules into a standalone workspace without moving the TUI,
-Host, Memory, or local-filesystem adapters.
+Binary mutation support, renames, and remote filesystem identities require
+explicit provider contracts before they can participate. A second real client
+can move contracts, domain, application, and Repository interfaces into a
+standalone workspace without moving the TUI, Host, Memory, or local-filesystem
+adapters. Full backward/forward time navigation can consume the retained cursor
+model without changing mutation capture or persistence ownership.

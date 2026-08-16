@@ -23,8 +23,8 @@ function service(history = 10, participants: readonly RewindParticipant[] = []):
   return new RewindService({ history }, new LocalWorkspaceRewind(), participants)
 }
 
-function begin(rewind: RewindService, root: string, turn = 1, sessionId = 'session'): void {
-  rewind.beginTurn({ sessionId, turn, workspaceRoot: root, prompt: `turn ${String(turn)}` })
+async function begin(rewind: RewindService, root: string, turn = 1, sessionId = 'session'): Promise<void> {
+  await rewind.beginTurn({ sessionId, turn, workspaceRoot: root, prompt: `turn ${String(turn)}` })
 }
 
 function record(rewind: RewindService, input: {
@@ -67,7 +67,7 @@ describe('RewindService', () => {
   it('restores only source-attributed AI files and supports compensation', async () => {
     const root = await workspace()
     const rewind = service()
-    begin(rewind, root)
+    await begin(rewind, root)
     const before = 'one\ntwo\nthree\n'
     const after = 'one\nAI\nthree\n'
     await writeFile(join(root, 'a.txt'), after)
@@ -92,7 +92,7 @@ describe('RewindService', () => {
   it('preserves non-overlapping later edits with a mergeable reverse patch', async () => {
     const root = await workspace()
     const rewind = service()
-    begin(rewind, root)
+    await begin(rewind, root)
     const before = 'one\ntwo\nthree\n'
     const after = 'one\nAI\nthree\n'
     await writeFile(join(root, 'a.txt'), 'one\nAI\nthree\nexternal\n')
@@ -108,7 +108,7 @@ describe('RewindService', () => {
   it('uses observation order when result callbacks settle out of order', async () => {
     const root = await workspace()
     const rewind = service()
-    begin(rewind, root)
+    await begin(rewind, root)
     const original = 'one\ntwo\nthree\n'
     const firstAfter = 'one\nAI one\nthree\n'
     const secondBefore = 'one\nAI one\nthree\nexternal\n'
@@ -127,7 +127,7 @@ describe('RewindService', () => {
   it('blocks overlapping edits and plans that become stale after confirmation', async () => {
     const root = await workspace()
     const rewind = service()
-    begin(rewind, root)
+    await begin(rewind, root)
     const before = 'one\ntwo\nthree\n'
     const after = 'one\nAI\nthree\n'
     await writeFile(join(root, 'a.txt'), 'one\nexternal replacement\nthree\n')
@@ -146,7 +146,7 @@ describe('RewindService', () => {
   it('removes AI-created files without removing unrelated files', async () => {
     const root = await workspace()
     const rewind = service()
-    begin(rewind, root)
+    await begin(rewind, root)
     const path = join(root, 'created.txt')
     await writeFile(path, 'created by AI\n')
     record(rewind, { root, path, before: null, after: 'created by AI\n' })
@@ -162,7 +162,7 @@ describe('RewindService', () => {
   it('collapses unsupported and reversible outcomes for one path into one blocked plan', async () => {
     const root = await workspace()
     const rewind = service()
-    begin(rewind, root)
+    await begin(rewind, root)
     record(rewind, { root, callId: 'call-1', before: 'one\ntwo\nthree\n', after: 'one\nAI\nthree\n', order: 1 })
     record(rewind, { root, callId: 'call-2', unsupportedReason: 'missing before-state', order: 2 })
 
@@ -180,7 +180,7 @@ describe('RewindService', () => {
     await writeFile(join(external, 'outside.txt'), 'AI result\n')
     await symlink(external, join(root, 'linked'))
     const rewind = service()
-    begin(rewind, root)
+    await begin(rewind, root)
     record(rewind, {
       root,
       path: join(root, 'linked', 'outside.txt'),
@@ -198,15 +198,15 @@ describe('RewindService', () => {
   it('keeps bounded history and moves only ancestors to the forked session', async () => {
     const root = await workspace()
     const rewind = service(3)
-    begin(rewind, root, 1)
-    begin(rewind, root, 2)
-    begin(rewind, root, 3)
-    begin(rewind, root, 4)
+    await begin(rewind, root, 1)
+    await begin(rewind, root, 2)
+    await begin(rewind, root, 3)
+    await begin(rewind, root, 4)
     const summaries = rewind.list('session')
     expect(summaries.map(summary => summary.turn)).toEqual([2, 3, 4])
 
     const plan = await rewind.plan('session', summaries[1]?.pointId ?? '')
-    rewind.continueFrom(plan, 'forked')
+    await rewind.continueFrom(plan, 'forked')
     expect(rewind.list('forked').map(summary => summary.turn)).toEqual([2])
     expect(() => rewind.list('session')).toThrow('no rewind point')
   })
@@ -220,12 +220,14 @@ describe('RewindService', () => {
         impact: { id: 'memory', label: 'Memory', changes: ids.length, state: 'safe' },
         apply: async () => async () => {},
       })),
+      snapshot: vi.fn((ids: readonly string[]) => ids.map(effectId => ({ effectId, payload: { effectId } }))),
+      hydrate: vi.fn(),
       release: vi.fn(),
     }
     const root = await workspace()
     const rewind = service(10, [participant])
-    begin(rewind, root, 1)
-    begin(rewind, root, 2)
+    await begin(rewind, root, 1)
+    await begin(rewind, root, 2)
     rewind.recordEffect({ participantId: 'memory', effectId: 'memory-1', sourceSessionId: 'session', sourceTurn: 1 })
     rewind.recordEffect({ participantId: 'memory', effectId: 'memory-1', sourceSessionId: 'session', sourceTurn: 1 })
     rewind.recordEffect({ participantId: 'memory', effectId: 'memory-2', sourceSessionId: 'session', sourceTurn: 2 })
@@ -234,7 +236,7 @@ describe('RewindService', () => {
     expect(summaries.map(summary => summary.participants[0]?.changes)).toEqual([1, 1])
     const plan = await rewind.plan('session', summaries[0]?.pointId ?? '')
     expect(plan.participants).toEqual([{ id: 'memory', label: 'Memory', changes: 2, state: 'safe' }])
-    expect(participant.prepare).toHaveBeenCalledWith(['memory-1', 'memory-2'])
+    expect(participant.prepare).toHaveBeenCalledWith(['memory-1', 'memory-2'], 'backward')
     expect(participant.release).not.toHaveBeenCalled()
   })
 
@@ -247,11 +249,13 @@ describe('RewindService', () => {
         impact: { id: 'memory', label: 'Memory', changes: 1, state: 'safe' },
         apply: async () => { throw new Error('memory restore failed') },
       })),
+      snapshot: vi.fn((ids: readonly string[]) => ids.map(effectId => ({ effectId, payload: { effectId } }))),
+      hydrate: vi.fn(),
       release: vi.fn(),
     }
     const root = await workspace()
     const rewind = service(10, [participant])
-    begin(rewind, root)
+    await begin(rewind, root)
     const before = 'one\ntwo\nthree\n'
     const after = 'one\nAI\nthree\n'
     await writeFile(join(root, 'a.txt'), after)
@@ -271,7 +275,7 @@ describe('RewindService', () => {
       { history: 10, maxMutationBytes: 8, maxSessionBytes: 16 },
       new LocalWorkspaceRewind(),
     )
-    begin(rewind, root)
+    await begin(rewind, root)
     record(rewind, { root, before: '12345', after: '67890' })
 
     const [summary] = rewind.list('session')

@@ -64,11 +64,13 @@ function memoryService(overrides: Partial<TuiMemoryPort> = {}): TuiMemoryPort {
 
 function rewindPort(overrides: Partial<RewindPort> = {}): RewindPort {
   return {
+    activate: vi.fn(async () => {}),
     settle: vi.fn(async () => {}),
     list: vi.fn(() => []),
     plan: vi.fn(async () => { throw new Error('no test Rewind plan') }),
     restore: vi.fn(async () => async () => {}),
-    continueFrom: vi.fn(),
+    continueFrom: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
     ...overrides,
   }
 }

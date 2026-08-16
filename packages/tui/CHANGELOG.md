@@ -13,6 +13,12 @@ All notable changes to this project are documented in this file.
 - Separate pure Rewind contracts, Journal, and reverse planner from Host,
   Memory, and local-filesystem adapters; consume the capability through a
   narrow application port and bound retained mutation content by bytes.
+- Persist one active editing lineage per canonical workspace under the Harness
+  home so its owner session can resume Rewind after TUI restart; retain cursor
+  and future-node state for a later timeline-navigation UI.
+- Add atomic content-addressed storage, opaque participant hydration,
+  cross-process locking, optimistic revision checks, corruption quarantine,
+  bounded LRU compaction, and stale-history invalidation after failed saves.
 - Remove detached Git-index snapshots, asynchronous whole-tree file counts,
   duplicate checkpoint state, and implementation-coupled checkpoint tests.
 

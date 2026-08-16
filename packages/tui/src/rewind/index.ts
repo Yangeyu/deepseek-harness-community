@@ -1,7 +1,15 @@
 export { RewindService, type RewindServiceOptions } from './application/service.ts'
 export { RewindTransaction, type RewindTransactionPhase } from './application/transaction.ts'
 export { installRewindLifecycle } from './adapters/host.ts'
+export { FileRewindRepository, type FileRewindRepositoryOptions } from './adapters/file-repository.ts'
 export { LocalWorkspaceRewind } from './adapters/local-workspace.ts'
+export type {
+  RewindRepositoryEntry,
+  RewindRepository,
+  StoredRewindParticipant,
+  StoredRewindTimeline,
+} from './application/repository.ts'
+export { RewindRepositoryConflictError } from './application/repository.ts'
 export {
   MEMORY_REWIND_PARTICIPANT,
   MemoryRewindParticipant,
@@ -14,7 +22,9 @@ export type {
   RewindBlockedState,
   RewindCompensation,
   RewindConversationPort,
+  RewindDirection,
   RewindEffectInput,
+  RewindEffectPayload,
   RewindEffectReference,
   RewindEffectSink,
   RewindFilePlan,

@@ -55,7 +55,7 @@ describe('decodeWorkspaceMutation', () => {
   it('correlates filesystem observation and result by the same execution identity', async () => {
     const ctx = new Context()
     const recordWorkspaceMutation = vi.fn()
-    const sink: RewindLifecycleSink = { beginTurn: vi.fn(), recordWorkspaceMutation }
+    const sink: RewindLifecycleSink = { beginTurn: vi.fn(async () => {}), recordWorkspaceMutation }
     installRewindLifecycle(ctx, sink)
     const signal = new AbortController().signal
     const exec = {

@@ -17,11 +17,13 @@ function plan(): RewindPlan {
 
 function rewindPort(overrides: Partial<RewindPort> = {}): RewindPort {
   return {
+    activate: vi.fn(async () => {}),
     settle: vi.fn(async () => {}),
     list: vi.fn(() => []),
     plan: vi.fn(async () => plan()),
     restore: vi.fn(async () => async () => {}),
-    continueFrom: vi.fn(),
+    continueFrom: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
     ...overrides,
   }
 }
@@ -31,8 +33,9 @@ describe('RewindTransaction', () => {
     const rewind = rewindPort({ list: vi.fn(() => []) })
     const transaction = new RewindTransaction(rewind, { rewind: vi.fn(async () => 'forked') })
 
-    await transaction.list('session')
+    await transaction.list('session', '/workspace')
 
+    expect(rewind.activate).toHaveBeenCalledWith('session', '/workspace')
     expect(rewind.settle).toHaveBeenCalledWith('session')
     expect(rewind.list).toHaveBeenCalledWith('session')
     expect(vi.mocked(rewind.settle).mock.invocationCallOrder[0])

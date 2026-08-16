@@ -1,4 +1,5 @@
 import { isUtf8 } from 'node:buffer'
+import { realpathSync } from 'node:fs'
 import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
@@ -190,15 +191,16 @@ async function prepareFile(
 /** Local UTF-8 workspace adapter with containment checks and guarded compensation. */
 export class LocalWorkspaceRewind implements WorkspaceRewindBackend {
   canonicalizeRoot(root: string): string {
-    return resolve(root)
+    return realpathSync(resolve(root))
   }
 
   canonicalizeMutation(pointRoot: string, input: WorkspaceMutationInput): CanonicalWorkspaceMutation {
-    const path = relativeWorkspacePath(pointRoot, input.path)
+    const lexicalRoot = resolve(input.workspaceRoot)
+    const path = relativeWorkspacePath(lexicalRoot, input.path)
     if (path === undefined) {
       return { kind: 'unsupported', path: input.path, reason: 'The filesystem target is outside the active local workspace.' }
     }
-    if (resolve(input.workspaceRoot) !== pointRoot) {
+    if (this.canonicalizeRoot(input.workspaceRoot) !== pointRoot) {
       return { kind: 'unsupported', path, reason: 'The workspace root changed during the turn.' }
     }
     if (input.kind === 'unsupported') return { kind: 'unsupported', path, reason: input.reason }
