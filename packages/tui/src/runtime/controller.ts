@@ -61,9 +61,9 @@ interface RpcResultLike<T> {
   result: { ok: true; value: T } | { ok: false; error: { message: string } }
 }
 
-/** Progress channel used while a visible prompt prepares its final Host content. */
+/** Progress channel retained from local preparation through durable event handoff. */
 export interface PromptPreparationContext {
-  setActivity(activity: SubmissionActivityUpdate | undefined): void
+  setActivity(activity: SubmissionActivityUpdate): void
 }
 
 function valueOf<T>(response: RpcResultLike<T>): T {
@@ -250,7 +250,7 @@ export class HarnessController {
       this.submissions.reject(pending.key)
       this.patch({ pendingSubmissions: this.submissions.snapshot })
     }
-    const setActivity = (activity: SubmissionActivityUpdate | undefined): void => {
+    const setActivity = (activity: SubmissionActivityUpdate): void => {
       if (generation !== this.generation || sessionId !== this.state.sessionId) return
       this.submissions.setActivity(pending.key, activity)
       this.patch({ pendingSubmissions: this.submissions.snapshot })
@@ -264,7 +264,6 @@ export class HarnessController {
       if (generation !== this.generation || sessionId !== this.state.sessionId) {
         throw new Error('The active session changed while preparing the prompt.')
       }
-      if (typeof contentOrPreparation === 'function') setActivity(undefined)
       response = await this.api.sessions.prompt({
         sessionId,
         mode,

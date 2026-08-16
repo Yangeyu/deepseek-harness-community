@@ -98,7 +98,8 @@ export class AttachmentCoordinator {
           ]
         }
         route = 'proxy'
-        preparation.setActivity({ kind: 'vision', imageCount: images.length })
+        const analysisId = this.vision.newAnalysisId()
+        preparation.setActivity({ kind: 'vision', analysisId, imageCount: images.length })
         const status = await this.vision.status(abort.signal)
         if (!status.proxyRegistered || !status.proxySupportsImages) {
           throw new Error(`Vision proxy ${status.config.proxyProvider}/${status.config.proxyModel} is not ready. Open /config vision.`)
@@ -106,7 +107,6 @@ export class AttachmentCoordinator {
         if (status.credentialRef !== undefined && status.credentialConfigured !== true) {
           throw new Error(`Vision credential ${status.credentialRef} is missing. Open /config vision after configuring it.`)
         }
-        const analysisId = this.vision.newAnalysisId()
         const analysis = await this.vision.analyze({
           analysisId,
           sessionId,

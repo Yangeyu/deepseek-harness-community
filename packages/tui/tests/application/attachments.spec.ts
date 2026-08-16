@@ -69,7 +69,7 @@ function addPng(store: AttachmentDraftStore): void {
 
 function preparedSender(
   onContent?: (content: PromptContentPart[]) => void,
-  onActivity?: (activity: { kind: 'vision'; imageCount: number } | undefined) => void,
+  onActivity?: (activity: { kind: 'vision'; analysisId: string; imageCount: number }) => void,
 ) {
   return vi.fn<PreparedPromptSender>(async (_text, _mode, prepareContent) => {
     const content = await prepareContent({ setActivity: activity => { onActivity?.(activity) } })
@@ -82,7 +82,7 @@ describe('AttachmentCoordinator', () => {
     const store = new AttachmentDraftStore()
     addPng(store)
     let submittedContent: PromptContentPart[] = []
-    const activities: Array<{ kind: 'vision'; imageCount: number } | undefined> = []
+    const activities: Array<{ kind: 'vision'; analysisId: string; imageCount: number }> = []
     const send = preparedSender(
       content => { submittedContent = content },
       activity => { activities.push(activity) },
@@ -138,7 +138,7 @@ describe('AttachmentCoordinator', () => {
     addPng(store)
     const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
     let submittedContent: PromptContentPart[] = []
-    const activities: Array<{ kind: 'vision'; imageCount: number } | undefined> = []
+    const activities: Array<{ kind: 'vision'; analysisId: string; imageCount: number }> = []
     const send = preparedSender(
       content => { submittedContent = content },
       activity => { activities.push(activity) },
@@ -161,7 +161,7 @@ describe('AttachmentCoordinator', () => {
       { type: 'text', text: 'marker:analysis-id' },
       { type: 'text', text: 'inspect this' },
     ])
-    expect(activities).toEqual([{ kind: 'vision', imageCount: 1 }])
+    expect(activities).toEqual([{ kind: 'vision', analysisId: 'analysis-id', imageCount: 1 }])
   })
 
   it('transfers images out of the Composer while proxy analysis is still running', async () => {

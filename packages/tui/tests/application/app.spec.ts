@@ -361,7 +361,7 @@ describe('TuiApplication input routing', () => {
         text: 'analyze this image',
         mode: 'queue',
         intent: 'working',
-        activity: { kind: 'vision', imageCount: 1, startedAt: 1_000 },
+        activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: 1_000 },
       }],
     })
 

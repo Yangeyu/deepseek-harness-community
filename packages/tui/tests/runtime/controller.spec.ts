@@ -212,7 +212,7 @@ describe('HarnessController', () => {
     let releasePreparation: (() => void) | undefined
 
     const submission = controller.promptWithPreparation('analyze this image', 'queue', async (preparation) => {
-      preparation.setActivity({ kind: 'vision', imageCount: 1 })
+      preparation.setActivity({ kind: 'vision', analysisId: 'analysis-1', imageCount: 1 })
       await new Promise<void>(resolve => { releasePreparation = resolve })
       return [{ type: 'text', text: 'prepared vision evidence' }]
     })
@@ -222,7 +222,7 @@ describe('HarnessController', () => {
       text: 'analyze this image',
       mode: 'queue',
       intent: 'working',
-      activity: expect.objectContaining({ kind: 'vision', imageCount: 1 }),
+      activity: expect.objectContaining({ kind: 'vision', analysisId: 'analysis-1', imageCount: 1 }),
     })])
     expect(prompt).not.toHaveBeenCalled()
     releasePreparation?.()
@@ -230,7 +230,10 @@ describe('HarnessController', () => {
     expect(prompt).toHaveBeenCalledWith(expect.objectContaining({
       content: [{ type: 'text', text: 'prepared vision evidence' }],
     }))
-    expect(controller.current.pendingSubmissions[0]?.activity).toBeUndefined()
+    expect(controller.current.pendingSubmissions[0]).toMatchObject({
+      rpcId,
+      activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1 },
+    })
     controller.dispose()
   })
 

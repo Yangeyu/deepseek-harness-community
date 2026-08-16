@@ -305,7 +305,7 @@ describe('TranscriptComponent', () => {
       text: 'analyze this image',
       mode: 'queue',
       intent: 'working',
-      activity: { kind: 'vision', imageCount: 1, startedAt: Date.now() - 1_500 },
+      activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: Date.now() - 1_500 },
     }]
     const transcript = new TranscriptComponent(pending, createTheme(false), true, 8)
 
@@ -313,6 +313,36 @@ describe('TranscriptComponent', () => {
     expect(output).toContain('› analyze this image')
     expect(output).toContain('Vision · 1 image · Analyzing…')
     expect(output.indexOf('analyze this image')).toBeLessThan(output.indexOf('Vision · 1 image'))
+  })
+
+  it('keeps Vision loading while the durable event takes ownership of the prompt', () => {
+    const transitioning = state([entry({
+      event: {
+        type: 'user/message',
+        seq: 0,
+        time: 1,
+        surfaceOp: 'append',
+        data: {
+          id: 'message-user',
+          role: 'user',
+          source: { kind: 'user', rpcId: 'rpc-image' },
+          content: [{ type: 'text', text: 'analyze this image' }],
+        },
+      },
+    })])
+    transitioning.pendingSubmissions = [{
+      key: 1,
+      text: 'analyze this image',
+      mode: 'queue',
+      intent: 'working',
+      rpcId: 'rpc-image' as never,
+      durablePromptObserved: true,
+      activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: Date.now() },
+    }]
+
+    const output = new TranscriptComponent(transitioning, createTheme(false), true, 8).render(80).join('\n')
+    expect(output.match(/analyze this image/g)).toHaveLength(1)
+    expect(output).toContain('Vision · 1 image · Analyzing…')
   })
 
   it('hands a local prompt to a visible queue row without hiding context placement', () => {

@@ -5,6 +5,7 @@ import type {
 
 export interface PendingVisionActivity {
   kind: 'vision'
+  analysisId: string
   imageCount: number
   startedAt: number
 }
@@ -19,6 +20,7 @@ export interface PendingSubmission {
   mode: 'queue' | 'steer'
   intent: 'working' | 'queueing' | 'steering'
   rpcId?: RpcId
+  durablePromptObserved?: boolean
   activity?: PendingSubmissionActivity
 }
 
@@ -26,6 +28,13 @@ function userMessageRpcId(entry: HistoryEntry): RpcId | undefined {
   const event = entry.event
   if (event.type !== 'user/message' || event.data.source.kind !== 'user') return undefined
   return 'rpcId' in event.data.source ? event.data.source.rpcId : undefined
+}
+
+function visionAnalysisId(entry: HistoryEntry): string | undefined {
+  const event = entry.event
+  return event.type === 'user/message' && event.data.source.kind === 'community-vision'
+    ? event.data.source.analysisId
+    : undefined
 }
 
 /** Reconciles optimistic prompts with durable user-message events. */
@@ -47,24 +56,21 @@ export class SubmissionTracker {
     return submission
   }
 
-  /** Attach or clear a preparation phase without changing prompt reconciliation identity. */
-  setActivity(key: number, activity: SubmissionActivityUpdate | undefined): void {
-    this.pending = this.pending.map((item) => {
-      if (item.key !== key) return item
-      if (activity !== undefined) {
-        return { ...item, activity: { ...activity, startedAt: Date.now() } }
-      }
-      const next = { ...item }
-      delete next.activity
-      return next
-    })
+  /** Attach a preparation phase without changing prompt reconciliation identity. */
+  setActivity(key: number, activity: SubmissionActivityUpdate): void {
+    this.pending = this.pending.map(item => item.key === key
+      ? { ...item, activity: { ...activity, startedAt: Date.now() } }
+      : item)
   }
 
   /** Attach the echoed RPC identity or retire an already durable prompt. */
   accept(key: number, rpcId: RpcId): void {
-    this.pending = this.observedRpcIds.has(rpcId)
-      ? this.pending.filter(item => item.key !== key)
-      : this.pending.map(item => item.key === key ? { ...item, rpcId } : item)
+    const durablePromptObserved = this.observedRpcIds.has(rpcId)
+    this.pending = this.pending.flatMap((item): PendingSubmission[] => {
+      if (item.key !== key) return [item]
+      if (!durablePromptObserved) return [{ ...item, rpcId }]
+      return item.activity === undefined ? [] : [{ ...item, rpcId, durablePromptObserved: true }]
+    })
     this.pruneObservedRpcIds()
   }
 
@@ -81,7 +87,14 @@ export class SubmissionTracker {
 
   /** Reconcile prompts represented by durable user-message events. */
   observeEvents(entries: readonly HistoryEntry[]): void {
-    for (const entry of entries) this.observe(userMessageRpcId(entry))
+    for (const entry of entries) {
+      this.observe(userMessageRpcId(entry))
+      const analysisId = visionAnalysisId(entry)
+      if (analysisId !== undefined) {
+        this.pending = this.pending.filter(item =>
+          item.activity?.kind !== 'vision' || item.activity.analysisId !== analysisId)
+      }
+    }
     this.reconcile()
   }
 
@@ -99,8 +112,10 @@ export class SubmissionTracker {
   }
 
   private reconcile(): void {
-    this.pending = this.pending.filter(item =>
-      item.rpcId === undefined || !this.observedRpcIds.has(item.rpcId))
+    this.pending = this.pending.flatMap((item): PendingSubmission[] => {
+      if (item.rpcId === undefined || !this.observedRpcIds.has(item.rpcId)) return [item]
+      return item.activity === undefined ? [] : [{ ...item, durablePromptObserved: true }]
+    })
     this.pruneObservedRpcIds()
   }
 

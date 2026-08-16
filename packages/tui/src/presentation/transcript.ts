@@ -210,7 +210,7 @@ function rowsFromState(
           const imageCount = source.attachments.length
           rows.push({
             tool: {
-              key: `vision:${source.analysisId}:${String(event.seq)}`,
+              key: `vision:${source.analysisId}`,
               title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalText(source.model)} · ${durationLabel(source.durationMs)}`,
               status: 'completed',
               arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${source.provider}/${source.model}`,
@@ -372,22 +372,25 @@ function rowsFromState(
     })
   }
   for (const submission of state.pendingSubmissions) {
-    if (submission.rpcId !== undefined && visibleQueueRpcIds.has(String(submission.rpcId))) continue
-    rows.push({
-      prompt: true,
-      body: submission.text,
-      ...submission.intent === 'queueing'
-        ? { promptStatus: 'Queueing…' }
-        : submission.intent === 'steering'
-          ? { promptStatus: 'Steering…' }
-          : {},
-    })
+    const promptVisible = submission.durablePromptObserved === true
+      || (submission.rpcId !== undefined && visibleQueueRpcIds.has(String(submission.rpcId)))
+    if (!promptVisible) {
+      rows.push({
+        prompt: true,
+        body: submission.text,
+        ...submission.intent === 'queueing'
+          ? { promptStatus: 'Queueing…' }
+          : submission.intent === 'steering'
+            ? { promptStatus: 'Steering…' }
+            : {},
+      })
+    }
     if (submission.activity?.kind === 'vision') {
       const imageCount = submission.activity.imageCount
       const elapsed = durationLabel(Math.max(0, Date.now() - submission.activity.startedAt))
       rows.push({
         tool: {
-          key: `vision:pending:${String(submission.key)}`,
+          key: `vision:${submission.activity.analysisId}`,
           title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · Analyzing… ${elapsed}`,
           status: 'pending',
           arguments: `${String(imageCount)} attached image${imageCount === 1 ? '' : 's'}`,
