@@ -1,19 +1,19 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import test from 'node:test'
+import { test } from 'vitest'
 import {
   ensureProfilePlugin,
   profileLegacyPlugins,
   profileUsesPlugin,
   resolveDshHome,
   resolveTuiProfile,
-} from '../src/launcher.js'
+} from '../src/launcher.ts'
 
 test('resolveDshHome uses a non-empty override', () => {
   assert.equal(resolveDshHome({ DSH_HOME: './custom-dsh-home' }), join(process.cwd(), 'custom-dsh-home'))
-  assert.equal(resolveDshHome({ DSH_HOME: '   ' }), join(process.env.HOME, '.dsh'))
+  assert.equal(resolveDshHome({ DSH_HOME: '   ' }), join(homedir(), '.dsh'))
 })
 
 test('resolveTuiProfile supports an isolated development profile', () => {
@@ -65,12 +65,16 @@ test('ensureProfilePlugin removes the legacy package once and preserves the acti
   }))
   await symlink(plugin, join(profile, 'node_modules', '@vascent', 'deepseek-harness-tui'), 'dir')
 
-  const calls = []
-  const runPlugin = async (args) => {
+  const calls: Array<readonly string[]> = []
+  const runPlugin = async (args: readonly string[]) => {
+    const packageName = args[1]
+    assert.ok(packageName)
     calls.push(args)
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-    delete manifest.dependencies[args[1]]
-    manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(name => name !== args[1])
+    delete manifest.dependencies[packageName]
+    manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(
+      (name: string) => name !== packageName,
+    )
     await writeFile(manifestPath, JSON.stringify(manifest))
     return 0
   }

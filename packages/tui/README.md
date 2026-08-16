@@ -79,11 +79,12 @@ npm install --global @vascent/dsh-tui
 dsh-tui
 ```
 
-The repository commits verified `lib/` artifacts, so installation does not build
-this workspace on the target machine. The bundle's `cordis.patch.yml` layers the
-required Host services, its `./memory` plugin entry, and the terminal entry point
-over the automatically installed `dsh-base` profile. The subpath embeds the
-private Memory workspace runtime, so installation has no standalone plugin dependency.
+The release pipeline builds verified `dist/` artifacts before packaging, so
+installation does not build this workspace on the target machine. Generated
+artifacts are not committed. The bundle's `cordis.patch.yml` layers the required
+Host services, its `./memory` plugin entry, and the terminal entry point over the
+automatically installed `dsh-base` profile. The subpath embeds the private Memory
+workspace runtime, so installation has no standalone plugin dependency.
 
 ## Develop
 

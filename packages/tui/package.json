@@ -20,26 +20,26 @@
     "directory": "packages/tui"
   },
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
-      "default": "./lib/index.js"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./memory": {
-      "types": "./lib/memory.d.ts",
-      "default": "./lib/memory.js"
+      "types": "./dist/memory.d.ts",
+      "default": "./dist/memory.js"
     },
     "./vision": {
-      "types": "./lib/vision.d.ts",
-      "default": "./lib/vision.js"
+      "types": "./dist/vision.d.ts",
+      "default": "./dist/vision.js"
     },
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "files": [
-    "lib",
+    "dist",
     "cordis.patch.yml",
     "README.md",
     "CHANGELOG.md",
@@ -60,8 +60,7 @@
     "lint": "oxlint --deny-warnings src tests tsdown.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
-    "prepack": "pnpm run check"
+    "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
     "@deepseek-ai/dsh-commands": ">=0.1.0-rc.6 <0.2.0",

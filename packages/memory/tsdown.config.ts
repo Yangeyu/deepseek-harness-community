@@ -2,7 +2,7 @@ import { defineConfig } from 'tsdown'
 
 export default defineConfig({
   entry: ['src/index.ts', 'src/store.ts'],
-  outDir: 'lib',
+  outDir: 'dist',
   format: ['esm'],
   platform: 'node',
   target: 'node22',

@@ -6,10 +6,11 @@ This repository keeps the upstream Harness checkout separate and owns the integr
 
 ```text
 deepseek-harness-community/
+├── bin/              # minimal JavaScript executable shims
+├── src/launcher.ts   # typed profile setup and launcher implementation
 ├── packages/memory/  # Markdown-backed project memory plugin
 ├── packages/vision/  # image routing, proxy analysis, and staged evidence
-├── packages/tui/     # terminal UI bundle
-└── src/launcher.js   # profile setup and dsh-tui launcher
+└── packages/tui/     # terminal UI bundle
 ```
 
 ## Install
@@ -55,6 +56,11 @@ bundle through an isolated `tui-dev` profile. It does not use the globally
 installed `dsh-tui` package or modify the regular `tui` profile. Run it from the
 project you want the agent to edit; pass TUI arguments after `--`, for example
 `pnpm dev -- --resume <session-id> --image screenshot.png`.
+
+TypeScript under `src/` is the only maintained implementation. Builds write
+ignored JavaScript, declarations, and source maps to each package's `dist/`;
+release archives are written to the ignored root `artifacts/` directory. Neither
+kind of generated output is committed.
 
 `pnpm start` remains the production-equivalent local launcher and uses the
 regular `tui` profile.

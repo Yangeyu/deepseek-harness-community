@@ -558,8 +558,8 @@ diagnostic.
   `DASHSCOPE_API_KEY` is available. It is never a paid default CI step.
 
 The release gate remains `pnpm run check`, `git diff --check`, packed-file
-inspection, and manual PTY acceptance. Generated `lib/` artifacts and the
-private Vision workspace bundle are committed together.
+inspection, and manual PTY acceptance. Generated `dist/` artifacts stay out of
+Git and are rebuilt before the private Vision workspace is bundled.
 
 ## Delivery slices
 

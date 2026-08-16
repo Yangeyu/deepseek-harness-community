@@ -23,10 +23,11 @@
   },
   "files": [
     "bin/dsh-tui.js",
-    "src",
+    "dist/launcher.js",
+    "dist/launcher.js.map",
     "packages/tui/CHANGELOG.md",
     "packages/tui/cordis.patch.yml",
-    "packages/tui/lib",
+    "packages/tui/dist",
     "packages/tui/LICENSE",
     "packages/tui/package.json",
     "packages/tui/README.md",
@@ -43,13 +44,14 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-vision run build && pnpm --filter @vascent/deepseek-harness-tui run build",
-    "lint": "pnpm --filter './packages/*' run lint",
-    "typecheck": "pnpm --filter './packages/*' run typecheck",
-    "test": "node --test tests/*.test.js && pnpm --filter './packages/*' run test",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-vision run build && pnpm --filter @vascent/deepseek-harness-tui run build && tsdown",
+    "lint": "oxlint --deny-warnings src tests tsdown.config.ts && pnpm --filter './packages/*' run lint",
+    "typecheck": "tsc --noEmit && pnpm --filter './packages/*' run typecheck",
+    "test": "vitest run tests/launcher.test.ts && pnpm --filter './packages/*' run test",
+    "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
     "dev": "pnpm run build && node bin/dsh-tui-dev.js",
-    "pack:check": "npm pack --dry-run",
+    "pack:check": "npm pack --dry-run --ignore-scripts",
+    "prepack": "pnpm run build",
     "release": "release-it",
     "start": "node bin/dsh-tui.js"
   },
@@ -94,6 +96,11 @@
     "access": "public"
   },
   "devDependencies": {
-    "release-it": "21.0.2"
+    "@types/node": "^22.20.0",
+    "oxlint": "1.76.0",
+    "release-it": "21.0.2",
+    "tsdown": "^0.22.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }

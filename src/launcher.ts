@@ -10,7 +10,18 @@ const TUI_PACKAGE = '@vascent/deepseek-harness-tui'
 const LEGACY_TUI_PACKAGES = ['@yangeyu/deepseek-harness-tui']
 const require = createRequire(import.meta.url)
 
-function readProfileManifest(profileDirectory) {
+interface ProfileManifest {
+  readonly dependencies?: Readonly<Record<string, string>>
+  readonly dsh?: {
+    readonly profile?: {
+      readonly bundles?: unknown
+    }
+  }
+}
+
+type RunPlugin = (args: readonly string[]) => Promise<number>
+
+function readProfileManifest(profileDirectory: string): ProfileManifest | undefined {
   const manifestPath = join(profileDirectory, 'package.json')
   if (!existsSync(manifestPath)) return undefined
   try {
@@ -21,13 +32,13 @@ function readProfileManifest(profileDirectory) {
 }
 
 /** Resolve the Harness home using the same environment precedence as dsh. */
-export function resolveDshHome(env = process.env) {
+export function resolveDshHome(env: NodeJS.ProcessEnv = process.env): string {
   const configured = env.DSH_HOME?.trim()
   return resolve(configured ? configured : join(homedir(), '.dsh'))
 }
 
 /** Resolve the profile name, allowing the development launcher to stay isolated. */
-export function resolveTuiProfile(env = process.env) {
+export function resolveTuiProfile(env: NodeJS.ProcessEnv = process.env): string {
   const profile = env.DSH_TUI_PROFILE?.trim() || DEFAULT_PROFILE
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(profile)) {
     throw new Error(`invalid DSH_TUI_PROFILE: ${profile}`)
@@ -36,12 +47,12 @@ export function resolveTuiProfile(env = process.env) {
 }
 
 /** Return whether the profile's installed TUI resolves to this launcher copy. */
-export function profileUsesPlugin(profileDirectory, pluginDirectory) {
+export function profileUsesPlugin(profileDirectory: string, pluginDirectory: string): boolean {
   const installedPath = join(profileDirectory, 'node_modules', '@vascent', 'deepseek-harness-tui')
   if (!existsSync(installedPath)) return false
   try {
     const manifest = readProfileManifest(profileDirectory)
-    const bundles = manifest.dsh?.profile?.bundles
+    const bundles = manifest?.dsh?.profile?.bundles
     return Array.isArray(bundles)
       && bundles.includes(TUI_PACKAGE)
       && realpathSync(installedPath) === realpathSync(pluginDirectory)
@@ -51,7 +62,7 @@ export function profileUsesPlugin(profileDirectory, pluginDirectory) {
 }
 
 /** Return obsolete TUI package names still referenced by one profile. */
-export function profileLegacyPlugins(profileDirectory) {
+export function profileLegacyPlugins(profileDirectory: string): string[] {
   const manifest = readProfileManifest(profileDirectory)
   const dependencies = manifest?.dependencies ?? {}
   const bundles = manifest?.dsh?.profile?.bundles
@@ -62,7 +73,11 @@ export function profileLegacyPlugins(profileDirectory) {
 }
 
 /** Migrate legacy package names and ensure the profile points at this launcher copy. */
-export async function ensureProfilePlugin(profileDirectory, pluginDirectory, runPlugin) {
+export async function ensureProfilePlugin(
+  profileDirectory: string,
+  pluginDirectory: string,
+  runPlugin: RunPlugin,
+): Promise<number> {
   const manifest = readProfileManifest(profileDirectory)
   const dependencies = manifest?.dependencies ?? {}
   for (const packageName of profileLegacyPlugins(profileDirectory)) {
@@ -87,7 +102,7 @@ export async function ensureProfilePlugin(profileDirectory, pluginDirectory, run
   return 0
 }
 
-function packageBin(packageName, binName) {
+function packageBin(packageName: string, binName: string): string {
   const manifestPath = require.resolve(`${packageName}/package.json`)
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
   const relativeBin = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.[binName]
@@ -95,8 +110,8 @@ function packageBin(packageName, binName) {
   return join(dirname(manifestPath), relativeBin)
 }
 
-function runNode(script, args, env) {
-  return new Promise((resolvePromise, reject) => {
+function runNode(script: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<number> {
+  return new Promise<number>((resolvePromise, reject) => {
     const child = spawn(process.execPath, [script, ...args], {
       cwd: process.cwd(),
       env,
@@ -108,7 +123,7 @@ function runNode(script, args, env) {
 }
 
 /** Configure the profile when needed, then run the TUI with forwarded arguments. */
-export async function main(args) {
+export async function main(args: readonly string[]): Promise<number> {
   const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
   const pluginDirectory = join(repositoryRoot, 'packages', 'tui')
   const profile = resolveTuiProfile()

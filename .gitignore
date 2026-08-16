@@ -1,6 +1,8 @@
 node_modules/
 .DS_Store
 *.tgz
+*.log
 .dsh-test/
 coverage/
 dist/
+artifacts/

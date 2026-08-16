@@ -1,5 +1,5 @@
 #!/usr/bin/env node
 
-import { main } from '../src/launcher.js'
+import { main } from '../dist/launcher.js'
 
 process.exitCode = await main(process.argv.slice(2))

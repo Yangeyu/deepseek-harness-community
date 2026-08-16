@@ -1,22 +1,11 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2024",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "strict": true,
-    "noImplicitOverride": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "verbatimModuleSyntax": true,
-    "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true,
-    "skipLibCheck": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "outDir": "lib",
-    "rootDir": ".",
-    "types": ["node"]
+    "outDir": "dist",
+    "rootDir": "."
   },
   "include": ["src", "tests", "tsdown.config.ts"]
 }

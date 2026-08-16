@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Standardize maintained implementation on TypeScript `src/`, generate ignored
+  workspace and launcher output under `dist/`, and keep npm archives under
+  `artifacts/` instead of committing generated runtime and declaration files.
 - Add a semantic, context-aware keymap layer with persisted Standard and Legacy
   presets, `/keymap` and `/config keybindings`, `Tab` queueing while working,
   and restored `Alt+Enter` multiline input under the default preset.

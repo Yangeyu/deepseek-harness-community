@@ -114,9 +114,24 @@ importers:
         specifier: ^2.4.2
         version: 2.9.0
     devDependencies:
+      '@types/node':
+        specifier: ^22.20.0
+        version: 22.20.1
+      oxlint:
+        specifier: 1.76.0
+        version: 1.76.0
       release-it:
         specifier: 21.0.2
         version: 21.0.2(@types/node@22.20.1)
+      tsdown:
+        specifier: ^0.22.2
+        version: 0.22.14(typescript@6.0.3)
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(jiti@2.7.0)(yaml@2.9.0))
 
   packages/memory:
     dependencies:

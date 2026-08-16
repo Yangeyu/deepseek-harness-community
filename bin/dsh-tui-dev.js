@@ -2,6 +2,6 @@
 
 process.env.DSH_TUI_PROFILE = 'tui-dev'
 
-const { main } = await import('../src/launcher.js')
+const { main } = await import('../dist/launcher.js')
 
 process.exitCode = await main(process.argv.slice(2))

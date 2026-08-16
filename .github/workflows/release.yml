@@ -28,8 +28,8 @@ jobs:
           package_version=$(node --print "require('./package.json').version")
           test "$GITHUB_REF_NAME" = "v${package_version}"
       - run: pnpm run check
-      - run: mkdir dist
-      - run: pnpm pack --pack-destination dist
+      - run: mkdir artifacts
+      - run: pnpm pack --pack-destination artifacts --ignore-scripts
       - name: Publish the installable package to npm
         shell: bash
         run: |
@@ -40,8 +40,8 @@ jobs:
           if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
             echo "${package_name}@${package_version} is already published"
           else
-            npm publish "./dist/${archive_name}" --access public
+            npm publish "./artifacts/${archive_name}" --access public
           fi
-      - run: gh release create "$GITHUB_REF_NAME" dist/*.tgz --generate-notes --title "$GITHUB_REF_NAME"
+      - run: gh release create "$GITHUB_REF_NAME" artifacts/*.tgz --generate-notes --title "$GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ github.token }}

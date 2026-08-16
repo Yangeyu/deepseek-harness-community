@@ -19,21 +19,21 @@
     "directory": "packages/memory"
   },
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
-      "default": "./lib/index.js"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./store": {
-      "types": "./lib/store.d.ts",
-      "default": "./lib/store.js"
+      "types": "./dist/store.d.ts",
+      "default": "./dist/store.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
-    "lib",
+    "dist",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -48,8 +48,7 @@
     "lint": "oxlint --deny-warnings src tests tsdown.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
-    "prepack": "pnpm run check"
+    "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1"

@@ -72,7 +72,7 @@ pnpm install --frozen-lockfile
 pnpm run check
 ```
 
-The workspace builds ESM runtime and declarations into `lib/`. Verified `lib/`
-artifacts are committed so GitHub and root-package installation do not depend on
-a target-machine build. The TUI embeds this runtime; it is not published as a
+The workspace builds ESM runtime and declarations into ignored `dist/` output.
+The release pipeline verifies and embeds that runtime in the public TUI package;
+generated artifacts are not committed and this workspace is not published as a
 standalone npm package.
