@@ -108,6 +108,31 @@ describe('AttachmentCoordinator', () => {
     expect(store.snapshot).toHaveLength(0)
   })
 
+  it('uses the visible image placeholder in image-only Host content', async () => {
+    const store = new AttachmentDraftStore()
+    addPng(store)
+    let displayText = ''
+    let submittedContent: PromptContentPart[] = []
+    const send = vi.fn<PreparedPromptSender>(async (display, _mode, prepareContent) => {
+      displayText = display
+      submittedContent = await prepareContent({ setActivity: () => {} })
+    })
+
+    await new AttachmentCoordinator(store, gateway({
+      strategy: 'native', provider: 'native', model: 'vision',
+    })).submit(
+      'session',
+      { provider: 'native', model: 'vision' },
+      '   ',
+      'queue',
+      undefined,
+      send,
+    )
+
+    expect(displayText).toBe('[Image]')
+    expect(submittedContent[0]).toEqual({ type: 'text', text: '[Image]' })
+  })
+
   it('stages proxy evidence before submitting the exact user text', async () => {
     const store = new AttachmentDraftStore()
     addPng(store)
@@ -192,7 +217,7 @@ describe('AttachmentCoordinator', () => {
       undefined,
       preparedSender(),
     )).rejects.toThrow('Configure Vision first.')
-    expect(store.snapshot[0]).toMatchObject({ status: 'error', error: 'Configure Vision first.' })
+    expect(store.snapshot[0]?.error).toBe('Configure Vision first.')
   })
 })
 

@@ -102,7 +102,7 @@ export class AttachmentRail implements Component {
     if (this.drafts.length === 0) return []
     const visible = this.drafts.slice(0, 2)
     const cards = visible.map((draft, index) => {
-      const state = draft.status === 'ready' ? '' : this.theme.warning(' · failed')
+      const state = draft.error === undefined ? '' : this.theme.warning(' · failed')
       const name = [...sanitizeTerminalText(draft.name)]
       const shortName = name.length <= 24 ? name.join('') : `${name.slice(0, 11).join('')}…${name.slice(-12).join('')}`
       const dimensions = draft.width === undefined || draft.height === undefined ? '' : ` · ${String(draft.width)}×${String(draft.height)}`

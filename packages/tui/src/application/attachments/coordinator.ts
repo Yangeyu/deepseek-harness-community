@@ -43,7 +43,6 @@ export class AttachmentCoordinator {
   constructor(
     readonly drafts: AttachmentDraftStore,
     private readonly vision: VisionGateway,
-    private readonly onProxyDisclosure?: (provider: string, model: string) => void,
   ) {}
 
   get busy(): boolean {
@@ -68,6 +67,7 @@ export class AttachmentCoordinator {
     if (this.active !== undefined) throw new Error('Vision analysis is already in progress.')
     const images = [...this.drafts.snapshot]
     if (images.length === 0) throw new Error('No images are attached.')
+    const promptText = text.trim() === '' ? '[Image]' : text
     const ids = images.map(image => image.id)
     try {
       this.checkLimits(images, limits)
@@ -81,14 +81,14 @@ export class AttachmentCoordinator {
     let route: 'native' | 'proxy' | undefined
     let stagedAnalysisId: string | undefined
     try {
-      await send(text.trim() === '' ? '[Image]' : text, mode, async (preparation) => {
-        this.drafts.take()
+      await send(promptText, mode, async (preparation) => {
+        this.drafts.clear()
         const capability = await this.vision.capability(selection.provider, selection.model, abort.signal)
         if (capability.strategy === 'disabled') throw new Error(capability.message)
         if (capability.strategy === 'native') {
           route = 'native'
           return [
-            { type: 'text', text },
+            { type: 'text', text: promptText },
             ...images.map(image => ({
               type: 'image' as const,
               mediaType: image.mediaType,
@@ -106,7 +106,6 @@ export class AttachmentCoordinator {
         if (status.credentialRef !== undefined && status.credentialConfigured !== true) {
           throw new Error(`Vision credential ${status.credentialRef} is missing. Open /config vision after configuring it.`)
         }
-        this.onProxyDisclosure?.(capability.provider, capability.model)
         const analysisId = this.vision.newAnalysisId()
         const analysis = await this.vision.analyze({
           analysisId,
@@ -121,7 +120,7 @@ export class AttachmentCoordinator {
         stagedAnalysisId = analysisId
         return [
           { type: 'text', text: analysis.marker },
-          { type: 'text', text },
+          { type: 'text', text: promptText },
         ]
       })
       if (route === undefined) throw new Error('Vision did not resolve an image route.')

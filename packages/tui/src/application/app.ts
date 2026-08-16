@@ -213,7 +213,6 @@ export class TuiApplication implements TuiControllerSink {
   private readonly removeKeymapListener: () => void
   private visionStatus: VisionStatus | undefined
   private attachmentRailFocused = false
-  private readonly disclosedVisionRoutes = new Set<string>()
   private readonly initialImagePaths: readonly string[]
   private readonly clipboardImage: ClipboardImageLoader
   private clipboardPastePending = false
@@ -262,9 +261,7 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.attachmentRail = new AttachmentRail(
       this.theme,
-      index => {
-        if (!this.attachmentDrafts.removeAt(index)) this.controller.notice('Wait for Vision analysis to finish before removing images.')
-      },
+      index => { this.attachmentDrafts.removeAt(index) },
       () => this.leaveAttachmentRail(),
     )
     this.vision = vision
@@ -276,12 +273,7 @@ export class TuiApplication implements TuiControllerSink {
     }
     this.attachmentCoordinator = vision === undefined
       ? undefined
-      : new AttachmentCoordinator(this.attachmentDrafts, vision, (provider, model) => {
-        const key = `${provider}/${model}`
-        if (this.disclosedVisionRoutes.has(key)) return
-        this.disclosedVisionRoutes.add(key)
-        this.controller.notice(`Attached images are being analyzed by ${key}; the primary model receives only bounded visual evidence.`)
-      })
+      : new AttachmentCoordinator(this.attachmentDrafts, vision)
     this.editor = new Editor(this.tui, this.theme.editor, { paddingX: 1, autocompleteMaxVisible: 10 })
     this.attachmentComposer = new AttachmentComposerFrame(this.editor, this.theme)
     this.commands = new TerminalCommandDirectory(
@@ -589,9 +581,7 @@ export class TuiApplication implements TuiControllerSink {
         this.tui.requestRender()
         return
       case 'attachments.remove-last':
-        if (!this.attachmentDrafts.removeLast()) {
-          this.controller.notice('Wait for Vision analysis to finish before removing images.')
-        }
+        this.attachmentDrafts.removeLast()
         return
       case 'details.toggle':
         this.setDetailsExpanded(!this.showDetails)

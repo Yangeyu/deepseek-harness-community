@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 
 export type AttachmentSource = 'file' | 'clipboard'
-export type AttachmentDraftStatus = 'ready' | 'error'
 
 /** One local, session-scoped image that has not yet been accepted by the Host. */
 export interface AttachmentDraft {
@@ -13,11 +12,10 @@ export interface AttachmentDraft {
   source: AttachmentSource
   width?: number
   height?: number
-  status: AttachmentDraftStatus
   error?: string | undefined
 }
 
-export type NewAttachmentDraft = Omit<AttachmentDraft, 'id' | 'status' | 'error'>
+export type NewAttachmentDraft = Omit<AttachmentDraft, 'id' | 'error'>
 
 /** Small observable store; binary drafts never enter global TUI state or the session log. */
 export class AttachmentDraftStore {
@@ -29,7 +27,7 @@ export class AttachmentDraftStore {
   }
 
   add(input: NewAttachmentDraft): AttachmentDraft {
-    const draft: AttachmentDraft = { ...input, id: randomUUID(), status: 'ready' }
+    const draft: AttachmentDraft = { ...input, id: randomUUID() }
     this.items = [...this.items, draft]
     this.emit()
     return draft
@@ -56,18 +54,9 @@ export class AttachmentDraftStore {
   setError(ids: readonly string[], error: string): void {
     const selected = new Set(ids)
     this.items = this.items.map(item => selected.has(item.id)
-      ? { ...item, status: 'error', error }
+      ? { ...item, error }
       : item)
     this.emit()
-  }
-
-  /** Transfer all drafts out of the Composer without copying their image bytes. */
-  take(): AttachmentDraft[] {
-    const drafts = this.items
-    if (drafts.length === 0) return []
-    this.items = []
-    this.emit()
-    return drafts
   }
 
   /** Restore a failed or cancelled submission while preserving stable attachment ids. */
@@ -77,8 +66,8 @@ export class AttachmentDraftStore {
     const restored = drafts
       .filter(item => !currentIds.has(item.id))
       .map(item => error === undefined
-        ? { ...item, status: 'ready' as const, error: undefined }
-        : { ...item, status: 'error' as const, error })
+        ? { ...item, error: undefined }
+        : { ...item, error })
     if (restored.length === 0) return
     this.items = [...restored, ...this.items]
     this.emit()
