@@ -29,7 +29,7 @@ jobs:
           test "$GITHUB_REF_NAME" = "v${package_version}"
       - run: pnpm run check
       - run: mkdir artifacts
-      - run: pnpm pack --pack-destination artifacts --ignore-scripts
+      - run: npm pack --pack-destination artifacts --ignore-scripts
       - name: Publish the installable package to npm
         shell: bash
         run: |
