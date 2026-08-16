@@ -49,6 +49,18 @@ interface VisionAnalysis {
   finishReason: string;
   usage?: TokenUsage;
 }
+/** Structured provenance persisted inside the supported `user/message` event. */
+interface VisionEvidenceSource {
+  kind: 'community-vision';
+  analysisId: string;
+  provider: string;
+  model: string;
+  attachments: readonly ImageAttachmentRef[];
+  durationMs: number;
+  finishReason: string;
+  truncated: boolean;
+  usage?: TokenUsage;
+}
 interface VisionStatus {
   config: VisionConfig;
   proxyRegistered: boolean;
@@ -57,28 +69,6 @@ interface VisionStatus {
   credentialRef?: string;
   credentialConfigured?: boolean;
   credentialSource?: string;
-}
-interface VisionAnalysisEvent {
-  analysisId: string;
-  status: 'completed' | 'failed' | 'cancelled';
-  route: {
-    strategy: 'proxy';
-    provider: string;
-    model: string;
-  };
-  content: Array<{
-    type: 'image';
-    attachment: ImageAttachmentRef;
-  }>;
-  durationMs: number;
-  finishReason?: string;
-  observation?: string;
-  truncated?: boolean;
-  usage?: TokenUsage;
-  error?: {
-    code: string;
-    message: string;
-  };
 }
 //#endregion
 //#region src/config.d.ts
@@ -101,16 +91,16 @@ declare module '@deepseek-ai/cordis' {
     vision: VisionService;
   }
 }
-declare module '@deepseek-ai/dsh-session' {
-  interface SessionEventMap {
-    'vision/analysis': VisionAnalysisEvent;
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'community-vision': VisionEvidenceSource;
   }
 }
 declare class VisionError extends Error {
   readonly code: string;
   constructor(code: string, message: string, options?: ErrorOptions);
 }
-/** Host-owned Vision policy, proxy analysis, and durable evidence service. */
+/** Host-owned Vision policy, proxy analysis, and staged evidence service. */
 declare class VisionService extends Service {
   static inject: string[];
   static Config: import("@deepseek-ai/schemastery").default<VisionConfig>;
@@ -130,5 +120,5 @@ declare class VisionService extends Service {
   private failureError;
 }
 //#endregion
-export { VisionConfig as a, VisionImageInput as c, VisionService as d, VisionStatus as f, wrapObservation as g, visionUserPrompt as h, VisionCapability as i, VisionMode as l, chooseVisionRoute as m, VisionAnalysis as n, VisionConfigSchema as o, VisionUnavailableReason as p, VisionAnalysisEvent as r, VisionError as s, VISION_SYSTEM_PROMPT as t, VisionRequest as u };
-//# sourceMappingURL=index-BFrW5xpj.d.ts.map
+export { VisionConfigSchema as a, VisionImageInput as c, VisionService as d, VisionStatus as f, wrapObservation as g, visionUserPrompt as h, VisionConfig as i, VisionMode as l, chooseVisionRoute as m, VisionAnalysis as n, VisionError as o, VisionUnavailableReason as p, VisionCapability as r, VisionEvidenceSource as s, VISION_SYSTEM_PROMPT as t, VisionRequest as u };
+//# sourceMappingURL=index-DkepdcJW.d.ts.map

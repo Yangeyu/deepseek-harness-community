@@ -24,9 +24,9 @@ import { chooseVisionRoute } from './routing.ts'
 import { VisionObservationStage } from './events.ts'
 import type {
   VisionAnalysis,
-  VisionAnalysisEvent,
   VisionCapability,
   VisionConfig,
+  VisionEvidenceSource,
   VisionImageInput,
   VisionRequest,
   VisionStatus,
@@ -37,9 +37,9 @@ export { chooseVisionRoute } from './routing.ts'
 export { VISION_SYSTEM_PROMPT, visionUserPrompt, wrapObservation } from './observation.ts'
 export type {
   VisionAnalysis,
-  VisionAnalysisEvent,
   VisionCapability,
   VisionConfig,
+  VisionEvidenceSource,
   VisionImageInput,
   VisionMode,
   VisionRequest,
@@ -57,9 +57,9 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-declare module '@deepseek-ai/dsh-session' {
-  interface SessionEventMap {
-    'vision/analysis': VisionAnalysisEvent
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'community-vision': VisionEvidenceSource
   }
 }
 
@@ -68,12 +68,6 @@ export class VisionError extends Error {
     super(message, options)
     this.name = 'VisionError'
   }
-}
-
-function safeFailure(error: unknown): { code: string; message: string } {
-  if (error instanceof VisionError) return { code: error.code, message: safeErrorMessage(error.message) }
-  if (error instanceof Error) return { code: 'VISION_FAILED', message: safeErrorMessage(error.message) }
-  return { code: 'VISION_FAILED', message: safeErrorMessage(String(error)) }
 }
 
 function safeErrorMessage(value: string): string {
@@ -98,7 +92,7 @@ function registeredProfile(value: unknown, provider: string): Record<string, unk
     : undefined
 }
 
-/** Host-owned Vision policy, proxy analysis, and durable evidence service. */
+/** Host-owned Vision policy, proxy analysis, and staged evidence service. */
 export class VisionService extends Service {
   static inject = ['agents', 'attachments', 'credentials', 'llm', 'settings']
   static Config = VisionConfigSchema
@@ -207,8 +201,9 @@ export class VisionService extends Service {
 
   async analyze(request: VisionRequest, signal?: AbortSignal): Promise<VisionAnalysis> {
     if (request.images.length === 0) throw new VisionError('NO_IMAGES', 'Vision analysis requires at least one image.')
-    const agent = this.ctx.agents.get(SessionId(request.sessionId))
-    if (agent === undefined) throw new VisionError('SESSION_UNAVAILABLE', 'The active session is no longer available.')
+    if (this.ctx.agents.get(SessionId(request.sessionId)) === undefined) {
+      throw new VisionError('SESSION_UNAVAILABLE', 'The active session is no longer available.')
+    }
     const config = this.config
     if (config.mode === 'disabled') throw new VisionError('VISION_DISABLED', 'Vision is disabled. Open /config vision to enable it.')
     const status = await this.status(signal)
@@ -223,82 +218,64 @@ export class VisionService extends Service {
     }
     const startedAt = Date.now()
     const saved: ImageAttachmentRef[] = []
-    let route = { provider: config.proxyProvider, model: config.proxyModel }
-    try {
-      await this.validateBatch(request.images)
+    await this.validateBatch(request.images)
+    signal?.throwIfAborted()
+    for (const image of request.images) {
+      const ref = await this.ctx.attachments.saveImage(image)
+      saved.push(ref)
       signal?.throwIfAborted()
-      for (const image of request.images) {
-        const ref = await this.ctx.attachments.saveImage(image)
-        saved.push(ref)
-        signal?.throwIfAborted()
-      }
-      const info = await this.ctx.llm.resolveModelInfo(config.proxyProvider, config.proxyModel, signal)
-      route = { provider: info.provider, model: info.id }
-      if (!info.inputModalities?.includes('image')) {
-        throw new VisionError('PROXY_NOT_MULTIMODAL', `Vision proxy ${info.provider}/${info.id} does not declare image input support.`)
-      }
-      const assembler = new BlockAssembler()
-      const content: ContentBlock[] = [
-        { type: 'text', text: visionUserPrompt(request.userText, saved.length) },
-        ...saved.map(attachment => ({ type: 'image' as const, attachment })),
-      ]
-      for await (const chunk of this.ctx.llm.stream({
-        provider: info.provider,
-        model: info.id,
-        system: VISION_SYSTEM_PROMPT,
-        messages: [createUserMessage({ content, source: { kind: 'plugin', plugin: PLUGIN_NAME } })],
-        maxTokens: config.maxTokens,
-        ...signal === undefined ? {} : { signal },
-      })) assembler.push(chunk)
-      const finish = assembler.finish
-      if (finish.kind === 'error' || finish.kind === 'aborted') throw this.failureError(finish.failure)
-      const raw = textOf(assembler.blocks())
-      if (raw === '') throw new VisionError('EMPTY_OBSERVATION', 'The Vision model returned no readable observation.')
-      const wrapped = wrapObservation(raw, info.provider, info.id, config.maxObservationChars)
-      const truncated = wrapped.truncated || finish.kind === 'max-tokens'
-      const durationMs = Date.now() - startedAt
-      const event: VisionAnalysisEvent = {
-        analysisId: request.analysisId,
-        status: 'completed',
-        route: { strategy: 'proxy', provider: info.provider, model: info.id },
-        content: saved.map(attachment => ({ type: 'image', attachment })),
-        durationMs,
-        finishReason: finish.kind,
-        observation: wrapped.text,
-        ...truncated ? { truncated: true } : {},
-        ...assembler.usage === undefined ? {} : { usage: assembler.usage },
-      }
-      agent.session.append('vision/analysis', event)
-      this.observations.set(request.analysisId, {
-        sessionId: request.sessionId,
-        observation: wrapped.text,
-        summary: `Vision analyzed ${String(saved.length)} image${saved.length === 1 ? '' : 's'} with ${info.id}`,
-      })
-      return {
-        analysisId: request.analysisId,
-        provider: info.provider,
-        model: info.id,
-        marker: this.observations.marker(request.analysisId),
-        observation: wrapped.text,
-        attachments: saved,
-        durationMs,
-        truncated,
-        finishReason: finish.kind,
-        ...assembler.usage === undefined ? {} : { usage: assembler.usage },
-      }
-    } catch (error: unknown) {
-      if (saved.length > 0) {
-        const failure = safeFailure(error)
-        agent.session.append('vision/analysis', {
-          analysisId: request.analysisId,
-          status: signal?.aborted ? 'cancelled' : 'failed',
-          route: { strategy: 'proxy', ...route },
-          content: saved.map(attachment => ({ type: 'image', attachment })),
-          durationMs: Date.now() - startedAt,
-          error: failure,
-        })
-      }
-      throw error
+    }
+    const info = await this.ctx.llm.resolveModelInfo(config.proxyProvider, config.proxyModel, signal)
+    if (!info.inputModalities?.includes('image')) {
+      throw new VisionError('PROXY_NOT_MULTIMODAL', `Vision proxy ${info.provider}/${info.id} does not declare image input support.`)
+    }
+    const assembler = new BlockAssembler()
+    const content: ContentBlock[] = [
+      { type: 'text', text: visionUserPrompt(request.userText, saved.length) },
+      ...saved.map(attachment => ({ type: 'image' as const, attachment })),
+    ]
+    for await (const chunk of this.ctx.llm.stream({
+      provider: info.provider,
+      model: info.id,
+      system: VISION_SYSTEM_PROMPT,
+      messages: [createUserMessage({ content, source: { kind: 'plugin', plugin: PLUGIN_NAME } })],
+      maxTokens: config.maxTokens,
+      ...signal === undefined ? {} : { signal },
+    })) assembler.push(chunk)
+    const finish = assembler.finish
+    if (finish.kind === 'error' || finish.kind === 'aborted') throw this.failureError(finish.failure)
+    const raw = textOf(assembler.blocks())
+    if (raw === '') throw new VisionError('EMPTY_OBSERVATION', 'The Vision model returned no readable observation.')
+    const wrapped = wrapObservation(raw, info.provider, info.id, config.maxObservationChars)
+    const truncated = wrapped.truncated || finish.kind === 'max-tokens'
+    const durationMs = Date.now() - startedAt
+    const source: VisionEvidenceSource = {
+      kind: 'community-vision',
+      analysisId: request.analysisId,
+      provider: info.provider,
+      model: info.id,
+      attachments: saved,
+      durationMs,
+      finishReason: finish.kind,
+      truncated,
+      ...assembler.usage === undefined ? {} : { usage: assembler.usage },
+    }
+    this.observations.set(request.analysisId, {
+      sessionId: request.sessionId,
+      observation: wrapped.text,
+      source,
+    })
+    return {
+      analysisId: request.analysisId,
+      provider: info.provider,
+      model: info.id,
+      marker: this.observations.marker(request.analysisId),
+      observation: wrapped.text,
+      attachments: saved,
+      durationMs,
+      truncated,
+      finishReason: finish.kind,
+      ...assembler.usage === undefined ? {} : { usage: assembler.usage },
     }
   }
 

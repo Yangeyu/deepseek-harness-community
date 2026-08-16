@@ -204,9 +204,23 @@ function rowsFromState(
     switch (event.type) {
       case 'user/message': {
         if (event.surfaceOp !== 'append') break
-        const human = event.data.source.kind === 'user'
-        if (!human && !showDetails) break
+        const source = event.data.source
         const rawText = messageText(event.data.content, showReasoning)
+        if (source.kind === 'community-vision') {
+          const imageCount = source.attachments.length
+          rows.push({
+            tool: {
+              key: `vision:${source.analysisId}:${String(event.seq)}`,
+              title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalText(source.model)} · ${durationLabel(source.durationMs)}`,
+              status: 'completed',
+              arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${source.provider}/${source.model}`,
+              result: rawText === '' ? 'Vision analysis completed.' : rawText,
+            },
+          })
+          break
+        }
+        const human = source.kind === 'user'
+        if (!human && !showDetails) break
         const imageCount = event.data.content.filter(block => block.type === 'image').length
         const text = [rawText, imageCount === 0 ? '' : `${String(imageCount)} image${imageCount === 1 ? '' : 's'} attached`]
           .filter(Boolean)
@@ -217,22 +231,6 @@ function rowsFromState(
           body: text,
           markdown: human,
           dim: !human,
-        })
-        break
-      }
-      case 'vision/analysis': {
-        const failed = event.data.status !== 'completed'
-        const imageCount = event.data.content.length
-        rows.push({
-          tool: {
-            key: `vision:${event.data.analysisId}:${String(event.seq)}`,
-            title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalText(event.data.route.model)} · ${durationLabel(event.data.durationMs)}`,
-            status: failed ? 'failed' : 'completed',
-            arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${event.data.route.provider}/${event.data.route.model}`,
-            result: failed
-              ? `${event.data.error?.code ?? 'VISION_FAILED'}: ${event.data.error?.message ?? event.data.status}`
-              : event.data.observation ?? 'Vision analysis completed.',
-          },
         })
         break
       }

@@ -1656,9 +1656,21 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 		switch (event.type) {
 			case "user/message": {
 				if (event.surfaceOp !== "append") break;
-				const human = event.data.source.kind === "user";
-				if (!human && !showDetails) break;
+				const source = event.data.source;
 				const rawText = messageText$1(event.data.content, showReasoning);
+				if (source.kind === "community-vision") {
+					const imageCount = source.attachments.length;
+					rows.push({ tool: {
+						key: `vision:${source.analysisId}:${String(event.seq)}`,
+						title: `Vision · ${String(imageCount)} image${imageCount === 1 ? "" : "s"} · ${sanitizeTerminalText(source.model)} · ${durationLabel(source.durationMs)}`,
+						status: "completed",
+						arguments: `${String(imageCount)} image${imageCount === 1 ? "" : "s"} · ${source.provider}/${source.model}`,
+						result: rawText === "" ? "Vision analysis completed." : rawText
+					} });
+					break;
+				}
+				const human = source.kind === "user";
+				if (!human && !showDetails) break;
 				const imageCount = event.data.content.filter((block) => block.type === "image").length;
 				const text = [rawText, imageCount === 0 ? "" : `${String(imageCount)} image${imageCount === 1 ? "" : "s"} attached`].filter(Boolean).join("\n\n");
 				if (text.trim() === "") break;
@@ -1671,18 +1683,6 @@ function rowsFromState(state, theme, showReasoning, showDetails, maxToolOutputLi
 					markdown: human,
 					dim: !human
 				});
-				break;
-			}
-			case "vision/analysis": {
-				const failed = event.data.status !== "completed";
-				const imageCount = event.data.content.length;
-				rows.push({ tool: {
-					key: `vision:${event.data.analysisId}:${String(event.seq)}`,
-					title: `Vision · ${String(imageCount)} image${imageCount === 1 ? "" : "s"} · ${sanitizeTerminalText(event.data.route.model)} · ${durationLabel(event.data.durationMs)}`,
-					status: failed ? "failed" : "completed",
-					arguments: `${String(imageCount)} image${imageCount === 1 ? "" : "s"} · ${event.data.route.provider}/${event.data.route.model}`,
-					result: failed ? `${event.data.error?.code ?? "VISION_FAILED"}: ${event.data.error?.message ?? event.data.status}` : event.data.observation ?? "Vision analysis completed."
-				} });
 				break;
 			}
 			case "assistant/chunk": {
@@ -2509,15 +2509,46 @@ function buildTrajectoryRecords(entries) {
 			}
 			case "user/message": {
 				const text = messageText(event.data);
-				const source = recordValue(event.data.source)?.kind;
+				const source = event.data.source;
 				const detail = text === "" ? displayUnknown(event.data.content) : text;
+				if (source.kind === "community-vision") {
+					records.push({
+						key: `vision:${source.analysisId}:${String(event.seq)}`,
+						kind: "vision",
+						type: event.type,
+						seq: event.seq,
+						...at,
+						title: "Vision analysis",
+						summary: `${source.provider}/${source.model} · ${String(source.durationMs)}ms · completed`,
+						detail,
+						status: "completed",
+						startedAt: Math.max(0, event.time - source.durationMs),
+						completedAt: event.time,
+						payload: {
+							analysisId: source.analysisId,
+							route: {
+								strategy: "proxy",
+								provider: source.provider,
+								model: source.model
+							},
+							images: source.attachments
+						},
+						result: {
+							observation: detail,
+							truncated: source.truncated,
+							finishReason: source.finishReason,
+							...source.usage === void 0 ? {} : { usage: source.usage }
+						}
+					});
+					break;
+				}
 				records.push({
 					key: `event:${String(event.seq)}`,
 					kind: "user",
 					type: event.type,
 					seq: event.seq,
 					...at,
-					title: source === "user" ? "User input" : "Context input",
+					title: source.kind === "user" ? "User input" : "Context input",
 					summary: oneLine(detail),
 					detail,
 					status: "info",
@@ -2613,35 +2644,6 @@ function buildTrajectoryRecords(entries) {
 						name: event.data.name,
 						...event.data.args === void 0 ? {} : { arguments: event.data.args },
 						source: event.data.source
-					}
-				});
-				break;
-			}
-			case "vision/analysis": {
-				const failed = event.data.status !== "completed";
-				const detail = event.data.observation ?? event.data.error?.message ?? `Vision analysis ${event.data.status}`;
-				records.push({
-					key: `vision:${event.data.analysisId}:${String(event.seq)}`,
-					kind: "vision",
-					type: event.type,
-					seq: event.seq,
-					...at,
-					title: "Vision analysis",
-					summary: `${event.data.route.provider}/${event.data.route.model} · ${String(event.data.durationMs)}ms · ${event.data.status}`,
-					detail,
-					status: failed ? event.data.status === "cancelled" ? "warning" : "failed" : "completed",
-					startedAt: Math.max(0, event.time - event.data.durationMs),
-					completedAt: event.time,
-					payload: {
-						analysisId: event.data.analysisId,
-						route: event.data.route,
-						images: event.data.content
-					},
-					result: failed ? event.data.error : {
-						observation: event.data.observation,
-						truncated: event.data.truncated ?? false,
-						finishReason: event.data.finishReason,
-						usage: event.data.usage
 					}
 				});
 				break;

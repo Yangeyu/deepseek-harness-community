@@ -30,7 +30,16 @@ describe('VisionObservationStage', () => {
     stage.set(ANALYSIS_ID, {
       sessionId: 'session-1',
       observation: '<vision-observation>evidence</vision-observation>',
-      summary: 'Vision analyzed one image',
+      source: {
+        kind: 'community-vision',
+        analysisId: ANALYSIS_ID,
+        provider: 'proxy',
+        model: 'vision',
+        attachments: [],
+        durationMs: 500,
+        finishReason: 'stop',
+        truncated: false,
+      },
     })
     const original = createUserMessage({
       source: { kind: 'user' },
@@ -45,17 +54,33 @@ describe('VisionObservationStage', () => {
     expect(result.kind).toBe('enter')
     if (result.kind !== 'enter') return
     expect(result.messages).toHaveLength(2)
-    expect(result.messages[0]?.source).toMatchObject({ kind: 'plugin', plugin: 'community-vision' })
-    expect(result.messages[1]).toMatchObject({
+    expect(result.messages[0]).toMatchObject({
       id: original.id,
       source: original.source,
       content: [{ type: 'text', text: 'What failed?' }],
+    })
+    expect(result.messages[1]?.source).toMatchObject({
+      kind: 'community-vision',
+      analysisId: ANALYSIS_ID,
     })
   })
 
   it('rejects a marker that does not belong to the active session', async () => {
     const { stage, invoke } = fixture()
-    stage.set(ANALYSIS_ID, { sessionId: 'session-1', observation: 'evidence', summary: 'Vision' })
+    stage.set(ANALYSIS_ID, {
+      sessionId: 'session-1',
+      observation: 'evidence',
+      source: {
+        kind: 'community-vision',
+        analysisId: ANALYSIS_ID,
+        provider: 'proxy',
+        model: 'vision',
+        attachments: [],
+        durationMs: 500,
+        finishReason: 'stop',
+        truncated: false,
+      },
+    })
     const message = createUserMessage({
       source: { kind: 'user' },
       content: [{ type: 'text', text: stage.marker(ANALYSIS_ID) }, { type: 'text', text: 'question' }],

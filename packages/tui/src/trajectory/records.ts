@@ -232,15 +232,42 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
       }
       case 'user/message': {
         const text = messageText(event.data)
-        const source = recordValue(event.data.source)?.kind
+        const source = event.data.source
         const detail = text === '' ? displayUnknown(event.data.content) : text
+        if (source.kind === 'community-vision') {
+          records.push({
+            key: `vision:${source.analysisId}:${String(event.seq)}`,
+            kind: 'vision',
+            type: event.type,
+            seq: event.seq,
+            ...at,
+            title: 'Vision analysis',
+            summary: `${source.provider}/${source.model} · ${String(source.durationMs)}ms · completed`,
+            detail,
+            status: 'completed',
+            startedAt: Math.max(0, event.time - source.durationMs),
+            completedAt: event.time,
+            payload: {
+              analysisId: source.analysisId,
+              route: { strategy: 'proxy', provider: source.provider, model: source.model },
+              images: source.attachments,
+            },
+            result: {
+              observation: detail,
+              truncated: source.truncated,
+              finishReason: source.finishReason,
+              ...source.usage === undefined ? {} : { usage: source.usage },
+            },
+          })
+          break
+        }
         records.push({
           key: `event:${String(event.seq)}`,
           kind: 'user',
           type: event.type,
           seq: event.seq,
           ...at,
-          title: source === 'user' ? 'User input' : 'Context input',
+          title: source.kind === 'user' ? 'User input' : 'Context input',
           summary: oneLine(detail),
           detail,
           status: 'info',
@@ -327,37 +354,6 @@ export function buildTrajectoryRecords(entries: readonly HistoryEntry[]): Trajec
             name: event.data.name,
             ...event.data.args === undefined ? {} : { arguments: event.data.args },
             source: event.data.source,
-          },
-        })
-        break
-      }
-      case 'vision/analysis': {
-        const failed = event.data.status !== 'completed'
-        const detail = event.data.observation
-          ?? event.data.error?.message
-          ?? `Vision analysis ${event.data.status}`
-        records.push({
-          key: `vision:${event.data.analysisId}:${String(event.seq)}`,
-          kind: 'vision',
-          type: event.type,
-          seq: event.seq,
-          ...at,
-          title: 'Vision analysis',
-          summary: `${event.data.route.provider}/${event.data.route.model} · ${String(event.data.durationMs)}ms · ${event.data.status}`,
-          detail,
-          status: failed ? event.data.status === 'cancelled' ? 'warning' : 'failed' : 'completed',
-          startedAt: Math.max(0, event.time - event.data.durationMs),
-          completedAt: event.time,
-          payload: {
-            analysisId: event.data.analysisId,
-            route: event.data.route,
-            images: event.data.content,
-          },
-          result: failed ? event.data.error : {
-            observation: event.data.observation,
-            truncated: event.data.truncated ?? false,
-            finishReason: event.data.finishReason,
-            usage: event.data.usage,
           },
         })
         break

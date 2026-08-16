@@ -1,5 +1,5 @@
 import { r as MemoryMutation } from "./index-BX8q4BCW.js";
-import "./index-BFrW5xpj.js";
+import "./index-DkepdcJW.js";
 import { GoalRef, HistoryEntry, IApiClient, ModelSelection, MuxFrame, PromptContentPart, QueuedInboxItem, RpcId, SessionModels, SessionSummary } from "@deepseek-ai/dsh-host-apiproxy";
 import { Component, EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
 import z from "@deepseek-ai/schemastery";

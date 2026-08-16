@@ -5,31 +5,54 @@ import { buildTrajectoryRecords } from '../../src/trajectory/records.ts'
 import { toolEvents } from './fixtures.ts'
 
 describe('trajectory records', () => {
-  it('turns durable Vision evidence into a timed trace record', () => {
+  it('turns a supported Vision evidence message into a timed trace record after the user input', () => {
     const entries = [{
       event: {
-        type: 'vision/analysis',
+        type: 'user/message',
         seq: 0,
-        time: 2_500,
+        time: 900,
+        surfaceOp: 'append',
         data: {
-          analysisId: 'analysis-1',
-          status: 'completed',
-          route: { strategy: 'proxy', provider: 'dashscope-vision', model: 'qwen3.7-plus' },
-          content: [],
-          durationMs: 1_500,
-          observation: 'Visible warning banner',
+          id: 'message-user',
+          role: 'user',
+          source: { kind: 'user' },
+          content: [{ type: 'text', text: 'Analyze this image' }],
+        },
+      },
+    }, {
+      event: {
+        type: 'user/message',
+        seq: 1,
+        time: 2_500,
+        surfaceOp: 'append',
+        data: {
+          id: 'message-vision',
+          role: 'user',
+          source: {
+            kind: 'community-vision',
+            analysisId: 'analysis-1',
+            provider: 'dashscope-vision',
+            model: 'qwen3.7-plus',
+            attachments: [],
+            durationMs: 1_500,
+            finishReason: 'stop',
+            truncated: false,
+          },
+          content: [{ type: 'text', text: 'Visible warning banner' }],
         },
       },
     }] as TuiState['events']
 
-    expect(buildTrajectoryRecords(entries)).toEqual([expect.objectContaining({
+    const records = buildTrajectoryRecords(entries)
+    expect(records.map(record => record.kind)).toEqual(['user', 'vision'])
+    expect(records[1]).toEqual(expect.objectContaining({
       kind: 'vision',
       title: 'Vision analysis',
       status: 'completed',
       startedAt: 1_000,
       completedAt: 2_500,
       detail: 'Visible warning banner',
-    })])
+    }))
   })
 
   it('pairs turn, step, and tool boundaries while preserving request schema and timing', () => {

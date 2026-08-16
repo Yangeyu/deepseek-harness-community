@@ -5,8 +5,8 @@ import {
   type ContentBlock,
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
+import type { VisionEvidenceSource } from './types.ts'
 
-const PLUGIN_NAME = 'community-vision'
 // Keep one-use observations available across long-running or queued turns while
 // still bounding abandoned process-local entries.
 const STAGE_TTL_MS = 24 * 60 * 60 * 1_000
@@ -17,7 +17,7 @@ interface StagedObservation {
   sessionId: string
   observation: string
   expiresAt: number
-  summary: string
+  source: VisionEvidenceSource
 }
 
 function markerId(block: ContentBlock): string | undefined {
@@ -56,11 +56,11 @@ export class VisionObservationStage {
         const content = message.content.filter(block => markerId(block) === undefined)
         if (content.length === 0) return { kind: 'reject' }
         this.staged.delete(analysisId)
+        messages.push(withoutMarker(message, content))
         messages.push(createUserMessage({
           content: [{ type: 'text', text: staged.observation }],
-          source: { kind: 'plugin', plugin: PLUGIN_NAME, form: 'notice', summary: staged.summary },
+          source: staged.source,
         }))
-        messages.push(withoutMarker(message, content))
       }
       return { kind: 'enter', messages }
     })

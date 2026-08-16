@@ -51,6 +51,19 @@ export interface VisionAnalysis {
   usage?: TokenUsage
 }
 
+/** Structured provenance persisted inside the supported `user/message` event. */
+export interface VisionEvidenceSource {
+  kind: 'community-vision'
+  analysisId: string
+  provider: string
+  model: string
+  attachments: readonly ImageAttachmentRef[]
+  durationMs: number
+  finishReason: string
+  truncated: boolean
+  usage?: TokenUsage
+}
+
 export interface VisionStatus {
   config: VisionConfig
   proxyRegistered: boolean
@@ -59,21 +72,4 @@ export interface VisionStatus {
   credentialRef?: string
   credentialConfigured?: boolean
   credentialSource?: string
-}
-
-export interface VisionAnalysisEvent {
-  analysisId: string
-  status: 'completed' | 'failed' | 'cancelled'
-  route: {
-    strategy: 'proxy'
-    provider: string
-    model: string
-  }
-  content: Array<{ type: 'image'; attachment: ImageAttachmentRef }>
-  durationMs: number
-  finishReason?: string
-  observation?: string
-  truncated?: boolean
-  usage?: TokenUsage
-  error?: { code: string; message: string }
 }

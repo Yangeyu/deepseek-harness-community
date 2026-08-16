@@ -1,7 +1,8 @@
 # DeepSeek Harness Vision
 
 Private community workspace providing model-capability routing, image proxy
-analysis, source-attributed observations, and durable Vision session events.
+analysis, and source-attributed observations staged into supported user-message
+events.
 
 The workspace is bundled into the public `@vascent/dsh-tui` package through its
 `./vision` subpath. It is not published independently and contains no terminal

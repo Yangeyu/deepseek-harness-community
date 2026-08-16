@@ -197,9 +197,10 @@ dsh-tui
 
 Then open `/config vision` (or `/vision`), select “Configure recommended
 DashScope route,” and confirm. The settings reference `DASHSCOPE_API_KEY`; the
-secret value is not copied into configuration or session events. Completed and
-failed proxy analyses appear as expandable Vision cards and timed
-`/trajectory` records.
+secret value is not copied into configuration or session events. Completed
+proxy analyses appear after their user prompt as expandable Vision cards and
+timed `/trajectory` records. Pre-submission failures retain the draft and stay
+out of conversation history.
 
 `/skills` lists effective user-invocable Skills for the current session. Use
 `j`/`k` to navigate, `Enter` to insert the canonical `/name ` gesture, `l` for

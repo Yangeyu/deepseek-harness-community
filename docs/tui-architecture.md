@@ -10,7 +10,7 @@ state.
 Harness Host
   session log · projections · LLM · attachments · commands · tools · persistence
       │
-      ├── private Vision service (routing · proxy analysis · durable evidence)
+      ├── private Vision service (routing · proxy analysis · staged evidence)
       │
       │ transport-neutral ApiProxy plus narrow Command/Memory/Vision ports
       ▼
@@ -134,15 +134,16 @@ architecture required to support that sequence.
   it before the terminal plugin, preserving one installable release artifact.
 - Pass a narrow `VisionPort` into the TUI application composition root. Image
   draft state and platform clipboard adapters stay in TUI application code;
-  routing, proxy execution, observation safety, and durable Vision events stay
-  in the Vision workspace.
+  routing, proxy execution, observation safety, and evidence provenance stay in
+  the Vision workspace.
 - Use explicit model modality metadata for native routing. Text-only or unknown
   routes use the configured proxy or reject without submitting partial input.
-- Preserve three durable identities in proxy mode: a log-only Vision event for
-  image evidence and timing, plugin-sourced model context for the observation,
-  and the exact human-authored user message for conversation display.
-- Extend Transcript and Trajectory from the same Vision event rather than
-  retaining a second UI-owned result store.
+- Preserve two durable messages in proxy mode: the exact human-authored user
+  message first, followed by a source-attributed Vision evidence message with
+  route, attachment, timing, and completion metadata.
+- Extend Transcript and Trajectory from that supported `user/message` source
+  instead of inventing an out-of-repository session event or retaining a
+  second UI-owned result store.
 - Keep provider endpoint, protocol, catalog, and credential references in
   `dsh-llm-pi-ai`; `/config Vision` selects policy and route without duplicating
   provider configuration.

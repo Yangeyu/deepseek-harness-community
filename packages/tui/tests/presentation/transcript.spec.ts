@@ -32,22 +32,40 @@ function entry(value: unknown): HistoryEntry {
 }
 
 describe('TranscriptComponent', () => {
-  it('renders a compact expandable Vision analysis card', () => {
+  it('renders durable Vision evidence after its user prompt', () => {
     const transcript = new TranscriptComponent(state([entry({
       event: {
-        type: 'vision/analysis',
+        type: 'user/message',
         seq: 0,
-        time: 1_500,
+        time: 1_000,
+        surfaceOp: 'append',
         data: {
-          analysisId: 'analysis-1',
-          status: 'completed',
-          route: { strategy: 'proxy', provider: 'dashscope-vision', model: 'qwen3.7-plus' },
-          content: [{
-            type: 'image',
-            attachment: { attachmentId: 'image-1', mediaType: 'image/png', bytes: 10, width: 2, height: 2 },
-          }],
-          durationMs: 500,
-          observation: 'Visible error dialog',
+          id: 'message-user',
+          role: 'user',
+          source: { kind: 'user' },
+          content: [{ type: 'text', text: 'What failed?' }],
+        },
+      },
+    }), entry({
+      event: {
+        type: 'user/message',
+        seq: 1,
+        time: 1_500,
+        surfaceOp: 'append',
+        data: {
+          id: 'message-vision',
+          role: 'user',
+          source: {
+            kind: 'community-vision',
+            analysisId: 'analysis-1',
+            provider: 'dashscope-vision',
+            model: 'qwen3.7-plus',
+            attachments: [{ attachmentId: 'image-1', mediaType: 'image/png', bytes: 10, width: 2, height: 2 }],
+            durationMs: 500,
+            finishReason: 'stop',
+            truncated: false,
+          },
+          content: [{ type: 'text', text: 'Visible error dialog' }],
         },
       },
     })]), createTheme(false), true, 8)
@@ -56,6 +74,7 @@ describe('TranscriptComponent', () => {
     const output = transcript.render(100).join('\n')
     expect(output).toContain('Vision · 1 image · qwen3.7-plus · 500ms')
     expect(output).toContain('dashscope-vision/qwen3.7-plus')
+    expect(output.indexOf('What failed?')).toBeLessThan(output.indexOf('Vision · 1 image'))
   })
 
   it('renders the final assistant message instead of its superseded stream chunks', () => {

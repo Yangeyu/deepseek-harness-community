@@ -7,7 +7,7 @@ This repository keeps the upstream Harness checkout separate and owns the integr
 ```text
 deepseek-harness-community/
 ├── packages/memory/  # Markdown-backed project memory plugin
-├── packages/vision/  # image routing, proxy analysis, and durable evidence
+├── packages/vision/  # image routing, proxy analysis, and staged evidence
 ├── packages/tui/     # terminal UI bundle
 └── src/launcher.js   # profile setup and dsh-tui launcher
 ```
@@ -32,7 +32,7 @@ The first launch creates or updates the `tui` Harness profile under `~/.dsh`; la
 
 - [`packages/tui`](packages/tui) is the private terminal-client workspace with the profile patch, streaming transcript, diffs, scoped Config and Task surfaces, Skills, rewind checkpoints, model selection, and memory UI.
 - [`packages/memory`](packages/memory) is the private file-backed memory workspace with explicit remember/forget tools and correction learning.
-- [`packages/vision`](packages/vision) is the private, terminal-independent Vision workspace for native/proxy routing, safe visual observations, and durable trace evidence.
+- [`packages/vision`](packages/vision) is the private, terminal-independent Vision workspace for native/proxy routing, safe visual observations, and source-attributed evidence.
 
 All private workspaces are source modules managed in this GitHub repository. They are embedded in `@vascent/dsh-tui` and are not published as standalone npm packages.
 The long-term ownership boundaries and staged design are documented in

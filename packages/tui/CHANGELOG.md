@@ -20,6 +20,10 @@ All notable changes to this project are documented in this file.
 - Add a private Vision service workspace with explicit native/proxy routing,
   DashScope `qwen3.7-plus` configuration, credential preflight, bounded
   untrusted observations, exact-id staging, and durable attachment evidence.
+- Persist completed proxy evidence through a structured, supported
+  `user/message` source instead of an unregistered `vision/analysis` event;
+  present the user prompt before its Vision card and keep failed pre-submission
+  analyses out of session history.
 - Add `/config vision` and `/vision`, model-switch safety for native-image
   history, expandable Transcript cards, and timed Trajectory records that
   participate in bottleneck detection.
