@@ -313,7 +313,7 @@ describe('TuiApplication input routing', () => {
     expect(internals.editor.getExpandedText()).toBe('')
   })
 
-  it('opens rewind only after two idle Escape presses within the threshold', () => {
+  it('counts physical Escape presses without treating release or repeat as the second press', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
     const app = application()
@@ -324,9 +324,80 @@ describe('TuiApplication input routing', () => {
     expect(internals.handleGlobalInput('\u001b')).toEqual({ consume: true })
     expect(requestRewind).not.toHaveBeenCalled()
     expect(internals.controller.current.notice).toBeUndefined()
+    expect(internals.handleGlobalInput('\u001b[27;1:2u')).toEqual({ consume: true })
+    expect(internals.handleGlobalInput('\u001b[27;1:3u')).toEqual({ consume: true })
+    expect(requestRewind).not.toHaveBeenCalled()
     vi.setSystemTime(1_300)
     expect(internals.handleGlobalInput('\u001b')).toEqual({ consume: true })
     expect(requestRewind).toHaveBeenCalledOnce()
+  })
+
+  it('clears an idle draft with Escape and restores it with Up or hides it with Down', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const app = application()
+    const internals = app as unknown as AppInternals
+    internals.editor.setText('unfinished prompt')
+
+    expect(internals.handleGlobalInput('\u001b')).toEqual({ consume: true })
+    expect(internals.editor.getExpandedText()).toBe('')
+    expect(internals.status.render(100).join('\n')).toContain('↑ to restore draft')
+
+    expect(internals.handleGlobalInput('\u001b[A')).toEqual({ consume: true })
+    expect(internals.editor.getExpandedText()).toBe('unfinished prompt')
+    expect(internals.handleGlobalInput('\u001b[B')).toEqual({ consume: true })
+    expect(internals.editor.getExpandedText()).toBe('')
+  })
+
+  it('clears and restores text and images as one Composer draft', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const vision = {
+      config: {
+        mode: 'auto',
+        proxyProvider: 'proxy',
+        proxyModel: 'vision',
+        maxObservationChars: 12_000,
+        maxTokens: 2_048,
+      },
+    } as VisionGateway
+    const app = application(undefined, undefined, undefined, undefined, undefined, {
+      vision,
+      clipboardImage: async () => ({
+        name: 'clipboard.png',
+        mediaType: 'image/png',
+        data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
+        source: 'clipboard',
+      }),
+    })
+    const internals = app as unknown as AppInternals
+    await internals.pasteImage()
+    const attachment = internals.attachmentDrafts.snapshot[0]
+    internals.editor.setText('inspect this')
+
+    expect(internals.handleGlobalInput('\u001b')).toEqual({ consume: true })
+    expect(internals.editor.getExpandedText()).toBe('')
+    expect(internals.attachmentDrafts.snapshot).toEqual([])
+    expect(internals.attachmentComposer.render(80).join('\n')).not.toContain('[Image #1]')
+
+    expect(internals.handleGlobalInput('\u001b[A')).toEqual({ consume: true })
+    expect(internals.editor.getExpandedText()).toBe('inspect this')
+    expect(internals.attachmentDrafts.snapshot).toEqual([attachment])
+    expect(internals.attachmentComposer.render(80).join('\n')).toContain('[Image #1]')
+
+    expect(internals.handleGlobalInput('\u001b[B')).toEqual({ consume: true })
+    expect(internals.editor.getExpandedText()).toBe('')
+    expect(internals.attachmentDrafts.snapshot).toEqual([])
+  })
+
+  it('lets the editor dismiss autocomplete before Escape clears the draft', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    internals.editor.setText('/rew')
+    vi.spyOn(internals.editor, 'isShowingAutocomplete').mockReturnValue(true)
+
+    expect(internals.handleGlobalInput('\u001b')).toBeUndefined()
+    expect(internals.editor.getExpandedText()).toBe('/rew')
   })
 
   it('keeps the running animation in the fixed status row above the editor', () => {

@@ -81,6 +81,23 @@ function preparedSender(
   })
 }
 
+describe('AttachmentDraftStore', () => {
+  it('replaces a Composer attachment set without changing stable draft state', () => {
+    const store = new AttachmentDraftStore()
+    addPng(store)
+    const id = store.snapshot[0]!.id
+    store.setError([id], 'retry later')
+    const retained = store.snapshot[0]!
+
+    store.clear()
+    store.replaceAll([retained])
+
+    expect(store.snapshot).toEqual([retained])
+    expect(store.snapshot[0]).toBe(retained)
+    expect(store.snapshot[0]?.error).toBe('retry later')
+  })
+})
+
 describe('AttachmentCoordinator', () => {
   it('submits bytes directly when the active model supports images', async () => {
     const store = new AttachmentDraftStore()

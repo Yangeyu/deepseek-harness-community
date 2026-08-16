@@ -130,16 +130,16 @@ After a normal exit, the restored shell prints a copyable
 | `Enter` | Send while idle; steer while running |
 | `Tab` | Queue explicitly while a turn is running |
 | `Alt+Enter` | Insert a newline with the default keymap |
-| `Esc` | Cancel Vision analysis or the active turn |
+| `Esc` | Dismiss the active composer layer, cancel active work, or clear and retain idle text and images |
 | `Ctrl+V` | Attach the current macOS clipboard image |
 | `Alt+A` | Focus and manage the attachment rail |
 | `Alt+Backspace` | Remove the latest image draft |
 | `Ctrl+C` | Cancel while running; exit while idle |
 | `Ctrl+O` | Toggle all Activity details |
 | `Shift+Tab` | Cycle supported reasoning efforts |
-| `↑` / `↓` | Browse previously submitted input while editing |
+| `↑` / `↓` | Restore/hide the last Esc-cleared text-and-image draft, then browse submitted input history |
 | `PageUp` / `PageDown` | Scroll conversation history while the editor is empty |
-| `Esc Esc` | Open Rewind history; use `↑`/`↓` and `Enter` to inspect a turn boundary |
+| `Esc Esc` | Open Rewind history after two physical key presses; use `↑`/`↓` and `Enter` to inspect a turn boundary |
 
 Open `/keymap` or `/config keybindings` to switch the persistent TUI keymap.
 The default Standard preset follows the running-turn `Enter`/`Tab` interaction
@@ -187,8 +187,10 @@ Commands therefore never appear as user/assistant conversation messages.
 Use repeatable `-i`/`--image <path>` at startup, `/attach <path>` while the TUI
 is open, `/paste-image` for the macOS clipboard, or `Ctrl+V` (`Alt+V` remains a
 compatibility alias). Drafts stay in memory above the editor until Host
-admission succeeds. Press `Alt+A` to focus the rail, then use `h`/`l` or arrows
-to select, `Delete` to remove, and `Esc` to return to the editor.
+admission succeeds. Idle `Esc` clears text and images as one recoverable
+Composer draft; `↑` restores both. Press `Alt+A` to focus the rail, then use
+`h`/`l` or arrows to select, `Delete` to remove, and `Esc` to return to the
+editor.
 
 In Auto mode, a model that explicitly declares image input receives the image
 natively. A text-only or unknown route uses the configured Vision proxy and
@@ -250,9 +252,10 @@ mutations that can be attributed to this Agent call. Files edited by another
 window are not listed and are never restored merely because they changed
 during the turn.
 
-`Esc Esc` opens the retained turn boundaries immediately. `Enter` prepares a
-stale-guarded reverse plan for the selected turn and every later turn. Exact
-matches are `safe`; non-overlapping later edits are `mergeable` and preserved;
+`Esc Esc` opens the retained turn boundaries. Key release and repeat events do
+not count as the second press. `Enter` prepares a stale-guarded reverse plan
+for the selected turn and every later turn. Exact matches are `safe`;
+non-overlapping later edits are `mergeable` and preserved;
 overlapping edits are `conflict`; provider outcomes without a reversible
 before-state are `unsupported`. Restore is selected by default only for safe
 or mergeable plans and the confirmation lists the exact affected paths.

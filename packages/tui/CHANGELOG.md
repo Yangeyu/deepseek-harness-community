@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Make idle `Esc` clear and retain one unified text-and-image Composer draft,
+  restore or hide that draft with `Up`/`Down`, and count only physical key
+  presses toward `Esc Esc` Rewind while preserving autocomplete, modal,
+  attachment-focus, and running-task cancellation priority.
 - Replace whole-worktree Git checkpoints with source-attributed Rewind points
   backed by correlated Host filesystem observations and canonical mutation
   outcomes; external-window changes are no longer listed or restored.

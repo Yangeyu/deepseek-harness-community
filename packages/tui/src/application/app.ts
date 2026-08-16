@@ -5,6 +5,8 @@ import {
   ProcessTerminal,
   Text,
   TuiMainScreen,
+  isKeyRelease,
+  isKeyRepeat,
   matchesKey,
   type OverlayHandle,
   type Terminal,
@@ -94,7 +96,10 @@ import {
   externalEditorCommand,
   runExternalEditor,
 } from './external-editor.ts'
-import { AttachmentDraftStore } from './attachments/drafts.ts'
+import {
+  AttachmentDraftStore,
+  type AttachmentDraft,
+} from './attachments/drafts.ts'
 import { imageDraftFromPath } from './attachments/files.ts'
 import {
   imageDraftFromClipboard,
@@ -121,8 +126,12 @@ import {
 } from '../input/keymap.ts'
 import { composerExecutionActivity } from '../presentation/composer-activity.ts'
 import { formatExecutionDuration } from '../presentation/execution-style.ts'
-
-const DOUBLE_ESCAPE_MS = 600
+import {
+  ComposerInputController,
+  REWIND_ESCAPE_WINDOW_MS,
+  type ComposerDraft,
+  type ComposerInputAction,
+} from './composer-input.ts'
 
 function isWorking(state: Readonly<TuiState>): boolean {
   return composerExecutionActivity(state) !== undefined
@@ -201,7 +210,7 @@ export class TuiApplication implements TuiControllerSink {
   private workingStartedAt: number | undefined
   private workingActivityKey: string | undefined
   private showDetails = false
-  private lastEscapeAt = 0
+  private readonly composerInput = new ComposerInputController<AttachmentDraft>()
   private rewindArmTimer: ReturnType<typeof setTimeout> | undefined
   private disposed = false
   private exiting = false
@@ -217,7 +226,7 @@ export class TuiApplication implements TuiControllerSink {
   private readonly skillCatalog: SkillCatalog
   private readonly skillAuthoring: SkillAuthoringCoordinator
   private autocompleteCwd: string
-  private attachmentSessionId: TuiState['sessionId'] = undefined
+  private renderedSessionId: TuiState['sessionId'] = undefined
   private readonly removeAttachmentListener: () => void
   private readonly keymap: KeymapSettingsGateway
   private readonly removeKeymapListener: () => void
@@ -300,7 +309,13 @@ export class TuiApplication implements TuiControllerSink {
       config.cwd,
     ))
     this.autocompleteCwd = config.cwd
+    this.editor.onChange = text => {
+      if (!this.composerInput.observeEditorText(text) || this.disposed) return
+      this.updateStatus(this.controller.current)
+      this.tui.requestRender()
+    }
     this.editor.onSubmit = text => {
+      this.resetComposerInput()
       this.editor.addToHistory(text)
       void this.submit(text)
     }
@@ -323,6 +338,9 @@ export class TuiApplication implements TuiControllerSink {
     })
     this.removeAttachmentListener = this.attachmentDrafts.onChange((drafts) => {
       if (this.disposed) return
+      if (this.composerInput.observeAttachments(drafts)) {
+        this.updateStatus(this.controller.current)
+      }
       this.attachmentRail.setDrafts(drafts)
       this.attachmentComposer.setDrafts(drafts)
       if (drafts.length === 0 && this.attachmentRailFocused) this.leaveAttachmentRail()
@@ -371,11 +389,14 @@ export class TuiApplication implements TuiControllerSink {
 
   render(state: Readonly<TuiState>): void {
     if (this.disposed) return
-    if (this.attachmentSessionId !== undefined && this.attachmentSessionId !== state.sessionId) {
+    if (this.renderedSessionId !== state.sessionId) {
+      this.resetComposerInput(false)
+    }
+    if (this.renderedSessionId !== undefined && this.renderedSessionId !== state.sessionId) {
       this.attachmentCoordinator?.cancel(false)
       this.attachmentDrafts.clear()
     }
-    this.attachmentSessionId = state.sessionId
+    this.renderedSessionId = state.sessionId
     const commandsChanged = this.commands.setSession(state.sessionId)
     this.skillCatalog.setSession(state.sessionId)
     this.transcript.setState(state)
@@ -470,12 +491,18 @@ export class TuiApplication implements TuiControllerSink {
       clearInterval(this.spinner)
       this.spinner = undefined
     }
-    if (this.lastEscapeAt !== 0) {
-      this.status.setText(this.theme.warning(`Press Esc again to open Rewind history${history}`))
+    const composerInput = this.composerInput.snapshot
+    if (composerInput.rewindArmed) {
+      const recovery = composerInput.draftRecovery === 'stored' ? ' · ↑ to restore draft' : ''
+      this.status.setText(this.theme.warning(`Press Esc again to open Rewind history${recovery}${history}`))
       return
     }
     if (this.memoryActivity.state === 'error') {
       this.status.setText(this.theme.warning(`Memory learning failed: ${this.memoryActivity.message}${history}`))
+      return
+    }
+    if (composerInput.draftRecovery === 'stored') {
+      this.status.setText(this.theme.dim(`Input cleared · ↑ to restore${history}`))
       return
     }
     this.status.setText(state.connected
@@ -489,16 +516,20 @@ export class TuiApplication implements TuiControllerSink {
       this.handleMouse(mouse)
       return { consume: true }
     }
+    const escape = matchesKey(data, Key.escape)
+    const keyRelease = isKeyRelease(data)
+    if (keyRelease && escape) return { consume: true }
+    if (escape && isKeyRepeat(data)) return { consume: true }
     if (this.composerModalActive) return undefined
     if (this.attachmentRailFocused) {
-      if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))) {
+      if (keyRelease) return undefined
+      if (escape || matchesKey(data, Key.ctrl('c'))) {
         this.leaveAttachmentRail()
         return { consume: true }
       }
       return undefined
     }
-    const escape = matchesKey(data, Key.escape)
-    if (!escape && this.lastEscapeAt !== 0) this.disarmRewind()
+    if (!escape && !keyRelease) this.disarmRewind()
     const resolution = resolveKeymapInput(data, {
       working: isWorking(this.controller.current),
       hasAttachments: this.attachmentDrafts.snapshot.length > 0,
@@ -507,6 +538,7 @@ export class TuiApplication implements TuiControllerSink {
       if (resolution.kind === 'action') this.handleKeymapAction(resolution.action)
       return { consume: true }
     }
+    if (keyRelease) return undefined
     const cursor = this.editor.getCursor()
     if (this.attachmentDrafts.snapshot.length > 0
       && matchesKey(data, Key.backspace)
@@ -529,6 +561,16 @@ export class TuiApplication implements TuiControllerSink {
       }
       return { consume: true }
     }
+    const historyDirection = matchesKey(data, Key.up)
+      ? 'up'
+      : matchesKey(data, Key.down) ? 'down' : undefined
+    if (historyDirection !== undefined) {
+      const action = this.composerInput.navigateDraft(
+        historyDirection,
+        this.composerDraft(),
+      )
+      if (this.applyComposerInputAction(action)) return { consume: true }
+    }
     if (escape && !this.tui.hasOverlay()) {
       if (this.imageSubmissionBusy) {
         this.attachmentCoordinator?.cancel()
@@ -538,16 +580,10 @@ export class TuiApplication implements TuiControllerSink {
         void this.runAction(() => this.controller.cancel())
         return { consume: true }
       }
-      if (this.editor.getExpandedText() === '') {
-        const now = Date.now()
-        if (now - this.lastEscapeAt <= DOUBLE_ESCAPE_MS) {
-          this.disarmRewind()
-          this.requestRewind()
-        } else {
-          this.armRewind(now)
-        }
-        return { consume: true }
-      }
+      if (this.editor.isShowingAutocomplete()) return undefined
+      const action = this.composerInput.pressEscape(this.composerDraft(), Date.now())
+      this.applyComposerInputAction(action)
+      return { consume: true }
     }
     return undefined
   }
@@ -608,6 +644,7 @@ export class TuiApplication implements TuiControllerSink {
   private async submitEditor(mode: 'queue' | 'steer'): Promise<void> {
     const text = this.editor.getExpandedText()
     if (text.trim() === '' && this.attachmentDrafts.snapshot.length === 0) return
+    this.resetComposerInput()
     this.editor.setText('')
     this.editor.addToHistory(text)
     await this.submit(text, mode)
@@ -1317,6 +1354,7 @@ export class TuiApplication implements TuiControllerSink {
             ? 'Reloading rewound session…'
             : 'Rewind failed; restoring the current workspace and memory…')
       })
+      this.resetComposerInput()
       this.editor.setText(plan.prompt)
     } catch (error: unknown) {
       this.controller.notice(error instanceof Error ? error.message : String(error))
@@ -1351,26 +1389,64 @@ export class TuiApplication implements TuiControllerSink {
     this.tui.requestRender()
   }
 
-  private armRewind(now: number): void {
-    if (this.rewindArmTimer !== undefined) clearTimeout(this.rewindArmTimer)
-    this.lastEscapeAt = now
+  private composerDraft(): ComposerDraft<AttachmentDraft> {
+    return {
+      text: this.editor.getExpandedText(),
+      attachments: this.attachmentDrafts.snapshot,
+    }
+  }
+
+  private applyComposerInputAction(action: ComposerInputAction<AttachmentDraft>): boolean {
+    switch (action.type) {
+      case 'pass':
+        return false
+      case 'clear-and-arm-rewind':
+        this.editor.setText('')
+        this.attachmentDrafts.clear()
+        this.scheduleRewindDisarm()
+        break
+      case 'arm-rewind':
+        this.scheduleRewindDisarm()
+        break
+      case 'open-rewind':
+        this.requestRewind()
+        return true
+      case 'restore-draft':
+        this.editor.setText(action.draft.text)
+        this.attachmentDrafts.replaceAll(action.draft.attachments)
+        break
+      case 'clear-restored-draft':
+        this.editor.setText('')
+        this.attachmentDrafts.clear()
+        break
+    }
     this.updateStatus(this.controller.current)
     this.tui.requestRender()
+    return true
+  }
+
+  private scheduleRewindDisarm(): void {
+    if (this.rewindArmTimer !== undefined) clearTimeout(this.rewindArmTimer)
     this.rewindArmTimer = setTimeout(() => {
       this.rewindArmTimer = undefined
-      this.lastEscapeAt = 0
-      if (this.disposed) return
+      if (!this.composerInput.disarmRewind() || this.disposed) return
       this.updateStatus(this.controller.current)
       this.tui.requestRender()
-    }, DOUBLE_ESCAPE_MS)
+    }, REWIND_ESCAPE_WINDOW_MS)
   }
 
   private disarmRewind(): void {
     if (this.rewindArmTimer !== undefined) clearTimeout(this.rewindArmTimer)
     this.rewindArmTimer = undefined
-    if (this.lastEscapeAt === 0) return
-    this.lastEscapeAt = 0
-    if (this.disposed) return
+    if (!this.composerInput.disarmRewind() || this.disposed) return
+    this.updateStatus(this.controller.current)
+    this.tui.requestRender()
+  }
+
+  private resetComposerInput(requestRender = true): void {
+    if (this.rewindArmTimer !== undefined) clearTimeout(this.rewindArmTimer)
+    this.rewindArmTimer = undefined
+    if (!this.composerInput.reset() || !requestRender || this.disposed) return
     this.updateStatus(this.controller.current)
     this.tui.requestRender()
   }

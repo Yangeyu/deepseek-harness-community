@@ -73,10 +73,16 @@ export class AttachmentDraftStore {
     this.emit()
   }
 
-  clear(): void {
-    if (this.items.length === 0) return
-    this.items = []
+  /** Replace the current Composer attachments while preserving draft identity and errors. */
+  replaceAll(drafts: readonly AttachmentDraft[]): void {
+    if (drafts.length === this.items.length
+      && drafts.every((draft, index) => draft === this.items[index])) return
+    this.items = [...drafts]
     this.emit()
+  }
+
+  clear(): void {
+    this.replaceAll([])
   }
 
   onChange(listener: (drafts: readonly AttachmentDraft[]) => void): () => void {
