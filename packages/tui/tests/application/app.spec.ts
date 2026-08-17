@@ -1030,30 +1030,58 @@ describe('TuiApplication input routing', () => {
   it('opens Web provider status without exposing credential values', async () => {
     const status = vi.fn(async () => ({
       search: {
-        id: 'community-tavily',
-        endpointHost: 'api.tavily.com',
-        credentialRef: 'TAVILY_API_KEY',
-        credentialConfigured: false,
-        credentialWritable: true,
+        selection: 'auto' as const,
+        activeProviderId: 'deepseek-official',
+        providers: [{
+          id: 'community-tavily',
+          label: 'Tavily',
+          description: 'Search through Tavily.',
+          endpointHost: 'api.tavily.com',
+          credentialRef: 'TAVILY_API_KEY',
+          credentialConfigured: false,
+          credentialWritable: true,
+          available: false,
+        }, {
+          id: 'deepseek-official',
+          label: 'DeepSeek Official',
+          description: 'Use DeepSeek native web search.',
+          endpointHost: 'api.deepseek.com',
+          credentialRef: 'DEEPSEEK_API_KEY',
+          credentialConfigured: true,
+          credentialWritable: true,
+          available: true,
+        }],
       },
       extract: {
-        id: 'community-tavily',
-        endpointHost: 'api.tavily.com',
-        credentialRef: 'TAVILY_API_KEY',
-        credentialConfigured: false,
-        credentialWritable: true,
+        activeProviderId: 'community-tavily',
+        providers: [{
+          id: 'community-tavily',
+          label: 'Tavily',
+          description: 'Read pages through Tavily.',
+          endpointHost: 'api.tavily.com',
+          credentialRef: 'TAVILY_API_KEY',
+          credentialConfigured: false,
+          credentialWritable: true,
+          available: false,
+        }],
       },
     }))
-    const app = application(undefined, undefined, undefined, undefined, undefined, { web: { status } })
+    const setSearchProvider = vi.fn(async () => {})
+    const app = application(undefined, undefined, undefined, undefined, undefined, {
+      web: { status, setSearchProvider },
+    })
     const internals = app as unknown as AppInternals
 
     await internals.submit('/config web')
 
     const output = internals.webConfigView?.render(100).join('\n') ?? ''
     expect(status).toHaveBeenCalledOnce()
-    expect(output).toContain('community-tavily')
+    expect(output).toContain('DeepSeek Official')
     expect(output).toContain('TAVILY_API_KEY missing')
     expect(output).not.toContain('must-not-appear')
+    internals.webConfigView?.handleInput('G')
+    internals.webConfigView?.handleInput('\r')
+    await vi.waitFor(() => { expect(setSearchProvider).toHaveBeenCalledWith('deepseek-official') })
     internals.webConfigView?.handleInput('\u001b')
     expect(internals.webConfigView).toBeUndefined()
   })

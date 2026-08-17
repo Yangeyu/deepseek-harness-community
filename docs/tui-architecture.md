@@ -177,11 +177,13 @@ reducing the number of visible files.
   composer admission and the workspace-contained `inspect_image` Agent tool.
   Tool inspection returns bounded untrusted text and never adds image blocks to
   a text-only main-model route.
-- `CommunityWebService` registers Tavily Search directly into the official
-  `ctx.web` search seam and Tavily Extract into a separate provider-neutral
-  extraction seam. Both adapters share one Tavily transport and credential;
-  `dsh-web` and `dsh-tool-web` retain search selection and the official model
-  tool, while the community layer owns only the distinct `web_extract` schema.
+- `CommunityWebService` registers one stable policy provider into the official
+  `ctx.web` search seam. A capability-local registry owns provider execution,
+  display metadata, priority, and secret-free readiness; both `auto` routing
+  and `/config web` derive from that registry. Selection is persisted live and
+  resolved before each request without request-time fallback. Tavily Extract
+  remains a separate provider-neutral capability, while `dsh-tool-web` retains
+  the official `web_search` model contract.
 - Session-control selectors derive separate Config rows (model, reasoning,
   Permission, Plan, Vision, Web status, keymap, and TUI display) and Task rows
   (Goal, Todos, and runtime) without retaining a second copy of Host state.

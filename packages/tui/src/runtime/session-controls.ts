@@ -108,9 +108,11 @@ export function configurationRows(
   snapshot: ConfigurationSnapshot,
 ): readonly ControlRow<ConfigurationRowKind>[] {
   const current = snapshot.models?.current
-  const webProviders = snapshot.web === null || snapshot.web === undefined
-    ? undefined
-    : [...new Set([snapshot.web.search.id, snapshot.web.extract.id])].join(' + ')
+  const webSearch = snapshot.web?.search.providers
+    .find(provider => provider.id === snapshot.web?.search.activeProviderId)
+  const webExtract = snapshot.web?.extract.providers
+    .find(provider => provider.id === snapshot.web?.extract.activeProviderId)
+  const webReady = webSearch?.available === true && webExtract?.available === true
   return [{
     kind: 'model',
     label: 'Model',
@@ -154,9 +156,7 @@ export function configurationRows(
       ? 'Unavailable in this profile'
       : snapshot.web === null
         ? 'Loading provider status…'
-        : [snapshot.web.search, snapshot.web.extract].every(provider => provider.credentialConfigured)
-          ? `${webProviders} · ready`
-          : `${webProviders} · credential missing`,
+        : `${webSearch?.label ?? snapshot.web.search.activeProviderId} search · ${webExtract?.label ?? snapshot.web.extract.activeProviderId} read · ${webReady ? 'ready' : 'configuration required'}`,
     scope: 'TUI',
     available: snapshot.web !== undefined,
   }, {

@@ -17,12 +17,11 @@
   config:
     mode: !!js process.env.DSH_TOOLS_MODE
 
-# Keep the official search capability and model-tool contract while selecting
-# Tavily explicitly. Page extraction remains separate because Tavily does not
-# expose origin HTTP response data.
+# Keep the official model-tool contract while delegating provider policy to one
+# live settings-backed search adapter. Page extraction remains independent.
 - id: web
   config:
-    searchProvider: community-tavily
+    searchProvider: community-web
 
 - id: tool-web
   config:
@@ -73,6 +72,7 @@
     - id: community-web
       name: '@vascent/deepseek-harness-tui/web'
       config:
+        searchProvider: auto
         extractProvider: community-tavily
         extractMaxOutputChars: 60000
         tavilyApiKeyEnv: TAVILY_API_KEY

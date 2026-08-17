@@ -52,7 +52,7 @@ The initial terminal client supports:
 - fuzzy `@path` references for ignored-aware workspace files and directories,
   with quoted insertion for paths containing spaces;
 - a scoped `/config` center for model, reasoning, permissions, Plan Mode,
-  Vision, Web provider status, and terminal display preferences, plus a separate `/task` surface for durable
+  Vision, persistent Web provider selection, and terminal display preferences, plus a separate `/task` surface for durable
   Goals, read-only Todos, and runtime actions;
 - effective Skill discovery and canonical `/name` invocation through the Slash
   catalog, plus a searchable `/skills` browser and safe project/user authoring;
@@ -66,8 +66,8 @@ The initial terminal client supports:
   Output, Schema, and Timing inspection;
 - explicit image drafts from files or the macOS clipboard, automatic native
   multimodal routing, and a configurable DashScope proxy for text-only models;
-- official `web_search` plus provider-neutral `web_extract`, both backed by
-  Tavily through independent capability adapters;
+- official `web_search` with automatic or explicit DeepSeek/Tavily selection,
+  plus provider-neutral Tavily-backed `web_extract`;
 - an application-owned transcript viewport with pointer and keyboard scrolling,
   stable history position, and automatic tail following.
 
@@ -217,25 +217,31 @@ Commands therefore never appear as user/assistant conversation messages.
 ## Web access
 
 The profile retains the official Harness `ctx.web` registry and official
-`web_search` model tool. The community Web package contributes
-`community-tavily` to that search seam and owns a separate, provider-neutral
-`web_extract` capability backed by the same Tavily client. Extraction is not
-presented as official `web_fetch`: Tavily returns readable content but not the
-origin response status required by the upstream fetch contract. Provider
-selection is explicit, so the bundled DeepSeek search adapter can remain
-installed without creating registration-order fallbacks. Search and extraction
-share authentication, cancellation, and error mapping but retain independent
-request and result contracts.
+`web_search` model tool, but permanently selects one `community-web` policy
+provider. That provider routes each search to the persisted concrete provider
+or uses `auto`, which chooses the highest-priority locally ready registration
+before the request starts. It never retries another provider after dispatch.
+`/config web` renders the provider registry and applies selection live, so a new
+provider registration needs no Profile, router, or UI branch.
 
-Configure both credential references before launch:
+The community package also owns a separate provider-neutral `web_extract`
+capability backed by Tavily. Extraction is not presented as official
+`web_fetch`: Tavily returns readable content but not the origin response status
+required by the upstream fetch contract. Tavily search and extraction share
+authentication, cancellation, and error mapping but retain independent request
+and result contracts.
+
+Set a Tavily credential to make it the preferred automatic search route and to
+enable page reading. Without it, automatic search uses a ready lower-priority
+provider such as DeepSeek Official:
 
 ```sh
 export TAVILY_API_KEY='...'
 dsh-tui
 ```
 
-`/config web` (or `/web`) displays the selected providers, endpoint hosts, and
-credential source/status. It never reads or renders a credential value. Keys
+`/config web` (or `/web`) selects the search policy and displays every registered
+provider, endpoint host, and credential source/status. It never reads or renders a credential value. Keys
 are resolved through the Harness credential service for every operation, so
 rotation applies to the next call without a profile restart. Search results are
 bounded and normalized into citeable URLs; page content is remotely extracted,
@@ -417,7 +423,7 @@ commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/attach`,
 Cordis bundle entry
   -> file-backed Memory plugin (context, tools, quiet learner, mutations)
   -> Vision plugin (routing, proxy analysis, observation staging, events)
-  -> Web plugin (Tavily search + extraction adapters over shared transport)
+  -> Web plugin (registry-driven search policy + Tavily extraction)
   -> in-process ApiProxy client
      -> application/ (bootstrap orchestration and local interactions)
         ├─ input/ (semantic keymap actions and context-aware binding resolution)

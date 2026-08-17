@@ -71,23 +71,36 @@ describe('session control selectors', () => {
 
     const ready = configurationSnapshot(undefined, {}, false, undefined, 'standard', {
       search: {
-        id: 'community-tavily',
-        credentialRef: 'TAVILY_API_KEY',
-        credentialConfigured: true,
-        credentialWritable: true,
+        selection: 'auto',
+        activeProviderId: 'community-tavily',
+        providers: [{
+          id: 'community-tavily',
+          label: 'Tavily',
+          description: 'Search through Tavily.',
+          credentialRef: 'TAVILY_API_KEY',
+          credentialConfigured: true,
+          credentialWritable: true,
+          available: true,
+        }],
       },
       extract: {
-        id: 'community-tavily',
-        credentialRef: 'TAVILY_API_KEY',
-        credentialConfigured: true,
-        credentialWritable: true,
+        activeProviderId: 'community-tavily',
+        providers: [{
+          id: 'community-tavily',
+          label: 'Tavily',
+          description: 'Read pages through Tavily.',
+          credentialRef: 'TAVILY_API_KEY',
+          credentialConfigured: true,
+          credentialWritable: true,
+          available: true,
+        }],
       },
     })
     expect(configurationRows(ready)).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'web',
         available: true,
-        value: 'community-tavily · ready',
+        value: 'Tavily search · Tavily read · ready',
       }),
     ]))
   })

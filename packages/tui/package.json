@@ -96,6 +96,7 @@
     "@deepseek-ai/dsh-base": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-credentials": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-fs": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-launch-environment": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-llm": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-session": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-session-projection": ">=0.1.0-rc.5 <0.2.0",
@@ -104,7 +105,8 @@
     "@deepseek-ai/dsh-token-meter": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-tool-todo": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-tools": ">=0.1.0-rc.5 <0.2.0",
-    "@deepseek-ai/dsh-web": ">=0.1.0-rc.6 <0.2.0"
+    "@deepseek-ai/dsh-web": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-web-search-deepseek": ">=0.1.0-rc.6 <0.2.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -134,6 +136,9 @@
     "@deepseek-ai/dsh-fs": {
       "optional": true
     },
+    "@deepseek-ai/dsh-launch-environment": {
+      "optional": true
+    },
     "@deepseek-ai/dsh-settings": {
       "optional": true
     },
@@ -148,6 +153,9 @@
     },
     "@deepseek-ai/dsh-web": {
       "optional": true
+    },
+    "@deepseek-ai/dsh-web-search-deepseek": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -157,9 +165,11 @@
     "@deepseek-ai/dsh-base": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-credentials": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-fs": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-launch-environment": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-session-projection": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-settings": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-token-meter": ">=0.1.0-rc.5 <0.2.0",
+    "@deepseek-ai/dsh-web-search-deepseek": ">=0.1.0-rc.6 <0.2.0",
     "@vascent/deepseek-harness-memory": "workspace:^",
     "@vascent/deepseek-harness-vision": "workspace:^",
     "@vascent/deepseek-harness-web": "workspace:^",

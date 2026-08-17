@@ -13,9 +13,10 @@ All notable changes to this project are documented in this file.
   retaining each observed target's canonical identity, preflighting multi-root
   plans atomically, and migrating schema 2 relative mutation paths.
 - Add official `web_search` and provider-neutral `web_extract` tool support
-  through one explicitly selected Tavily provider, shared per-operation Harness
-  credential resolution and transport, bounded output, stable error mapping,
-  cancellation, and a secret-free `/config web` status surface.
+  through a registry-driven live search policy and Tavily page reading. Automatic
+  routing prefers ready providers without request-time retries; `/config web`
+  persists explicit selection and renders secret-free readiness directly from
+  the provider registry.
 
 ## 0.1.10 - 2026-08-17
 

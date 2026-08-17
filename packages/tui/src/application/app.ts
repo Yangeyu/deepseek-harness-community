@@ -119,7 +119,7 @@ import { ComposerEditorFrame } from '../presentation/composer-editor.ts'
 import { ComposerFooter } from '../presentation/footer.ts'
 import { VisionConfigView } from '../presentation/config/vision-view.ts'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
-import type { CommunityWebStatus } from '@vascent/deepseek-harness-web'
+import type { CommunityWebStatus, WebSearchSelection } from '@vascent/deepseek-harness-web'
 import { WebConfigView } from '../presentation/config/web-view.ts'
 import { KeymapView } from '../presentation/config/keymap-view.ts'
 import {
@@ -196,6 +196,7 @@ export interface TuiMemoryPort {
 /** Secret-free Web capability status used by the terminal configuration surface. */
 export interface WebGateway {
   status(signal?: AbortSignal): Promise<CommunityWebStatus>
+  setSearchProvider(provider: WebSearchSelection): Promise<void>
 }
 
 /** Optional composition ports kept separate from the stable application core. */
@@ -1206,7 +1207,8 @@ export class TuiApplication implements TuiControllerSink {
 
   private async openWebConfig(): Promise<void> {
     if (this.tui.hasOverlay() || this.composerModalActive) return
-    if (this.web === undefined) throw new Error('Web providers are unavailable in this profile.')
+    const web = this.web
+    if (web === undefined) throw new Error('Web providers are unavailable in this profile.')
     const status = await this.refreshWebStatus()
     if (this.tui.hasOverlay() || this.composerModalActive || this.disposed) return
     const close = (): void => {
@@ -1220,6 +1222,13 @@ export class TuiApplication implements TuiControllerSink {
     const view = new WebConfigView(
       status,
       this.theme,
+      provider => {
+        void this.runAction(async () => {
+          await web.setSearchProvider(provider)
+          await this.refreshWebStatus()
+          this.controller.notice(`Web search provider changed to ${provider}.`)
+        })
+      },
       () => { void this.runAction(async () => { await this.refreshWebStatus() }) },
       close,
     )

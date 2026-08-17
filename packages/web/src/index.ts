@@ -1,21 +1,32 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { credentialRef, type CredentialInfo } from '@deepseek-ai/dsh-credentials'
 import { settingsNamespace, type SettingsScope } from '@deepseek-ai/dsh-settings'
-import { WebError } from '@deepseek-ai/dsh-web'
+import { WebError, type WebSearchProvider } from '@deepseek-ai/dsh-web'
 import {
+  AUTOMATIC_SEARCH_PROVIDER_ID,
   CommunityWebConfigSchema,
   resolveCommunityWebConfig,
-  TAVILY_PROVIDER_ID,
   type CommunityWebConfig,
   type ResolvedCommunityWebConfig,
+  type WebSearchSelection,
 } from './config.ts'
+import { createDeepSeekSearchProvider, deepSeekSearchRouteStatus } from './deepseek-search.ts'
 import type { WebExtractProvider, WebExtractRequest, WebExtractResult } from './extract.ts'
+import {
+  ProviderCatalog,
+  type CommunityWebProviderReadiness,
+  type CommunityWebProviderRegistration,
+  type CommunityWebProviderStatus,
+} from './provider-catalog.ts'
+import { SelectedSearchProvider } from './search-router.ts'
 import { TavilyClient } from './tavily-client.ts'
 import { TavilyExtractProvider } from './tavily-extract.ts'
 import { TavilySearchProvider } from './tavily-search.ts'
 import { createWebExtractTool } from './tool.ts'
 
 export {
+  AUTOMATIC_SEARCH_PROVIDER_ID,
+  COMMUNITY_SEARCH_PROVIDER_ID,
   CommunityWebConfigSchema as Config,
   DEFAULT_TAVILY_API_KEY_ENV,
   DEFAULT_TAVILY_EXTRACT_ENDPOINT,
@@ -28,28 +39,36 @@ export {
   type ResolvedCommunityWebConfig,
   type TavilyExtractDepth,
   type TavilySearchDepth,
+  type WebSearchSelection,
 } from './config.ts'
 export type { WebExtractProvider, WebExtractRequest, WebExtractResult } from './extract.ts'
 export { TavilyClient, type TavilyClientOptions } from './tavily-client.ts'
 export { TavilyExtractProvider, type TavilyExtractProviderOptions } from './tavily-extract.ts'
 export { TavilySearchProvider, type TavilySearchProviderOptions } from './tavily-search.ts'
+export { SelectedSearchProvider } from './search-router.ts'
+export {
+  type CommunityWebProviderReadiness,
+  type CommunityWebProviderRegistration,
+  type CommunityWebProviderStatus,
+} from './provider-catalog.ts'
+export { DEEPSEEK_PROVIDER_ID } from '@deepseek-ai/dsh-web-search-deepseek'
 export { createWebExtractTool, WEB_EXTRACT_TIMEOUT_MS, WEB_EXTRACT_TOOL_NAME } from './tool.ts'
 
 export const name = 'community-web'
 export const COMMUNITY_WEB_SETTINGS_NAMESPACE = settingsNamespace('community-web')
 
-export interface CommunityWebProviderStatus {
-  id: string
-  endpointHost?: string
-  credentialRef: string
-  credentialConfigured: boolean
-  credentialSource?: string
-  credentialWritable: boolean
+export interface CommunityWebCapabilityStatus {
+  activeProviderId: string
+  providers: readonly CommunityWebProviderStatus[]
+}
+
+export interface CommunityWebSearchStatus extends CommunityWebCapabilityStatus {
+  selection: WebSearchSelection
 }
 
 export interface CommunityWebStatus {
-  search: CommunityWebProviderStatus
-  extract: CommunityWebProviderStatus
+  search: CommunityWebSearchStatus
+  extract: CommunityWebCapabilityStatus
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -66,20 +85,24 @@ function endpointHost(value: string): string | undefined {
   }
 }
 
-function providerStatus(
-  id: string,
+function providerReadiness(
   endpoint: string,
   reference: string,
   info: CredentialInfo,
-): CommunityWebProviderStatus {
+  configuredRoute: boolean,
+  literalCredentialConfigured = false,
+): CommunityWebProviderReadiness {
   const host = endpointHost(endpoint)
+  const credentialConfigured = literalCredentialConfigured || info.configured
   return {
-    id,
     ...host === undefined ? {} : { endpointHost: host },
     credentialRef: reference,
-    credentialConfigured: info.configured,
-    ...info.source === undefined ? {} : { credentialSource: info.source },
-    credentialWritable: info.writable,
+    credentialConfigured,
+    ...literalCredentialConfigured
+      ? { credentialSource: 'provider config' }
+      : info.source === undefined ? {} : { credentialSource: info.source },
+    credentialWritable: literalCredentialConfigured ? false : info.writable,
+    available: configuredRoute && credentialConfigured,
   }
 }
 
@@ -90,7 +113,11 @@ export class CommunityWebService extends Service {
 
   private readonly settings: SettingsScope<CommunityWebConfig>
   private readonly tavily: TavilyClient
-  private readonly extractProviders = new Map<string, WebExtractProvider>()
+  private readonly tavilySearch: TavilySearchProvider
+  private readonly deepSeekSearch: WebSearchProvider
+  private readonly tavilyExtract: TavilyExtractProvider
+  private readonly searchProviders: ProviderCatalog<WebSearchProvider>
+  private readonly extractProviders: ProviderCatalog<WebExtractProvider>
 
   constructor(ctx: Context, config: CommunityWebConfig) {
     super(ctx, 'communityWeb')
@@ -99,8 +126,36 @@ export class CommunityWebService extends Service {
       applies: 'live',
     })
     this.tavily = new TavilyClient(() => this.tavilyClientOptions())
-    ctx.web.registerSearchProvider(new TavilySearchProvider(this.tavily, () => this.tavilySearchOptions()))
-    this.registerExtractProvider(new TavilyExtractProvider(this.tavily, () => this.tavilyExtractOptions()))
+    this.tavilySearch = new TavilySearchProvider(this.tavily, () => this.tavilySearchOptions())
+    this.deepSeekSearch = createDeepSeekSearchProvider(ctx)
+    this.tavilyExtract = new TavilyExtractProvider(this.tavily, () => this.tavilyExtractOptions())
+    this.searchProviders = new ProviderCatalog(ctx)
+    this.extractProviders = new ProviderCatalog(ctx)
+    this.registerSearchProvider({
+      provider: this.tavilySearch,
+      label: 'Tavily',
+      description: 'Search through Tavily using the configured search depth and per-operation credential resolution.',
+      autoPriority: 200,
+      status: signal => this.tavilyReadiness(this.tavilySearch, this.config.tavilySearchEndpoint, signal),
+    })
+    this.registerSearchProvider({
+      provider: this.deepSeekSearch,
+      label: 'DeepSeek Official',
+      description: 'Use DeepSeek native web search through the official Anthropic-compatible Messages API.',
+      autoPriority: 100,
+      status: signal => this.deepSeekReadiness(signal),
+    })
+    this.registerExtractProvider({
+      provider: this.tavilyExtract,
+      label: 'Tavily',
+      description: 'Extract readable Markdown from a public page through Tavily.',
+      autoPriority: 100,
+      status: signal => this.tavilyReadiness(this.tavilyExtract, this.config.tavilyExtractEndpoint, signal),
+    })
+    ctx.web.registerSearchProvider(new SelectedSearchProvider(
+      this.searchProviders,
+      signal => this.selectedSearchProviderId(signal),
+    ))
     ctx.tools.register(createWebExtractTool({
       extract: (request, signal) => this.extract(request, signal),
     }))
@@ -117,24 +172,39 @@ export class CommunityWebService extends Service {
 
   async status(signal?: AbortSignal): Promise<CommunityWebStatus> {
     const config = this.config
-    const tavily = await this.ctx.credentials.describe(credentialRef(config.tavilyApiKeyEnv))
+    const [searchProviders, extractProviders] = await Promise.all([
+      this.searchProviders.statuses(signal),
+      this.extractProviders.statuses(signal),
+    ])
     signal?.throwIfAborted()
     return {
-      search: providerStatus(TAVILY_PROVIDER_ID, config.tavilySearchEndpoint, config.tavilyApiKeyEnv, tavily),
-      extract: providerStatus(TAVILY_PROVIDER_ID, config.tavilyExtractEndpoint, config.tavilyApiKeyEnv, tavily),
+      search: {
+        selection: config.searchProvider,
+        activeProviderId: config.searchProvider === AUTOMATIC_SEARCH_PROVIDER_ID
+          ? this.automaticProviderId(searchProviders)
+          : config.searchProvider,
+        providers: searchProviders,
+      },
+      extract: {
+        activeProviderId: config.extractProvider,
+        providers: extractProviders,
+      },
     }
   }
 
-  registerExtractProvider(provider: WebExtractProvider): () => void {
-    if (this.extractProviders.has(provider.id)) {
-      throw new WebError(`an extract provider with id "${provider.id}" is already registered`, 'WEB_DUPLICATE_PROVIDER')
+  async setSearchProvider(searchProvider: WebSearchSelection): Promise<void> {
+    if (searchProvider !== AUTOMATIC_SEARCH_PROVIDER_ID && !this.searchProviders.has(searchProvider)) {
+      throw new WebError(`web search provider "${searchProvider}" is not registered`, 'WEB_PROVIDER_CONFIGURED_MISSING')
     }
-    const providers = this.extractProviders
-    const dispose = this.ctx.effect(function* registerCommunityExtractProvider() {
-      providers.set(provider.id, provider)
-      yield () => { providers.delete(provider.id) }
-    }, 'communityWeb.registerExtractProvider()')
-    return () => { void dispose() }
+    await this.settings.update({ searchProvider })
+  }
+
+  registerSearchProvider(registration: CommunityWebProviderRegistration<WebSearchProvider>): () => void {
+    return this.searchProviders.register(registration)
+  }
+
+  registerExtractProvider(registration: CommunityWebProviderRegistration<WebExtractProvider>): () => void {
+    return this.extractProviders.register(registration)
   }
 
   async extract(request: WebExtractRequest, signal?: AbortSignal): Promise<WebExtractResult> {
@@ -153,6 +223,47 @@ export class CommunityWebService extends Service {
       content: result.content.slice(0, config.extractMaxOutputChars),
       truncated: true,
     }
+  }
+
+  private async selectedSearchProviderId(signal?: AbortSignal): Promise<string> {
+    const config = this.config
+    if (config.searchProvider !== AUTOMATIC_SEARCH_PROVIDER_ID) return config.searchProvider
+    return this.automaticProviderId(await this.searchProviders.statuses(signal))
+  }
+
+  private automaticProviderId(providers: readonly CommunityWebProviderStatus[]): string {
+    const provider = providers.find(candidate => candidate.available) ?? providers[0]
+    if (provider === undefined) throw new WebError('no web search provider is registered', 'WEB_PROVIDER_UNAVAILABLE')
+    return provider.id
+  }
+
+  private async tavilyReadiness(
+    provider: { available(): boolean },
+    endpoint: string,
+    signal?: AbortSignal,
+  ): Promise<CommunityWebProviderReadiness> {
+    const config = this.config
+    const credential = await this.ctx.credentials.describe(credentialRef(config.tavilyApiKeyEnv))
+    signal?.throwIfAborted()
+    return providerReadiness(
+      endpoint,
+      config.tavilyApiKeyEnv,
+      credential,
+      provider.available(),
+    )
+  }
+
+  private async deepSeekReadiness(signal?: AbortSignal): Promise<CommunityWebProviderReadiness> {
+    const route = deepSeekSearchRouteStatus(this.ctx)
+    const credential = await this.ctx.credentials.describe(credentialRef(route.apiKeyRef))
+    signal?.throwIfAborted()
+    return providerReadiness(
+      route.baseURL,
+      route.apiKeyRef,
+      credential,
+      this.deepSeekSearch.available(),
+      route.literalCredentialConfigured,
+    )
   }
 
   private tavilyClientOptions() {
