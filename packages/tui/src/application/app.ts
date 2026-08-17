@@ -143,6 +143,7 @@ import {
   listWorkspacePaths,
   type WorkspacePathSource,
 } from './autocomplete.ts'
+import type { TuiStartupOptions } from './cli.ts'
 import {
   watchGitBranch,
   type GitBranchSource,
@@ -193,7 +194,7 @@ export interface TuiApplicationDependencies {
   commandSource?: HostCommandSource
   vision?: VisionGateway
   keymap?: KeymapSettingsGateway
-  initialImagePaths?: readonly string[]
+  startup?: TuiStartupOptions
   clipboardImage?: ClipboardImageLoader
   clipboardText?: ClipboardTextWriter
   attachments?: PromptAttachmentReader
@@ -217,7 +218,7 @@ function shellArgument(value: string): string {
 
 function resumeHint(sessionId: TuiState['sessionId']): string | undefined {
   if (sessionId === undefined) return undefined
-  return `\nResume this session with:\n  dsh-tui --resume ${shellArgument(String(sessionId))}\n\n`
+  return `\nResume this session with:\n  dsh-tui resume ${shellArgument(String(sessionId))}\n\n`
 }
 
 /** Main-screen pi-tui application for one in-process Harness API client. */
@@ -273,7 +274,7 @@ export class TuiApplication implements TuiControllerSink {
   private readonly removeKeymapListener: () => void
   private visionStatus: VisionStatus | undefined
   private attachmentRailFocused = false
-  private readonly initialImagePaths: readonly string[]
+  private readonly startup: TuiStartupOptions
   private readonly clipboardImage: ClipboardImageLoader
   private readonly clipboardText: ClipboardTextWriter
   private readonly promptAttachmentReader: PromptAttachmentReader | undefined
@@ -297,7 +298,7 @@ export class TuiApplication implements TuiControllerSink {
       commandSource,
       vision,
       keymap,
-      initialImagePaths = [],
+      startup = { imagePaths: [], plan: false },
       clipboardImage = imageDraftFromClipboard,
       clipboardText,
       attachments,
@@ -306,7 +307,7 @@ export class TuiApplication implements TuiControllerSink {
       terminal = new ProcessTerminal(),
     } = dependencies
     this.terminal = terminal
-    this.initialImagePaths = initialImagePaths
+    this.startup = startup
     this.clipboardImage = clipboardImage
     this.clipboardText = clipboardText ?? createClipboardTextWriter(terminal)
     this.promptAttachmentReader = attachments
@@ -409,7 +410,7 @@ export class TuiApplication implements TuiControllerSink {
     })
   }
 
-  /** Start raw-mode rendering and bind or resume the configured session. */
+  /** Start rendering, bind the requested session, then apply one startup intent. */
   async start(): Promise<void> {
     if (!this.runtime.stdin.isTTY || !this.runtime.stdout.isTTY) {
       throw new Error('deepseek-harness-tui requires an interactive TTY')
@@ -417,8 +418,21 @@ export class TuiApplication implements TuiControllerSink {
     this.terminal.setTitle(this.config.title)
     this.removeInputListener = this.tui.addInputListener(data => this.handleGlobalInput(data))
     this.tui.start()
-    await this.controller.start(this.config.sessionId)
+    await this.controller.start(await this.startupSessionId())
+    if (this.startup.model !== undefined) {
+      await this.selectNamedModel(this.startup.model, this.startup.reasoningEffort)
+    } else if (this.startup.reasoningEffort !== undefined) {
+      await this.selectReasoningEffort(this.startup.reasoningEffort)
+    }
+    if (this.startup.permissionMode !== undefined) {
+      await this.commands.dispatchHost(`/permission ${this.startup.permissionMode}`)
+    }
+    if (this.startup.plan) await this.commands.dispatchHost('/plan')
     await this.loadInitialImages()
+    if (this.startup.prompt !== undefined) {
+      this.editor.addToHistory(this.startup.prompt)
+      await this.submit(this.startup.prompt)
+    }
   }
 
   /** Restore the terminal and stop controller streams. Idempotent. */
@@ -919,10 +933,19 @@ export class TuiApplication implements TuiControllerSink {
     return this.attachmentCoordinator?.busy === true
   }
 
+  private async startupSessionId(): Promise<string | undefined> {
+    const target = this.startup.resume
+    if (target === undefined) return undefined
+    if (target.kind === 'session') return target.sessionId
+    const latest = (await this.controller.sessions()).find(session => !session.blank && session.origin !== 'subagent')
+    if (latest === undefined) throw new Error('no non-blank root session is available to resume')
+    return String(latest.sessionId)
+  }
+
   private async loadInitialImages(): Promise<void> {
-    if (this.initialImagePaths.length === 0) return
+    if (this.startup.imagePaths.length === 0) return
     this.ensureVisionAvailable()
-    const drafts = await Promise.all(this.initialImagePaths.map(path => (
+    const drafts = await Promise.all(this.startup.imagePaths.map(path => (
       imageDraftFromPath(path, this.controller.current.cwd)
     )))
     for (const draft of drafts) this.attachmentDrafts.add(draft)
@@ -1638,7 +1661,7 @@ export class TuiApplication implements TuiControllerSink {
     this.tui.requestRender()
   }
 
-  private async selectNamedModel(name: string): Promise<void> {
+  private async selectNamedModel(name: string, reasoningEffort?: string): Promise<void> {
     const models = await this.controller.refreshModels()
     const matches = models.groups.flatMap(group => group.models
       .filter(model => `${group.id}/${model.id}` === name || model.id === name)
@@ -1646,7 +1669,10 @@ export class TuiApplication implements TuiControllerSink {
     if (matches.length !== 1) throw new Error(matches.length === 0
       ? `model "${name}" was not found`
       : `model "${name}" is ambiguous; use provider/model`)
-    await this.selectModel(matches[0] as ModelSelection)
+    await this.selectModel({
+      ...matches[0] as ModelSelection,
+      ...reasoningEffort === undefined ? {} : { reasoningEffort },
+    })
   }
 
   private async selectModel(selection: ModelSelection): Promise<void> {

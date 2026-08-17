@@ -1,11 +1,22 @@
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import {
+  CliUsageError,
+  formatCliError,
+  parseCliArgs,
+  renderCliHelp,
+  renderCliVersion,
+  renderCompletion,
+  tuiAppArgs,
+} from '../packages/tui/src/application/cli.ts'
+import { diagnose, formatDoctorReport } from './doctor.ts'
 
 const DEFAULT_PROFILE = 'tui'
+const HEADLESS_PROFILE = 'headless'
 const TUI_PACKAGE = '@vascent/deepseek-harness-tui'
 const LEGACY_TUI_PACKAGES = ['@yangeyu/deepseek-harness-tui']
 const require = createRequire(import.meta.url)
@@ -20,6 +31,40 @@ interface ProfileManifest {
 }
 
 type RunPlugin = (args: readonly string[]) => Promise<number>
+type WriteText = (text: string) => unknown
+
+export type NodeRunner = (
+  script: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  output: 'inherit' | 'stderr',
+) => Promise<number>
+
+export interface LauncherOptions {
+  env?: NodeJS.ProcessEnv
+  cwd?: string
+  stdout?: { write: WriteText; isTTY?: boolean }
+  stderr?: { write: WriteText }
+  stdinIsTTY?: boolean
+  readStdin?: () => Promise<string>
+  runNode?: NodeRunner
+  ensureProfile?: () => Promise<number>
+  resolveDshBin?: () => string
+  resolveRgBin?: () => Promise<string>
+  nodeVersion?: string
+  packageVersion?: string
+  platform?: NodeJS.Platform
+}
+
+function packageVersion(): string {
+  const manifestPath = fileURLToPath(new URL('../package.json', import.meta.url))
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { version?: unknown }
+  if (typeof manifest.version !== 'string' || manifest.version.trim() === '') {
+    throw new Error(`package version is missing from ${manifestPath}`)
+  }
+  return manifest.version
+}
 
 function readProfileManifest(profileDirectory: string): ProfileManifest | undefined {
   const manifestPath = join(profileDirectory, 'package.json')
@@ -77,6 +122,7 @@ export async function ensureProfilePlugin(
   profileDirectory: string,
   pluginDirectory: string,
   runPlugin: RunPlugin,
+  report: WriteText = text => process.stderr.write(text),
 ): Promise<number> {
   const manifest = readProfileManifest(profileDirectory)
   const dependencies = manifest?.dependencies ?? {}
@@ -84,7 +130,7 @@ export async function ensureProfilePlugin(
     if (!Object.hasOwn(dependencies, packageName)) {
       throw new Error(`profile still references legacy bundle ${packageName} without an installed dependency`)
     }
-    process.stderr.write(`dsh-tui: removing legacy profile plugin ${packageName}\n`)
+    report(`dsh-tui: removing legacy profile plugin ${packageName}\n`)
     const removeCode = await runPlugin(['remove', packageName])
     if (removeCode !== 0) return removeCode
   }
@@ -93,7 +139,7 @@ export async function ensureProfilePlugin(
   if (legacy.length > 0) throw new Error(`legacy profile plugin remained after migration: ${legacy.join(', ')}`)
   if (profileUsesPlugin(profileDirectory, pluginDirectory)) return 0
 
-  process.stderr.write('dsh-tui: configuring the profile for this installation\n')
+  report('dsh-tui: configuring the profile for this installation\n')
   const addCode = await runPlugin(['add', pluginDirectory])
   if (addCode !== 0) return addCode
   if (!profileUsesPlugin(profileDirectory, pluginDirectory)) {
@@ -110,40 +156,157 @@ function packageBin(packageName: string, binName: string): string {
   return join(dirname(manifestPath), relativeBin)
 }
 
-function runNode(script: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<number> {
+function runNode(
+  script: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  output: 'inherit' | 'stderr',
+): Promise<number> {
   return new Promise<number>((resolvePromise, reject) => {
     const child = spawn(process.execPath, [script, ...args], {
-      cwd: process.cwd(),
+      cwd,
       env,
-      stdio: 'inherit',
+      stdio: ['inherit', output === 'stderr' ? 'pipe' : 'inherit', 'inherit'],
     })
+    child.stdout?.pipe(process.stderr)
     child.once('error', reject)
     child.once('exit', code => resolvePromise(code ?? 1))
   })
 }
 
-/** Configure the profile when needed, then run the TUI with forwarded arguments. */
-export async function main(args: readonly string[]): Promise<number> {
-  const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
-  const pluginDirectory = join(repositoryRoot, 'packages', 'tui')
-  const profile = resolveTuiProfile()
-  const profileDirectory = join(resolveDshHome(), 'profiles', profile)
-  const dshBin = packageBin('@deepseek-ai/dsh', 'dsh')
-  const env = {
-    ...process.env,
-    PATH: `${join(repositoryRoot, 'node_modules', '.bin')}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`,
-  }
+async function readStandardInput(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+function patchArgs(patches: readonly string[]): string[] {
+  return patches.flatMap(path => ['--patch', path])
+}
+
+function unreachable(invocation: never): never {
+  throw new Error(`unhandled CLI invocation: ${JSON.stringify(invocation)}`)
+}
+
+/** Parse first, then run exactly one action; informational actions never touch a profile. */
+export async function main(args: readonly string[], options: LauncherOptions = {}): Promise<number> {
+  const env = options.env ?? process.env
+  const cwd = options.cwd ?? process.cwd()
+  const stdout = options.stdout ?? process.stdout
+  const stderr = options.stderr ?? process.stderr
 
   try {
-    const setupCode = await ensureProfilePlugin(
+    const invocation = parseCliArgs(args)
+    if (invocation.kind === 'help') {
+      stdout.write(renderCliHelp(invocation.topic))
+      return 0
+    }
+    if (invocation.kind === 'version') {
+      stdout.write(renderCliVersion(options.packageVersion ?? packageVersion()))
+      return 0
+    }
+    if (invocation.kind === 'completion') {
+      stdout.write(renderCompletion(invocation.shell))
+      return 0
+    }
+
+    const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
+    const pluginDirectory = join(repositoryRoot, 'packages', 'tui')
+    const profile = resolveTuiProfile(env)
+    const profileDirectory = join(resolveDshHome(env), 'profiles', profile)
+    const childEnv = {
+      ...env,
+      PATH: `${join(repositoryRoot, 'node_modules', '.bin')}${delimiter}${env.PATH ?? ''}`,
+    }
+    const nodeRunner = options.runNode ?? runNode
+    const resolveDshBin = options.resolveDshBin ?? (() => packageBin('@deepseek-ai/dsh', 'dsh'))
+    const launchDsh = (
+      dshArgs: readonly string[],
+      launchOptions: {
+        cwd?: string
+        env?: NodeJS.ProcessEnv
+        output?: 'inherit' | 'stderr'
+      } = {},
+    ): Promise<number> => nodeRunner(
+      resolveDshBin(),
+      dshArgs,
+      launchOptions.env ?? childEnv,
+      launchOptions.cwd ?? cwd,
+      launchOptions.output ?? 'inherit',
+    )
+    const ensureProfile = options.ensureProfile ?? (() => ensureProfilePlugin(
       profileDirectory,
       pluginDirectory,
-      pluginArgs => runNode(dshBin, ['plugin', '--profile', profile, ...pluginArgs], env),
-    )
+      pluginArgs => launchDsh(
+        ['plugin', '--profile', profile, ...pluginArgs],
+        { output: 'stderr' },
+      ),
+      text => stderr.write(text),
+    ))
+
+    if (invocation.kind === 'doctor') {
+      const report = await diagnose({
+        cwd,
+        env,
+        nodeVersion: options.nodeVersion ?? process.versions.node,
+        platform: options.platform ?? process.platform,
+        stdoutIsTTY: options.stdout?.isTTY ?? process.stdout.isTTY,
+        pluginDirectory,
+        profileDirectory,
+        profileConfigured: profileUsesPlugin(profileDirectory, pluginDirectory),
+        resolveDshBin,
+        resolveRgBin: options.resolveRgBin ?? (async () => (await import('@vscode/ripgrep')).rgPath),
+      })
+      stdout.write(formatDoctorReport(report, invocation.json))
+      return report.ok ? 0 : 1
+    }
+
+    if (invocation.kind === 'exec') {
+      let prompt = invocation.prompt
+      if (prompt === undefined) {
+        if (options.stdinIsTTY ?? process.stdin.isTTY) {
+          throw new CliUsageError('exec requires a prompt argument or piped stdin')
+        }
+        prompt = (await (options.readStdin ?? readStandardInput)()).trim()
+        if (prompt === '') throw new CliUsageError('exec received an empty prompt from stdin')
+      }
+      const executionCwd = resolve(cwd, invocation.cwd ?? '.')
+      return await launchDsh(
+        ['--profile', HEADLESS_PROFILE, ...patchArgs(invocation.patches), prompt],
+        { cwd: executionCwd, env: { ...childEnv, DSH_CWD: executionCwd } },
+      )
+    }
+
+    const setupCode = await ensureProfile()
     if (setupCode !== 0) return setupCode
-    return await runNode(dshBin, ['--profile', profile, ...args], env)
+
+    if (invocation.kind === 'config') {
+      return await launchDsh([
+        '--profile',
+        profile,
+        ...patchArgs(invocation.patches),
+        invocation.defaults ? '--dump-default-config' : '--dump-config',
+      ])
+    }
+    if (invocation.kind === 'plugin') {
+      return await launchDsh(['plugin', '--profile', profile, ...invocation.args])
+    }
+    if (invocation.kind === 'interactive' || invocation.kind === 'sessions') {
+      return await launchDsh([
+        '--profile',
+        profile,
+        ...patchArgs(invocation.patches),
+        ...tuiAppArgs(invocation),
+      ])
+    }
+    return unreachable(invocation)
   } catch (error) {
-    process.stderr.write(`dsh-tui: ${error instanceof Error ? error.message : String(error)}\n`)
+    if (error instanceof CliUsageError) {
+      stderr.write(formatCliError(error))
+      return 2
+    }
+    stderr.write(`dsh-tui: ${error instanceof Error ? error.message : String(error)}\n`)
     return 1
   }
 }

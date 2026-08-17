@@ -23,6 +23,14 @@ pi-tui presentation
   transcript · config/task/skill surfaces · trajectory view · composer · dialogs
 ```
 
+The executable has a separate pre-Host boundary:
+
+```text
+argv → shared CLI contract → help/version/completion/doctor
+                           → profile setup → TUI or one-shot session query
+                           → Harness delegation → exec/config/plugin
+```
+
 The Host owns durable domain facts. The terminal runtime owns connection,
 paging, semantic indexing, and interaction state. Presentation code owns only
 layout, colors, focus, keyboard handling, pointer handling, and scrolling.
@@ -105,6 +113,11 @@ reducing the number of visible files.
     The Host adapter must correlate an authoritative filesystem observation and
     canonical mutation outcome on the same execution identity. Unattributed or
     non-reversible mutations remain outside the default restore transaction.
+14. Command-line input resolves to one typed action before profile mutation or
+    Host boot. Help, version output, completion, diagnostics, usage errors, and
+    execution do not pass through interactive startup. Launcher overlays are
+    consumed before app arguments, while the TUI receives one startup intent for
+    session selection, controls, attachments, and the optional initial prompt.
 
 ## Transcript interaction contract
 
@@ -234,9 +247,10 @@ architecture required to support that sequence.
   `TuiApplication` handles semantic actions only. Standard and Legacy are data
   presets, so future presets or per-action overrides do not require changing
   submission, Vision, or Config behavior.
-- Parse launcher options in an application-owned CLI module. Repeatable startup
-  images enter the same validated draft store as interactive file attachment;
-  command-line intake does not create a parallel submission path.
+- Parse the public command line through one shared action contract used by the
+  package launcher and direct TUI profile entry. Repeatable startup images enter
+  the same validated draft store as interactive file attachment; command-line
+  intake does not create a parallel submission path.
 
 ### v0.1.8 implemented architecture
 

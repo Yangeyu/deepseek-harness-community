@@ -244,6 +244,55 @@ describe('TuiApplication input routing', () => {
     await vi.waitFor(() => { expect(exit).toHaveBeenCalledWith(0) })
   })
 
+  it('applies one ordered startup intent before submitting its initial prompt', async () => {
+    const events: string[] = []
+    const app = application(
+      undefined,
+      undefined,
+      {
+        stdin: { isTTY: true } as NodeJS.ReadStream,
+        stdout: { isTTY: true, write: vi.fn() } as unknown as NodeJS.WriteStream,
+      },
+      undefined,
+      undefined,
+      {
+        startup: {
+          resume: { kind: 'last' },
+          prompt: 'continue the task',
+          imagePaths: [],
+          permissionMode: 'workspace-write',
+          plan: true,
+        },
+      },
+    )
+    const internals = app as unknown as {
+      controller: {
+        sessions(): Promise<Array<{ sessionId: string; blank: boolean }>>
+        start(sessionId?: string): Promise<void>
+      }
+      commands: { dispatchHost(command: string): Promise<void> }
+      submit(prompt: string): Promise<void>
+    }
+    internals.controller.sessions = vi.fn(async () => [
+      { sessionId: 'blank', blank: true },
+      { sessionId: 'latest-subagent', blank: false, origin: 'subagent' },
+      { sessionId: 'latest-conversation', blank: false },
+    ])
+    internals.controller.start = vi.fn(async (sessionId) => { events.push(`start:${sessionId ?? ''}`) })
+    internals.commands.dispatchHost = vi.fn(async command => { events.push(command) })
+    internals.submit = vi.fn(async prompt => { events.push(`prompt:${prompt}`) })
+
+    await app.start()
+
+    expect(events).toEqual([
+      'start:latest-conversation',
+      '/permission workspace-write',
+      '/plan',
+      'prompt:continue the task',
+    ])
+    await app.dispose()
+  })
+
   it('opens and applies workspace file suggestions for @ input', async () => {
     const workspacePaths = vi.fn(async () => [
       { path: 'README.md', isDirectory: false },
@@ -1035,7 +1084,7 @@ describe('TuiApplication input routing', () => {
     await internals.requestExit(0)
 
     expect(dispose).toHaveBeenCalledOnce()
-    expect(write).toHaveBeenCalledWith('\nResume this session with:\n  dsh-tui --resume session-123\n\n')
+    expect(write).toHaveBeenCalledWith('\nResume this session with:\n  dsh-tui resume session-123\n\n')
     expect(exit).toHaveBeenCalledWith(0)
     expect(dispose.mock.invocationCallOrder[0]).toBeLessThan(write.mock.invocationCallOrder[0] ?? 0)
     expect(write.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0] ?? 0)

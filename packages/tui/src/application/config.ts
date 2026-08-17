@@ -44,7 +44,6 @@ export interface ResolvedConfig {
   keymap: KeymapPreset
   title: string
   cwd: string
-  sessionId?: string
 }
 
 /** Resolve optional loader fields once at application startup. */
@@ -60,6 +59,5 @@ export function resolveConfig(config: Config): ResolvedConfig {
     keymap: config.keymap ?? 'standard',
     title: config.title ?? 'DeepSeek Harness',
     cwd: config.cwd ?? process.cwd(),
-    ...config.sessionId === undefined ? {} : { sessionId: config.sessionId },
   }
 }

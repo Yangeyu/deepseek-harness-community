@@ -113,17 +113,32 @@ pnpm run start
 ## Command-line options
 
 ```text
-dsh-tui [options]
-
---resume <session-id>  Resume an existing session
---cwd <path>           Start a new session in this directory
--i, --image <path>     Attach an image at startup; repeat for multiple images
---no-color             Disable ANSI color
--h, --help             Show help
+dsh-tui [options] [prompt...]
+dsh-tui resume <session-id> [options] [prompt...]
+dsh-tui resume --last [options] [prompt...]
+dsh-tui sessions [list] [--json]
+dsh-tui exec [-C <path>] [prompt...]
+dsh-tui doctor [--json]
+dsh-tui completion <bash|zsh|fish|powershell>
+dsh-tui config [show|default]
+dsh-tui plugin <pnpm-args...>
+dsh-tui -v | -V | --version
 ```
 
+Interactive options include `-C`/`--cwd`, repeatable `-i`/`--image`,
+`-m`/`--model`, `--effort`, `--permission-mode`, `--plan`, `--no-color`, and
+repeatable launcher-owned `--patch` overlays. A positional prompt is submitted
+after the session, startup settings, and image drafts are ready.
+
+`--resume <session-id>` remains a compatibility form. `sessions` is a
+non-interactive Host query; `exec` uses the Harness headless profile and accepts
+a positional prompt or piped stdin. `doctor` is read-only, while `config` and
+`plugin` explicitly delegate to the Harness profile manager.
+`-v`, `-V`, and `--version` print the public root package version without
+initializing the TUI profile.
+
 After a normal exit, the restored shell prints a copyable
-`dsh-tui --resume <session-id>` command for the active session.
+`dsh-tui resume <session-id>` command for the active session.
 
 ## Keyboard and input behavior
 

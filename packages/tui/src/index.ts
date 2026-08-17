@@ -23,7 +23,13 @@ import {
 } from './rewind/index.ts'
 import type { HostCommandSource } from './runtime/commands.ts'
 import { Config, resolveConfig, type Config as TuiConfig } from './application/config.ts'
-import { parseTuiArgs, TUI_HELP } from './application/cli.ts'
+import {
+  CliUsageError,
+  formatCliError,
+  parseCliArgs,
+  renderCliHelp,
+} from './application/cli.ts'
+import { formatSessionList } from './application/session-list.ts'
 import {
   settingsKeymapGateway,
   TUI_SETTINGS_NAMESPACE,
@@ -66,6 +72,13 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+function rpcValue<T>(response: {
+  result: { ok: true; value: T } | { ok: false; error: { message: string } }
+}): T {
+  if (response.result.ok) return response.result.value
+  throw new Error(response.result.error.message)
+}
+
 /** Stable Cordis plugin name. */
 export const name = 'community-tui'
 
@@ -76,10 +89,28 @@ export const inject = ['apiProxy', 'agents', 'attachments', 'commands', 'memory'
 export function apply(ctx: Context, config: TuiConfig): void {
   const exit = ctx.get('appExit')
   if (exit === undefined) throw new Error('community-tui requires the dsh launcher appExit service')
-  const parsed = parseTuiArgs(ctx.get('cmdlineArgs')?.get() ?? [], config)
-  if (parsed.help) {
-    process.stdout.write(TUI_HELP)
+  let invocation
+  try {
+    invocation = parseCliArgs(ctx.get('cmdlineArgs')?.get() ?? [], config)
+  } catch (error) {
+    if (!(error instanceof CliUsageError)) throw error
+    process.stderr.write(formatCliError(error))
+    exit(2)
+    return
+  }
+  if (invocation.kind === 'help') {
+    process.stdout.write(renderCliHelp(invocation.topic))
     exit(0)
+    return
+  }
+  if (invocation.kind !== 'interactive' && invocation.kind !== 'sessions') {
+    process.stderr.write(`dsh-tui: ${invocation.kind} is available only through the dsh-tui launcher\n`)
+    exit(2)
+    return
+  }
+  if (invocation.patches.length > 0) {
+    process.stderr.write('dsh-tui: --patch must be consumed by the launcher before TUI startup\n')
+    exit(2)
     return
   }
   const runtime: TuiRuntime = {
@@ -89,12 +120,29 @@ export function apply(ctx: Context, config: TuiConfig): void {
     exit,
   }
   const api = new InProcessApiClient(toFetchHandler(ctx.apiProxy))
+  if (invocation.kind === 'sessions') {
+    ctx.effect(() => {
+      const abort = new AbortController()
+      void (async () => {
+        await ctx.get('loader')?.await()
+        const sessions = rpcValue(await api.sessions.list({}, abort.signal)).items
+        runtime.stdout.write(formatSessionList(sessions, invocation.json))
+        exit(0)
+      })().catch((error: unknown) => {
+        if (abort.signal.aborted) return
+        runtime.stderr.write(`dsh tui: ${error instanceof Error ? error.message : String(error)}\n`)
+        exit(1)
+      })
+      return () => { abort.abort() }
+    })
+    return
+  }
   const keymapScope = ctx.settings.register(TUI_SETTINGS_NAMESPACE, TuiSettingsSchema, {
-    base: { keymap: parsed.config.keymap ?? 'standard' },
+    base: { keymap: invocation.config.keymap ?? 'standard' },
     applies: 'live',
   })
   const keymap = settingsKeymapGateway(keymapScope)
-  const resolved = resolveConfig({ ...parsed.config, keymap: keymap.current().keymap })
+  const resolved = resolveConfig({ ...invocation.config, keymap: keymap.current().keymap })
   const memoryRewind = new MemoryRewindParticipant(ctx.memory)
   const rewindRepository = new FileRewindRepository(dshHomePath('rewind', 'v2'), {
     onWarning: message => { ctx.logger.warn(message) },
@@ -143,7 +191,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
       commandSource,
       vision: ctx.vision,
       keymap,
-      initialImagePaths: parsed.imagePaths,
+      startup: invocation.startup,
       attachments: ctx.attachments,
     },
   )

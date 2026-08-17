@@ -29,6 +29,36 @@ dsh-tui
 
 The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DEEPSEEK_API_KEY` before beginning a model-backed session. For image understanding with a text-only DeepSeek route, set `DASHSCOPE_API_KEY`, open `/config vision`, and confirm the recommended `qwen3.7-plus` route. `DSH_HOME` continues to override the Harness data directory.
 
+## Command line
+
+`dsh-tui` parses the requested action before touching a Harness profile. Help,
+version output, completion generation, usage errors, and `doctor` therefore do
+not initialize or repair the `tui` profile.
+
+```text
+dsh-tui [options] [prompt...]
+dsh-tui resume <session-id> [options] [prompt...]
+dsh-tui resume --last [options] [prompt...]
+dsh-tui sessions [list] [--json]
+dsh-tui exec [-C <path>] [prompt...]
+dsh-tui doctor [--json]
+dsh-tui completion <bash|zsh|fish|powershell>
+dsh-tui config [show|default]
+dsh-tui plugin <pnpm-args...>
+dsh-tui -v | -V | --version
+```
+
+Interactive startup supports `-C`/`--cwd`, repeatable `-i`/`--image`,
+`-m`/`--model`, `--effort`, `--permission-mode`, `--plan`, and `--no-color`.
+`--resume <session-id>` remains accepted as a compatibility form. Use repeatable
+`--patch <path>` options to apply Harness profile overlays.
+
+`exec` runs one task through the upstream Harness headless profile and prints
+its final assistant message. It accepts a positional prompt or piped stdin and
+does not configure the TUI profile. `config` and `plugin` explicitly delegate
+their work to the underlying `dsh` profile manager.
+All three version aliases print the root package version as `dsh-tui <version>`.
+
 ## Packages
 
 - [`@vascent/dsh-tui`](package.json) is the only published npm package. It
@@ -62,7 +92,7 @@ pnpm dev
 bundle through an isolated `tui-dev` profile. It does not use the globally
 installed `dsh-tui` package or modify the regular `tui` profile. Run it from the
 project you want the agent to edit; pass TUI arguments after `--`, for example
-`pnpm dev -- --resume <session-id> --image screenshot.png`.
+`pnpm dev -- resume <session-id> --image screenshot.png`.
 
 TypeScript under `src/` is the only maintained implementation. Builds write
 ignored JavaScript, declarations, and source maps to each package's `dist/`;

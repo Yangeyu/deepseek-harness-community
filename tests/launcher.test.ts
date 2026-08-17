@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'vitest'
 import {
   ensureProfilePlugin,
+  main,
   profileLegacyPlugins,
   profileUsesPlugin,
   resolveDshHome,
@@ -80,9 +81,159 @@ test('ensureProfilePlugin removes the legacy package once and preserves the acti
   }
 
   assert.deepEqual(profileLegacyPlugins(profile), ['@yangeyu/deepseek-harness-tui'])
-  assert.equal(await ensureProfilePlugin(profile, plugin, runPlugin), 0)
+  assert.equal(await ensureProfilePlugin(profile, plugin, runPlugin, () => {}), 0)
   assert.deepEqual(calls, [['remove', '@yangeyu/deepseek-harness-tui']])
   assert.deepEqual(profileLegacyPlugins(profile), [])
-  assert.equal(await ensureProfilePlugin(profile, plugin, runPlugin), 0)
+  assert.equal(await ensureProfilePlugin(profile, plugin, runPlugin, () => {}), 0)
   assert.deepEqual(calls, [['remove', '@yangeyu/deepseek-harness-tui']])
+})
+
+function output() {
+  let value = ''
+  return {
+    stream: {
+      write(text: string) { value += text },
+      isTTY: true,
+    },
+    read: () => value,
+  }
+}
+
+test('help, version, and usage errors resolve before profile setup or child execution', async () => {
+  const stdout = output()
+  const stderr = output()
+  let setupCalls = 0
+  let runCalls = 0
+  const options = {
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    ensureProfile: async () => { setupCalls += 1; return 0 },
+    runNode: async () => { runCalls += 1; return 0 },
+    resolveDshBin: () => '/unused/dsh',
+    packageVersion: '0.1.9',
+  }
+
+  assert.equal(await main(['--help'], options), 0)
+  assert.match(stdout.read(), /Usage:\n  dsh-tui/)
+  assert.match(stdout.read(), /-v, -V, --version/)
+  const versionStdout = output()
+  for (const flag of ['-v', '-V', '--version']) {
+    assert.equal(await main([flag], { ...options, stdout: versionStdout.stream }), 0)
+  }
+  assert.equal(versionStdout.read(), 'dsh-tui 0.1.9\n'.repeat(3))
+  assert.equal(await main(['--version', 'extra'], options), 2)
+  assert.match(stderr.read(), /--version cannot be combined with other arguments/)
+  assert.equal(setupCalls, 0)
+  assert.equal(runCalls, 0)
+})
+
+test('interactive commands configure the TUI profile and forward canonical app arguments', async () => {
+  const calls: Array<{ args: readonly string[]; cwd: string }> = []
+  let setupCalls = 0
+  const code = await main([
+    '--patch', 'team.yml',
+    'resume', '--last',
+    '--plan',
+    '--image', 'context.png',
+    'continue',
+  ], {
+    cwd: '/workspace',
+    ensureProfile: async () => { setupCalls += 1; return 0 },
+    resolveDshBin: () => '/runtime/dsh.js',
+    runNode: async (_script, args, _env, cwd) => {
+      calls.push({ args, cwd })
+      return 7
+    },
+  })
+
+  assert.equal(code, 7)
+  assert.equal(setupCalls, 1)
+  assert.deepEqual(calls, [{
+    args: [
+      '--profile', 'tui',
+      '--patch', 'team.yml',
+      'resume', '--last',
+      '--image', 'context.png',
+      '--plan',
+      '--', 'continue',
+    ],
+    cwd: '/workspace',
+  }])
+})
+
+test('exec uses the headless profile and never configures the TUI profile', async () => {
+  const calls: Array<{ args: readonly string[]; env: NodeJS.ProcessEnv; cwd: string }> = []
+  let setupCalls = 0
+  const code = await main(['exec', '-C', './project', '--patch', 'ci.yml', 'run', 'tests'], {
+    cwd: '/workspace',
+    ensureProfile: async () => { setupCalls += 1; return 0 },
+    resolveDshBin: () => '/runtime/dsh.js',
+    runNode: async (_script, args, env, cwd) => {
+      calls.push({ args, env, cwd })
+      return 0
+    },
+  })
+
+  assert.equal(code, 0)
+  assert.equal(setupCalls, 0)
+  assert.deepEqual(calls[0]?.args, ['--profile', 'headless', '--patch', 'ci.yml', 'run tests'])
+  assert.equal(calls[0]?.cwd, '/workspace/project')
+  assert.equal(calls[0]?.env.DSH_CWD, '/workspace/project')
+})
+
+test('exec reads a non-interactive prompt from stdin and rejects an empty TTY invocation', async () => {
+  const calls: Array<readonly string[]> = []
+  const shared = {
+    resolveDshBin: () => '/runtime/dsh.js',
+    runNode: async (_script: string, args: readonly string[]) => { calls.push(args); return 0 },
+  }
+  assert.equal(await main(['exec'], {
+    ...shared,
+    stdinIsTTY: false,
+    readStdin: async () => '  inspect the repository\n',
+  }), 0)
+  assert.deepEqual(calls[0], ['--profile', 'headless', 'inspect the repository'])
+
+  const stderr = output()
+  assert.equal(await main(['exec'], { ...shared, stderr: stderr.stream, stdinIsTTY: true }), 2)
+  assert.match(stderr.read(), /prompt argument or piped stdin/)
+})
+
+test('config and plugin actions delegate only after the TUI profile is ready', async () => {
+  const calls: Array<readonly string[]> = []
+  let setupCalls = 0
+  const options = {
+    ensureProfile: async () => { setupCalls += 1; return 0 },
+    resolveDshBin: () => '/runtime/dsh.js',
+    runNode: async (_script: string, args: readonly string[]) => { calls.push(args); return 0 },
+  }
+
+  assert.equal(await main(['config', 'show', '--patch', 'team.yml'], options), 0)
+  assert.equal(await main(['plugin', 'list'], options), 0)
+  assert.equal(setupCalls, 2)
+  assert.deepEqual(calls, [
+    ['--profile', 'tui', '--patch', 'team.yml', '--dump-config'],
+    ['plugin', '--profile', 'tui', 'list'],
+  ])
+})
+
+test('doctor reports profile state without initializing it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-tui-doctor-'))
+  const stdout = output()
+  let setupCalls = 0
+  const code = await main(['doctor', '--json'], {
+    cwd: process.cwd(),
+    env: { ...process.env, DSH_HOME: root },
+    stdout: stdout.stream,
+    ensureProfile: async () => { setupCalls += 1; return 0 },
+    resolveDshBin: () => join(process.cwd(), 'package.json'),
+    resolveRgBin: async () => process.execPath,
+    platform: 'linux',
+  })
+
+  const report = JSON.parse(stdout.read())
+  assert.equal(code, 0)
+  assert.equal(report.ok, true)
+  assert.equal(report.checks.find((check: { id: string }) => check.id === 'profile')?.status, 'warn')
+  assert.equal(setupCalls, 0)
 })
