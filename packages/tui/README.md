@@ -52,7 +52,7 @@ The initial terminal client supports:
 - fuzzy `@path` references for ignored-aware workspace files and directories,
   with quoted insertion for paths containing spaces;
 - a scoped `/config` center for model, reasoning, permissions, Plan Mode,
-  Vision, and terminal display preferences, plus a separate `/task` surface for durable
+  Vision, Web provider status, and terminal display preferences, plus a separate `/task` surface for durable
   Goals, read-only Todos, and runtime actions;
 - effective Skill discovery and canonical `/name` invocation through the Slash
   catalog, plus a searchable `/skills` browser and safe project/user authoring;
@@ -63,9 +63,11 @@ The initial terminal client supports:
 - individually clickable tool calls with bounded Arguments and Result details;
 - a responsive `/trajectory` trace explorer backed by the shared turn, step,
   and tool lifecycle snapshot, with bottleneck timing plus Summary, Input,
-  Output, Schema, and Timing inspection; and
+  Output, Schema, and Timing inspection;
 - explicit image drafts from files or the macOS clipboard, automatic native
   multimodal routing, and a configurable DashScope proxy for text-only models;
+- official `web_search` plus provider-neutral `web_extract`, backed by independently selected
+  Brave Search and Tavily Extract providers;
 - an application-owned transcript viewport with pointer and keyboard scrolling,
   stable history position, and automatic tail following.
 
@@ -89,10 +91,11 @@ dsh-tui
 The release pipeline builds verified `dist/` artifacts before packaging, so
 installation does not build this workspace on the target machine. Generated
 artifacts are not committed. The bundle's `cordis.patch.yml` layers the required
-Host services, its bundled `./memory` and `./vision` entries, and the terminal
+Host services, its bundled `./memory`, `./vision`, and `./web` entries, and the terminal
 entry point over the automatically installed `dsh-base` profile. Library and
 Cordis consumers use the public `@vascent/dsh-tui/tui`,
-`@vascent/dsh-tui/memory`, and `@vascent/dsh-tui/vision` subpaths from the same
+`@vascent/dsh-tui/memory`, `@vascent/dsh-tui/vision`, and
+`@vascent/dsh-tui/web` subpaths from the same
 installation.
 
 ## Develop
@@ -196,10 +199,11 @@ an older, message-aligned history page without losing live tail events. `Ctrl+C`
 remains an interrupt while the session is running.
 
 `/config` is the unified configuration entry for the active session and TUI.
-It shows Model, Reasoning, Permission, Plan Mode, Vision, Keybindings, and Details with an explicit
-`Session` or `TUI` scope. `/task` owns the current Goal, read-only Todo progress,
-and runtime cancellation. Both surfaces use `j`/`k`, arrows, `g`/`G`, `Enter`,
-and `Esc`, and neither retains a second copy of Host state.
+It shows Model, Reasoning, Permission, Plan Mode, Vision, Web, Keybindings, and
+Details with an explicit `Session` or `TUI` scope. `/task` owns the current Goal,
+read-only Todo progress, and runtime cancellation. Both surfaces use `j`/`k`,
+arrows, `g`/`G`, `Enter`, and `Esc`, and neither retains a second copy of Host
+state.
 
 Permission widening to `danger-full-access` requires an explicit confirmation,
 pending Plan state is distinct from effective state, and Goal mutations use the
@@ -209,6 +213,32 @@ Bare `/permission` opens the same Permission selector directly. An argued
 `/permission <preset>`, Plan actions, and every other discovered Host Command
 execute through the Host command registry rather than model prompting. Known
 Commands therefore never appear as user/assistant conversation messages.
+
+## Web access
+
+The profile retains the official Harness `ctx.web` registry and official
+`web_search` model tool. The community Web package contributes
+`community-brave` to that search seam and owns a separate, provider-neutral
+`web_extract` capability backed by `community-tavily`. Extraction is not
+presented as official `web_fetch`: Tavily returns readable content but not the
+origin response status required by the upstream fetch contract. Provider
+selection is explicit, so the bundled DeepSeek search adapter can remain
+installed without creating registration-order fallbacks.
+
+Configure both credential references before launch:
+
+```sh
+export BRAVE_API_KEY='...'
+export TAVILY_API_KEY='...'
+dsh-tui
+```
+
+`/config web` (or `/web`) displays the selected providers, endpoint hosts, and
+credential source/status. It never reads or renders a credential value. Keys
+are resolved through the Harness credential service for every operation, so
+rotation applies to the next call without a profile restart. Search results are
+bounded and normalized into citeable URLs; page content is remotely extracted,
+bounded again before model presentation, and has no implicit retry or fallback.
 
 ## Vision input
 
@@ -361,8 +391,8 @@ The status row shows a separate animation while quiet learning is running.
 `/clear` removes the visible conversation synchronously and then attaches a
 fresh session; if session creation fails, the previous view is restored. Slash
 commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/attach`,
-`/paste-image`, `/vision`, `/keymap`, `/details`, `/status`, `/config`, `/task`, `/skills`,
-`/trajectory`, `/memories`, `/rewind`, and `/exit`.
+`/paste-image`, `/vision`, `/web`, `/keymap`, `/details`, `/status`, `/config`,
+`/task`, `/skills`, `/trajectory`, `/memories`, `/rewind`, and `/exit`.
 
 ## Architecture
 
@@ -370,6 +400,7 @@ commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/attach`,
 Cordis bundle entry
   -> file-backed Memory plugin (context, tools, quiet learner, mutations)
   -> Vision plugin (routing, proxy analysis, observation staging, events)
+  -> Web plugin (Brave search + Tavily extraction adapters over ctx.web)
   -> in-process ApiProxy client
      -> application/ (bootstrap orchestration and local interactions)
         ├─ input/ (semantic keymap actions and context-aware binding resolution)

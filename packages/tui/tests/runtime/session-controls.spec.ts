@@ -63,6 +63,35 @@ describe('session control selectors', () => {
     ]))
   })
 
+  it('distinguishes unavailable, loading, and configured Web status', () => {
+    const loading = configurationSnapshot(undefined, {}, false, undefined, 'standard', null)
+    expect(configurationRows(loading)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'web', available: true, value: 'Loading provider status…' }),
+    ]))
+
+    const ready = configurationSnapshot(undefined, {}, false, undefined, 'standard', {
+      search: {
+        id: 'community-brave',
+        credentialRef: 'BRAVE_API_KEY',
+        credentialConfigured: true,
+        credentialWritable: true,
+      },
+      extract: {
+        id: 'community-tavily',
+        credentialRef: 'TAVILY_API_KEY',
+        credentialConfigured: true,
+        credentialWritable: true,
+      },
+    })
+    expect(configurationRows(ready)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'web',
+        available: true,
+        value: 'community-brave + community-tavily · ready',
+      }),
+    ]))
+  })
+
   it('summarizes authoritative policy and task state without copying it', () => {
     const projections = {
       permissions: {

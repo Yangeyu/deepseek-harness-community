@@ -35,6 +35,10 @@
       "types": "./dist/vision.d.ts",
       "default": "./dist/vision.js"
     },
+    "./web": {
+      "types": "./dist/web.d.ts",
+      "default": "./dist/web.js"
+    },
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
@@ -99,7 +103,8 @@
     "@deepseek-ai/dsh-system-prompt": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-token-meter": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-tool-todo": ">=0.1.0-rc.6 <0.2.0",
-    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.5 <0.2.0"
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.5 <0.2.0",
+    "@deepseek-ai/dsh-web": ">=0.1.0-rc.6 <0.2.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -140,6 +145,9 @@
     },
     "@deepseek-ai/dsh-tools": {
       "optional": true
+    },
+    "@deepseek-ai/dsh-web": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -154,6 +162,7 @@
     "@deepseek-ai/dsh-token-meter": ">=0.1.0-rc.5 <0.2.0",
     "@vascent/deepseek-harness-memory": "workspace:^",
     "@vascent/deepseek-harness-vision": "workspace:^",
+    "@vascent/deepseek-harness-web": "workspace:^",
     "@types/node": "^22.20.0",
     "oxlint": "1.76.0",
     "tsdown": "^0.22.2",

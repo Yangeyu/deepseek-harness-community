@@ -60,6 +60,7 @@ interface AppInternals {
   }
   trajectoryView?: { handleInput(data: string): void; render(width: number): string[] }
   configView?: { handleInput(data: string): void; render(width: number): string[] }
+  webConfigView?: { handleInput(data: string): void; render(width: number): string[] }
   keymapView?: { handleInput(data: string): void; render(width: number): string[] }
   taskView?: { handleInput(data: string): void; render(width: number): string[] }
   skillsView?: { handleInput(data: string): void; render(width: number): string[] }
@@ -999,6 +1000,38 @@ describe('TuiApplication input routing', () => {
     expect(internals.keymapView?.render(80).join('\n')).toContain('Keybindings')
     internals.keymapView?.handleInput('\u001b')
     expect(internals.keymapView).toBeUndefined()
+  })
+
+  it('opens Web provider status without exposing credential values', async () => {
+    const status = vi.fn(async () => ({
+      search: {
+        id: 'community-brave',
+        endpointHost: 'api.search.brave.com',
+        credentialRef: 'BRAVE_API_KEY',
+        credentialConfigured: true,
+        credentialSource: 'env',
+        credentialWritable: true,
+      },
+      extract: {
+        id: 'community-tavily',
+        endpointHost: 'api.tavily.com',
+        credentialRef: 'TAVILY_API_KEY',
+        credentialConfigured: false,
+        credentialWritable: true,
+      },
+    }))
+    const app = application(undefined, undefined, undefined, undefined, undefined, { web: { status } })
+    const internals = app as unknown as AppInternals
+
+    await internals.submit('/config web')
+
+    const output = internals.webConfigView?.render(100).join('\n') ?? ''
+    expect(status).toHaveBeenCalledOnce()
+    expect(output).toContain('community-brave')
+    expect(output).toContain('TAVILY_API_KEY missing')
+    expect(output).not.toContain('must-not-appear')
+    internals.webConfigView?.handleInput('\u001b')
+    expect(internals.webConfigView).toBeUndefined()
   })
 
   it('opens bare /permission as a picker and executes selections outside model input', async () => {

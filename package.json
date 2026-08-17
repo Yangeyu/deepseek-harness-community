@@ -38,6 +38,10 @@
       "types": "./packages/tui/dist/vision.d.ts",
       "default": "./packages/tui/dist/vision.js"
     },
+    "./web": {
+      "types": "./packages/tui/dist/web.d.ts",
+      "default": "./packages/tui/dist/web.js"
+    },
     "./cordis.patch.yml": "./packages/tui/cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -66,7 +70,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-vision run build && pnpm --filter @vascent/deepseek-harness-tui run build && tsdown",
+    "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-vision run build && pnpm --filter @vascent/deepseek-harness-web run build && pnpm --filter @vascent/deepseek-harness-tui run build && tsdown",
     "lint": "oxlint --deny-warnings src tests tsdown.config.ts && pnpm --filter './packages/*' run lint",
     "typecheck": "tsc --noEmit && pnpm --filter './packages/*' run typecheck",
     "test": "vitest run tests/launcher.test.ts tests/release.test.ts && pnpm --filter './packages/*' run test",
@@ -106,6 +110,7 @@
     "@deepseek-ai/dsh-token-meter": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tool-todo": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-web": "0.1.0-rc.6",
     "@deepseek-ai/dsh-workspace": "0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1",
     "@earendil-works/pi-tui": "^0.84.2",

@@ -11,8 +11,9 @@ Harness Host
   session log · projections · LLM · attachments · commands · tools · persistence
       │
       ├── Vision service (routing · proxy analysis · staged evidence)
+      ├── Web service (official registry · community provider adapters)
       │
-      │ transport-neutral ApiProxy plus narrow Command/Memory/Vision ports
+      │ transport-neutral ApiProxy plus narrow Command/Memory/Vision/Web ports
       ▼
 Terminal runtime
   HarnessController · semantic keymap · submission coordinator · Slash/Skill catalogs · trajectory model
@@ -101,7 +102,7 @@ reducing the number of visible files.
    are hard boundaries. Returned file Diff evidence remains top-level
    regardless of execution status. Thought, tool, Diff, and Activity summaries
    consume one shared running/completed/failed/interrupted state model.
-12. Memory, Vision, and TUI remain independent implementations but use the same
+12. Memory, Vision, Web, and TUI remain independent implementations but use the same
     lifecycle conventions: stable identity, monotonic terminal state, explicit
     recorded boundaries, explicit failure, snapshot-before-notify publication,
     and symmetric cleanup. Domain packages never import terminal lifecycle or
@@ -173,9 +174,14 @@ reducing the number of visible files.
   composer admission and the workspace-contained `inspect_image` Agent tool.
   Tool inspection returns bounded untrusted text and never adds image blocks to
   a text-only main-model route.
+- `CommunityWebService` registers Brave Search and Tavily Extract directly into
+  the official `ctx.web` search seam and owns a separate provider-neutral
+  extraction seam. It owns vendor HTTP mapping and credential status;
+  `dsh-web` and `dsh-tool-web` retain search selection and the official model
+  tool, while the community layer owns only the distinct `web_extract` schema.
 - Session-control selectors derive separate Config rows (model, reasoning,
-  Permission, Plan, keymap, and TUI display) and Task rows (Goal, Todos, and runtime)
-  without retaining a second copy of Host state.
+  Permission, Plan, Vision, Web status, keymap, and TUI display) and Task rows
+  (Goal, Todos, and runtime) without retaining a second copy of Host state.
 - `SkillCatalog` generation-binds effective RPC rows to one session;
   `SlashCatalog` merges them with Commands while preserving dispatch semantics.
 - `SkillAuthoringCoordinator` keeps file creation, editor handoff, validation,

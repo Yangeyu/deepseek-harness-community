@@ -118,6 +118,8 @@ import { ComposerEditorFrame } from '../presentation/composer-editor.ts'
 import { ComposerFooter } from '../presentation/footer.ts'
 import { VisionConfigView } from '../presentation/config/vision-view.ts'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
+import type { CommunityWebStatus } from '@vascent/deepseek-harness-web'
+import { WebConfigView } from '../presentation/config/web-view.ts'
 import { KeymapView } from '../presentation/config/keymap-view.ts'
 import {
   memoryKeymapGateway,
@@ -190,10 +192,16 @@ export interface TuiMemoryPort {
   setPolicy(sessionId: string, patch: Partial<MemorySessionPolicy>): MemorySessionPolicy
 }
 
+/** Secret-free Web capability status used by the terminal configuration surface. */
+export interface WebGateway {
+  status(signal?: AbortSignal): Promise<CommunityWebStatus>
+}
+
 /** Optional composition ports kept separate from the stable application core. */
 export interface TuiApplicationDependencies {
   commandSource?: HostCommandSource
   vision?: VisionGateway
+  web?: WebGateway
   keymap?: KeymapSettingsGateway
   startup?: TuiStartupOptions
   clipboardImage?: ClipboardImageLoader
@@ -243,6 +251,7 @@ export class TuiApplication implements TuiControllerSink {
   private trajectoryView: TrajectoryView | undefined
   private configView: ConfigView | undefined
   private visionConfigView: VisionConfigView | undefined
+  private webConfigView: WebConfigView | undefined
   private keymapView: KeymapView | undefined
   private taskView: TaskView | undefined
   private skillsView: SkillsView | undefined
@@ -274,6 +283,8 @@ export class TuiApplication implements TuiControllerSink {
   private readonly keymap: KeymapSettingsGateway
   private readonly removeKeymapListener: () => void
   private visionStatus: VisionStatus | undefined
+  private webStatus: CommunityWebStatus | undefined
+  private readonly web: WebGateway | undefined
   private attachmentRailFocused = false
   private readonly startup: TuiStartupOptions
   private readonly clipboardImage: ClipboardImageLoader
@@ -298,6 +309,7 @@ export class TuiApplication implements TuiControllerSink {
     const {
       commandSource,
       vision,
+      web,
       keymap,
       startup = { imagePaths: [], plan: false },
       clipboardImage = imageDraftFromClipboard,
@@ -336,6 +348,7 @@ export class TuiApplication implements TuiControllerSink {
       () => this.leaveAttachmentRail(),
     )
     this.vision = vision
+    this.web = web
     this.keymap = keymap ?? memoryKeymapGateway({ keymap: config.keymap })
     this.visionStatus = vision === undefined ? undefined : {
       config: vision.config,
@@ -885,7 +898,7 @@ export class TuiApplication implements TuiControllerSink {
     }, {
       name: 'config',
       description: 'Configure model, policy, and terminal preferences',
-      argumentHint: '[model|reasoning|permission|plan|vision|keybindings|interface]',
+      argumentHint: '[model|reasoning|permission|plan|vision|web|keybindings|interface]',
       handler: argument => this.openConfigRoute(argument),
     }, {
       name: 'keymap',
@@ -895,6 +908,10 @@ export class TuiApplication implements TuiControllerSink {
       name: 'vision',
       description: 'Configure image routing and the Vision proxy',
       handler: () => this.openVisionConfig(),
+    }, {
+      name: 'web',
+      description: 'Inspect Web search and page-reading providers',
+      handler: () => this.openWebConfig(),
     }, {
       name: 'task',
       description: 'Inspect and control the current task',
@@ -1058,9 +1075,10 @@ export class TuiApplication implements TuiControllerSink {
     if (route === 'permission' || route === 'permissions') return this.openPermissionConfig()
     if (route === 'plan') return this.openConfig('plan')
     if (route === 'vision') return this.openVisionConfig()
+    if (route === 'web') return this.openWebConfig()
     if (route === 'keymap' || route === 'keybinding' || route === 'keybindings') return this.openKeymap()
     if (route === 'interface' || route === 'details') return this.openConfig()
-    throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, vision, keybindings, or interface.`)
+    throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, vision, web, keybindings, or interface.`)
   }
 
   private openConfig(initialStage: ConfigEntryStage = 'root'): void {
@@ -1098,6 +1116,10 @@ export class TuiApplication implements TuiControllerSink {
         close()
         this.openKeymap()
       },
+      () => {
+        close()
+        void this.runAction(() => this.openWebConfig())
+      },
     )
     this.configView = view
     this.composerModalActive = true
@@ -1108,6 +1130,9 @@ export class TuiApplication implements TuiControllerSink {
       && state.models === undefined
       && state.sessionId !== undefined) {
       void this.runAction(async () => { await this.controller.refreshModels() })
+    }
+    if (initialStage === 'root' && this.web !== undefined && this.webStatus === undefined) {
+      void this.runAction(async () => { await this.refreshWebStatus() })
     }
   }
 
@@ -1178,12 +1203,48 @@ export class TuiApplication implements TuiControllerSink {
     this.tui.requestRender()
   }
 
+  private async openWebConfig(): Promise<void> {
+    if (this.tui.hasOverlay() || this.composerModalActive) return
+    if (this.web === undefined) throw new Error('Web providers are unavailable in this profile.')
+    const status = await this.refreshWebStatus()
+    if (this.tui.hasOverlay() || this.composerModalActive || this.disposed) return
+    const close = (): void => {
+      if (this.webConfigView === undefined) return
+      this.webConfigView = undefined
+      this.layout.setComposerOverride(undefined)
+      this.composerModalActive = false
+      this.tui.setFocus(this.editor)
+      this.tui.requestRender()
+    }
+    const view = new WebConfigView(
+      status,
+      this.theme,
+      () => { void this.runAction(async () => { await this.refreshWebStatus() }) },
+      close,
+    )
+    this.webConfigView = view
+    this.composerModalActive = true
+    this.layout.setComposerOverride(view)
+    this.tui.setFocus(view)
+    this.tui.requestRender()
+  }
+
   private async refreshVisionStatus(): Promise<VisionStatus> {
     const vision = this.vision
     if (vision === undefined) throw new Error('Vision is unavailable in this profile.')
     const status = await vision.status()
     this.visionStatus = status
     this.visionConfigView?.setStatus(status)
+    this.refreshConfigurationSurface()
+    this.tui.requestRender()
+    return status
+  }
+
+  private async refreshWebStatus(): Promise<CommunityWebStatus> {
+    if (this.web === undefined) throw new Error('Web providers are unavailable in this profile.')
+    const status = await this.web.status()
+    this.webStatus = status
+    this.webConfigView?.setStatus(status)
     this.refreshConfigurationSurface()
     this.tui.requestRender()
     return status
@@ -1713,6 +1774,7 @@ export class TuiApplication implements TuiControllerSink {
       this.showDetails,
       this.visionStatus,
       this.keymap.current().keymap,
+      this.web === undefined ? undefined : this.webStatus ?? null,
     )
   }
 

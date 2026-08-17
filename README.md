@@ -10,6 +10,7 @@ deepseek-harness-community/
 ├── src/launcher.ts   # typed profile setup and launcher implementation
 ├── packages/memory/  # Markdown-backed project memory plugin
 ├── packages/vision/  # image routing, proxy analysis, and staged evidence
+├── packages/web/     # Brave search and Tavily page-reading providers
 └── packages/tui/     # terminal UI bundle
 ```
 
@@ -27,7 +28,7 @@ Then start the TUI from any project directory:
 dsh-tui
 ```
 
-The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DEEPSEEK_API_KEY` before beginning a model-backed session. For image understanding with a text-only DeepSeek route, set `DASHSCOPE_API_KEY`, open `/config vision`, and confirm the recommended `qwen3.7-plus` route. `DSH_HOME` continues to override the Harness data directory.
+The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DEEPSEEK_API_KEY` before beginning a model-backed session. Set `BRAVE_API_KEY` and `TAVILY_API_KEY` to enable the bundled `web_search` and `web_extract` tools; `/config web` reports both credentials without displaying their values. For image understanding with a text-only DeepSeek route, set `DASHSCOPE_API_KEY`, open `/config vision`, and confirm the recommended `qwen3.7-plus` route. `DSH_HOME` continues to override the Harness data directory.
 
 ## Command line
 
@@ -69,8 +70,11 @@ All three version aliases print the root package version as `dsh-tui <version>`.
   exposed as `@vascent/dsh-tui/memory`.
 - [`packages/vision`](packages/vision) owns the public, terminal-independent
   Vision API exposed as `@vascent/dsh-tui/vision`.
+- [`packages/web`](packages/web) owns the public Brave/Tavily Provider adapters
+  exposed as `@vascent/dsh-tui/web` while the official Harness packages retain
+  the provider registry and model-tool contracts.
 
-The three workspaces remain independently owned modules, but their manifests
+The four workspaces remain independently owned modules, but their manifests
 block standalone registry publication. One npm artifact therefore exposes all
 public APIs without creating separate package versions or release pipelines.
 The long-term ownership boundaries and staged design are documented in
@@ -88,7 +92,7 @@ pnpm run check
 pnpm dev
 ```
 
-`pnpm dev` builds the current Memory and TUI sources, then launches the local
+`pnpm dev` builds the current Memory, Vision, Web, and TUI sources, then launches the local
 bundle through an isolated `tui-dev` profile. It does not use the globally
 installed `dsh-tui` package or modify the regular `tui` profile. Run it from the
 project you want the agent to edit; pass TUI arguments after `--`, for example

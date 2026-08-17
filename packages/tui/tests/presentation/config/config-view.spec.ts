@@ -33,6 +33,20 @@ function snapshot() {
       ],
     },
     plan: { active: false, pending: false },
+    web: {
+      search: {
+        id: 'community-brave',
+        credentialRef: 'BRAVE_API_KEY',
+        credentialConfigured: true,
+        credentialWritable: true,
+      },
+      extract: {
+        id: 'community-tavily',
+        credentialRef: 'TAVILY_API_KEY',
+        credentialConfigured: true,
+        credentialWritable: true,
+      },
+    },
     keymap: 'standard' as const,
     detailsExpanded: false,
   }
@@ -43,6 +57,7 @@ function view(overrides: {
   onPermission?: (value: string) => void
   onDetails?: (expanded: boolean) => void
   onKeymap?: () => void
+  onWeb?: () => void
   onClose?: () => void
 } = {}, initialStage: 'root' | 'reasoning' | 'permissions' | 'plan' = 'root') {
   return new ConfigView(
@@ -57,6 +72,7 @@ function view(overrides: {
     initialStage,
     undefined,
     overrides.onKeymap,
+    overrides.onWeb,
   )
 }
 
@@ -123,6 +139,16 @@ describe('ConfigView', () => {
     config.handleInput('\r')
 
     expect(onKeymap).toHaveBeenCalledOnce()
+  })
+
+  it('opens the Web provider surface from the unified Config list', () => {
+    const onWeb = vi.fn()
+    const config = view({ onWeb })
+
+    for (let index = 0; index < 5; index += 1) config.handleInput('j')
+    config.handleInput('\r')
+
+    expect(onWeb).toHaveBeenCalledOnce()
   })
 
   it('bounds every rendered row in narrow terminals', () => {

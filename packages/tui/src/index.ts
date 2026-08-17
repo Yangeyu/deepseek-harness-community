@@ -6,6 +6,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@vascent/deepseek-harness-web'
 import type { CommandDescriptor } from '@deepseek-ai/dsh-commands'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import {
@@ -83,7 +84,7 @@ function rpcValue<T>(response: {
 export const name = 'community-tui'
 
 /** The in-process API gateway must exist before the terminal can activate. */
-export const inject = ['apiProxy', 'agents', 'attachments', 'commands', 'memory', 'settings', 'vision']
+export const inject = ['apiProxy', 'agents', 'attachments', 'commands', 'communityWeb', 'memory', 'settings', 'vision']
 
 /** Mount the terminal application and bind its lifetime to the plugin effect. */
 export function apply(ctx: Context, config: TuiConfig): void {
@@ -190,6 +191,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
     {
       commandSource,
       vision: ctx.vision,
+      web: ctx.communityWeb,
       keymap,
       startup: invocation.startup,
       attachments: ctx.attachments,

@@ -8,6 +8,7 @@ import type { PlanProjection } from '@deepseek-ai/dsh-plan-mode/client'
 import type { GoalProjection } from '@deepseek-ai/dsh-goal/client'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
+import type { CommunityWebStatus } from '@vascent/deepseek-harness-web'
 import { keymapShortcut, type KeymapPreset } from '../input/keymap.ts'
 
 // Load optional projection-key augmentations at the client boundary only.
@@ -21,6 +22,7 @@ export interface ConfigurationSnapshot {
   permissions?: PermissionSelect
   plan?: PlanProjection
   vision?: VisionStatus
+  web?: CommunityWebStatus | null
   keymap: KeymapPreset
   detailsExpanded: boolean
 }
@@ -32,7 +34,7 @@ export interface TaskSnapshot {
   queued: number
 }
 
-export type ConfigurationRowKind = 'model' | 'reasoning' | 'permissions' | 'plan' | 'vision' | 'keymap' | 'details'
+export type ConfigurationRowKind = 'model' | 'reasoning' | 'permissions' | 'plan' | 'vision' | 'web' | 'keymap' | 'details'
 export type TaskRowKind = 'goal' | 'todos' | 'runtime'
 
 export interface ControlRow<Kind extends string> {
@@ -57,12 +59,14 @@ export function configurationSnapshot(
   detailsExpanded: boolean,
   vision?: VisionStatus,
   keymap: KeymapPreset = 'standard',
+  web?: CommunityWebStatus | null,
 ): ConfigurationSnapshot {
   return {
     models,
     ...hasProjection(projections, 'permissions') ? { permissions: projections.permissions } : {},
     ...hasProjection(projections, 'plan') ? { plan: projections.plan } : {},
     ...vision === undefined ? {} : { vision },
+    ...web === undefined ? {} : { web },
     keymap,
     detailsExpanded,
   }
@@ -140,6 +144,18 @@ export function configurationRows(
         : `${snapshot.vision.config.mode} · ${snapshot.vision.config.proxyProvider}/${snapshot.vision.config.proxyModel}${snapshot.vision.credentialConfigured === false ? ' · credential missing' : ''}`,
     scope: 'TUI',
     available: snapshot.vision !== undefined,
+  }, {
+    kind: 'web',
+    label: 'Web',
+    value: snapshot.web === undefined
+      ? 'Unavailable in this profile'
+      : snapshot.web === null
+        ? 'Loading provider status…'
+        : [snapshot.web.search, snapshot.web.extract].every(provider => provider.credentialConfigured)
+          ? `${snapshot.web.search.id} + ${snapshot.web.extract.id} · ready`
+          : `${snapshot.web.search.id} + ${snapshot.web.extract.id} · credential missing`,
+    scope: 'TUI',
+    available: snapshot.web !== undefined,
   }, {
     kind: 'keymap',
     label: 'Keybindings',
