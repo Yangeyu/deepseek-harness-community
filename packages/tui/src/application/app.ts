@@ -29,6 +29,7 @@ import {
   type TuiState,
 } from '../runtime/controller.ts'
 import {
+  ApprovalDialog,
   ChoiceDialog,
   MemoryDialog,
   ModelDialog,
@@ -382,6 +383,7 @@ export class TuiApplication implements TuiControllerSink {
       this.footer,
       () => this.terminal.rows,
       this.attachmentRail,
+      this.theme.surfaceBorder,
     )
     this.tui.addChild(this.layout)
     this.tui.setFocus(this.editor)
@@ -624,6 +626,13 @@ export class TuiApplication implements TuiControllerSink {
     if (keyRelease && escape) return { consume: true }
     if (escape && isKeyRepeat(data)) return { consume: true }
     if (escape && this.cancelActiveInteraction()) return { consume: true }
+    if (this.activeInteraction !== undefined) {
+      if (matchesKey(data, Key.ctrl('c'))) {
+        if (!keyRelease && !isKeyRepeat(data)) this.cancelOrExit()
+        return { consume: true }
+      }
+      return undefined
+    }
     if (this.composerModalActive) return undefined
     if (this.attachmentRailFocused) {
       if (keyRelease) return undefined
@@ -1756,17 +1765,17 @@ export class TuiApplication implements TuiControllerSink {
     next.open()
   }
 
-  private setInteractionOverlay(key: string, handle: OverlayHandle): void {
+  private setInteractionSurface(key: string, close: () => void): void {
     const active = this.activeInteraction
     if (active?.key !== key) {
-      handle.hide()
+      close()
       return
     }
     active.close?.()
-    active.close = () => { handle.hide() }
+    active.close = close
   }
 
-  private hideInteractionOverlay(key: string): void {
+  private hideInteractionSurface(key: string): void {
     const active = this.activeInteraction
     if (active?.key !== key) return
     active.close?.()
@@ -1864,29 +1873,25 @@ export class TuiApplication implements TuiControllerSink {
     const settle = (outcome: 'allowed-once' | 'rejected'): void => {
       this.respondToInteraction(key, () => this.controller.answerApproval(prompt, outcome))
     }
-    const guidance = 'Esc / Ctrl+C interrupts the task. Reject only declines this tool call.'
-    const dialog = new ChoiceDialog(
-      `Allow ${sanitizeTerminalText(prompt.toolName)}?`,
-      [
-        { value: 'allowed-once', label: 'Allow once' },
-        {
-          value: 'rejected',
-          label: 'Reject and continue',
-          description: 'Decline this tool call without stopping the task.',
-        },
-      ],
+    const dialog = new ApprovalDialog(
+      prompt.toolName,
+      prompt.reason,
       this.theme,
-      item => settle(item.value === 'allowed-once' ? 'allowed-once' : 'rejected'),
+      settle,
       () => { this.cancelActiveInteraction() },
-      prompt.reason === undefined ? guidance : `${prompt.reason}\n${guidance}`,
     )
-    const handle = this.tui.showOverlay(dialog, {
-      anchor: 'bottom-center',
-      width: '100%',
-      maxHeight: '40%',
-      margin: { left: 1, right: 1, bottom: 1 },
+    const previousFocus = this.tui.getFocusedComponent()
+    const previousModalActive = this.composerModalActive
+    const restoreComposer = this.layout.pushComposerOverride(dialog)
+    this.composerModalActive = true
+    this.tui.setFocus(dialog)
+    this.tui.requestRender()
+    this.setInteractionSurface(key, () => {
+      if (!restoreComposer()) return
+      this.composerModalActive = previousModalActive
+      this.tui.setFocus(previousFocus)
+      this.tui.requestRender()
     })
-    this.setInteractionOverlay(key, handle)
   }
 
   private showQuestion(
@@ -1900,7 +1905,7 @@ export class TuiApplication implements TuiControllerSink {
       this.respondToInteraction(key, () => this.controller.answerQuestions(prompt, answers))
       return
     }
-    const close = (): void => { this.hideInteractionOverlay(key) }
+    const close = (): void => { this.hideInteractionSurface(key) }
     const next = (answer: { id: string; selected: string[]; custom?: string }): void => {
       const completed = [...answers, answer]
       if (index + 1 >= prompt.questions.length) {
@@ -1924,7 +1929,7 @@ export class TuiApplication implements TuiControllerSink {
         cancel,
       )
       const inputHandle = this.tui.showOverlay(input, { width: '85%', maxHeight: '70%', margin: 1 })
-      this.setInteractionOverlay(key, inputHandle)
+      this.setInteractionSurface(key, () => { inputHandle.hide() })
     }
     const options = (question.options ?? []).map(option => ({
       value: option.label,
@@ -1941,7 +1946,7 @@ export class TuiApplication implements TuiControllerSink {
         cancel,
       )
       const handle = this.tui.showOverlay(dialog, { width: '85%', maxHeight: '80%', margin: 1 })
-      this.setInteractionOverlay(key, handle)
+      this.setInteractionSurface(key, () => { handle.hide() })
       return
     }
     if (options.length === 0) {
@@ -1955,7 +1960,7 @@ export class TuiApplication implements TuiControllerSink {
         },
         cancel,
       ), { width: '85%', maxHeight: '70%', margin: 1 })
-      this.setInteractionOverlay(key, handle)
+      this.setInteractionSurface(key, () => { handle.hide() })
       return
     }
     const customValue = '__dsh_tui_custom__'
@@ -1970,7 +1975,7 @@ export class TuiApplication implements TuiControllerSink {
       question.detail,
     )
     const handle = this.tui.showOverlay(dialog, { width: '85%', maxHeight: '80%', margin: 1 })
-    this.setInteractionOverlay(key, handle)
+    this.setInteractionSurface(key, () => { handle.hide() })
   }
 
   private async runAction(action: () => Promise<void>): Promise<void> {

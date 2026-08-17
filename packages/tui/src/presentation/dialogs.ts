@@ -24,6 +24,82 @@ import type {
 import { sanitizeTerminalText } from '../text.ts'
 import type { TuiTheme } from './theme.ts'
 
+export type ApprovalDecision = 'allowed-once' | 'rejected'
+
+/** Compact high-salience decision surface for one blocking tool approval. */
+export class ApprovalDialog implements Component {
+  private selected = 0
+
+  constructor(
+    private readonly toolName: string,
+    private readonly reason: string | undefined,
+    private readonly theme: TuiTheme,
+    private readonly onSelect: (decision: ApprovalDecision) => void,
+    private readonly onCancel: () => void,
+  ) {}
+
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.up) || data === 'k') {
+      this.selected = this.selected === 0 ? 1 : 0
+      return
+    }
+    if (matchesKey(data, Key.down) || matchesKey(data, Key.tab) || data === 'j') {
+      this.selected = this.selected === 1 ? 0 : 1
+      return
+    }
+    if (data === '1' || data === '2') {
+      this.selected = Number(data) - 1
+      return
+    }
+    if (matchesKey(data, Key.enter)) {
+      this.onSelect(this.selected === 0 ? 'allowed-once' : 'rejected')
+      return
+    }
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))) this.onCancel()
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const safeWidth = Math.max(1, width)
+    const toolName = sanitizeTerminalText(this.toolName).replaceAll('\n', ' ')
+    const lines = [
+      this.theme.bold(this.theme.warning(`Permission required · ${toolName}`)),
+      ...(this.reason === undefined
+        ? []
+        : wrapTextWithAnsi(this.theme.secondary(sanitizeTerminalText(this.reason)), safeWidth)),
+      '',
+      this.actionRow(0, 'Allow once'),
+      this.actionRow(1, 'Reject and continue'),
+      ...this.indentedSecondary(
+        'Reject declines only this tool call; the task keeps running.',
+        safeWidth,
+      ),
+      '',
+      ...wrapTextWithAnsi(
+        this.theme.secondary('↑/↓ select · Enter confirm · Esc/Ctrl+C interrupt task'),
+        safeWidth,
+      ),
+    ]
+    return lines.map(line => truncateToWidth(line, safeWidth, ''))
+  }
+
+  private actionRow(index: number, label: string): string {
+    const selected = this.selected === index
+    const cursor = selected ? this.theme.accent('›') : ' '
+    const text = selected ? this.theme.bold(label) : label
+    return `${cursor} ${String(index + 1)}. ${text}`
+  }
+
+  private indentedSecondary(text: string, width: number): string[] {
+    const indent = '     '
+    return wrapTextWithAnsi(
+      this.theme.secondary(text),
+      Math.max(1, width - indent.length),
+    ).map(line => `${indent}${line}`)
+  }
+}
+
 /** Keyboard selector with a title and optional explanatory line. */
 export class ChoiceDialog implements Component {
   private readonly title: Text

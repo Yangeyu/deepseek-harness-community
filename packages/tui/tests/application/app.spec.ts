@@ -1,9 +1,6 @@
 import {
   Editor,
   stripTerminalSequences,
-  type Component,
-  type OverlayHandle,
-  type OverlayOptions,
   type Terminal,
 } from '@earendil-works/pi-tui'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -70,7 +67,6 @@ interface AppInternals {
   tui: {
     requestRender(): void
     hasOverlay(): boolean
-    showOverlay(component: Component, options?: OverlayOptions): OverlayHandle
     getFocusedComponent(): { handleInput?(data: string): void } | null
     beginTextSelection(x: number, y: number): boolean
     updateTextSelection(x: number, y: number): boolean
@@ -385,23 +381,24 @@ describe('TuiApplication input routing', () => {
     expect(handlePointer).toHaveBeenCalledWith(0, 'click')
   })
 
-  it('keeps transcript wheel scrolling available behind an interaction overlay', () => {
+  it('renders approval in the composer surface while keeping transcript wheel scrolling', () => {
     const app = application()
     const internals = app as unknown as AppInternals
     const prompt = approvalPrompt()
     const scrollTranscript = vi.fn(() => true)
-    const showOverlay = vi.spyOn(internals.tui, 'showOverlay')
     internals.layout.scrollTranscript = scrollTranscript
     internals.transcript.handlePointer = vi.fn(() => false)
 
     internals.requestApproval(prompt)
-    expect(internals.tui.hasOverlay()).toBe(true)
-    expect(showOverlay).toHaveBeenCalledWith(expect.anything(), {
-      anchor: 'bottom-center',
-      width: '100%',
-      maxHeight: '40%',
-      margin: { left: 1, right: 1, bottom: 1 },
-    })
+    expect(internals.tui.hasOverlay()).toBe(false)
+    expect(internals.composerModalActive).toBe(true)
+    const approval = internals.layout.render(80)
+      .map(line => stripTerminalSequences(line).trimEnd())
+      .join('\n')
+    expect(approval).toContain('╭─ Permission required · shell ─')
+    expect(approval).toContain('Allow once')
+    expect(approval).toContain('Reject and continue')
+    expect(approval).toContain('╰─ ↑/↓ select · Enter confirm · Esc/Ctrl+C interrupt task ─')
 
     expect(internals.handleGlobalInput('\u001b[<64;8;9M')).toEqual({ consume: true })
     expect(scrollTranscript).toHaveBeenCalledWith(-3)
@@ -409,6 +406,8 @@ describe('TuiApplication input routing', () => {
 
     internals.resolveInteraction(approvalResolution(prompt, 'cancelled'))
     expect(internals.tui.hasOverlay()).toBe(false)
+    expect(internals.composerModalActive).toBe(false)
+    expect(internals.tui.getFocusedComponent()).toBe(internals.editor)
   })
 
   it('uses Ctrl+V as the primary image paste shortcut and keeps Alt+V compatible', () => {
@@ -667,12 +666,13 @@ describe('TuiApplication input routing', () => {
     internals.controller.answerApproval = answerApproval
 
     internals.requestApproval(prompt)
-    expect(internals.tui.hasOverlay()).toBe(true)
+    expect(internals.tui.hasOverlay()).toBe(false)
+    expect(internals.composerModalActive).toBe(true)
 
     expect(internals.handleGlobalInput(input)).toEqual({ consume: true })
     expect(cancel).toHaveBeenCalledOnce()
     expect(answerApproval).not.toHaveBeenCalled()
-    await vi.waitFor(() => { expect(internals.tui.hasOverlay()).toBe(false) })
+    await vi.waitFor(() => { expect(internals.composerModalActive).toBe(false) })
   })
 
   it('exits on repeated Ctrl+C when approval cancellation does not settle', async () => {
@@ -708,6 +708,7 @@ describe('TuiApplication input routing', () => {
     await vi.waitFor(() => {
       expect(answerApproval).toHaveBeenCalledWith(prompt, 'rejected')
       expect(internals.tui.hasOverlay()).toBe(false)
+      expect(internals.composerModalActive).toBe(false)
     })
     expect(cancel).not.toHaveBeenCalled()
   })
@@ -950,6 +951,27 @@ describe('TuiApplication input routing', () => {
     internals.trajectoryView?.handleInput('\u001b')
     expect(internals.trajectoryView).toBeUndefined()
     expect(internals.composerModalActive).toBe(false)
+  })
+
+  it('restores the active composer surface after an approval is resolved', async () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const prompt = approvalPrompt()
+
+    await internals.submit('/trajectory')
+    const trajectory = internals.tui.getFocusedComponent()
+    internals.requestApproval(prompt)
+
+    expect(internals.tui.getFocusedComponent()).not.toBe(trajectory)
+    expect(internals.layout.render(80).map(stripTerminalSequences).join('\n'))
+      .toContain('╭─ Permission required · shell ─')
+
+    internals.resolveInteraction(approvalResolution(prompt, 'cancelled'))
+    expect(internals.composerModalActive).toBe(true)
+    expect(internals.tui.getFocusedComponent()).toBe(trajectory)
+    expect(internals.layout.render(80).map(stripTerminalSequences).join('\n')).toContain('Trajectory')
+
+    internals.trajectoryView?.handleInput('\u001b')
   })
 
   it('opens Config, Task, and Skill discovery as separate composer-anchored surfaces', async () => {

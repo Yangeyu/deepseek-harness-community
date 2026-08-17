@@ -165,6 +165,10 @@ reducing the number of visible files.
 - `ComposerEditorFrame` is the presentation boundary around `pi-tui`'s Editor.
   It places autocomplete above the bottom-anchored input frame and keeps image
   markers inside that frame, so changing candidate count cannot move the input.
+- `ComposerAnchoredLayout` frames every editor-replacing surface as the same
+  bounded bottom dock. Approval uses a compact decision component inside that
+  frame; lifecycle ownership remains in the interaction queue rather than in
+  presentation-specific overlays.
 - `VisionService` owns one attachment-validated proxy inference core for both
   composer admission and the workspace-contained `inspect_image` Agent tool.
   Tool inspection returns bounded untrusted text and never adds image blocks to

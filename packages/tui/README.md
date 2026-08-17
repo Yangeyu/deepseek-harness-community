@@ -43,7 +43,7 @@ The initial terminal client supports:
 - model and reasoning-effort selection;
 - a Codex-style model surface that temporarily replaces the composer and moves
   from model selection to a separate reasoning-effort step;
-- approval and structured-question dialogs;
+- a composer-anchored approval decision dock and structured-question dialogs;
 - Markdown-backed global and per-project memory, explicit remember/forget
   tools, quiet correction learning, and a `/memories` management surface;
 - reconnect and history resynchronization;

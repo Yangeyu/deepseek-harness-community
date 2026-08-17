@@ -1,5 +1,26 @@
 /** Composer-anchored layout primitives for the terminal presentation layer. */
-import { Container, type Component } from '@earendil-works/pi-tui'
+import {
+  Container,
+  stripTerminalSequences,
+  truncateToWidth,
+  visibleWidth,
+  type Component,
+} from '@earendil-works/pi-tui'
+
+type Paint = (text: string) => string
+
+const identityPaint: Paint = text => text
+/** Bound reading measure without making the dock itself look like a floating card. */
+const SURFACE_CONTENT_COLUMNS = 100
+
+function trimVisibleEnd(line: string): string {
+  if (!line.includes('\u001b')) return line.trimEnd()
+  const visible = stripTerminalSequences(line)
+  const trimmedWidth = visibleWidth(visible.trimEnd())
+  return trimmedWidth === visibleWidth(visible)
+    ? line
+    : truncateToWidth(line, trimmedWidth, '')
+}
 
 /** Main-screen layout with a fixed composer and a scrollable conversation viewport. */
 export class ComposerAnchoredLayout extends Container {
@@ -19,6 +40,7 @@ export class ComposerAnchoredLayout extends Container {
     private readonly footer: Component,
     private readonly viewportRows: () => number,
     private readonly attachments?: Component,
+    private readonly surfaceBorder: Paint = identityPaint,
   ) {
     super()
     this.addChild(header)
@@ -71,6 +93,20 @@ export class ComposerAnchoredLayout extends Container {
     if (component !== undefined) this.addChild(component)
   }
 
+  /** Temporarily replace the composer surface and restore it only while this override still owns it. */
+  pushComposerOverride(component: Component): () => boolean {
+    const previous = this.composerOverride
+    this.setComposerOverride(component)
+    let active = true
+    return () => {
+      if (!active) return false
+      active = false
+      if (this.composerOverride !== component) return false
+      this.setComposerOverride(previous)
+      return true
+    }
+  }
+
   /** Move the conversation viewport by rendered lines; positive values move toward newer output. */
   scrollTranscript(delta: number): boolean {
     const current = this.conversationTop ?? this.maxConversationTop
@@ -102,12 +138,40 @@ export class ComposerAnchoredLayout extends Container {
   }
 
   private renderComposer(width: number): string[] {
-    if (this.composerOverride !== undefined) return this.composerOverride.render(width)
+    if (this.composerOverride !== undefined) return this.renderComposerSurface(width)
     return [
       ...this.status.render(width),
       ...this.attachments?.render(width) ?? [],
       ...this.editor.render(width),
       ...this.footer.render(width),
     ]
+  }
+
+  private renderComposerSurface(width: number): string[] {
+    const safeWidth = Math.max(1, width)
+    const contentWidth = Math.max(1, Math.min(SURFACE_CONTENT_COLUMNS, safeWidth - 3))
+    const lines = this.composerOverride?.render(contentWidth) ?? []
+    return lines.map((line, index) => {
+      const edge = index === 0 ? 'top' : index === lines.length - 1 ? 'bottom' : 'middle'
+      return this.renderSurfaceLine(line, safeWidth, edge)
+    })
+  }
+
+  private renderSurfaceLine(
+    line: string,
+    width: number,
+    edge: 'top' | 'middle' | 'bottom',
+  ): string {
+    const normalizedLine = trimVisibleEnd(line)
+    const marker = edge === 'top' ? '╭─ ' : edge === 'bottom' ? '╰─ ' : '│  '
+    const prefix = truncateToWidth(marker, width, '')
+    const available = Math.max(0, width - visibleWidth(prefix))
+    const content = truncateToWidth(normalizedLine, available, '')
+    const used = visibleWidth(prefix) + visibleWidth(content)
+    const remaining = Math.max(0, width - used)
+    const suffix = edge === 'middle' || remaining === 0
+      ? ''
+      : remaining === 1 ? '─' : ` ${'─'.repeat(remaining - 1)}`
+    return `${this.surfaceBorder(prefix)}${content}${this.surfaceBorder(suffix)}`
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Text } from '@earendil-works/pi-tui'
+import { Text, visibleWidth } from '@earendil-works/pi-tui'
 import { ComposerAnchoredLayout } from '../../src/presentation/layout.ts'
 
 describe('ComposerAnchoredLayout', () => {
@@ -19,6 +19,90 @@ describe('ComposerAnchoredLayout', () => {
     expect(lines[2]?.trimEnd()).toBe('message')
     expect(lines[4]).toBe('')
     expect(lines.slice(-3).map(line => line.trim())).toEqual(['status', 'editor', 'footer'])
+  })
+
+  it('temporarily replaces and restores the current composer surface', () => {
+    const layout = new ComposerAnchoredLayout(
+      new Text('header', 0, 0),
+      new Text('message', 0, 0),
+      new Text('status', 0, 0),
+      new Text('editor', 0, 0),
+      new Text('footer', 0, 0),
+      () => 8,
+    )
+    const trajectory = new Text('trajectory', 0, 0)
+    const approval = new Text('approval', 0, 0)
+    layout.setComposerOverride(trajectory)
+
+    const restore = layout.pushComposerOverride(approval)
+    expect(layout.render(80).at(-1)?.trim()).toContain('approval')
+
+    expect(restore()).toBe(true)
+    expect(layout.render(80).at(-1)?.trim()).toContain('trajectory')
+    expect(restore()).toBe(false)
+    expect(layout.render(80).at(-1)?.trim()).toContain('trajectory')
+  })
+
+  it('does not overwrite a composer surface that replaced a temporary override', () => {
+    const layout = new ComposerAnchoredLayout(
+      new Text('header', 0, 0),
+      new Text('message', 0, 0),
+      new Text('status', 0, 0),
+      new Text('editor', 0, 0),
+      new Text('footer', 0, 0),
+      () => 8,
+    )
+    const restore = layout.pushComposerOverride(new Text('approval', 0, 0))
+    layout.setComposerOverride(new Text('new surface', 0, 0))
+
+    expect(restore()).toBe(false)
+    expect(layout.render(80).at(-1)?.trim()).toContain('new surface')
+  })
+
+  it('frames every composer surface as a distinct bottom dock without adding rows', () => {
+    const layout = new ComposerAnchoredLayout(
+      new Text('header', 0, 0),
+      new Text('message', 0, 0),
+      new Text('status', 0, 0),
+      new Text('editor', 0, 0),
+      new Text('footer', 0, 0),
+      () => 8,
+    )
+    layout.setComposerOverride(new Text('Permission required\nReason\n\nAllow once\nEsc cancel', 0, 0))
+
+    const lines = layout.render(80)
+    const surface = lines.slice(-5)
+    expect(lines).toHaveLength(8)
+    expect(surface[0]).toMatch(/^╭─ Permission required ─+$/u)
+    expect(surface.slice(1, -1).every(line => line.startsWith('│  '))).toBe(true)
+    expect(surface.at(-1)).toMatch(/^╰─ Esc cancel ─+$/u)
+    expect(visibleWidth(surface[0] ?? '')).toBe(80)
+    expect(visibleWidth(surface.at(-1) ?? '')).toBe(80)
+  })
+
+  it('bounds surface content width while extending its boundary across the viewport', () => {
+    let renderedWidth = 0
+    const surface = {
+      render: (width: number): string[] => {
+        renderedWidth = width
+        return ['Panel', 'content', 'Esc close']
+      },
+      invalidate: () => {},
+    }
+    const layout = new ComposerAnchoredLayout(
+      new Text('header', 0, 0),
+      new Text('message', 0, 0),
+      new Text('status', 0, 0),
+      new Text('editor', 0, 0),
+      new Text('footer', 0, 0),
+      () => 8,
+    )
+    layout.setComposerOverride(surface)
+
+    const lines = layout.render(180)
+    expect(renderedWidth).toBe(100)
+    expect(visibleWidth(lines.at(-3) ?? '')).toBe(180)
+    expect(visibleWidth(lines.at(-1) ?? '')).toBe(180)
   })
 
   it('follows the conversation tail and scrolls through the non-fixed header', () => {

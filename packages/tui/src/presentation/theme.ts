@@ -20,6 +20,7 @@ export interface TuiTheme {
   hover: Paint
   reasoning: Paint
   success: Paint
+  surfaceBorder: Paint
   tool: Paint
   underline: Paint
   user: Paint
@@ -78,6 +79,7 @@ export function createTheme(enabled: boolean): TuiTheme {
     hover,
     reasoning,
     success,
+    surfaceBorder: secondary,
     tool,
     underline,
     user,
