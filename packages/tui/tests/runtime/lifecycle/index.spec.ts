@@ -9,6 +9,7 @@ import {
   executionStatus,
   lifecycleEndedAt,
   lifecycleStartedAt,
+  promptLifecycleKey,
   stepLifecycleKey,
   thoughtLifecycleKey,
   toolLifecycleKey,
@@ -315,6 +316,7 @@ describe('execution lifecycle', () => {
             role: 'user',
             source: {
               kind: 'community-vision',
+              promptId: 'missing-prompt',
               analysisId: 'analysis-1',
               provider: 'dashscope-vision',
               model: 'qwen',
@@ -337,6 +339,71 @@ describe('execution lifecycle', () => {
     expect(vision === undefined ? undefined : executionStatus(vision)).toBe('completed')
     expect(vision === undefined ? undefined : lifecycleStartedAt(vision)).toBe(500)
     expect(vision === undefined ? undefined : lifecycleEndedAt(vision)).toBe(800)
+  })
+
+  it('models an image prompt once and nests Vision evidence beneath it', () => {
+    const snapshot = build([
+      { event: { type: 'turn/start', seq: 0, time: 100, data: { turn: 1 } } },
+      {
+        event: {
+          type: 'user/message',
+          seq: 1,
+          time: 120,
+          surfaceOp: 'append',
+          data: {
+            id: 'image-prompt',
+            role: 'user',
+            source: { kind: 'user', rpcId: 'rpc-image' },
+            content: [{ type: 'text', text: 'inspect image' }],
+          },
+        },
+      },
+      {
+        event: {
+          type: 'user/message',
+          seq: 2,
+          time: 420,
+          surfaceOp: 'append',
+          data: {
+            id: 'vision-evidence',
+            role: 'user',
+            source: {
+              kind: 'community-vision',
+              promptId: 'image-prompt',
+              analysisId: 'analysis-image',
+              provider: 'dashscope-vision',
+              model: 'qwen',
+              attachments: [],
+              durationMs: 300,
+              finishReason: 'stop',
+              truncated: false,
+            },
+            content: [{ type: 'text', text: 'vision observation' }],
+          },
+        },
+      },
+      { event: { type: 'turn/end', seq: 3, time: 450, data: { turn: 1, reason: { kind: 'completed' } } } },
+    ])
+    const promptKey = promptLifecycleKey('image-prompt')
+    const visionKey = visionLifecycleKey('analysis-image')
+
+    expect(snapshot.ordered().map(node => node.key)).toEqual([
+      turnLifecycleKey(1),
+      promptKey,
+      visionKey,
+    ])
+    expect(snapshot.get(promptKey)).toMatchObject({
+      kind: 'prompt',
+      parentKey: turnLifecycleKey(1),
+      state: { phase: 'settled', outcome: 'completed' },
+    })
+    expect(snapshot.get(visionKey)).toMatchObject({
+      kind: 'vision',
+      parentKey: promptKey,
+      state: { phase: 'settled', outcome: 'completed' },
+    })
+    expect(snapshot.ordered().filter(node => node.kind === 'prompt')).toHaveLength(1)
+    expect(snapshot.diagnostics()).toEqual([])
   })
 
   it('uses one aggregate precedence and complete timing rule', () => {

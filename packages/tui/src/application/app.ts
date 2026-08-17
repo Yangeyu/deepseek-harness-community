@@ -100,6 +100,10 @@ import {
   AttachmentDraftStore,
   type AttachmentDraft,
 } from './attachments/drafts.ts'
+import {
+  preparePromptDraft,
+  type PromptAttachmentReader,
+} from './attachments/restore.ts'
 import { imageDraftFromPath } from './attachments/files.ts'
 import {
   imageDraftFromClipboard,
@@ -159,6 +163,7 @@ export interface TuiApplicationDependencies {
   keymap?: KeymapSettingsGateway
   initialImagePaths?: readonly string[]
   clipboardImage?: ClipboardImageLoader
+  attachments?: PromptAttachmentReader
   terminal?: Terminal
 }
 
@@ -234,6 +239,7 @@ export class TuiApplication implements TuiControllerSink {
   private attachmentRailFocused = false
   private readonly initialImagePaths: readonly string[]
   private readonly clipboardImage: ClipboardImageLoader
+  private readonly promptAttachmentReader: PromptAttachmentReader | undefined
   private clipboardPastePending = false
   private readonly rewindTransaction: RewindTransaction
 
@@ -251,11 +257,13 @@ export class TuiApplication implements TuiControllerSink {
       keymap,
       initialImagePaths = [],
       clipboardImage = imageDraftFromClipboard,
+      attachments,
       terminal = new ProcessTerminal(),
     } = dependencies
     this.terminal = terminal
     this.initialImagePaths = initialImagePaths
     this.clipboardImage = clipboardImage
+    this.promptAttachmentReader = attachments
     this.theme = createTheme(config.color)
     this.tui = new TuiMainScreen(this.terminal, config.showHardwareCursor)
     this.controller = new HarnessController(api, this, config.cwd, config.historyMessages)
@@ -1347,6 +1355,7 @@ export class TuiApplication implements TuiControllerSink {
 
   private async performRewind(plan: RewindPlan): Promise<void> {
     try {
+      const draft = await preparePromptDraft(plan.input, this.promptAttachmentReader)
       await this.rewindTransaction.execute(plan, (phase) => {
         this.showRewindProgress(phase === 'forking'
           ? 'Rewinding conversation…'
@@ -1355,7 +1364,8 @@ export class TuiApplication implements TuiControllerSink {
             : 'Rewind failed; restoring the current workspace and memory…')
       })
       this.resetComposerInput()
-      this.editor.setText(plan.prompt)
+      this.editor.setText(draft.text)
+      this.attachmentDrafts.replaceAll(draft.attachments)
     } catch (error: unknown) {
       this.controller.notice(error instanceof Error ? error.message : String(error))
     } finally {

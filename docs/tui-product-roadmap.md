@@ -108,16 +108,21 @@ are in [`tui-v0.1.8-design.md`](tui-v0.1.8-design.md).
 
 - Replace TUI-owned whole-worktree checkpoint policy with one transport-neutral
   Rewind domain consumed through a narrow application port.
+- Project each accepted human `user/message` into the existing TUI lifecycle as
+  one stable Prompt node; use the same node for text, native-image, and
+  proxy-image turns, classify turn-entry versus in-turn placement, and retain
+  Vision evidence as a child contribution that enriches the Prompt's durable
+  attachment references.
 - Journal source-attributed workspace mutations with stable session, turn, and
   call identities plus before/after snapshot references.
 - Plan each restore as `safe`, `mergeable`, `conflict`, or `unsupported`; only
   AI-owned mutations participate in the default restore plan.
-- Restore workspace mutations, Memory mutations, and the conversation fork as
-  one preflighted transaction with compensation on partial failure.
+- Verify and refill complete Prompt text and attachments around the same
+  preflighted workspace, Memory, and conversation transaction.
 - Persist one active editing lineage per canonical workspace so the owner
   session can resume after TUI restart with the same bounded Rewind history.
 - Retain a durable cursor and future segment after restore; discard that future
-  only when the forked session begins a new durable turn.
+  only when the forked session admits a new durable turn-entry Prompt.
 - Keep `Restore` selected by default for safe plans, disable it for unresolved
   conflicts, and show exact affected paths and ownership before confirmation.
 - Remove whole-worktree inference, tool-name parsing, duplicated checkpoint

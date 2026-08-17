@@ -7,6 +7,7 @@ import {
   executionStatus,
   lifecycleEndedAt,
   lifecycleStartedAt,
+  promptLifecycleKey,
   stepLifecycleKey,
   toolLifecycleKey,
   turnLifecycleKey,
@@ -187,9 +188,10 @@ function stateWord(node: LifecycleNode): string {
   return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
-function trajectoryKind(node: LifecycleNode): Extract<TrajectoryKind, LifecycleNode['kind']> {
+function trajectoryKind(node: LifecycleNode): TrajectoryKind {
   switch (node.kind) {
     case 'turn': return 'turn'
+    case 'prompt': return 'user'
     case 'step': return 'step'
     case 'tool': return 'tool'
     case 'command': return 'command'
@@ -355,13 +357,29 @@ export function buildTrajectoryRecords(
           }))
           break
         }
+        if (source.kind === 'user') {
+          const node = lifecycle.get(promptLifecycleKey(String(event.data.id)))
+          const input = {
+            type: event.type,
+            seq: event.seq,
+            ...at,
+            title: 'User input',
+            summary: oneLine(detail),
+            detail,
+            payload: event.data,
+          }
+          records.push(node === undefined
+            ? { key: `event:${String(event.seq)}`, kind: 'user', tone: 'info', occurredAt: event.time, ...input }
+            : executionRecord(node, input))
+          break
+        }
         records.push({
           key: `event:${String(event.seq)}`,
           kind: 'user',
           type: event.type,
           seq: event.seq,
           ...at,
-          title: source.kind === 'user' ? 'User input' : 'Context input',
+          title: 'Context input',
           summary: oneLine(detail),
           detail,
           tone: 'info',

@@ -36,6 +36,7 @@ function visionEvent(analysisId: string): HistoryEntry {
         role: 'user',
         source: {
           kind: 'community-vision',
+          promptId: 'message-durable',
           analysisId,
           provider: 'proxy',
           model: 'vision',

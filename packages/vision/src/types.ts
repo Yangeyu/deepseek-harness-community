@@ -2,7 +2,7 @@ import type {
   ImageAttachmentRef,
   ImageMediaType,
 } from '@deepseek-ai/dsh-attachment'
-import type { TokenUsage } from '@deepseek-ai/dsh-llm'
+import type { MessageId, TokenUsage } from '@deepseek-ai/dsh-llm'
 
 export interface VisionObservationBlock {
   type: 'community-vision-observation'
@@ -43,16 +43,20 @@ export interface VisionRequest {
   images: readonly VisionImageInput[]
 }
 
-export interface VisionAnalysis {
+/** Provider facts shared by analysis, admission carriers, and durable evidence. */
+export interface VisionEvidenceMetadata {
   analysisId: string
   provider: string
   model: string
-  observation: string
   attachments: readonly ImageAttachmentRef[]
   durationMs: number
   truncated: boolean
   finishReason: string
   usage?: TokenUsage
+}
+
+export interface VisionAnalysis extends VisionEvidenceMetadata {
+  observation: string
 }
 
 export interface VisionAdmissionRequest {
@@ -64,24 +68,15 @@ export interface VisionAdmissionRequest {
   clientTimeZone?: string
 }
 
-interface VisionEvidence {
-  analysisId: string
-  provider: string
-  model: string
-  attachments: readonly ImageAttachmentRef[]
-  durationMs: number
-  finishReason: string
-  truncated: boolean
-  usage?: TokenUsage
-}
-
 /** Structured provenance persisted inside the supported `user/message` event. */
-export interface VisionEvidenceSource extends VisionEvidence {
+export interface VisionEvidenceSource extends VisionEvidenceMetadata {
   kind: 'community-vision'
+  /** Stable identity of the admitted human Prompt that owns this evidence. */
+  promptId: MessageId
 }
 
 /** Durable, pre-admission carrier that keeps proxy media recoverable but model-invisible. */
-export interface VisionSubmissionSource extends VisionEvidence {
+export interface VisionSubmissionSource extends VisionEvidenceMetadata {
   kind: 'community-vision-submission'
   sessionId: string
   rpcId: string

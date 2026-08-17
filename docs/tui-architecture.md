@@ -59,8 +59,10 @@ reducing the number of visible files.
    exact Skills remain ordinary Host-owned prompts; unknown leading gestures
    are rejected after catalog refresh. A known Command never degrades to model
    input.
-5. Paired lifecycle events produce one semantic node. This applies to
-   turn/start-end, step/start-end, tool/call-result, and command/run-done.
+5. Durable user prompts and paired lifecycle events produce one semantic node.
+   This applies to `user/message(source=user)`, turn/start-end, step/start-end,
+   tool/call-result, and command/run-done. A Prompt is identified by its durable
+   message id and belongs to its open Turn.
    Command nodes remain standalone because their lifecycle is explicitly not
    wrapped by a turn, even when their events arrive during active work. A
    `turn/end` also closes unmatched streaming or tool children as failed or
@@ -72,8 +74,11 @@ reducing the number of visible files.
 7. Stable semantic keys preserve selection across live replacement and history
    paging. UI row indexes are not identities.
 8. Image bytes become durable only through the Harness attachment service.
-   Proxy observations are source-attributed context, never rewritten as human
-   text, and a missing Vision capability never silently drops an attachment.
+   Native and proxy routes produce the same human Prompt lifecycle. Proxy
+   observations are source-attributed children of that Prompt, never rewritten
+   as human text. Native image blocks and proxy evidence enrich the same Prompt
+   with immutable attachment references, and a missing Vision capability never
+   silently drops an attachment.
 9. Raw terminal sequences resolve to semantic actions before application
    behavior runs. Context owns gesture availability: idle editor input is never
    consumed by a running-turn binding, and persisted keymap choices contain no
@@ -141,9 +146,18 @@ reducing the number of visible files.
 - `TrajectoryModel` indexes lifecycle parent keys once per event snapshot and
   computes offsets, durations, parent share, sibling bottlenecks, and the global
   bottleneck in linear time.
-- `runtime/lifecycle` is the only module that pairs execution facts and enforces
-  transition legality. It exposes one immutable snapshot for Turn, Step,
-  Thought, Tool, Command, and Vision nodes.
+- `runtime/lifecycle` is the only module that projects accepted Prompt
+  boundaries, pairs execution facts, and enforces transition legality. It
+  exposes one immutable snapshot for Turn, Prompt, Step, Thought, Tool,
+  Command, and Vision nodes. Its post-commit Prompt feed is replayable from the
+  same Session log and contains no Rewind policy.
+- Prompt lifecycle retains both `turn-entry` and `in-turn` user admissions.
+  Rewind's adapter selects only `turn-entry`, matching the Host's completed-turn
+  fork contract instead of silently deduplicating steering messages in Journal.
+  The lifecycle feed upserts immutable Prompt snapshots so later Vision evidence
+  can add attachment references without creating another Prompt or Rewind point.
+  Durable Vision evidence names its owning `promptId`; projections never infer
+  ownership from the nearest or latest Prompt.
 - `buildTrajectoryRecords` and `buildTranscriptItems` join presentation payloads
   to resolved lifecycle nodes without re-pairing execution events or importing
   each other's models.
@@ -153,9 +167,10 @@ reducing the number of visible files.
   `rewind/domain` owns bounded history and pure reverse planning;
   `rewind/application` owns the active timeline Repository port, restore, and
   conversation compensation; and
-  `rewind/adapters` is the only layer that knows Host events, Memory payloads,
-  durable Harness-home files, or the local workspace. Presentation consumes
-  only the `RewindPort`, point summaries, and immutable plans.
+  `rewind/adapters` is the only layer that translates Prompt nodes, Host
+  filesystem events, Memory payloads, durable Harness-home files, or the local
+  workspace. Presentation consumes only the `RewindPort`, point summaries, and
+  immutable plans.
 
 ## Planned evolution
 
@@ -230,11 +245,15 @@ architecture required to support that sequence.
 - One `rewind` domain replaces the TUI-owned Git checkpoint subsystem; there is
   no compatibility reader, detached index, tree snapshot, or alternate restore
   path.
-- `rewind/adapters/host` joins `fs/observed` and `tools/result` by execution identity,
-  validates the canonical text-mutation contract, and attributes it through
-  stable root-call, session, and turn identities without parsing tool names or
-  presentation diffs.
-- `RewindJournal` retains only turn boundaries, attributed workspace facts,
+- `runtime/lifecycle/host` projects a first-class Prompt only from a committed
+  human `user/message`; `rewind/adapters/prompt` maps its `turn-entry` subset to
+  Rewind points. Vision transport and evidence cannot create or suppress that
+  point; evidence can only enrich its durable attachment references.
+- `rewind/adapters/host` joins `fs/observed` and `tools/result` by execution
+  identity, validates the canonical text-mutation contract, and attributes it
+  through stable root-call, session, and turn identities without parsing tool
+  names or presentation diffs.
+- `RewindJournal` retains only Prompt boundaries, attributed workspace facts,
   opaque participant references, and a cursor over one active workspace
   lineage. `RewindService` builds `safe`,
   `mergeable`, `conflict`, or `unsupported` plans through an injected workspace
@@ -248,11 +267,13 @@ architecture required to support that sequence.
 - Workspace and explicit participants form one reversible stage before
   `RewindTransaction` commits the conversation fork. Memory payloads remain in
   its adapter, and any failed later phase compensates completed stages.
+  Composer restoration first verifies attachment references through the Host
+  store, then restores text and image drafts together after the fork succeeds.
   Presentation defaults safe and mergeable plans to Restore,
   defaults blocked plans to Cancel, and lists exact paths before confirmation.
 - Session resume reactivates the same owner lineage. Another session does not
   replace it until its first attributed edit. Rewind moves a durable cursor and
-  retains the future segment until a new turn branches from the restored point;
+  retains the future segment until a new Prompt branches from the restored point;
   only backward navigation is exposed in this milestone.
 
 ### Following architecture work

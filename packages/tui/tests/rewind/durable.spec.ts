@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MemoryMutation } from '@vascent/deepseek-harness-memory'
 import {
@@ -27,8 +28,22 @@ function service(storageRoot: string, participant?: MemoryRewindParticipant): Re
   )
 }
 
-async function begin(rewind: RewindService, root: string, turn: number, sessionId = 'session'): Promise<void> {
-  await rewind.beginTurn({ sessionId, turn, workspaceRoot: root, prompt: `turn ${String(turn)}` })
+async function begin(
+  rewind: RewindService,
+  root: string,
+  turn: number,
+  sessionId = 'session',
+  attachments: readonly ImageAttachmentRef[] = [],
+): Promise<void> {
+  await rewind.recordPoint({
+    pointId: `${sessionId}-prompt-${String(turn)}`,
+    sessionId,
+    turn,
+    workspaceRoot: root,
+    input: { text: `turn ${String(turn)}`, attachments },
+    promptSeq: turn,
+    createdAt: turn,
+  })
 }
 
 function record(rewind: RewindService, root: string, turn: number, before: string, after: string, sessionId = 'session'): void {
@@ -59,7 +74,15 @@ describe('durable Rewind lifecycle', () => {
     const after = 'after\n'
     await writeFile(path, before)
     const first = service(storageRoot)
-    await begin(first, workspaceRoot, 1)
+    const attachment: ImageAttachmentRef = {
+      attachmentId: 'attachment-1' as ImageAttachmentRef['attachmentId'],
+      mediaType: 'image/png',
+      bytes: 4,
+      width: 1,
+      height: 1,
+      name: 'image.png',
+    }
+    await begin(first, workspaceRoot, 1, 'session', [attachment])
     await writeFile(path, after)
     record(first, workspaceRoot, 1, before, after)
     await first.settle('session')
@@ -71,6 +94,7 @@ describe('durable Rewind lifecycle', () => {
     const plan = await resumed.plan('session', point?.pointId ?? '')
 
     expect(plan.state).toBe('safe')
+    expect(plan.input.attachments).toEqual([attachment])
     await resumed.restore(plan)
     expect(await readFile(path, 'utf8')).toBe(before)
     await resumed.close()
@@ -147,6 +171,7 @@ describe('durable Rewind lifecycle', () => {
     expect(() => first.list('other')).toThrow('no rewind point')
 
     record(first, workspaceRoot, 1, 'before\n', 'after\n', 'other')
+    await first.settle('other')
     expect(() => first.list('session')).toThrow('no rewind point')
     expect(first.list('other')).toHaveLength(1)
     await first.close()

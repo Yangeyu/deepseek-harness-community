@@ -1,29 +1,13 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { FsObservation, FsTarget } from '@deepseek-ai/dsh-fs'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import type { RewindLifecycleSink, WorkspaceMutationInput } from '../contracts.ts'
-
-interface PromptMessage {
-  readonly source: { readonly kind: string }
-  readonly content: readonly { readonly type: string; readonly text?: string }[]
-}
+import type { RewindWorkspaceSink, WorkspaceMutationInput } from '../contracts.ts'
 
 type CanonicalMutationOutcome =
   | Pick<Extract<WorkspaceMutationInput, { readonly kind: 'reversible' }>, 'kind' | 'path' | 'before' | 'after'>
   | Pick<Extract<WorkspaceMutationInput, { readonly kind: 'unsupported' }>, 'kind' | 'path' | 'reason'>
 
 type MutationSource = Pick<WorkspaceMutationInput, 'sessionId' | 'turn' | 'callId' | 'rootCallId' | 'workspaceRoot'>
-
-function promptText(messages: readonly PromptMessage[]): string | undefined {
-  const prompt = messages.find(message => message.source.kind === 'user')
-  if (prompt === undefined) return undefined
-  const text = prompt.content
-    .filter(block => block.type === 'text')
-    .map(block => block.text ?? '')
-    .join('\n')
-  return text.trim() === '' ? undefined : text
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -78,24 +62,10 @@ function sourceFor(exec: Readonly<ToolExecution>): MutationSource | undefined {
   }
 }
 
-/** Install the only Host-to-Rewind lifecycle adapter. */
-export function installRewindLifecycle(ctx: Context, sink: RewindLifecycleSink): void {
+/** Attribute normalized filesystem outcomes to their originating Agent turn. */
+export function installRewindWorkspaceAdapter(ctx: Context, sink: RewindWorkspaceSink): void {
   const observed = new WeakMap<object, { readonly target: FsTarget; readonly order: number }>()
   let mutationOrder = 0
-  ctx.on('agent/pre-step', async ({ agent, messages, turn, step }, next): Promise<PreStepDecision> => {
-    const prompt = step === 1 ? promptText(messages) : undefined
-    if (prompt !== undefined) {
-      const previous = agent.session.events.findLast(event => event.type === 'turn/end' && event.data.turn < turn)
-      await sink.beginTurn({
-        sessionId: String(agent.session.id),
-        turn,
-        workspaceRoot: agent.session.header.cwd ?? process.cwd(),
-        prompt,
-        ...previous === undefined ? {} : { previousTurnEndSeq: previous.seq },
-      })
-    }
-    return next()
-  })
   ctx.on('fs/observed', (target: FsTarget, observation: FsObservation, actor: object | undefined) => {
     if (actor !== undefined && observation.kind === 'present') {
       mutationOrder += 1

@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   LocalWorkspaceRewind,
@@ -24,7 +25,20 @@ function service(history = 10, participants: readonly RewindParticipant[] = []):
 }
 
 async function begin(rewind: RewindService, root: string, turn = 1, sessionId = 'session'): Promise<void> {
-  await rewind.beginTurn({ sessionId, turn, workspaceRoot: root, prompt: `turn ${String(turn)}` })
+  await rewind.recordPoint({
+    pointId: `${sessionId}-prompt-${String(turn)}`,
+    sessionId,
+    turn,
+    workspaceRoot: root,
+    input: { text: `turn ${String(turn)}`, attachments: [] },
+    promptSeq: turn,
+    createdAt: turn,
+  })
+}
+
+async function list(rewind: RewindService, sessionId = 'session') {
+  await rewind.settle(sessionId)
+  return rewind.list(sessionId)
 }
 
 function record(rewind: RewindService, input: {
@@ -64,6 +78,56 @@ afterEach(async () => {
 })
 
 describe('RewindService', () => {
+  it('serializes prompt admission before same-turn effects', async () => {
+    const root = await workspace()
+    const rewind = service()
+    const point = rewind.recordPoint({
+      pointId: 'prompt-1',
+      sessionId: 'session',
+      turn: 1,
+      workspaceRoot: root,
+      input: { text: 'edit the file', attachments: [] },
+      promptSeq: 1,
+      createdAt: 1,
+    })
+    record(rewind, {
+      root,
+      before: 'one\ntwo\nthree\n',
+      after: 'one\nAI\nthree\n',
+    })
+
+    await point
+    const [summary] = await list(rewind)
+    expect(summary).toMatchObject({ pointId: 'prompt-1', workspaceFiles: 1 })
+  })
+
+  it('updates one Prompt point when durable image evidence arrives', async () => {
+    const root = await workspace()
+    const rewind = service()
+    const base = {
+      pointId: 'prompt-1',
+      sessionId: 'session',
+      turn: 1,
+      workspaceRoot: root,
+      promptSeq: 1,
+      createdAt: 1,
+    }
+    await rewind.recordPoint({ ...base, input: { text: 'inspect image', attachments: [] } })
+    const attachment: ImageAttachmentRef = {
+      attachmentId: 'attachment-1' as ImageAttachmentRef['attachmentId'],
+      mediaType: 'image/png',
+      bytes: 4,
+      width: 1,
+      height: 1,
+    }
+    await rewind.recordPoint({ ...base, input: { text: 'inspect image', attachments: [attachment] } })
+
+    const [summary] = await list(rewind)
+    expect(summary).toMatchObject({ pointId: 'prompt-1', imageCount: 1 })
+    const plan = await rewind.plan('session', summary?.pointId ?? '')
+    expect(plan.input).toEqual({ text: 'inspect image', attachments: [attachment] })
+  })
+
   it('restores only source-attributed AI files and supports compensation', async () => {
     const root = await workspace()
     const rewind = service()
@@ -74,7 +138,7 @@ describe('RewindService', () => {
     record(rewind, { root, before, after })
     await writeFile(join(root, 'b.txt'), 'external window edit\n')
 
-    const [summary] = rewind.list('session')
+    const [summary] = await list(rewind)
     expect(summary).toMatchObject({ workspaceFiles: 1, unsupportedFiles: 0 })
     const plan = await rewind.plan('session', summary?.pointId ?? '')
     expect(plan.state).toBe('safe')
@@ -98,7 +162,7 @@ describe('RewindService', () => {
     await writeFile(join(root, 'a.txt'), 'one\nAI\nthree\nexternal\n')
     record(rewind, { root, before, after })
 
-    const [summary] = rewind.list('session')
+    const [summary] = await list(rewind)
     const plan = await rewind.plan('session', summary?.pointId ?? '')
     expect(plan.state).toBe('mergeable')
     await rewind.restore(plan)
@@ -117,7 +181,7 @@ describe('RewindService', () => {
     record(rewind, { root, callId: 'call-2', before: secondBefore, after: secondAfter, order: 2 })
     record(rewind, { root, callId: 'call-1', before: original, after: firstAfter, order: 1 })
 
-    const [summary] = rewind.list('session')
+    const [summary] = await list(rewind)
     const plan = await rewind.plan('session', summary?.pointId ?? '')
     expect(plan.state).toBe('mergeable')
     await rewind.restore(plan)
@@ -132,7 +196,7 @@ describe('RewindService', () => {
     const after = 'one\nAI\nthree\n'
     await writeFile(join(root, 'a.txt'), 'one\nexternal replacement\nthree\n')
     record(rewind, { root, before, after })
-    const [summary] = rewind.list('session')
+    const [summary] = await list(rewind)
     const conflict = await rewind.plan('session', summary?.pointId ?? '')
     expect(conflict.state).toBe('conflict')
     await expect(rewind.restore(conflict)).rejects.toThrow('conflict rewind plan cannot be restored')
@@ -152,7 +216,7 @@ describe('RewindService', () => {
     record(rewind, { root, path, before: null, after: 'created by AI\n' })
     await writeFile(join(root, 'external.txt'), 'created elsewhere\n')
 
-    const [summary] = rewind.list('session')
+    const [summary] = await list(rewind)
     const plan = await rewind.plan('session', summary?.pointId ?? '')
     await rewind.restore(plan)
     await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -166,7 +230,7 @@ describe('RewindService', () => {
     record(rewind, { root, callId: 'call-1', before: 'one\ntwo\nthree\n', after: 'one\nAI\nthree\n', order: 1 })
     record(rewind, { root, callId: 'call-2', unsupportedReason: 'missing before-state', order: 2 })
 
-    const [summary] = rewind.list('session')
+    const [summary] = await list(rewind)
     expect(summary).toMatchObject({ workspaceFiles: 1, unsupportedFiles: 1 })
     const plan = await rewind.plan('session', summary?.pointId ?? '')
     expect(plan.state).toBe('unsupported')
@@ -188,7 +252,7 @@ describe('RewindService', () => {
       after: 'AI result\n',
     })
 
-    const [summary] = rewind.list('session')
+    const [summary] = await list(rewind)
     const plan = await rewind.plan('session', summary?.pointId ?? '')
     expect(plan.state).toBe('conflict')
     expect(plan.files[0]?.state).toBe('conflict')
@@ -202,7 +266,7 @@ describe('RewindService', () => {
     await begin(rewind, root, 2)
     await begin(rewind, root, 3)
     await begin(rewind, root, 4)
-    const summaries = rewind.list('session')
+    const summaries = await list(rewind)
     expect(summaries.map(summary => summary.turn)).toEqual([2, 3, 4])
 
     const plan = await rewind.plan('session', summaries[1]?.pointId ?? '')
@@ -232,7 +296,7 @@ describe('RewindService', () => {
     rewind.recordEffect({ participantId: 'memory', effectId: 'memory-1', sourceSessionId: 'session', sourceTurn: 1 })
     rewind.recordEffect({ participantId: 'memory', effectId: 'memory-2', sourceSessionId: 'session', sourceTurn: 2 })
 
-    const summaries = rewind.list('session')
+    const summaries = await list(rewind)
     expect(summaries.map(summary => summary.participants[0]?.changes)).toEqual([1, 1])
     const plan = await rewind.plan('session', summaries[0]?.pointId ?? '')
     expect(plan.participants).toEqual([{ id: 'memory', label: 'Memory', changes: 2, state: 'safe' }])
@@ -261,7 +325,7 @@ describe('RewindService', () => {
     await writeFile(join(root, 'a.txt'), after)
     record(rewind, { root, before, after })
     rewind.recordEffect({ participantId: 'memory', effectId: 'memory-1', sourceSessionId: 'session', sourceTurn: 1 })
-    const [summary] = rewind.list('session')
+    const [summary] = await list(rewind)
     const plan = await rewind.plan('session', summary?.pointId ?? '')
 
     await expect(rewind.restore(plan)).rejects.toThrow('memory restore failed')
@@ -278,7 +342,7 @@ describe('RewindService', () => {
     await begin(rewind, root)
     record(rewind, { root, before: '12345', after: '67890' })
 
-    const [summary] = rewind.list('session')
+    const [summary] = await list(rewind)
     expect(summary).toMatchObject({ workspaceFiles: 1, unsupportedFiles: 1 })
     const plan = await rewind.plan('session', summary?.pointId ?? '')
     expect(plan.state).toBe('unsupported')

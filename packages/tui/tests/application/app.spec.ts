@@ -1,4 +1,5 @@
 import { Editor, type Terminal } from '@earendil-works/pi-tui'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -17,6 +18,7 @@ import {
 } from '../../src/application/keymap-settings.ts'
 import type { VisionGateway } from '../../src/application/attachments/coordinator.ts'
 import type { NewAttachmentDraft } from '../../src/application/attachments/drafts.ts'
+import type { AttachmentDraft } from '../../src/application/attachments/drafts.ts'
 import { buildLifecycleSnapshot } from '../../src/runtime/lifecycle/index.ts'
 
 interface AppInternals {
@@ -33,7 +35,7 @@ interface AppInternals {
     refresh(force?: boolean): Promise<readonly unknown[]>
   }
   editor: Editor
-  attachmentDrafts: { snapshot: readonly unknown[] }
+  attachmentDrafts: { snapshot: readonly AttachmentDraft[] }
   attachmentComposer: { render(width: number): string[] }
   footer: { render(width: number): string[] }
   status: { render(width: number): string[] }
@@ -72,6 +74,20 @@ function rewindPort(overrides: Partial<RewindPort> = {}): RewindPort {
     continueFrom: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
     ...overrides,
+  }
+}
+
+function rewindPlan(attachments: readonly ImageAttachmentRef[] = []): RewindPlan {
+  return {
+    planId: 'plan-1',
+    pointId: 'point-1',
+    sessionId: 'session-1',
+    turn: 1,
+    input: { text: 'inspect image', attachments },
+    createdAt: 1,
+    state: 'safe',
+    files: [],
+    participants: [],
   }
 }
 
@@ -216,6 +232,62 @@ describe('TuiApplication input routing', () => {
     expect(internals.handleGlobalInput('\u007F')).toEqual({ consume: true })
     expect(internals.attachmentDrafts.snapshot).toEqual([])
     expect(internals.attachmentComposer.render(80).join('\n')).not.toContain('[Image #1]')
+  })
+
+  it('restores complete Prompt text and durable images after a successful Rewind', async () => {
+    const ref: ImageAttachmentRef = {
+      attachmentId: 'attachment-1' as ImageAttachmentRef['attachmentId'],
+      mediaType: 'image/png',
+      bytes: 4,
+      width: 1,
+      height: 1,
+      name: 'image.png',
+    }
+    const restore = vi.fn(async () => async () => {})
+    const continueFrom = vi.fn(async () => {})
+    const app = application(rewindPort({ restore, continueFrom }), undefined, undefined, undefined, undefined, {
+      attachments: {
+        readImage: vi.fn(async () => ({
+          ref,
+          data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
+        })),
+      },
+    })
+    const internals = app as unknown as AppInternals
+    internals.controller.rewind = vi.fn(async () => 'forked')
+
+    await internals.performRewind(rewindPlan([ref]))
+
+    expect(restore).toHaveBeenCalledOnce()
+    expect(continueFrom).toHaveBeenCalledWith(expect.anything(), 'forked')
+    expect(internals.editor.getExpandedText()).toBe('inspect image')
+    expect(internals.attachmentDrafts.snapshot).toEqual([expect.objectContaining({
+      name: 'image.png',
+      source: 'rewind',
+    })])
+  })
+
+  it('does not mutate workspace or conversation when a Rewind image cannot be prepared', async () => {
+    const ref: ImageAttachmentRef = {
+      attachmentId: 'missing' as ImageAttachmentRef['attachmentId'],
+      mediaType: 'image/png',
+      bytes: 4,
+      width: 1,
+      height: 1,
+    }
+    const restore = vi.fn(async () => async () => {})
+    const app = application(rewindPort({ restore }), undefined, undefined, undefined, undefined, {
+      attachments: { readImage: vi.fn(async () => { throw new Error('missing attachment') }) },
+    })
+    const internals = app as unknown as AppInternals
+    const rewind = vi.fn(async () => 'forked')
+    internals.controller.rewind = rewind
+
+    await internals.performRewind(rewindPlan([ref]))
+
+    expect(restore).not.toHaveBeenCalled()
+    expect(rewind).not.toHaveBeenCalled()
+    expect(internals.attachmentDrafts.snapshot).toEqual([])
   })
 
   it('queues with Tab while working and leaves Alt+Enter for multiline input', () => {

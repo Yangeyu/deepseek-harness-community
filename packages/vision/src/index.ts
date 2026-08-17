@@ -27,6 +27,7 @@ import type {
   VisionAnalysis,
   VisionCapability,
   VisionConfig,
+  VisionEvidenceMetadata,
   VisionEvidenceSource,
   VisionImageInput,
   VisionObservationBlock,
@@ -43,6 +44,7 @@ export type {
   VisionAnalysis,
   VisionCapability,
   VisionConfig,
+  VisionEvidenceMetadata,
   VisionEvidenceSource,
   VisionImageInput,
   VisionMode,
@@ -268,8 +270,7 @@ export class VisionService extends Service {
     const wrapped = wrapObservation(raw, info.provider, info.id, config.maxObservationChars)
     const truncated = wrapped.truncated || finish.kind === 'max-tokens'
     const durationMs = Date.now() - startedAt
-    const source: VisionEvidenceSource = {
-      kind: 'community-vision',
+    const source: VisionEvidenceMetadata = {
       analysisId: request.analysisId,
       provider: info.provider,
       model: info.id,

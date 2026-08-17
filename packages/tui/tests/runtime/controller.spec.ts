@@ -603,7 +603,7 @@ describe('HarnessController', () => {
       pointId: 'point-1',
       sessionId: String(source),
       turn: 3,
-      prompt: 'redo this',
+      input: { text: 'redo this', attachments: [] },
       createdAt: 1,
       previousTurnEndSeq: 17,
       state: 'safe',

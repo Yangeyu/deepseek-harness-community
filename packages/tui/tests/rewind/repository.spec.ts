@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   FileRewindRepository,
@@ -21,6 +22,7 @@ function stored(workspaceRoot: string, options: {
   readonly before?: string
   readonly after?: string
   readonly updatedAt?: number
+  readonly attachments?: readonly ImageAttachmentRef[]
 } = {}): StoredRewindTimeline {
   const sessionId = options.sessionId ?? 'session'
   const before = options.before ?? 'before secret\n'
@@ -37,7 +39,8 @@ function stored(workspaceRoot: string, options: {
         sessionId,
         turn: 1,
         workspaceRoot,
-        prompt: 'edit the file',
+        input: { text: 'edit the file', attachments: options.attachments ?? [] },
+        promptSeq: 1,
         createdAt: 1,
         workspaceMutations: [{
           id: `mutation-${sessionId}`,
@@ -85,7 +88,16 @@ describe('FileRewindRepository', () => {
     const root = await temporary('dsh-rewind-repository-')
     const workspaceRoot = await temporary('dsh-rewind-workspace-')
     const repository = new FileRewindRepository(root)
-    const value = stored(workspaceRoot)
+    const value = stored(workspaceRoot, {
+      attachments: [{
+        attachmentId: 'attachment-1' as ImageAttachmentRef['attachmentId'],
+        mediaType: 'image/png',
+        bytes: 4,
+        width: 1,
+        height: 1,
+        name: 'image.png',
+      }],
+    })
 
     await repository.save(value, null)
 

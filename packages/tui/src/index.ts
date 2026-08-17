@@ -14,7 +14,8 @@ import {
 } from '@deepseek-ai/dsh-host-apiproxy'
 import { TuiApplication, type TuiRuntime } from './application/app.ts'
 import {
-  installRewindLifecycle,
+  installRewindWorkspaceAdapter,
+  installRewindPromptAdapter,
   FileRewindRepository,
   LocalWorkspaceRewind,
   MemoryRewindParticipant,
@@ -69,7 +70,7 @@ declare module '@deepseek-ai/cordis' {
 export const name = 'community-tui'
 
 /** The in-process API gateway must exist before the terminal can activate. */
-export const inject = ['apiProxy', 'agents', 'commands', 'memory', 'settings', 'vision']
+export const inject = ['apiProxy', 'agents', 'attachments', 'commands', 'memory', 'settings', 'vision']
 
 /** Mount the terminal application and bind its lifetime to the plugin effect. */
 export function apply(ctx: Context, config: TuiConfig): void {
@@ -95,19 +96,25 @@ export function apply(ctx: Context, config: TuiConfig): void {
   const keymap = settingsKeymapGateway(keymapScope)
   const resolved = resolveConfig({ ...parsed.config, keymap: keymap.current().keymap })
   const memoryRewind = new MemoryRewindParticipant(ctx.memory)
-  const rewindRepository = new FileRewindRepository(dshHomePath('rewind', 'v1'), {
+  const rewindRepository = new FileRewindRepository(dshHomePath('rewind', 'v2'), {
     onWarning: message => { ctx.logger.warn(message) },
   })
   const rewind = new RewindService(
     {
       history: resolved.rewindHistory,
+      onIngestionError: error => { ctx.logger.warn(`Rewind ingestion failed: ${String(error)}`) },
       onPersistenceError: error => { ctx.logger.warn(`durable Rewind failed: ${String(error)}`) },
     },
     new LocalWorkspaceRewind(),
     [memoryRewind],
     rewindRepository,
   )
-  installRewindLifecycle(ctx, rewind)
+  installRewindPromptAdapter(
+    ctx,
+    rewind,
+    error => { ctx.logger.warn(`Rewind prompt ingestion failed: ${String(error)}`) },
+  )
+  installRewindWorkspaceAdapter(ctx, rewind)
   const commandSource: HostCommandSource = {
     list: (sessionId) => {
       if (sessionId === undefined) return []
@@ -137,6 +144,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
       vision: ctx.vision,
       keymap,
       initialImagePaths: parsed.imagePaths,
+      attachments: ctx.attachments,
     },
   )
   ctx.effect(() => {

@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { installRewindLifecycle, type RewindLifecycleSink } from '../../src/rewind/index.ts'
+import { installRewindWorkspaceAdapter, type RewindWorkspaceSink } from '../../src/rewind/index.ts'
 import { decodeWorkspaceMutation } from '../../src/rewind/adapters/host.ts'
 
 const target = {
@@ -55,8 +55,8 @@ describe('decodeWorkspaceMutation', () => {
   it('correlates filesystem observation and result by the same execution identity', async () => {
     const ctx = new Context()
     const recordWorkspaceMutation = vi.fn()
-    const sink: RewindLifecycleSink = { beginTurn: vi.fn(async () => {}), recordWorkspaceMutation }
-    installRewindLifecycle(ctx, sink)
+    const sink: RewindWorkspaceSink = { recordWorkspaceMutation }
+    installRewindWorkspaceAdapter(ctx, sink)
     const signal = new AbortController().signal
     const exec = {
       callId: 'call-1',

@@ -10,8 +10,10 @@ import type {
   LifecycleSnapshot,
 } from './types.ts'
 
+export { installPromptLifecycle, isAcceptedPromptEvent, projectPromptNode } from './host.ts'
 export {
   commandLifecycleKey,
+  promptLifecycleKey,
   stepLifecycleKey,
   thoughtLifecycleKey,
   toolLifecycleKey,
@@ -31,6 +33,8 @@ export type {
   LifecycleNode,
   LifecycleOutcome,
   LifecycleSnapshot,
+  PromptNode,
+  PromptNodeSink,
   LifecycleState,
   RuntimeLifecycleActivity,
   RuntimeVisionActivity,

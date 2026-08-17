@@ -1,3 +1,4 @@
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
 
 declare const lifecycleKeyBrand: unique symbol
@@ -6,6 +7,7 @@ export type LifecycleKey = string & { readonly [lifecycleKeyBrand]: true }
 
 export type LifecycleKind =
   | 'turn'
+  | 'prompt'
   | 'step'
   | 'thought'
   | 'tool'
@@ -93,4 +95,26 @@ export interface LifecycleBuildInput {
   readonly entries: readonly HistoryEntry[]
   readonly sessionRunning: boolean
   readonly runtimeActivities?: readonly RuntimeLifecycleActivity[]
+}
+
+/** Durable user-authored boundary projected from the canonical Session log. */
+export interface PromptNode {
+  readonly promptId: string
+  readonly sessionId: string
+  readonly turn: number
+  readonly workspaceRoot: string
+  readonly input: {
+    readonly text: string
+    readonly attachments: readonly ImageAttachmentRef[]
+  }
+  /** Placement within the enclosing Turn; only the entry Prompt is a conversation fork boundary. */
+  readonly position: 'turn-entry' | 'in-turn'
+  readonly admittedSeq: number
+  readonly admittedAt: number
+  readonly previousTurnEndSeq?: number
+}
+
+/** Consumer boundary for independently owned features such as Rewind. */
+export interface PromptNodeSink {
+  upsertPrompt(node: PromptNode): void
 }

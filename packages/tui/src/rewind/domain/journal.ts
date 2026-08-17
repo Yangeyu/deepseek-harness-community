@@ -3,6 +3,7 @@ import type {
   RewindEffectInput,
   RewindEffectReference,
   RewindPointInput,
+  RewindPromptInput,
   WorkspaceMutation,
   WorkspaceMutationInput,
 } from '../contracts.ts'
@@ -15,11 +16,12 @@ export interface RewindJournalLimits {
 
 interface RewindPoint {
   readonly id: string
-  /** Session that originally produced this turn. */
+  /** Session that originally admitted this Prompt. */
   readonly sessionId: string
   readonly turn: number
   readonly workspaceRoot: string
-  readonly prompt: string
+  input: RewindPromptInput
+  readonly promptSeq: number
   readonly previousTurnEndSeq?: number
   readonly createdAt: number
   readonly workspaceMutations: WorkspaceMutation[]
@@ -40,7 +42,8 @@ export interface RewindPointSnapshot {
   readonly sessionId: string
   readonly turn: number
   readonly workspaceRoot: string
-  readonly prompt: string
+  readonly input: RewindPromptInput
+  readonly promptSeq: number
   readonly previousTurnEndSeq?: number
   readonly createdAt: number
   readonly workspaceMutations: readonly WorkspaceMutation[]
@@ -70,7 +73,7 @@ export interface RewindJournalMutationResult {
   readonly released: readonly RewindEffectReference[]
 }
 
-export interface RewindJournalTurnResult {
+export interface RewindJournalPointResult {
   readonly changed: boolean
   readonly durable: boolean
   readonly workspaceRoot: string
@@ -81,13 +84,21 @@ function effectIds(points: readonly RewindPoint[]): RewindEffectReference[] {
   return points.flatMap(point => point.effects)
 }
 
+function copyInput(input: RewindPromptInput): RewindPromptInput {
+  return {
+    text: input.text,
+    attachments: input.attachments.map(attachment => ({ ...attachment })),
+  }
+}
+
 function snapshot(point: RewindPoint, sessionId = point.sessionId): RewindPointSnapshot {
   return {
     id: point.id,
     sessionId,
     turn: point.turn,
     workspaceRoot: point.workspaceRoot,
-    prompt: point.prompt,
+    input: copyInput(point.input),
+    promptSeq: point.promptSeq,
     createdAt: point.createdAt,
     ...point.previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq: point.previousTurnEndSeq },
     workspaceMutations: point.workspaceMutations.map(mutation => ({ ...mutation })),
@@ -101,7 +112,8 @@ function mutablePoint(point: RewindPointSnapshot): RewindPoint {
     sessionId: point.sessionId,
     turn: point.turn,
     workspaceRoot: point.workspaceRoot,
-    prompt: point.prompt,
+    input: copyInput(point.input),
+    promptSeq: point.promptSeq,
     createdAt: point.createdAt,
     ...point.previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq: point.previousTurnEndSeq },
     workspaceMutations: point.workspaceMutations.map(mutation => ({ ...mutation })),
@@ -111,17 +123,94 @@ function mutablePoint(point: RewindPointSnapshot): RewindPoint {
 
 function newPoint(input: RewindPointInput): RewindPoint {
   return {
-    id: globalThis.crypto.randomUUID(),
-    ...input,
-    createdAt: Date.now(),
+    id: input.pointId,
+    sessionId: input.sessionId,
+    turn: input.turn,
+    workspaceRoot: input.workspaceRoot,
+    input: copyInput(input.input),
+    promptSeq: input.promptSeq,
+    createdAt: input.createdAt,
+    ...input.previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq: input.previousTurnEndSeq },
     workspaceMutations: [],
     effects: [],
   }
 }
 
+function validatePoint(input: RewindPointInput): void {
+  if (input.pointId.trim() === '') throw new Error('rewind point identity must not be empty')
+  if (input.sessionId.trim() === '') throw new Error('rewind point session identity must not be empty')
+  if (input.workspaceRoot.trim() === '') throw new Error('rewind point workspace root must not be empty')
+  if (!Number.isSafeInteger(input.turn) || input.turn < 1) throw new Error('rewind point turn must be a positive integer')
+  if (!Number.isSafeInteger(input.createdAt) || input.createdAt < 0) {
+    throw new Error('rewind point creation time must be a non-negative integer')
+  }
+  if (!Number.isSafeInteger(input.promptSeq) || input.promptSeq < 0) {
+    throw new Error('rewind point Prompt seq must be a non-negative integer')
+  }
+  if (input.previousTurnEndSeq !== undefined
+    && (!Number.isSafeInteger(input.previousTurnEndSeq)
+      || input.previousTurnEndSeq < 0
+      || input.previousTurnEndSeq >= input.promptSeq)) {
+    throw new Error('rewind point conversation boundary must precede its Prompt')
+  }
+  if (input.input.text.trim() === '') throw new Error('rewind point prompt text must not be empty')
+  const attachmentIds = new Set<string>()
+  for (const attachment of input.input.attachments) {
+    const id = String(attachment.attachmentId)
+    if (id.trim() === '' || attachmentIds.has(id)) throw new Error('rewind point attachment identity is invalid')
+    attachmentIds.add(id)
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(attachment.mediaType)
+      || !Number.isSafeInteger(attachment.bytes) || attachment.bytes < 1
+      || !Number.isSafeInteger(attachment.width) || attachment.width < 1
+      || !Number.isSafeInteger(attachment.height) || attachment.height < 1
+      || (attachment.name !== undefined && attachment.name.trim() === '')) {
+      throw new Error('rewind point attachment metadata is invalid')
+    }
+  }
+}
+
+function sameAttachment(
+  left: RewindPromptInput['attachments'][number],
+  right: RewindPromptInput['attachments'][number],
+): boolean {
+  return String(left.attachmentId) === String(right.attachmentId)
+    && left.mediaType === right.mediaType
+    && left.bytes === right.bytes
+    && left.width === right.width
+    && left.height === right.height
+    && left.name === right.name
+}
+
+function enrichPoint(point: RewindPoint, input: RewindPointInput): boolean {
+  if (point.id !== input.pointId
+    || point.sessionId !== input.sessionId
+    || point.turn !== input.turn
+    || point.workspaceRoot !== input.workspaceRoot
+    || point.promptSeq !== input.promptSeq
+    || point.createdAt !== input.createdAt
+    || point.previousTurnEndSeq !== input.previousTurnEndSeq
+    || point.input.text !== input.input.text) {
+    throw new Error('rewind point update conflicts with its admitted Prompt')
+  }
+  const attachments = new Map(point.input.attachments.map(attachment => [String(attachment.attachmentId), attachment]))
+  let changed = false
+  for (const attachment of input.input.attachments) {
+    const id = String(attachment.attachmentId)
+    const existing = attachments.get(id)
+    if (existing !== undefined) {
+      if (!sameAttachment(existing, attachment)) throw new Error('rewind point attachment metadata changed')
+      continue
+    }
+    attachments.set(id, { ...attachment })
+    changed = true
+  }
+  if (changed) point.input = { text: point.input.text, attachments: [...attachments.values()] }
+  return changed
+}
+
 /**
  * One active, bounded editing timeline per workspace. Future nodes survive a
- * navigation until the restored session starts a new durable turn.
+ * navigation until the restored session admits a new durable Prompt.
  */
 export class RewindJournal {
   private readonly timelines = new Map<string, RewindTimeline>()
@@ -138,11 +227,39 @@ export class RewindJournal {
 
   /** Restore one durable timeline without exposing its storage representation. */
   hydrate(input: RewindTimelineSnapshot): void {
+    if (input.lineageId.trim() === ''
+      || input.workspaceRoot.trim() === ''
+      || input.ownerSessionId.trim() === '') {
+      throw new Error('rewind timeline identity is invalid')
+    }
+    if (!Number.isSafeInteger(input.updatedAt) || input.updatedAt < 0) {
+      throw new Error('rewind timeline update time is invalid')
+    }
     if (input.cursor < 0 || input.cursor > input.nodes.length || !Number.isSafeInteger(input.cursor)) {
       throw new Error('rewind timeline cursor is invalid')
     }
     if (input.nodes.some(point => point.workspaceRoot !== input.workspaceRoot)) {
       throw new Error('rewind timeline contains a foreign workspace root')
+    }
+    const pointIds = new Set<string>()
+    const turnKeys = new Set<string>()
+    for (const point of input.nodes) {
+      validatePoint({
+        pointId: point.id,
+        sessionId: point.sessionId,
+        turn: point.turn,
+        workspaceRoot: point.workspaceRoot,
+        input: point.input,
+        promptSeq: point.promptSeq,
+        createdAt: point.createdAt,
+        ...point.previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq: point.previousTurnEndSeq },
+      })
+      const turnKey = `${point.sessionId}\u0000${String(point.turn)}`
+      if (pointIds.has(point.id) || turnKeys.has(turnKey)) {
+        throw new Error('rewind timeline contains duplicate Prompt identity')
+      }
+      pointIds.add(point.id)
+      turnKeys.add(turnKey)
     }
     const nodes = input.nodes.map(mutablePoint)
     let cursor = input.cursor
@@ -175,8 +292,9 @@ export class RewindJournal {
     }
   }
 
-  /** Register a turn, retaining it durably only for the active workspace owner. */
-  beginTurn(input: RewindPointInput): RewindJournalTurnResult {
+  /** Register a prompt boundary, retaining it durably only for the active workspace owner. */
+  recordPoint(input: RewindPointInput): RewindJournalPointResult {
+    validatePoint(input)
     const timeline = this.timelines.get(input.workspaceRoot)
     if (timeline === undefined) {
       const created: RewindTimeline = {
@@ -193,8 +311,14 @@ export class RewindJournal {
     }
     if (timeline.ownerSessionId === input.sessionId) {
       const applied = timeline.nodes.slice(0, timeline.cursor)
-      if (applied.some(point => point.sessionId === input.sessionId && point.turn === input.turn)
-        || (applied.filter(point => point.sessionId === input.sessionId).at(-1)?.turn ?? 0) > input.turn) {
+      const existing = applied.find(point => point.id === input.pointId
+        || (point.sessionId === input.sessionId && point.turn === input.turn))
+      if (existing !== undefined) {
+        const changed = enrichPoint(existing, input)
+        if (changed) timeline.updatedAt = Date.now()
+        return { changed, durable: true, workspaceRoot: input.workspaceRoot, released: [] }
+      }
+      if ((applied.filter(point => point.sessionId === input.sessionId).at(-1)?.turn ?? 0) > input.turn) {
         return { changed: false, durable: true, workspaceRoot: input.workspaceRoot, released: [] }
       }
       const future = timeline.nodes.splice(timeline.cursor)
@@ -203,7 +327,16 @@ export class RewindJournal {
     }
 
     const existing = this.pending.get(input.sessionId) ?? []
-    if (existing.some(point => point.turn === input.turn) || (existing.at(-1)?.turn ?? 0) > input.turn) {
+    const pendingPoint = existing.find(point => point.id === input.pointId || point.turn === input.turn)
+    if (pendingPoint !== undefined) {
+      return {
+        changed: enrichPoint(pendingPoint, input),
+        durable: false,
+        workspaceRoot: input.workspaceRoot,
+        released: [],
+      }
+    }
+    if ((existing.at(-1)?.turn ?? 0) > input.turn) {
       return { changed: false, durable: false, workspaceRoot: input.workspaceRoot, released: [] }
     }
     const next = [...existing, newPoint(input)].slice(-this.limits.history)

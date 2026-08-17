@@ -8,6 +8,7 @@ import type { TuiState } from '../runtime/controller.ts'
 import {
   aggregateLifecycle,
   commandLifecycleKey,
+  promptLifecycleKey,
   thoughtLifecycleKey,
   toolLifecycleKey,
   visionLifecycleKey,
@@ -31,6 +32,8 @@ export interface TranscriptPromptItem {
   kind: 'prompt'
   body: string
   promptStatus?: string
+  key?: string
+  lifecycle?: LifecycleNode
 }
 
 export interface TranscriptThinkingItem {
@@ -254,7 +257,12 @@ export function buildTranscriptItems(
           .join('\n\n')
         if (text.trim() === '') break
         if (human) {
-          items.push({ kind: 'prompt', body: text })
+          const lifecycle = state.lifecycle.get(promptLifecycleKey(String(event.data.id)))
+          items.push({
+            kind: 'prompt',
+            body: text,
+            ...lifecycle === undefined ? {} : { key: String(lifecycle.key), lifecycle },
+          })
         } else {
           items.push({ kind: 'text', label: 'Context', tone: 'dim', body: text, dim: true })
         }

@@ -10,7 +10,7 @@ function plan(overrides: Partial<RewindPlan> = {}): RewindPlan {
     pointId: 'point-1',
     sessionId: 'session-1',
     turn: 2,
-    prompt: 'fix the parser',
+    input: { text: 'fix the parser', attachments: [] },
     createdAt: Date.now(),
     previousTurnEndSeq: 15,
     state: 'safe',
@@ -82,16 +82,16 @@ describe('RewindPointDialog', () => {
     const select = vi.fn()
     const cancel = vi.fn()
     const summaries = [
-      { pointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', createdAt: 1, workspaceFiles: 0, unsupportedFiles: 0, participants: [] },
-      { pointId: 'two', sessionId: 'session-1', turn: 2, prompt: 'second', createdAt: 2, workspaceFiles: 2, unsupportedFiles: 0, participants: [{ id: 'memory', label: 'Memory', changes: 1, state: 'safe' as const }] },
-      { pointId: 'three', sessionId: 'session-1', turn: 3, prompt: 'third', createdAt: 3, workspaceFiles: 0, unsupportedFiles: 1, participants: [] },
+      { pointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', imageCount: 0, createdAt: 1, workspaceFiles: 0, unsupportedFiles: 0, participants: [] },
+      { pointId: 'two', sessionId: 'session-1', turn: 2, prompt: 'second', imageCount: 2, createdAt: 2, workspaceFiles: 2, unsupportedFiles: 0, participants: [{ id: 'memory', label: 'Memory', changes: 1, state: 'safe' as const }] },
+      { pointId: 'three', sessionId: 'session-1', turn: 3, prompt: 'third', imageCount: 0, createdAt: 3, workspaceFiles: 0, unsupportedFiles: 1, participants: [] },
     ]
     const dialog = new RewindPointDialog(summaries, undefined, () => 20, createTheme(false), select, cancel)
 
     expect(dialog.render(80).join('\n')).toContain('› third')
     expect(dialog.render(80).join('\n')).toContain('No AI file edits · 1 unsupported')
     dialog.handleInput('\u001b[A')
-    expect(dialog.render(80).join('\n')).toContain('2 AI-edited files this turn · 1 memory update')
+    expect(dialog.render(80).join('\n')).toContain('2 AI-edited files this turn · 2 images · 1 memory update')
     dialog.handleInput('\r')
     expect(select).toHaveBeenCalledWith(summaries[1])
 

@@ -49,6 +49,35 @@ function entry(value: unknown): HistoryEntry {
 }
 
 describe('TranscriptComponent', () => {
+  it('keeps durable user input visible when lifecycle metadata is unavailable', () => {
+    const events = [entry({
+      event: {
+        type: 'user/message',
+        seq: 0,
+        time: 1_000,
+        surfaceOp: 'append',
+        data: {
+          id: 'message-user',
+          role: 'user',
+          source: { kind: 'user' },
+          content: [{ type: 'text', text: 'Do not hide this input' }],
+        },
+      },
+    })]
+    const snapshot = state(events)
+    const transcript = new TranscriptComponent({
+      ...snapshot,
+      lifecycle: buildLifecycleSnapshot({
+        sessionId: 'session-test',
+        generation: 0,
+        entries: [],
+        sessionRunning: false,
+      }),
+    }, createTheme(false), true, 8)
+
+    expect(transcript.render(80).join('\n')).toContain('Do not hide this input')
+  })
+
   it('renders durable Vision evidence after its user prompt', () => {
     const transcript = new TranscriptComponent(state([entry({
       event: {
@@ -74,6 +103,7 @@ describe('TranscriptComponent', () => {
           role: 'user',
           source: {
             kind: 'community-vision',
+            promptId: 'message-user',
             analysisId: 'analysis-1',
             provider: 'dashscope-vision',
             model: 'qwen3.7-plus',

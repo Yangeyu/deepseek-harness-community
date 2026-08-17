@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 0.1.9 - 2026-08-17
 
 - Make idle `Esc` clear and retain one unified text-and-image Composer draft,
   restore or hide that draft with `Up`/`Down`, and count only physical key
@@ -20,11 +20,19 @@ All notable changes to this project are documented in this file.
 - Persist one active editing lineage per canonical workspace under the Harness
   home so its owner session can resume Rewind after TUI restart; retain cursor
   and future-node state for a later timeline-navigation UI.
+- Model every admitted human input as one stable Prompt lifecycle node and bind
+  delayed Vision evidence to its explicit Prompt identity instead of inferring
+  ownership from event proximity.
+- Retain complete Prompt text and immutable image references in Rewind, verify
+  every image before mutation, and restore text and image drafts together in
+  the forked Composer after a successful rewind.
 - Add atomic content-addressed storage, opaque participant hydration,
   cross-process locking, optimistic revision checks, corruption quarantine,
   bounded LRU compaction, and stale-history invalidation after failed saves.
 - Remove detached Git-index snapshots, asynchronous whole-tree file counts,
-  duplicate checkpoint state, and implementation-coupled checkpoint tests.
+  duplicate checkpoint state, implementation-coupled checkpoint tests, and
+  presentation paths that hid durable user input when lifecycle metadata was
+  unavailable.
 
 ## 0.1.8 - 2026-08-16
 

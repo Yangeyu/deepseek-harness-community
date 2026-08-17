@@ -3,9 +3,11 @@ import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import {
   createUserMessage,
   freezeMessage,
+  type MessageId,
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
 import type {
+  VisionEvidenceMetadata,
   VisionEvidenceSource,
   VisionAdmissionRequest,
   VisionSubmissionSource,
@@ -19,15 +21,17 @@ interface StagedObservation {
   sessionId: string
   observation: string
   expiresAt: number
-  source: VisionEvidenceSource
+  source: VisionEvidenceMetadata
 }
 
 function evidenceSource(
   source: VisionSubmissionSource,
+  promptId: MessageId,
   attachments = source.attachments,
 ): VisionEvidenceSource {
   return {
     kind: 'community-vision',
+    promptId,
     analysisId: source.analysisId,
     provider: source.provider,
     model: source.model,
@@ -69,7 +73,7 @@ function admittedMessages(message: UserMessage & { source: VisionSubmissionSourc
   })
   const evidence = createUserMessage({
     content: [{ type: 'text', text: observation.text }],
-    source: evidenceSource(source, attachments),
+    source: evidenceSource(source, user.id, attachments),
   })
   return [user, evidence]
 }

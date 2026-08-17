@@ -7,7 +7,7 @@ function plan(): RewindPlan {
     pointId: 'point',
     sessionId: 'session',
     turn: 2,
-    prompt: 'fix it again',
+    input: { text: 'fix it again', attachments: [] },
     createdAt: 1,
     state: 'safe',
     files: [],

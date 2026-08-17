@@ -3,12 +3,14 @@ import type {} from '@deepseek-ai/dsh-commands/types'
 import type {} from '@vascent/deepseek-harness-vision'
 import {
   commandLifecycleKey,
+  promptLifecycleKey,
   stepLifecycleKey,
   thoughtLifecycleKey,
   toolLifecycleKey,
   turnLifecycleKey,
   visionLifecycleKey,
 } from './keys.ts'
+import { isAcceptedPromptEvent } from './host.ts'
 import { LifecycleReducer } from './reducer.ts'
 import type { LifecycleBoundary, LifecycleError, LifecycleOutcome } from './types.ts'
 
@@ -199,14 +201,22 @@ export function applyLifecycleEntry(entry: HistoryEntry, reducer: LifecycleReduc
       return
     case 'user/message': {
       const source = event.data.source
+      if (isAcceptedPromptEvent(event)) {
+        const parentKey = reducer.openNodes().findLast(node => node.kind === 'turn')?.key
+        const key = promptLifecycleKey(String(event.data.id))
+        reducer.start(key, 'prompt', parentKey, at)
+        reducer.settle(key, 'prompt', parentKey, 'completed', at)
+        return
+      }
       if (source.kind !== 'community-vision') return
       const key = visionLifecycleKey(source.analysisId)
+      const parentKey = promptLifecycleKey(source.promptId)
       const started: LifecycleBoundary = {
         time: Math.max(0, event.time - source.durationMs),
         source: 'event',
       }
-      reducer.start(key, 'vision', undefined, started)
-      reducer.settle(key, 'vision', undefined, 'completed', at)
+      reducer.start(key, 'vision', parentKey, started)
+      reducer.settle(key, 'vision', parentKey, 'completed', at)
       return
     }
     default:

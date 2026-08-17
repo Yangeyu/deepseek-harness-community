@@ -5,7 +5,7 @@ import type {
   RewindEffectInput,
   RewindEffectReference,
   RewindEffectSink,
-  RewindLifecycleSink,
+  RewindPointSink,
   RewindParticipant,
   RewindParticipantImpact,
   RewindPlan,
@@ -14,6 +14,7 @@ import type {
   RewindPointSummary,
   RewindPort,
   WorkspaceMutationInput,
+  RewindWorkspaceSink,
   WorkspaceRewindBackend,
 } from '../contracts.ts'
 import { RewindJournal } from '../domain/journal.ts'
@@ -31,6 +32,7 @@ export interface RewindServiceOptions {
   readonly history: number
   readonly maxMutationBytes?: number
   readonly maxSessionBytes?: number
+  readonly onIngestionError?: (error: unknown) => void
   readonly onPersistenceError?: (error: unknown) => void
 }
 
@@ -64,7 +66,7 @@ function immutableParticipant(plan: RewindParticipantImpact): RewindParticipantI
 }
 
 /** Transport-neutral Rewind use case composed from a journal and explicit adapters. */
-export class RewindService implements RewindPort, RewindLifecycleSink, RewindEffectSink {
+export class RewindService implements RewindPort, RewindPointSink, RewindWorkspaceSink, RewindEffectSink {
   private readonly journal: RewindJournal
   private readonly participants: readonly RewindParticipant[]
   private readonly participantsById: ReadonlyMap<string, RewindParticipant>
@@ -73,6 +75,7 @@ export class RewindService implements RewindPort, RewindLifecycleSink, RewindEff
   private readonly activationTasks = new Map<string, Promise<void>>()
   private readonly persistenceDisabled = new Set<string>()
   private readonly revisions = new Map<string, string | null>()
+  private readonly ingestionTails = new Map<string, Promise<void>>()
   private writeTail: Promise<void> = Promise.resolve()
   private closed = false
 
@@ -134,27 +137,49 @@ export class RewindService implements RewindPort, RewindLifecycleSink, RewindEff
     return task
   }
 
-  async beginTurn(input: RewindPointInput): Promise<void> {
+  recordPoint(input: RewindPointInput): Promise<void> {
     this.assertOpen()
-    const root = this.workspace.canonicalizeRoot(input.workspaceRoot)
-    try {
-      await this.activate(input.sessionId, root)
-    } catch {
-      // Rewind durability is auxiliary and must not block the Agent turn.
-    }
-    const result = this.journal.beginTurn({
-      ...input,
-      workspaceRoot: root,
-    })
-    this.release(result.released)
-    if (result.changed) {
-      this.invalidatePrepared(input.sessionId)
-      if (result.durable) await this.persist(result.workspaceRoot)
-    }
+    return this.enqueue(input.sessionId, () => this.ingestPoint(input))
   }
 
   recordWorkspaceMutation(input: WorkspaceMutationInput): void {
     this.assertOpen()
+    void this.enqueue(input.sessionId, () => this.ingestWorkspaceMutation(input))
+      .catch(error => { this.options.onIngestionError?.(error) })
+  }
+
+  recordEffect(input: RewindEffectInput): void {
+    this.assertOpen()
+    if (!this.participantsById.has(input.participantId)) {
+      throw new Error(`unknown Rewind participant: ${input.participantId}`)
+    }
+    void this.enqueue(input.sourceSessionId, () => this.ingestEffect(input))
+      .catch(error => { this.options.onIngestionError?.(error) })
+  }
+
+  async settle(sessionId: string): Promise<void> {
+    this.assertOpen()
+    await this.ingestion(sessionId)
+    await Promise.all(this.participants.map(participant => participant.settle(sessionId)))
+    await this.ingestion(sessionId)
+    await this.writeTail
+  }
+
+  private async ingestPoint(input: RewindPointInput): Promise<void> {
+    const root = this.workspace.canonicalizeRoot(input.workspaceRoot)
+    try {
+      await this.activate(input.sessionId, root)
+    } catch {
+      // Rewind durability is auxiliary and must not block prompt admission.
+    }
+    const result = this.journal.recordPoint({ ...input, workspaceRoot: root })
+    this.release(result.released)
+    if (!result.changed) return
+    this.invalidatePrepared(input.sessionId)
+    if (result.durable) void this.persist(result.workspaceRoot)
+  }
+
+  private ingestWorkspaceMutation(input: WorkspaceMutationInput): void {
     const pointRoot = this.journal.workspaceRoot(input.sessionId, input.turn)
     if (pointRoot === undefined) return
     const canonical = this.workspace.canonicalizeMutation(pointRoot, input)
@@ -166,8 +191,7 @@ export class RewindService implements RewindPort, RewindLifecycleSink, RewindEff
     }
   }
 
-  recordEffect(input: RewindEffectInput): void {
-    this.assertOpen()
+  private ingestEffect(input: RewindEffectInput): void {
     const participant = this.participantsById.get(input.participantId)
     if (participant === undefined) throw new Error(`unknown Rewind participant: ${input.participantId}`)
     const result = this.journal.recordEffect(input)
@@ -181,18 +205,13 @@ export class RewindService implements RewindPort, RewindLifecycleSink, RewindEff
     if (result.workspaceRoot !== undefined) void this.persist(result.workspaceRoot)
   }
 
-  async settle(sessionId: string): Promise<void> {
-    this.assertOpen()
-    await Promise.all(this.participants.map(participant => participant.settle(sessionId)))
-    await this.writeTail
-  }
-
   list(sessionId: string): RewindPointSummary[] {
     return this.journal.list(sessionId).map(point => ({
       pointId: point.id,
       sessionId: point.sessionId,
       turn: point.turn,
-      prompt: point.prompt,
+      prompt: point.input.text,
+      imageCount: point.input.attachments.length,
       createdAt: point.createdAt,
       workspaceFiles: new Set(point.workspaceMutations.map(mutation => mutation.path)).size,
       unsupportedFiles: new Set(point.workspaceMutations
@@ -219,7 +238,10 @@ export class RewindService implements RewindPort, RewindLifecycleSink, RewindEff
       pointId: selected.point.id,
       sessionId,
       turn: selected.point.turn,
-      prompt: selected.point.prompt,
+      input: Object.freeze({
+        text: selected.point.input.text,
+        attachments: Object.freeze(selected.point.input.attachments.map(attachment => Object.freeze({ ...attachment }))),
+      }),
       createdAt: selected.point.createdAt,
       ...selected.point.previousTurnEndSeq === undefined
         ? {}
@@ -261,6 +283,7 @@ export class RewindService implements RewindPort, RewindLifecycleSink, RewindEff
 
   async close(): Promise<void> {
     if (this.closed) return
+    await this.drainIngestion()
     await Promise.allSettled(this.activationTasks.values())
     const settlements = await Promise.allSettled(this.journal.ownerSessionIds().flatMap(sessionId => (
       this.participants.map(participant => participant.settle(sessionId))
@@ -268,6 +291,7 @@ export class RewindService implements RewindPort, RewindLifecycleSink, RewindEff
     for (const settlement of settlements) {
       if (settlement.status === 'rejected') this.options.onPersistenceError?.(settlement.reason)
     }
+    await this.drainIngestion()
     await this.writeTail
     try {
       await this.repository.close()
@@ -305,6 +329,28 @@ export class RewindService implements RewindPort, RewindLifecycleSink, RewindEff
   private invalidatePrepared(sessionId: string): void {
     for (const [planId, prepared] of this.prepared) {
       if (prepared.plan.sessionId === sessionId) this.prepared.delete(planId)
+    }
+  }
+
+  private enqueue(sessionId: string, task: () => void | Promise<void>): Promise<void> {
+    const previous = this.ingestionTails.get(sessionId) ?? Promise.resolve()
+    const current = previous.catch(() => {}).then(task)
+    this.ingestionTails.set(sessionId, current)
+    void current.then(
+      () => { if (this.ingestionTails.get(sessionId) === current) this.ingestionTails.delete(sessionId) },
+      () => { if (this.ingestionTails.get(sessionId) === current) this.ingestionTails.delete(sessionId) },
+    )
+    return current
+  }
+
+  private ingestion(sessionId: string): Promise<void> {
+    return this.ingestionTails.get(sessionId) ?? Promise.resolve()
+  }
+
+  private async drainIngestion(): Promise<void> {
+    const results = await Promise.allSettled(this.ingestionTails.values())
+    for (const result of results) {
+      if (result.status === 'rejected') this.options.onIngestionError?.(result.reason)
     }
   }
 

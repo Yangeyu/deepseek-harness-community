@@ -1,3 +1,5 @@
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+
 /** Whether a prepared rewind can be applied without losing unowned state. */
 export type RewindPlanState = 'safe' | 'mergeable' | 'conflict' | 'unsupported'
 
@@ -68,12 +70,21 @@ export type CanonicalWorkspaceMutation =
     readonly reason: string
   }
 
-/** Data registered before one user-authored turn enters its first step. */
+/** Complete, durable user input restored after a successful Rewind. */
+export interface RewindPromptInput {
+  readonly text: string
+  readonly attachments: readonly ImageAttachmentRef[]
+}
+
+/** One accepted user prompt projected into the Rewind timeline. */
 export interface RewindPointInput {
+  readonly pointId: string
   readonly sessionId: string
   readonly turn: number
   readonly workspaceRoot: string
-  readonly prompt: string
+  readonly input: RewindPromptInput
+  readonly promptSeq: number
+  readonly createdAt: number
   readonly previousTurnEndSeq?: number
 }
 
@@ -115,6 +126,7 @@ export interface RewindPointSummary {
   readonly sessionId: string
   readonly turn: number
   readonly prompt: string
+  readonly imageCount: number
   readonly createdAt: number
   readonly workspaceFiles: number
   readonly unsupportedFiles: number
@@ -141,7 +153,7 @@ export interface RewindPlan {
   readonly pointId: string
   readonly sessionId: string
   readonly turn: number
-  readonly prompt: string
+  readonly input: RewindPromptInput
   readonly createdAt: number
   readonly previousTurnEndSeq?: number
   readonly state: RewindPlanState
@@ -162,9 +174,13 @@ export interface RewindPort {
   close(): Promise<void>
 }
 
-/** Single lifecycle intake consumed by a Host adapter. */
-export interface RewindLifecycleSink {
-  beginTurn(input: RewindPointInput): Promise<void>
+/** Prompt-boundary intake owned by the Rewind application service. */
+export interface RewindPointSink {
+  recordPoint(input: RewindPointInput): Promise<void>
+}
+
+/** Workspace-effect intake consumed by the filesystem Host adapter. */
+export interface RewindWorkspaceSink {
   recordWorkspaceMutation(input: WorkspaceMutationInput): void
 }
 

@@ -8,6 +8,10 @@ export function turnLifecycleKey(turn: number): LifecycleKey {
   return key(`turn:${String(turn)}`)
 }
 
+export function promptLifecycleKey(messageId: string): LifecycleKey {
+  return key(`prompt:${messageId}`)
+}
+
 export function stepLifecycleKey(turn: number, step: number): LifecycleKey {
   return key(`step:${String(turn)}:${String(step)}`)
 }

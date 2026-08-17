@@ -139,7 +139,7 @@ After a normal exit, the restored shell prints a copyable
 | `Shift+Tab` | Cycle supported reasoning efforts |
 | `↑` / `↓` | Restore/hide the last Esc-cleared text-and-image draft, then browse submitted input history |
 | `PageUp` / `PageDown` | Scroll conversation history while the editor is empty |
-| `Esc Esc` | Open Rewind history after two physical key presses; use `↑`/`↓` and `Enter` to inspect a turn boundary |
+| `Esc Esc` | Open Rewind history after two physical key presses; use `↑`/`↓` and `Enter` to inspect a Prompt boundary |
 
 Open `/keymap` or `/config keybindings` to switch the persistent TUI keymap.
 The default Standard preset follows the running-turn `Enter`/`Tab` interaction
@@ -244,15 +244,22 @@ pauses automatic tail following, and PageDown or a downward wheel returns to
 live output. Hold the terminal's mouse-bypass modifier (usually Shift) when
 native terminal text selection is needed.
 
-Rewind registers a boundary before the first step of each user-authored turn.
-It does not diff or snapshot the Git worktree. The Host
-adapter correlates an authoritative `fs/observed` event with the same
+Rewind registers a boundary from the durable user message accepted into each
+user-authored turn. Text, native-image, and proxy-image submissions follow the
+same Prompt lifecycle; Vision preparation never decides whether a boundary
+exists. It does not diff or snapshot the Git worktree. The filesystem adapter
+correlates an authoritative `fs/observed` event with the same
 execution's canonical `before`/`after` result, so the history counts only file
 mutations that can be attributed to this Agent call. Files edited by another
 window are not listed and are never restored merely because they changed
 during the turn.
 
-`Esc Esc` opens the retained turn boundaries. Key release and repeat events do
+Steering messages remain first-class `in-turn` Prompt lifecycle nodes, but are
+not listed as Rewind points: the current Host conversation API can restore only
+completed-turn boundaries. The adapter makes that capability boundary explicit
+rather than presenting a steer that cannot be restored faithfully.
+
+`Esc Esc` opens the retained Prompt boundaries. Key release and repeat events do
 not count as the second press. `Enter` prepares a stale-guarded reverse plan
 for the selected turn and every later turn. Exact matches are `safe`;
 non-overlapping later edits are `mergeable` and preserved;
@@ -261,14 +268,21 @@ before-state are `unsupported`. Restore is selected by default only for safe
 or mergeable plans and the confirmation lists the exact affected paths.
 Successful confirmation restores those AI-owned text mutations, reverts the
 corresponding Memory mutations, forks the conversation, and refills the
-selected prompt. Workspace and Memory changes are compensated if a later phase
+selected Prompt's text and attached images. Attachments are verified from their
+durable Host references before any workspace, Memory, or conversation mutation;
+missing image data therefore cannot produce a partial restore. Workspace and
+Memory changes are compensated if a later phase
 fails. Native filesystem calls that do not publish the semantic mutation
 contract, including arbitrary shell-side edits, are deliberately excluded
 rather than guessed. The history limit defaults to 20 through `rewindHistory`;
-earlier boundaries follow the forked conversation for repeated Rewind.
+earlier boundaries follow the forked conversation for repeated Rewind. A
+proxy-image prompt appears once; its Vision observation is execution detail,
+not a second checkpoint. Native image blocks and proxy Vision evidence enrich
+the same retained Prompt input. Evidence carries the admitted Prompt identity,
+so delayed events cannot attach an image to a nearby user message.
 
 The active editing timeline survives TUI shutdown under
-`$DSH_HOME/rewind/v1`, so `dsh-tui --resume <session-id>` can Rewind edits made
+`$DSH_HOME/rewind/v2`, so `dsh-tui --resume <session-id>` can Rewind edits made
 before restart. Storage is scoped to one canonical workspace lineage, uses
 private versioned manifests and content-addressed objects, and is bounded to 16
 MiB per object, 64 MiB per timeline, and 512 MiB globally. Invalid history is

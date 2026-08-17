@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 
-export type AttachmentSource = 'file' | 'clipboard'
+export type AttachmentSource = 'file' | 'clipboard' | 'rewind'
 
 /** One local, session-scoped image that has not yet been accepted by the Host. */
 export interface AttachmentDraft {

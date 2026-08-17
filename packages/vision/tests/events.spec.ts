@@ -37,7 +37,6 @@ function stageAnalysis(stage: VisionObservationStage, sessionId = 'session-1'): 
     sessionId,
     observation: '<vision-observation>evidence</vision-observation>',
     source: {
-      kind: 'community-vision',
       analysisId: ANALYSIS_ID,
       provider: 'proxy',
       model: 'vision',
@@ -86,7 +85,12 @@ describe('VisionObservationStage', () => {
       content: [{ type: 'text', text: 'What failed?' }],
     })
     expect(result.messages[1]).toMatchObject({
-      source: { kind: 'community-vision', analysisId: ANALYSIS_ID, attachments: [attachment] },
+      source: {
+        kind: 'community-vision',
+        promptId: submission.id,
+        analysisId: ANALYSIS_ID,
+        attachments: [attachment],
+      },
       content: [{ type: 'text', text: '<vision-observation>evidence</vision-observation>' }],
     })
     expect(result.messages.flatMap(message => message.content)).not.toContainEqual(expect.objectContaining({ type: 'image' }))
@@ -110,7 +114,7 @@ describe('VisionObservationStage', () => {
       kind: 'enter',
       messages: [
         { source: { kind: 'user', rpcId: 'rpc-resume' } },
-        { source: { kind: 'community-vision', analysisId: ANALYSIS_ID } },
+        { source: { kind: 'community-vision', promptId: durable.id, analysisId: ANALYSIS_ID } },
       ],
     })
   })

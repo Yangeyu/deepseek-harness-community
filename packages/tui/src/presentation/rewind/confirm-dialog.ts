@@ -71,7 +71,7 @@ export class RewindDialog implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    const prompt = sanitizeTerminalText(this.plan.prompt).replaceAll('\n', ' ')
+    const prompt = sanitizeTerminalText(this.plan.input.text).replaceAll('\n', ' ')
     const changed = this.plan.files.length
     const confirmation = wrapTextWithAnsi(
       this.theme.dim('Confirm you want to restore the workspace, memory, and conversation to the point before you sent this message:'),
@@ -85,6 +85,9 @@ export class RewindDialog implements Component {
       this.theme.dim(`${participant.changes} ${participant.label.toLowerCase()} update${participant.changes === 1 ? '' : 's'} will be reverted.`),
       width,
     ))
+    const imageImpact = this.plan.input.attachments.length === 0
+      ? []
+      : [this.theme.dim(`${String(this.plan.input.attachments.length)} attached image${this.plan.input.attachments.length === 1 ? '' : 's'} will be restored to the Composer.`)]
     const body = [
       this.theme.bold('Rewind'),
       '',
@@ -95,6 +98,7 @@ export class RewindDialog implements Component {
       '',
       this.theme.dim('The conversation will be forked.'),
       ...impact,
+      ...imageImpact,
       ...participantImpact,
       '',
     ]

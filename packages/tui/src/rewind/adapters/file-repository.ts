@@ -12,7 +12,13 @@ import {
 } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { isJsonValue } from '@deepseek-ai/dsh-session'
-import type { RewindEffectPayload, RewindEffectReference, WorkspaceMutation } from '../contracts.ts'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type {
+  RewindEffectPayload,
+  RewindEffectReference,
+  RewindPromptInput,
+  WorkspaceMutation,
+} from '../contracts.ts'
 import type { RewindPointSnapshot, RewindTimelineSnapshot } from '../domain/journal.ts'
 import type {
   RewindRepository,
@@ -22,7 +28,7 @@ import type {
 } from '../application/repository.ts'
 import { RewindRepositoryConflictError } from '../application/repository.ts'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 const HASH_PATTERN = /^[a-f0-9]{64}$/u
 const LOCK_STALE_MS = 30_000
@@ -56,7 +62,7 @@ interface StoredParticipantManifest {
 }
 
 interface TimelineManifest {
-  readonly schema: 1
+  readonly schema: 2
   readonly workspaceId: string
   readonly workspaceRoot: string
   readonly lineageId: string
@@ -109,6 +115,36 @@ function optionalPreviousTurnEndSeq(value: unknown): { readonly previousTurnEndS
   return value === undefined ? {} : { previousTurnEndSeq: integer(value, 'point.previousTurnEndSeq') }
 }
 
+function attachmentRef(value: unknown): ImageAttachmentRef {
+  const item = record(value, 'prompt attachment')
+  const mediaType = string(item.mediaType, 'prompt attachment.mediaType')
+  if (mediaType !== 'image/png'
+    && mediaType !== 'image/jpeg'
+    && mediaType !== 'image/webp'
+    && mediaType !== 'image/gif') throw new Error('prompt attachment.mediaType is invalid')
+  const bytes = integer(item.bytes, 'prompt attachment.bytes')
+  const width = integer(item.width, 'prompt attachment.width')
+  const height = integer(item.height, 'prompt attachment.height')
+  if (bytes < 1 || width < 1 || height < 1) throw new Error('prompt attachment dimensions are invalid')
+  const name = item.name === undefined ? undefined : string(item.name, 'prompt attachment.name')
+  return {
+    attachmentId: string(item.attachmentId, 'prompt attachment.attachmentId') as ImageAttachmentRef['attachmentId'],
+    mediaType,
+    bytes,
+    width,
+    height,
+    ...name === undefined ? {} : { name },
+  }
+}
+
+function promptInput(value: unknown): RewindPromptInput {
+  const item = record(value, 'point.input')
+  return {
+    text: string(item.text, 'point.input.text'),
+    attachments: array(item.attachments, 'point.input.attachments').map(attachmentRef),
+  }
+}
+
 function effectReference(value: unknown): RewindEffectReference {
   const item = record(value, 'effect')
   return {
@@ -153,7 +189,8 @@ function storedPoint(value: unknown, workspaceRoot: string): StoredPoint {
     sessionId: string(item.sessionId, 'point.sessionId'),
     turn: integer(item.turn, 'point.turn'),
     workspaceRoot: pointRoot,
-    prompt: string(item.prompt, 'point.prompt'),
+    input: promptInput(item.input),
+    promptSeq: integer(item.promptSeq, 'point.promptSeq'),
     createdAt: integer(item.createdAt, 'point.createdAt'),
     ...optionalPreviousTurnEndSeq(item.previousTurnEndSeq),
     workspaceMutations: array(item.workspaceMutations, 'point.workspaceMutations').map(storedMutation),
@@ -187,6 +224,15 @@ function validateManifestIntegrity(manifest: TimelineManifest): void {
   for (const point of manifest.nodes) {
     if (pointIds.has(point.id)) throw new Error('rewind manifest contains a duplicate point')
     pointIds.add(point.id)
+    const attachmentIds = new Set<string>()
+    for (const attachment of point.input.attachments) {
+      const id = String(attachment.attachmentId)
+      if (attachmentIds.has(id)) throw new Error('rewind point contains a duplicate prompt attachment')
+      attachmentIds.add(id)
+    }
+    if (point.previousTurnEndSeq !== undefined && point.previousTurnEndSeq >= point.promptSeq) {
+      throw new Error('rewind point conversation boundary does not precede its Prompt')
+    }
     for (const mutation of point.workspaceMutations) {
       if (mutationIds.has(mutation.id)) throw new Error('rewind manifest contains a duplicate workspace mutation')
       mutationIds.add(mutation.id)

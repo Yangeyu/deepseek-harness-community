@@ -80,6 +80,9 @@ export class RewindPointDialog implements Component {
       const unsupportedStatus = summary.unsupportedFiles === 0
         ? ''
         : ` · ${summary.unsupportedFiles} unsupported`
+      const imageStatus = summary.imageCount === 0
+        ? ''
+        : ` · ${summary.imageCount} image${summary.imageCount === 1 ? '' : 's'}`
       const participantStatus = summary.participants.map(participant => (
         ` · ${participant.changes} ${participant.label.toLowerCase()} update${participant.changes === 1 ? '' : 's'}`
       )).join('')
@@ -87,7 +90,7 @@ export class RewindPointDialog implements Component {
         `${cursor} ${selected ? this.theme.bold(prompt) : prompt}`,
         width,
       ))
-      lines.push(truncateToWidth(`    ${this.theme.dim(`${fileStatus}${unsupportedStatus}${participantStatus}`)}`, width), '')
+      lines.push(truncateToWidth(`    ${this.theme.dim(`${fileStatus}${unsupportedStatus}${imageStatus}${participantStatus}`)}`, width), '')
     }
     if (end < this.summaries.length) lines.push(this.theme.dim(`  ↓ ${this.summaries.length - end} more below`), '')
     lines.push(this.theme.dim('↑/↓ select · Enter continue · Esc cancel'))

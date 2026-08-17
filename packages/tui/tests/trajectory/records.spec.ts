@@ -19,6 +19,33 @@ function records(entries: TuiState['events']) {
 }
 
 describe('trajectory records', () => {
+  it('falls back to the durable user event when lifecycle metadata is unavailable', () => {
+    const entries = [{
+      event: {
+        type: 'user/message',
+        seq: 0,
+        time: 900,
+        surfaceOp: 'append',
+        data: {
+          id: 'message-user',
+          role: 'user',
+          source: { kind: 'user' },
+          content: [{ type: 'text', text: 'Retain me' }],
+        },
+      },
+    }] as TuiState['events']
+    const lifecycle = buildLifecycleSnapshot({
+      sessionId: 'session-trajectory',
+      generation: 0,
+      entries: [],
+      sessionRunning: false,
+    })
+
+    expect(buildTrajectoryRecords(entries, lifecycle)).toEqual([
+      expect.objectContaining({ kind: 'user', tone: 'info', detail: 'Retain me' }),
+    ])
+  })
+
   it('turns a supported Vision evidence message into a timed trace record after the user input', () => {
     const entries = [{
       event: {
@@ -44,6 +71,7 @@ describe('trajectory records', () => {
           role: 'user',
           source: {
             kind: 'community-vision',
+            promptId: 'message-user',
             analysisId: 'analysis-1',
             provider: 'dashscope-vision',
             model: 'qwen3.7-plus',
@@ -59,6 +87,7 @@ describe('trajectory records', () => {
 
     const result = records(entries)
     expect(result.map(record => record.kind)).toEqual(['user', 'vision'])
+    expect(result[0]).toMatchObject({ lifecycle: { kind: 'prompt', key: 'prompt:message-user' } })
     expect(result[1]).toEqual(expect.objectContaining({
       kind: 'vision',
       title: 'Vision analysis',
