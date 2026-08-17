@@ -114,6 +114,7 @@ import {
 } from './attachments/coordinator.ts'
 import { AttachmentRail } from '../presentation/attachments.ts'
 import { ComposerEditorFrame } from '../presentation/composer-editor.ts'
+import { ComposerFooter } from '../presentation/footer.ts'
 import { VisionConfigView } from '../presentation/config/vision-view.ts'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
 import { KeymapView } from '../presentation/config/keymap-view.ts'
@@ -142,6 +143,10 @@ import {
   listWorkspacePaths,
   type WorkspacePathSource,
 } from './autocomplete.ts'
+import {
+  watchGitBranch,
+  type GitBranchSource,
+} from './git-branch.ts'
 
 function isWorking(state: Readonly<TuiState>): boolean {
   return composerExecutionActivity(state) !== undefined
@@ -193,6 +198,7 @@ export interface TuiApplicationDependencies {
   clipboardText?: ClipboardTextWriter
   attachments?: PromptAttachmentReader
   workspacePaths?: WorkspacePathSource
+  gitBranch?: GitBranchSource
   terminal?: Terminal
 }
 
@@ -222,7 +228,7 @@ export class TuiApplication implements TuiControllerSink {
   private readonly controller: HarnessController
   private readonly header: Text
   private readonly status = new Text('', 0, 0)
-  private readonly footer = new Text('', 0, 0)
+  private readonly footer: ComposerFooter
   private readonly editor: Editor
   private readonly transcript: TranscriptComponent
   private readonly attachmentRail: AttachmentRail
@@ -248,6 +254,7 @@ export class TuiApplication implements TuiControllerSink {
   private rewindArmTimer: ReturnType<typeof setTimeout> | undefined
   private disposed = false
   private exiting = false
+  private interruptingActivityKey: string | undefined
   private activeInteraction: ActiveInteraction | undefined
   private composerModalActive = false
   private rewindProgress: Text | undefined
@@ -271,6 +278,10 @@ export class TuiApplication implements TuiControllerSink {
   private readonly clipboardText: ClipboardTextWriter
   private readonly promptAttachmentReader: PromptAttachmentReader | undefined
   private readonly workspacePaths: WorkspacePathSource
+  private readonly gitBranchSource: GitBranchSource
+  private gitBranchCwd: string | undefined
+  private gitBranch: string | undefined
+  private removeGitBranchListener: (() => void) | undefined
   private clipboardPastePending = false
   private readonly rewindTransaction: RewindTransaction
 
@@ -291,6 +302,7 @@ export class TuiApplication implements TuiControllerSink {
       clipboardText,
       attachments,
       workspacePaths = listWorkspacePaths,
+      gitBranch = watchGitBranch,
       terminal = new ProcessTerminal(),
     } = dependencies
     this.terminal = terminal
@@ -299,7 +311,9 @@ export class TuiApplication implements TuiControllerSink {
     this.clipboardText = clipboardText ?? createClipboardTextWriter(terminal)
     this.promptAttachmentReader = attachments
     this.workspacePaths = workspacePaths
+    this.gitBranchSource = gitBranch
     this.theme = createTheme(config.color)
+    this.footer = new ComposerFooter(this.theme)
     this.tui = new SelectableMainScreen(this.terminal, config.showHardwareCursor)
     this.controller = new HarnessController(api, this, config.cwd, config.historyMessages)
     this.rewindTransaction = new RewindTransaction(rewind, {
@@ -419,6 +433,8 @@ export class TuiApplication implements TuiControllerSink {
     this.removeMemoryActivity()
     this.removeAttachmentListener()
     this.removeKeymapListener()
+    this.removeGitBranchListener?.()
+    this.removeGitBranchListener = undefined
     this.attachmentCoordinator?.cancel(false)
     this.removeInputListener?.()
     this.tui.stop()
@@ -452,20 +468,42 @@ export class TuiApplication implements TuiControllerSink {
       this.theme.bold(this.theme.accent(`✦ ${this.config.title}`)),
       this.theme.dim(`${state.cwd}${state.sessionId === undefined ? '' : ` · ${String(state.sessionId)}`}`),
     ].join('\n'))
+    this.reconcileInterruptTarget(state)
     this.updateStatus(state)
-    const selection = state.models?.current
-    const model = selection === undefined
-      ? 'model unavailable'
-      : `${selection.provider}/${selection.model}${selection.reasoningEffort === undefined ? '' : ` · ${selection.reasoningEffort}`}`
-    const stats = composerStats(state.projections)
-    this.footer.setText([
-      this.theme.dim(model),
-      ...(stats === '' ? [] : [this.theme.dim(stats)]),
-    ].join('\n'))
+    this.observeGitBranch(state.cwd)
+    this.updateFooter(state)
     if (state.cwd !== this.autocompleteCwd || commandsChanged) {
       this.refreshAutocomplete(state.cwd, false)
     }
     this.tui.requestRender()
+  }
+
+  private observeGitBranch(cwd: string): void {
+    if (this.gitBranchCwd === cwd) return
+    this.removeGitBranchListener?.()
+    this.gitBranchCwd = cwd
+    this.gitBranch = undefined
+    this.removeGitBranchListener = this.gitBranchSource(cwd, (branch) => {
+      if (this.disposed || this.gitBranchCwd !== cwd || this.gitBranch === branch) return
+      this.gitBranch = branch
+      this.updateFooter(this.controller.current)
+      this.tui.requestRender()
+    })
+  }
+
+  private updateFooter(state: Readonly<TuiState>): void {
+    const selection = state.models?.current
+    const model = selection === undefined
+      ? 'model unavailable'
+      : `${selection.provider}/${selection.model}${selection.reasoningEffort === undefined ? '' : ` · ${selection.reasoningEffort}`}`
+    this.footer.setSnapshot({
+      model,
+      cwd: state.cwd,
+      ...this.gitBranchCwd === state.cwd && this.gitBranch !== undefined
+        ? { branch: this.gitBranch }
+        : {},
+      stats: composerStats(state.projections),
+    })
   }
 
   requestApproval(prompt: ApprovalPrompt): void {
@@ -513,9 +551,12 @@ export class TuiApplication implements TuiControllerSink {
       const label = activity.kind === 'vision'
         ? `Vision · Analyzing ${String(activity.imageCount)} image${activity.imageCount === 1 ? '' : 's'}`
         : 'Working'
+      const interruptHint = this.interruptingActivityKey === this.interruptionTargetKey(state)
+        ? 'Ctrl+C again to exit'
+        : 'esc to interrupt'
       this.status.setText([
         this.theme.accent(glyph),
-        this.theme.dim(` ${label} (${elapsed} · esc to interrupt${history})`),
+        this.theme.secondary(` ${label} (${elapsed} · ${interruptHint}${history})`),
       ].join(''))
       return
     }
@@ -549,11 +590,11 @@ export class TuiApplication implements TuiControllerSink {
       return
     }
     if (composerInput.draftRecovery === 'stored') {
-      this.status.setText(this.theme.dim(`Input cleared · ↑ to restore${history}`))
+      this.status.setText(this.theme.secondary(`Input cleared · ↑ to restore${history}`))
       return
     }
     this.status.setText(state.connected
-      ? this.theme.dim(`Ready${taskStatus}${history}`)
+      ? `${this.theme.bold(this.theme.success('Ready'))}${this.theme.secondary(`${taskStatus}${history}`)}`
       : this.theme.warning(`Connecting…${history}`))
   }
 
@@ -621,12 +662,8 @@ export class TuiApplication implements TuiControllerSink {
       if (this.applyComposerInputAction(action)) return { consume: true }
     }
     if (escape && !this.tui.hasOverlay()) {
-      if (this.imageSubmissionBusy) {
-        this.attachmentCoordinator?.cancel()
-        return { consume: true }
-      }
-      if (isWorking(this.controller.current)) {
-        void this.runAction(() => this.controller.cancel())
+      if (this.imageSubmissionBusy || isWorking(this.controller.current)) {
+        this.requestInterrupt()
         return { consume: true }
       }
       if (this.editor.isShowingAutocomplete()) return undefined
@@ -640,10 +677,7 @@ export class TuiApplication implements TuiControllerSink {
   private handleKeymapAction(action: KeymapAction): void {
     switch (action) {
       case 'app.cancel-or-exit':
-        if (this.cancelActiveInteraction()) return
-        if (this.imageSubmissionBusy) this.attachmentCoordinator?.cancel()
-        else if (isWorking(this.controller.current)) void this.runAction(() => this.controller.cancel())
-        else void this.requestExit(0)
+        this.cancelOrExit()
         return
       case 'turn.queue':
         void this.submitEditor('queue')
@@ -1735,17 +1769,56 @@ export class TuiApplication implements TuiControllerSink {
     )
   }
 
-  private cancelActiveInteraction(): boolean {
+  private interruptionTargetKey(state: Readonly<TuiState> = this.controller.current): string | undefined {
+    return composerExecutionActivity(state)?.key
+      ?? (this.imageSubmissionBusy ? 'vision:preparation' : undefined)
+      ?? this.activeInteraction?.key
+  }
+
+  private reconcileInterruptTarget(state: Readonly<TuiState>): void {
+    if (this.interruptingActivityKey === undefined) return
+    if (this.interruptingActivityKey !== this.interruptionTargetKey(state)) {
+      this.interruptingActivityKey = undefined
+    }
+  }
+
+  private requestInterrupt(): boolean {
+    const target = this.interruptionTargetKey()
+    if (target === undefined) return false
+    if (this.interruptingActivityKey === target) return true
+    this.interruptingActivityKey = target
     const active = this.activeInteraction
-    if (active === undefined) return false
-    if (active.phase === 'cancelling') return true
+    if (active !== undefined) this.beginInteractionCancellation(active)
+    else if (this.imageSubmissionBusy) this.attachmentCoordinator?.cancel()
+    else void this.runAction(() => this.controller.cancel())
+    this.updateStatus(this.controller.current)
+    this.tui.requestRender()
+    return true
+  }
+
+  private cancelOrExit(): void {
+    const target = this.interruptionTargetKey()
+    if (target === undefined || this.interruptingActivityKey === target) {
+      void this.requestExit(0)
+      return
+    }
+    this.requestInterrupt()
+  }
+
+  private cancelActiveInteraction(): boolean {
+    if (this.activeInteraction === undefined) return false
+    this.requestInterrupt()
+    return true
+  }
+
+  private beginInteractionCancellation(active: ActiveInteraction): void {
+    if (active.phase === 'cancelling') return
     const key = active.key
     active.phase = 'cancelling'
     void this.controller.cancel().then(
       () => { this.completeInteraction(key) },
       (error: unknown) => { this.reopenInteraction(key, 'cancelling', error) },
     )
-    return true
   }
 
   private reopenInteraction(

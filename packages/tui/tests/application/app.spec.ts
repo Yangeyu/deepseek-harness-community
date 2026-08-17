@@ -183,6 +183,10 @@ function application(
     memory,
     {
       terminal: quietTerminal(),
+      gitBranch: (_cwd, onChange) => {
+        onChange(undefined)
+        return () => {}
+      },
       ...dependencies,
       ...commandSource === undefined ? {} : { commandSource },
       ...keymap === undefined ? {} : { keymap },
@@ -198,6 +202,48 @@ afterEach(() => {
 })
 
 describe('TuiApplication input routing', () => {
+  it('exits immediately when Ctrl+C is pressed while idle', async () => {
+    const exit = vi.fn()
+    const app = application(undefined, undefined, { exit })
+    const internals = app as unknown as AppInternals
+
+    expect(internals.handleGlobalInput('\u0003')).toEqual({ consume: true })
+
+    await vi.waitFor(() => { expect(exit).toHaveBeenCalledWith(0) })
+  })
+
+  it('exits on repeated Ctrl+C when an interrupted runtime never becomes idle', async () => {
+    const exit = vi.fn()
+    const write = vi.fn(() => true)
+    const app = application(undefined, undefined, {
+      exit,
+      stdout: { write } as unknown as NodeJS.WriteStream,
+    })
+    const internals = app as unknown as AppInternals
+    const current = internals.controller.current
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue({
+      ...current,
+      sessionId: 'session-stuck' as TuiState['sessionId'],
+      running: true,
+      lifecycle: buildLifecycleSnapshot({
+        sessionId: 'session-stuck',
+        generation: 1,
+        entries: [],
+        sessionRunning: true,
+      }),
+    })
+    const cancel = vi.fn(() => new Promise<void>(() => {}))
+    internals.controller.cancel = cancel
+
+    expect(internals.handleGlobalInput('\u0003')).toEqual({ consume: true })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(exit).not.toHaveBeenCalled()
+    expect(internals.status.render(100).join('\n')).toContain('Ctrl+C again to exit')
+
+    expect(internals.handleGlobalInput('\u0003')).toEqual({ consume: true })
+    await vi.waitFor(() => { expect(exit).toHaveBeenCalledWith(0) })
+  })
+
   it('opens and applies workspace file suggestions for @ input', async () => {
     const workspacePaths = vi.fn(async () => [
       { path: 'README.md', isDirectory: false },
@@ -477,8 +523,12 @@ describe('TuiApplication input routing', () => {
     expect(submit).toHaveBeenCalledWith('legacy task', 'queue')
   })
 
-  it('keeps model identity on the first footer row and metrics on the second', () => {
-    const app = application()
+  it('keeps model and workspace identity on the first footer row and metrics on the second', () => {
+    const gitBranch = vi.fn((_cwd: string, onChange: (branch: string | undefined) => void) => {
+      onChange('feature/footer-context')
+      return () => {}
+    })
+    const app = application(undefined, undefined, undefined, undefined, undefined, { gitBranch })
     const internals = app as unknown as AppInternals
 
     app.render({
@@ -516,7 +566,10 @@ describe('TuiApplication input routing', () => {
     })
 
     const footer = internals.footer.render(240).map(line => line.trimEnd())
+    expect(gitBranch).toHaveBeenCalledWith('/workspace', expect.any(Function))
     expect(footer[0]).toContain('deepseek-official/deepseek-v4-pro · max')
+    expect(footer[0]).toContain('workspace · feature/footer-context')
+    expect(footer).toHaveLength(2)
     expect(footer.slice(1).join('\n')).toContain('2 turns · 3 steps')
     expect(footer.join('\n')).not.toMatch(/queue|newline|image|details|\/help/u)
   })
@@ -556,6 +609,22 @@ describe('TuiApplication input routing', () => {
     expect(cancel).toHaveBeenCalledOnce()
     expect(answerApproval).not.toHaveBeenCalled()
     await vi.waitFor(() => { expect(internals.tui.hasOverlay()).toBe(false) })
+  })
+
+  it('exits on repeated Ctrl+C when approval cancellation does not settle', async () => {
+    const exit = vi.fn()
+    const app = application(undefined, undefined, { exit })
+    const internals = app as unknown as AppInternals
+    const cancel = vi.fn(() => new Promise<void>(() => {}))
+    internals.controller.cancel = cancel
+
+    internals.requestApproval(approvalPrompt())
+    expect(internals.handleGlobalInput('\u0003')).toEqual({ consume: true })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(exit).not.toHaveBeenCalled()
+
+    expect(internals.handleGlobalInput('\u0003')).toEqual({ consume: true })
+    await vi.waitFor(() => { expect(exit).toHaveBeenCalledWith(0) })
   })
 
   it('keeps explicit approval rejection separate from turn interruption', async () => {

@@ -13,6 +13,7 @@ export interface TuiTheme {
   accent: Paint
   bold: Paint
   dim: Paint
+  secondary: Paint
   diffAdded: Paint
   diffRemoved: Paint
   error: Paint
@@ -45,10 +46,11 @@ export function createTheme(enabled: boolean): TuiTheme {
   const diffAdded = ansiSequence(enabled, '48;2;12;48;28', '49')
   const diffRemoved = ansiSequence(enabled, '48;2;58;23;31', '49')
   const error = ansi(enabled, 31, 39)
-  // Reasoning is secondary content, but ANSI bright-black becomes nearly
-  // invisible in several dark terminal palettes. Keep it muted without
-  // sacrificing legibility.
-  const reasoning = ansiSequence(enabled, '38;2;148;163;184', '39')
+  // SGR dim delegates contrast to the terminal and can make persistent chrome
+  // nearly invisible. Use a stable, high-luminance secondary foreground for
+  // information that is subordinate but still needs to remain readable.
+  const secondary = ansiSequence(enabled, '38;2;148;163;184', '39')
+  const reasoning = secondary
   const success = ansi(enabled, 32, 39)
   // Tool titles need more luminance than standard ANSI blue on dark terminals.
   const tool = ansiSequence(enabled, '38;2;125;211;252', '39')
@@ -69,6 +71,7 @@ export function createTheme(enabled: boolean): TuiTheme {
     accent,
     bold,
     dim,
+    secondary,
     diffAdded,
     diffRemoved,
     error,
