@@ -21,11 +21,14 @@ interface WorkspaceMutationSource {
   readonly callId: string
   readonly rootCallId: string
   readonly order: number
-  readonly workspaceRoot: string
+  /** Filesystem display base at the time of the observed edit; not a restore boundary. */
+  readonly sourceRoot: string
+  /** Opaque identity returned by the filesystem backend for the observed target. */
+  readonly targetKey: string
   readonly path: string
 }
 
-/** Canonical filesystem outcome accepted from a Host adapter. */
+/** Source-attributed filesystem outcome accepted from a Host adapter. */
 export type WorkspaceMutationInput =
   | WorkspaceMutationSource & {
     readonly kind: 'reversible'
@@ -44,7 +47,8 @@ interface AttributedWorkspaceMutation {
   readonly callId: string
   readonly rootCallId: string
   readonly order: number
-  readonly path: string
+  /** Canonical absolute identity of the local file changed by this tool call. */
+  readonly absolutePath: string
   readonly createdAt: number
 }
 
@@ -65,14 +69,14 @@ export type WorkspaceMutation =
 export type CanonicalWorkspaceMutation =
   | {
     readonly kind: 'reversible'
-    readonly path: string
+    readonly absolutePath: string
     readonly before: string | null
     readonly after: string
     readonly bytes: number
   }
   | {
     readonly kind: 'unsupported'
-    readonly path: string
+    readonly absolutePath: string
     readonly reason: string
   }
 
@@ -212,7 +216,8 @@ export interface PreparedWorkspaceRewind {
 /** Filesystem-specific behavior injected into the transport-neutral service. */
 export interface WorkspaceRewindBackend {
   canonicalizeRoot(root: string): string
-  canonicalizeMutation(pointRoot: string, input: WorkspaceMutationInput): CanonicalWorkspaceMutation
+  canonicalizeMutation(input: WorkspaceMutationInput): CanonicalWorkspaceMutation
+  /** Prepare all tracked local targets; workspaceRoot is used only for display. */
   prepare(workspaceRoot: string, mutations: readonly WorkspaceMutation[]): Promise<PreparedWorkspaceRewind>
 }
 

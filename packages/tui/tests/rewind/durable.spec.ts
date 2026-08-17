@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -61,6 +62,7 @@ async function begin(
 }
 
 function record(rewind: RewindService, root: string, turn: number, before: string, after: string, sessionId = 'session'): void {
+  const path = join(root, 'a.txt')
   rewind.recordWorkspaceMutation({
     kind: 'reversible',
     sessionId,
@@ -68,8 +70,9 @@ function record(rewind: RewindService, root: string, turn: number, before: strin
     callId: `${sessionId}-call-${String(turn)}`,
     rootCallId: `${sessionId}-call-${String(turn)}`,
     order: turn,
-    workspaceRoot: root,
-    path: join(root, 'a.txt'),
+    sourceRoot: root,
+    targetKey: join(realpathSync(root), 'a.txt'),
+    path,
     before,
     after,
   })
@@ -110,6 +113,44 @@ describe('durable Rewind lifecycle', () => {
 
     expect(plan.state).toBe('safe')
     expect(plan.input.attachments).toEqual([attachment])
+    await resumed.restore(plan)
+    expect(await readFile(path, 'utf8')).toBe(before)
+    await resumed.close()
+  })
+
+  it('retains an attributed external file target after the TUI service is recreated', async () => {
+    const storageRoot = await temporary('dsh-rewind-external-storage-')
+    const workspaceRoot = await temporary('dsh-rewind-external-workspace-')
+    const externalRoot = await temporary('dsh-rewind-external-files-')
+    const path = join(externalRoot, 'README.md')
+    const before = 'external before\n'
+    const after = 'external after\n'
+    const conversation = new TestRewindConversationHistory()
+    await writeFile(path, after)
+    const first = service(storageRoot, conversation)
+    await begin(first, workspaceRoot, 1)
+    first.recordWorkspaceMutation({
+      kind: 'reversible',
+      sessionId: 'session',
+      turn: 1,
+      callId: 'external-call',
+      rootCallId: 'external-call',
+      order: 1,
+      sourceRoot: workspaceRoot,
+      targetKey: realpathSync(path),
+      path,
+      before,
+      after,
+    })
+    await first.settle('session')
+    await first.close()
+
+    const resumed = service(storageRoot, conversation)
+    await resumed.activate('session', workspaceRoot)
+    const [point] = resumed.list('session')
+    const plan = await resumed.plan('session', point?.pointId ?? '')
+
+    expect(plan).toMatchObject({ state: 'safe', files: [{ path: realpathSync(path), state: 'safe' }] })
     await resumed.restore(plan)
     expect(await readFile(path, 'utf8')).toBe(before)
     await resumed.close()

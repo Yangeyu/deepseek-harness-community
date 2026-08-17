@@ -124,7 +124,7 @@ describe('RewindPointDialog', () => {
       vi.fn(),
     ).render(80).join('\n')
 
-    expect(output).toContain('\u001b[38;2;164;176;194mNo AI file edits\u001b[39m')
+    expect(output).toContain('\u001b[38;2;148;163;184mNo AI file edits\u001b[39m')
     expect(output).not.toContain('\u001b[38;2;188;198;214mNo AI file edits\u001b[39m')
   })
 })

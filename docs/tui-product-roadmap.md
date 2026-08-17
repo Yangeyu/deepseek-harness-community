@@ -114,7 +114,8 @@ are in [`tui-v0.1.8-design.md`](tui-v0.1.8-design.md).
   Vision evidence as a child contribution that enriches the Prompt's durable
   attachment references.
 - Journal source-attributed workspace mutations with stable session, turn, and
-  call identities plus before/after snapshot references.
+  call identities, canonical per-target filesystem identities, and before/after
+  snapshot references; authorized local edits remain reversible across roots.
 - Plan each restore as `safe`, `mergeable`, `conflict`, or `unsupported`; only
   AI-owned mutations participate in the default restore plan.
 - Verify and refill complete Prompt text and attachments around one transaction

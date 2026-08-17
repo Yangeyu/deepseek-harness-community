@@ -3,11 +3,11 @@ import type { FsObservation, FsTarget } from '@deepseek-ai/dsh-fs'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import type { RewindWorkspaceSink, WorkspaceMutationInput } from '../contracts.ts'
 
-type CanonicalMutationOutcome =
-  | Pick<Extract<WorkspaceMutationInput, { readonly kind: 'reversible' }>, 'kind' | 'path' | 'before' | 'after'>
-  | Pick<Extract<WorkspaceMutationInput, { readonly kind: 'unsupported' }>, 'kind' | 'path' | 'reason'>
+type ObservedMutationOutcome =
+  | Pick<Extract<WorkspaceMutationInput, { readonly kind: 'reversible' }>, 'kind' | 'targetKey' | 'path' | 'before' | 'after'>
+  | Pick<Extract<WorkspaceMutationInput, { readonly kind: 'unsupported' }>, 'kind' | 'targetKey' | 'path' | 'reason'>
 
-type MutationSource = Pick<WorkspaceMutationInput, 'sessionId' | 'turn' | 'callId' | 'rootCallId' | 'workspaceRoot'>
+type MutationSource = Pick<WorkspaceMutationInput, 'sessionId' | 'turn' | 'callId' | 'rootCallId' | 'sourceRoot'>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -21,12 +21,12 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
 export function decodeWorkspaceMutation(
   target: FsTarget,
   value: unknown,
-): CanonicalMutationOutcome | undefined {
+): ObservedMutationOutcome | undefined {
   if (!isRecord(value) || typeof value.path !== 'string' || value.path !== target.displayPath
     || typeof value.after !== 'string') return undefined
   if (exactKeys(value, ['path', 'before', 'after'])) {
     if (typeof value.before !== 'string' || value.before === value.after) return undefined
-    return { kind: 'reversible', path: value.path, before: value.before, after: value.after }
+    return { kind: 'reversible', targetKey: String(target.targetKey), path: value.path, before: value.before, after: value.after }
   }
   if (!exactKeys(value, ['path', 'operation', 'before', 'after'])
     || (value.operation !== 'create' && value.operation !== 'update')
@@ -34,16 +34,17 @@ export function decodeWorkspaceMutation(
     || value.before === value.after) return undefined
   if (value.operation === 'create') {
     if (value.before !== null) return undefined
-    return { kind: 'reversible', path: value.path, before: null, after: value.after }
+    return { kind: 'reversible', targetKey: String(target.targetKey), path: value.path, before: null, after: value.after }
   }
   if (value.before === null) {
     return {
       kind: 'unsupported',
+      targetKey: String(target.targetKey),
       path: value.path,
       reason: 'The overwritten file was too large or non-text, so the provider omitted its before-state.',
     }
   }
-  return { kind: 'reversible', path: value.path, before: value.before, after: value.after }
+  return { kind: 'reversible', targetKey: String(target.targetKey), path: value.path, before: value.before, after: value.after }
 }
 
 function sourceFor(exec: Readonly<ToolExecution>): MutationSource | undefined {
@@ -58,7 +59,7 @@ function sourceFor(exec: Readonly<ToolExecution>): MutationSource | undefined {
     turn: call.data.turn,
     callId: String(exec.callId),
     rootCallId: String(exec.rootCallId),
-    workspaceRoot: agent.session.header.cwd ?? process.cwd(),
+    sourceRoot: agent.session.header.cwd ?? process.cwd(),
   }
 }
 

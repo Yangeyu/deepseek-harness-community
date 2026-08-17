@@ -374,7 +374,7 @@ export class RewindJournal {
       callId: input.callId,
       rootCallId: input.rootCallId,
       order: input.order,
-      path: canonical.path,
+      absolutePath: canonical.absolutePath,
       createdAt: Date.now(),
     }
     if (canonical.kind === 'unsupported') {

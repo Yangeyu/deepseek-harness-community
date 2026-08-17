@@ -105,7 +105,10 @@ A workspace mutation is accepted only when all of these facts agree:
    `{ path, operation, before, after }`.
 4. The result path equals the observed target path.
 5. The root model call exists in the Agent session log and supplies the turn.
-6. The target is a local path inside the turn's workspace root.
+6. The observed filesystem target supplies a local canonical absolute identity.
+   It may be outside the turn's workspace root when that edit was authorized.
+7. The display path and target identity do not cross a symbolic-link boundary,
+   and the target is not hard-linked.
 
 Tool names, arguments, rendered Diff cards, Git status, and elapsed execution
 windows are not ownership evidence. An update with a missing `before` value is
@@ -127,7 +130,7 @@ file content.
 | `safe` | Current content is the exact recorded after-state | Enabled |
 | `mergeable` | Every reverse patch applies with exact context while preserving later non-overlapping edits | Enabled |
 | `conflict` | A file is missing, non-text, changed after preview, or overlaps an AI edit | Disabled |
-| `unsupported` | The provider omitted the before-state or the target is outside the local workspace | Disabled |
+| `unsupported` | The provider omitted the before-state, the target is not local, or the path is symbolic/hard-linked | Disabled |
 
 AI-created files are removed only when their current content still equals the
 recorded after-state. A changed created file is a conflict because deleting it
@@ -140,7 +143,8 @@ would discard unowned work.
    inconsistent object aborts before any mutation.
 2. Wait for already-scheduled Memory learning for the source session to settle,
    then prepare one stable set of attributed workspace and Memory mutations.
-3. Preflight all attributed workspace files against the prepared plan.
+3. Preflight every attributed local target across all roots against the prepared
+   plan before writing any file.
 4. If code restore is selected, apply workspace targets atomically per file and
    compensate already-applied files if any workspace write fails.
 5. If code restore is selected, revert Memory mutations newest-first using

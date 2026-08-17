@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
+import { link, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -65,14 +66,16 @@ function record(rewind: RewindService, input: {
   unsupportedReason?: string
   order?: number
 }): void {
+  const path = input.path ?? join(input.root, 'a.txt')
   const source = {
     sessionId: input.sessionId ?? 'session',
     turn: input.turn ?? 1,
     callId: input.callId ?? 'call-1',
     rootCallId: input.callId ?? 'call-1',
     order: input.order ?? 1,
-    workspaceRoot: input.root,
-    path: input.path ?? join(input.root, 'a.txt'),
+    sourceRoot: input.root,
+    targetKey: realpathSync(path),
+    path,
   }
   if (input.unsupportedReason !== undefined) {
     rewind.recordWorkspaceMutation({ ...source, kind: 'unsupported', reason: input.unsupportedReason })
@@ -166,6 +169,76 @@ describe('RewindService', () => {
     expect(await readFile(join(root, 'b.txt'), 'utf8')).toBe('external window edit\n')
   })
 
+  it('restores source-attributed files outside the session workspace in the same transaction', async () => {
+    const root = await workspace()
+    const externalRoot = await mkdtemp(join(tmpdir(), 'dsh-rewind-external-target-'))
+    temporaryDirectories.push(externalRoot)
+    const externalPath = join(externalRoot, 'README.md')
+    const internalBefore = 'one\ntwo\nthree\n'
+    const internalAfter = 'one\nAI\nthree\n'
+    const externalBefore = 'external before\n'
+    const externalAfter = 'external after\n'
+    await writeFile(join(root, 'a.txt'), internalAfter)
+    await writeFile(externalPath, externalAfter)
+    const rewind = service()
+    await begin(rewind, root)
+    record(rewind, { root, callId: 'internal', before: internalBefore, after: internalAfter, order: 1 })
+    record(rewind, {
+      root,
+      callId: 'external',
+      path: externalPath,
+      before: externalBefore,
+      after: externalAfter,
+      order: 2,
+    })
+
+    const [summary] = await list(rewind)
+    expect(summary).toMatchObject({ workspaceFiles: 2, unsupportedFiles: 0 })
+    const plan = await rewind.plan('session', summary?.pointId ?? '')
+    expect(plan.state).toBe('safe')
+    expect(plan.files.map(file => file.path)).toEqual([
+      realpathSync(externalPath),
+      'a.txt',
+    ].sort())
+
+    const compensate = await rewind.restore(plan)
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe(internalBefore)
+    expect(await readFile(externalPath, 'utf8')).toBe(externalBefore)
+
+    await compensate()
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe(internalAfter)
+    expect(await readFile(externalPath, 'utf8')).toBe(externalAfter)
+  })
+
+  it('preflights every local target before restoring across workspace roots', async () => {
+    const root = await workspace()
+    const externalRoot = await mkdtemp(join(tmpdir(), 'dsh-rewind-external-stale-'))
+    temporaryDirectories.push(externalRoot)
+    const externalPath = join(externalRoot, 'README.md')
+    const internalBefore = 'one\ntwo\nthree\n'
+    const internalAfter = 'one\nAI\nthree\n'
+    await writeFile(join(root, 'a.txt'), internalAfter)
+    await writeFile(externalPath, 'external after\n')
+    const rewind = service()
+    await begin(rewind, root)
+    record(rewind, { root, callId: 'internal', before: internalBefore, after: internalAfter, order: 1 })
+    record(rewind, {
+      root,
+      callId: 'external',
+      path: externalPath,
+      before: 'external before\n',
+      after: 'external after\n',
+      order: 2,
+    })
+    const [summary] = await list(rewind)
+    const plan = await rewind.plan('session', summary?.pointId ?? '')
+    await writeFile(externalPath, 'changed after confirmation\n')
+
+    await expect(rewind.restore(plan)).rejects.toThrow('workspace changed after the rewind plan')
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe(internalAfter)
+    expect(await readFile(externalPath, 'utf8')).toBe('changed after confirmation\n')
+  })
+
   it('preserves non-overlapping later edits with a mergeable reverse patch', async () => {
     const root = await workspace()
     const rewind = service()
@@ -250,7 +323,7 @@ describe('RewindService', () => {
     expect(plan.files).toEqual([{ path: 'a.txt', state: 'unsupported', reason: 'missing before-state' }])
   })
 
-  it('blocks a lexical path that resolves through a symlink outside the workspace', async () => {
+  it('blocks a path whose filesystem identity resolves through a symbolic link', async () => {
     const root = await workspace()
     const external = await mkdtemp(join(tmpdir(), 'dsh-rewind-external-'))
     temporaryDirectories.push(external)
@@ -267,9 +340,28 @@ describe('RewindService', () => {
 
     const [summary] = await list(rewind)
     const plan = await rewind.plan('session', summary?.pointId ?? '')
-    expect(plan.state).toBe('conflict')
-    expect(plan.files[0]?.state).toBe('conflict')
-    expect(plan.files[0]?.state === 'conflict' ? plan.files[0].reason : '').toContain('outside the active workspace')
+    expect(plan.state).toBe('unsupported')
+    expect(plan.files[0]?.state).toBe('unsupported')
+    expect(plan.files[0]?.state === 'unsupported' ? plan.files[0].reason : '').toContain('symbolic links')
+  })
+
+  it('does not restore hard-linked targets', async () => {
+    const root = await workspace()
+    const hardLink = join(root, 'hard-linked.txt')
+    await link(join(root, 'a.txt'), hardLink)
+    const rewind = service()
+    await begin(rewind, root)
+    record(rewind, {
+      root,
+      path: hardLink,
+      before: 'one\ntwo\nthree\n',
+      after: 'one\nAI\nthree\n',
+    })
+
+    const [summary] = await list(rewind)
+    const plan = await rewind.plan('session', summary?.pointId ?? '')
+    expect(plan.state).toBe('unsupported')
+    expect(plan.files[0]?.state === 'unsupported' ? plan.files[0].reason : '').toContain('hard-linked')
   })
 
   it('keeps bounded history while both source and fork read checkpoints from their Session logs', async () => {

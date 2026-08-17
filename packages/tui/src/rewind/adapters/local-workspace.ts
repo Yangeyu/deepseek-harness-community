@@ -1,7 +1,7 @@
 import { isUtf8 } from 'node:buffer'
-import { realpathSync } from 'node:fs'
-import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { lstatSync, realpathSync } from 'node:fs'
+import { chmod, lstat, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   CanonicalWorkspaceMutation,
   PreparedWorkspaceRewind,
@@ -16,7 +16,6 @@ import { planWorkspaceContent } from '../domain/planner.ts'
 const MAX_CURRENT_FILE_BYTES = 16 * 1024 * 1024
 
 interface WorkspaceState {
-  readonly workspaceRoot: string
   readonly absolutePath: string
   readonly expected: string | null
   readonly target: string | null
@@ -42,59 +41,45 @@ function isContained(root: string, path: string): boolean {
   return candidate !== '' && candidate !== '..' && !candidate.startsWith(`..${sep}`) && !isAbsolute(candidate)
 }
 
-function relativeWorkspacePath(root: string, path: string): string | undefined {
-  if (!isAbsolute(path)) return undefined
-  const candidate = resolve(path)
-  const display = relative(root, candidate)
-  if (display === '' || display === '..' || display.startsWith(`..${sep}`) || isAbsolute(display)) return undefined
-  return display
+function displayPath(root: string, path: string): string {
+  return isContained(root, path) ? relative(root, path) : path
 }
 
-async function assertWorkspacePath(root: string, path: string): Promise<void> {
-  const canonicalRoot = await realpath(root)
-  let canonicalPath: string
-  try {
-    canonicalPath = await realpath(path)
-  } catch (error: unknown) {
-    if (nodeErrorCode(error) !== 'ENOENT') throw error
-    canonicalPath = join(await realpath(dirname(path)), basename(path))
-  }
-  if (!isContained(canonicalRoot, canonicalPath)) {
-    throw new Error(`rewind target resolves outside the active workspace: ${path}`)
-  }
-}
-
-async function readTextState(root: string, path: string): Promise<string | null> {
-  await assertWorkspacePath(root, path)
+async function inspectLocalPath(path: string): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
   let info: Awaited<ReturnType<typeof lstat>>
   try {
     info = await lstat(path)
   } catch (error: unknown) {
-    if (nodeErrorCode(error) === 'ENOENT') return null
-    throw error
+    if (nodeErrorCode(error) !== 'ENOENT') throw error
+    const parent = dirname(path)
+    if (await realpath(parent) !== parent) {
+      throw new Error(`rewind target parent identity changed: ${path}`)
+    }
+    return undefined
   }
+  if (info.isSymbolicLink()) throw new Error(`rewind does not restore symbolic links: ${path}`)
   if (!info.isFile()) throw new Error(`rewind supports regular text files only: ${path}`)
+  if (info.nlink > 1) throw new Error(`rewind does not restore hard-linked files: ${path}`)
+  if (await realpath(path) !== path) throw new Error(`rewind target identity changed: ${path}`)
+  return info
+}
+
+async function readTextState(path: string): Promise<string | null> {
+  const info = await inspectLocalPath(path)
+  if (info === undefined) return null
   if (info.size > MAX_CURRENT_FILE_BYTES) throw new Error(`file is too large to inspect safely: ${path}`)
   const bytes = await readFile(path)
   if (!isUtf8(bytes)) throw new Error(`file is no longer UTF-8 text: ${path}`)
   return bytes.toString('utf8')
 }
 
-async function atomicReplace(root: string, path: string, content: string | null): Promise<void> {
-  await assertWorkspacePath(root, path)
-  let mode = 0o600
-  try {
-    const info = await lstat(path)
-    if (!info.isFile()) throw new Error(`rewind supports regular text files only: ${path}`)
-    mode = info.mode & 0o777
-  } catch (error: unknown) {
-    if (nodeErrorCode(error) !== 'ENOENT') throw error
-  }
+async function atomicReplace(path: string, content: string | null): Promise<void> {
+  const info = await inspectLocalPath(path)
+  const mode = info === undefined ? 0o600 : Number(info.mode) & 0o777
   if (content === null) {
     await rm(path, { force: true })
     return
   }
-  await mkdir(dirname(path), { recursive: true })
   const temporary = join(dirname(path), `.dsh-rewind-${globalThis.crypto.randomUUID()}`)
   try {
     await writeFile(temporary, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
@@ -113,7 +98,7 @@ function aggregateState(states: readonly RewindPlanState[]): RewindPlanState {
 }
 
 async function applyStates(states: readonly WorkspaceState[]): Promise<void> {
-  const current = await Promise.all(states.map(state => readTextState(state.workspaceRoot, state.absolutePath)))
+  const current = await Promise.all(states.map(state => readTextState(state.absolutePath)))
   for (const [index, state] of states.entries()) {
     if (current[index] !== state.expected) {
       throw new Error(`workspace changed after the rewind plan: ${state.absolutePath}`)
@@ -122,7 +107,7 @@ async function applyStates(states: readonly WorkspaceState[]): Promise<void> {
   const applied: number[] = []
   try {
     for (const [index, state] of states.entries()) {
-      await atomicReplace(state.workspaceRoot, state.absolutePath, state.target)
+      await atomicReplace(state.absolutePath, state.target)
       applied.push(index)
     }
   } catch (error: unknown) {
@@ -131,7 +116,7 @@ async function applyStates(states: readonly WorkspaceState[]): Promise<void> {
       const state = states[index]
       if (state === undefined) continue
       try {
-        await atomicReplace(state.workspaceRoot, state.absolutePath, current[index] ?? null)
+        await atomicReplace(state.absolutePath, current[index] ?? null)
       } catch (rollbackError: unknown) {
         rollbackErrors.push(rollbackError)
       }
@@ -145,9 +130,10 @@ async function applyStates(states: readonly WorkspaceState[]): Promise<void> {
 
 async function prepareFile(
   workspaceRoot: string,
-  path: string,
+  absolutePath: string,
   mutations: readonly WorkspaceMutation[],
 ): Promise<PreparedWorkspaceFile> {
+  const path = displayPath(workspaceRoot, absolutePath)
   const unsupported = mutations.find(mutation => mutation.kind === 'unsupported')
   if (unsupported?.kind === 'unsupported') {
     return {
@@ -158,10 +144,9 @@ async function prepareFile(
   const reversible = mutations.filter((mutation): mutation is Extract<WorkspaceMutation, { kind: 'reversible' }> => (
     mutation.kind === 'reversible'
   ))
-  const absolutePath = resolve(workspaceRoot, path)
   let current: string | null
   try {
-    current = await readTextState(workspaceRoot, absolutePath)
+    current = await readTextState(absolutePath)
   } catch (error: unknown) {
     return {
       kind: 'blocked',
@@ -184,29 +169,62 @@ async function prepareFile(
       ...content.added === undefined ? {} : { added: content.added },
       ...content.removed === undefined ? {} : { removed: content.removed },
     },
-    state: { workspaceRoot, absolutePath, expected: current, target: content.target },
+    state: { absolutePath, expected: current, target: content.target },
   }
 }
 
-/** Local UTF-8 workspace adapter with containment checks and guarded compensation. */
+/** Local UTF-8 target adapter with stable identities and guarded compensation. */
 export class LocalWorkspaceRewind implements WorkspaceRewindBackend {
   canonicalizeRoot(root: string): string {
     return realpathSync(resolve(root))
   }
 
-  canonicalizeMutation(pointRoot: string, input: WorkspaceMutationInput): CanonicalWorkspaceMutation {
-    const lexicalRoot = resolve(input.workspaceRoot)
-    const path = relativeWorkspacePath(lexicalRoot, input.path)
-    if (path === undefined) {
-      return { kind: 'unsupported', path: input.path, reason: 'The filesystem target is outside the active local workspace.' }
+  canonicalizeMutation(input: WorkspaceMutationInput): CanonicalWorkspaceMutation {
+    const absolutePath = isAbsolute(input.targetKey) ? resolve(input.targetKey) : resolve(input.path)
+    if (!isAbsolute(input.path) || !isAbsolute(input.targetKey)) {
+      return {
+        kind: 'unsupported',
+        absolutePath,
+        reason: 'The filesystem backend did not provide a local absolute target identity.',
+      }
     }
-    if (this.canonicalizeRoot(input.workspaceRoot) !== pointRoot) {
-      return { kind: 'unsupported', path, reason: 'The workspace root changed during the turn.' }
+    try {
+      const lexicalRoot = resolve(input.sourceRoot)
+      const projectedTarget = resolve(
+        realpathSync(lexicalRoot),
+        relative(lexicalRoot, resolve(input.path)),
+      )
+      if (projectedTarget !== absolutePath) {
+        return {
+          kind: 'unsupported',
+          absolutePath,
+          reason: 'Rewind does not restore paths that resolve through symbolic links.',
+        }
+      }
+      const displayInfo = lstatSync(resolve(input.path))
+      if (displayInfo.isSymbolicLink()) {
+        return { kind: 'unsupported', absolutePath, reason: 'Rewind does not restore symbolic links.' }
+      }
+      const targetInfo = lstatSync(absolutePath)
+      if (!targetInfo.isFile()) {
+        return { kind: 'unsupported', absolutePath, reason: 'Rewind supports regular text files only.' }
+      }
+      if (targetInfo.nlink > 1) {
+        return { kind: 'unsupported', absolutePath, reason: 'Rewind does not restore hard-linked files.' }
+      }
+    } catch (error: unknown) {
+      if (nodeErrorCode(error) !== 'ENOENT') {
+        return {
+          kind: 'unsupported',
+          absolutePath,
+          reason: `The local filesystem target could not be inspected: ${String(error)}`,
+        }
+      }
     }
-    if (input.kind === 'unsupported') return { kind: 'unsupported', path, reason: input.reason }
+    if (input.kind === 'unsupported') return { kind: 'unsupported', absolutePath, reason: input.reason }
     return {
       kind: 'reversible',
-      path,
+      absolutePath,
       before: input.before,
       after: input.after,
       bytes: new TextEncoder().encode(input.before ?? '').byteLength + new TextEncoder().encode(input.after).byteLength,
@@ -216,9 +234,9 @@ export class LocalWorkspaceRewind implements WorkspaceRewindBackend {
   async prepare(workspaceRoot: string, mutations: readonly WorkspaceMutation[]): Promise<PreparedWorkspaceRewind> {
     const byPath = new Map<string, WorkspaceMutation[]>()
     for (const mutation of mutations) {
-      const existing = byPath.get(mutation.path) ?? []
+      const existing = byPath.get(mutation.absolutePath) ?? []
       existing.push(mutation)
-      byPath.set(mutation.path, existing)
+      byPath.set(mutation.absolutePath, existing)
     }
     const prepared = (await Promise.all([...byPath].map(([path, pathMutations]) => (
       prepareFile(workspaceRoot, path, pathMutations)
@@ -234,7 +252,6 @@ export class LocalWorkspaceRewind implements WorkspaceRewindBackend {
         const applicable = prepared.flatMap(file => file.kind === 'applicable' ? [file.state] : [])
         await applyStates(applicable)
         return async () => applyStates(applicable.map(file => ({
-          workspaceRoot: file.workspaceRoot,
           absolutePath: file.absolutePath,
           expected: file.target,
           target: file.expected,

@@ -321,7 +321,10 @@ correlates an authoritative `fs/observed` event with the same
 execution's canonical `before`/`after` result, so the history counts only file
 mutations that can be attributed to this Agent call. Files edited by another
 window are not listed and are never restored merely because they changed
-during the turn.
+during the turn. A successful attributed edit remains reversible when its
+canonical local target is outside the session workspace; the original
+filesystem authorization controls the edit, while the explicit Rewind
+confirmation controls its restoration.
 
 Steering messages remain first-class `in-turn` Prompt lifecycle nodes, but are
 not listed as Rewind points: the current Host conversation API can restore only
@@ -342,7 +345,8 @@ conversation only**, and **Restore code only**. Conversation-only remains
 available when code restore is blocked or no source-attributed code state is
 retained. Restoring conversation forks at the checkpoint and refills the
 selected Prompt's text and attached images; restoring code reverts only the
-listed AI-owned text and corresponding Memory mutations. Attachments are
+listed AI-owned text and corresponding Memory mutations, including listed
+external local paths. Attachments are
 verified from their durable Host references before a conversation restore;
 missing image data therefore cannot produce a partial restore. Workspace and
 Memory changes are compensated if a later conversation phase fails. Native
@@ -363,6 +367,10 @@ private versioned manifests and content-addressed objects, and is bounded to 16
 MiB per object, 64 MiB per timeline, and 512 MiB globally. Invalid history is
 quarantined. Opening another session never hides its Prompt checkpoints and does
 not take effect ownership until that session produces its first attributed edit.
+The workspace key owns timeline persistence only; each mutation retains its own
+canonical absolute filesystem identity, so one restore transaction can safely
+span multiple local roots. Schema 2 relative mutation paths are migrated on
+load.
 
 After a code-and-conversation Rewind, the forked session owns a code/effect
 cursor before the selected turn. Code-only restore moves the same cursor without

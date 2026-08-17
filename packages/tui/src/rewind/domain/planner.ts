@@ -38,9 +38,17 @@ function reverseMutation(
   if (mutation.before === null) {
     return { state: 'conflict', reason: 'The AI-created file has subsequent changes and cannot be removed safely.' }
   }
-  const patch = structuredPatch(mutation.path, mutation.path, mutation.after, mutation.before, undefined, undefined, {
+  const patch = structuredPatch(
+    mutation.absolutePath,
+    mutation.absolutePath,
+    mutation.after,
+    mutation.before,
+    undefined,
+    undefined,
+    {
     context: 4,
-  })
+    },
+  )
   const merged = applyPatch(current, patch, { fuzzFactor: 0 })
   if (merged === false) return { state: 'conflict', reason: 'A later change overlaps the AI edit.' }
   return { target: merged, state: 'mergeable' }

@@ -114,6 +114,9 @@ reducing the number of visible files.
     The Host adapter must correlate an authoritative filesystem observation and
     canonical mutation outcome on the same execution identity. Unattributed or
     non-reversible mutations remain outside the default restore transaction.
+    A timeline's workspace root is its persistence owner, not a containment
+    boundary: each accepted file mutation retains the filesystem backend's
+    canonical absolute target and one transaction may span multiple local roots.
 14. Command-line input resolves to one typed action before profile mutation or
     Host boot. Help, version output, completion, diagnostics, usage errors, and
     execution do not pass through interactive startup. Launcher overlays are
@@ -306,6 +309,11 @@ architecture required to support that sequence.
   metadata by stable Prompt identity, and builds `safe`,
   `mergeable`, `conflict`, or `unsupported` plans through an injected workspace
   backend; the pure planner preserves non-overlapping later edits.
+- Local mutation identity comes from the observed filesystem target key rather
+  than recomputing ownership from the Prompt workspace. The local adapter uses
+  the Prompt workspace only to render relative in-workspace paths, preflights
+  all internal and external targets before writing, and rejects symbolic or
+  hard-linked targets instead of silently following them.
 - The injected `RewindRepository` persists that lineage independently of UI
   state. Its local adapter stores a versioned manifest plus content-addressed
   objects under the Harness home, uses atomic writes, a cross-process lock, and

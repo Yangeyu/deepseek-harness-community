@@ -192,7 +192,7 @@ export class RewindService implements RewindPort, RewindPointSink, RewindWorkspa
     } catch {
       // Keep process-local Rewind available when durable state cannot be loaded.
     }
-    const canonical = this.workspace.canonicalizeMutation(point.workspaceRoot, input)
+    const canonical = this.workspace.canonicalizeMutation(input)
     const claimed = this.journal.claim(input.sessionId, history)
     this.release(claimed.released)
     const result = this.journal.recordWorkspaceMutation(input, canonical)
@@ -250,10 +250,10 @@ export class RewindService implements RewindPort, RewindPointSink, RewindWorkspa
         prompt: point.input.text,
         imageCount: point.input.attachments.length,
         createdAt: point.createdAt,
-        workspaceFiles: new Set(effects?.workspaceMutations.map(mutation => mutation.path) ?? []).size,
+        workspaceFiles: new Set(effects?.workspaceMutations.map(mutation => mutation.absolutePath) ?? []).size,
         unsupportedFiles: new Set((effects?.workspaceMutations ?? [])
           .filter(mutation => mutation.kind === 'unsupported')
-          .map(mutation => mutation.path)).size,
+          .map(mutation => mutation.absolutePath)).size,
         participants: this.participantSummaries(effects?.effects ?? []),
       }
     })

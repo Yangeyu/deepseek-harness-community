@@ -10,7 +10,7 @@ import {
   rm,
   stat,
 } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { isJsonValue } from '@deepseek-ai/dsh-session'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type {
@@ -28,7 +28,7 @@ import type {
 } from '../application/repository.ts'
 import { RewindRepositoryConflictError } from '../application/repository.ts'
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 const HASH_PATTERN = /^[a-f0-9]{64}$/u
 const LOCK_STALE_MS = 30_000
@@ -62,7 +62,7 @@ interface StoredParticipantManifest {
 }
 
 interface TimelineManifest {
-  readonly schema: 2
+  readonly schema: 3
   readonly workspaceId: string
   readonly workspaceRoot: string
   readonly lineageId: string
@@ -155,8 +155,22 @@ function effectReference(value: unknown): RewindEffectReference {
   }
 }
 
-function storedMutation(value: unknown): StoredWorkspaceMutation {
+function storedMutation(
+  value: unknown,
+  workspaceRoot: string,
+  schema: 2 | 3,
+): StoredWorkspaceMutation {
   const item = record(value, 'workspace mutation')
+  const storedPath = string(
+    schema === 2 ? item.path : item.absolutePath,
+    schema === 2 ? 'mutation.path' : 'mutation.absolutePath',
+  )
+  const absolutePath = schema === 2 && !isAbsolute(storedPath)
+    ? resolve(workspaceRoot, storedPath)
+    : resolve(storedPath)
+  if (!isAbsolute(storedPath) && schema === 3) {
+    throw new Error('mutation.absolutePath must be absolute')
+  }
   const common = {
     id: string(item.id, 'mutation.id'),
     sourceSessionId: string(item.sourceSessionId, 'mutation.sourceSessionId'),
@@ -164,7 +178,7 @@ function storedMutation(value: unknown): StoredWorkspaceMutation {
     callId: string(item.callId, 'mutation.callId'),
     rootCallId: string(item.rootCallId, 'mutation.rootCallId'),
     order: integer(item.order, 'mutation.order'),
-    path: string(item.path, 'mutation.path'),
+    absolutePath,
     createdAt: integer(item.createdAt, 'mutation.createdAt'),
   }
   if (item.kind === 'unsupported') {
@@ -180,7 +194,7 @@ function storedMutation(value: unknown): StoredWorkspaceMutation {
   }
 }
 
-function storedPoint(value: unknown, workspaceRoot: string): StoredPoint {
+function storedPoint(value: unknown, workspaceRoot: string, schema: 2 | 3): StoredPoint {
   const item = record(value, 'point')
   const pointRoot = string(item.workspaceRoot, 'point.workspaceRoot')
   if (pointRoot !== workspaceRoot) throw new Error('point belongs to a different workspace')
@@ -193,7 +207,8 @@ function storedPoint(value: unknown, workspaceRoot: string): StoredPoint {
     promptSeq: integer(item.promptSeq, 'point.promptSeq'),
     createdAt: integer(item.createdAt, 'point.createdAt'),
     ...optionalPreviousTurnEndSeq(item.previousTurnEndSeq),
-    workspaceMutations: array(item.workspaceMutations, 'point.workspaceMutations').map(storedMutation),
+    workspaceMutations: array(item.workspaceMutations, 'point.workspaceMutations')
+      .map(mutation => storedMutation(mutation, workspaceRoot, schema)),
     effects: array(item.effects, 'point.effects').map(effectReference),
   }
 }
@@ -239,6 +254,9 @@ function validateManifestIntegrity(manifest: TimelineManifest): void {
       if (mutation.sourceSessionId !== point.sessionId || mutation.sourceTurn !== point.turn) {
         throw new Error('rewind workspace mutation attribution does not match its point')
       }
+      if (!isAbsolute(mutation.absolutePath)) {
+        throw new Error('rewind workspace mutation target is not absolute')
+      }
       if (mutation.kind === 'reversible') {
         const expectedBytes = (mutation.before?.bytes ?? 0) + mutation.after.bytes
         if (mutation.bytes !== expectedBytes) throw new Error('rewind workspace mutation byte count is invalid')
@@ -281,12 +299,15 @@ function validateManifestIntegrity(manifest: TimelineManifest): void {
 
 function parseManifest(value: unknown, expectedRoot?: string): TimelineManifest {
   const item = record(value, 'rewind manifest')
-  if (item.schema !== SCHEMA_VERSION) throw new Error(`unsupported Rewind manifest schema: ${String(item.schema)}`)
+  if (item.schema !== 2 && item.schema !== SCHEMA_VERSION) {
+    throw new Error(`unsupported Rewind manifest schema: ${String(item.schema)}`)
+  }
+  const schema = item.schema
   const workspaceRoot = string(item.workspaceRoot, 'manifest.workspaceRoot')
   if (expectedRoot !== undefined && workspaceRoot !== expectedRoot) throw new Error('rewind manifest workspace root does not match its key')
   const workspaceId = string(item.workspaceId, 'manifest.workspaceId')
   if (workspaceId !== hash(workspaceRoot)) throw new Error('rewind manifest workspace identity is invalid')
-  const nodes = array(item.nodes, 'manifest.nodes').map(node => storedPoint(node, workspaceRoot))
+  const nodes = array(item.nodes, 'manifest.nodes').map(node => storedPoint(node, workspaceRoot, schema))
   const cursor = integer(item.cursor, 'manifest.cursor')
   if (cursor > nodes.length) throw new Error('rewind manifest cursor is outside its timeline')
   const manifest: TimelineManifest = {

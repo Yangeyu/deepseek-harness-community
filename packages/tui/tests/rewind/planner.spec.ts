@@ -11,7 +11,7 @@ function mutation(before: string | null, after: string): Extract<WorkspaceMutati
     callId: 'call',
     rootCallId: 'call',
     order: 1,
-    path: 'a.txt',
+    absolutePath: '/workspace/a.txt',
     before,
     after,
     bytes: (before?.length ?? 0) + after.length,

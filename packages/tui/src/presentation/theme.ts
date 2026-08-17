@@ -49,7 +49,7 @@ export function createTheme(enabled: boolean): TuiTheme {
   // Never delegate text contrast to terminal-specific SGR dim. Keep both
   // secondary levels explicit so their hierarchy is stable across terminals.
   const secondary = ansiSequence(enabled, '38;2;188;198;214', '39')
-  const dim = ansiSequence(enabled, '38;2;164;176;194', '39')
+  const dim = ansiSequence(enabled, '38;2;148;163;184', '39')
   const structure = ansiSequence(enabled, '38;2;100;116;139', '39')
   const reasoning = secondary
   const success = ansi(enabled, 32, 39)
