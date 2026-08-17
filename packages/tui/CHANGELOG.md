@@ -22,6 +22,8 @@ All notable changes to this project are documented in this file.
   routing prefers ready providers without request-time retries; `/config web`
   persists explicit selection and renders secret-free readiness directly from
   the provider registry.
+- Make `Ctrl+C` clear and preserve a non-empty idle Composer draft before using
+  the same shortcut to exit an already empty idle Composer.
 
 ## 0.1.10 - 2026-08-17
 

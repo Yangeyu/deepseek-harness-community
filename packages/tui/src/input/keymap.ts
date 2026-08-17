@@ -156,7 +156,7 @@ export function keymapShortcut(preset: KeymapPreset, action: KeymapAction): stri
 
 function actionLabel(action: KeymapAction): string {
   switch (action) {
-    case 'app.cancel-or-exit': return 'Cancel task or exit'
+    case 'app.cancel-or-exit': return 'Clear input, cancel task, or exit'
     case 'turn.queue': return 'Queue next message'
     case 'vision.paste': return 'Paste image'
     case 'attachments.focus': return 'Focus attachments'

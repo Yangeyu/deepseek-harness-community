@@ -155,7 +155,7 @@ After a normal exit, the restored shell prints a copyable
 | `Alt+A` | Focus and manage the attachment rail |
 | `Alt+Backspace` | Remove the latest image draft |
 | `@` | Find and insert a file or directory reference from the active workspace |
-| `Ctrl+C` | Cancel while running; exit while idle |
+| `Ctrl+C` | Clear a non-empty draft; cancel while running; exit when idle and empty |
 | `Ctrl+O` | Toggle all Activity details |
 | `Shift+Tab` | Cycle supported reasoning efforts |
 | `↑` / `↓` | Restore/hide the last Esc-cleared text-and-image draft, then browse submitted input history |

@@ -7,7 +7,7 @@ export interface ComposerDraft<Attachment> {
 
 export type ComposerInputAction<Attachment> =
   | { type: 'arm-rewind' }
-  | { type: 'clear-and-arm-rewind' }
+  | { type: 'clear-draft' }
   | { type: 'open-rewind' }
   | { type: 'restore-draft'; draft: ComposerDraft<Attachment> }
   | { type: 'clear-restored-draft' }
@@ -23,7 +23,7 @@ interface RecoverableDraft<Attachment> {
   visible: boolean
 }
 
-/** Coordinates idle-composer Escape and one-level draft recovery. */
+/** Coordinates idle-composer clearing, Escape arming, and one-level draft recovery. */
 export class ComposerInputController<Attachment = never> {
   private rewindArmedAt: number | undefined
   private recoverableDraft: RecoverableDraft<Attachment> | undefined
@@ -49,13 +49,13 @@ export class ComposerInputController<Attachment = never> {
     }
 
     this.rewindArmedAt = now
-    if (this.isEmpty(draft)) return { type: 'arm-rewind' }
+    if (!this.rememberDraft(draft)) return { type: 'arm-rewind' }
+    return { type: 'clear-draft' }
+  }
 
-    this.recoverableDraft = {
-      draft: { text: draft.text, attachments: [...draft.attachments] },
-      visible: false,
-    }
-    return { type: 'clear-and-arm-rewind' }
+  clearDraft(draft: ComposerDraft<Attachment>): ComposerInputAction<Attachment> {
+    if (!this.rememberDraft(draft)) return { type: 'pass' }
+    return { type: 'clear-draft' }
   }
 
   navigateDraft(
@@ -104,6 +104,15 @@ export class ComposerInputController<Attachment = never> {
     if (this.rewindArmedAt === undefined && this.recoverableDraft === undefined) return false
     this.rewindArmedAt = undefined
     this.recoverableDraft = undefined
+    return true
+  }
+
+  private rememberDraft(draft: ComposerDraft<Attachment>): boolean {
+    if (this.isEmpty(draft)) return false
+    this.recoverableDraft = {
+      draft: { text: draft.text, attachments: [...draft.attachments] },
+      visible: false,
+    }
     return true
   }
 

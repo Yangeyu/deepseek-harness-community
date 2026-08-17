@@ -208,13 +208,18 @@ afterEach(() => {
 })
 
 describe('TuiApplication input routing', () => {
-  it('exits immediately when Ctrl+C is pressed while idle', async () => {
+  it('clears an idle draft before Ctrl+C exits an empty composer', async () => {
     const exit = vi.fn()
     const app = application(undefined, undefined, { exit })
     const internals = app as unknown as AppInternals
+    internals.editor.setText('unfinished prompt')
 
     expect(internals.handleGlobalInput('\u0003')).toEqual({ consume: true })
+    expect(internals.editor.getExpandedText()).toBe('')
+    expect(internals.status.render(100).join('\n')).toContain('Input cleared · ↑ to restore')
+    expect(exit).not.toHaveBeenCalled()
 
+    expect(internals.handleGlobalInput('\u0003')).toEqual({ consume: true })
     await vi.waitFor(() => { expect(exit).toHaveBeenCalledWith(0) })
   })
 

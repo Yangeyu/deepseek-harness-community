@@ -20,7 +20,7 @@ describe('ComposerInputController', () => {
     const input = new ComposerInputController<TestAttachment>(600)
 
     expect(input.pressEscape(draft('unfinished prompt'), 1_000)).toEqual({
-      type: 'clear-and-arm-rewind',
+      type: 'clear-draft',
     })
     expect(input.snapshot).toEqual({
       rewindArmed: true,
@@ -61,7 +61,7 @@ describe('ComposerInputController', () => {
     const image = { id: 'image-1' }
 
     expect(input.pressEscape(draft('', [image]), 1_000)).toEqual({
-      type: 'clear-and-arm-rewind',
+      type: 'clear-draft',
     })
     expect(input.navigateDraft('up', draft(''))).toEqual({
       type: 'restore-draft',
@@ -71,6 +71,18 @@ describe('ComposerInputController', () => {
     expect(input.navigateDraft('down', draft('', [image]))).toEqual({
       type: 'clear-restored-draft',
     })
+  })
+
+  it('clears a recoverable draft without arming Rewind', () => {
+    const input = new ComposerInputController<TestAttachment>()
+
+    expect(input.clearDraft(draft('unfinished prompt'))).toEqual({ type: 'clear-draft' })
+    expect(input.snapshot).toEqual({ rewindArmed: false, draftRecovery: 'stored' })
+    expect(input.navigateDraft('up', draft(''))).toEqual({
+      type: 'restore-draft',
+      draft: draft('unfinished prompt'),
+    })
+    expect(input.clearDraft(draft(''))).toEqual({ type: 'pass' })
   })
 
   it('drops draft recovery after the user edits either state', () => {

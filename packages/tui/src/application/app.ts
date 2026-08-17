@@ -1622,13 +1622,11 @@ export class TuiApplication implements TuiControllerSink {
     switch (action.type) {
       case 'pass':
         return false
-      case 'clear-and-arm-rewind':
+      case 'clear-draft':
         this.editor.setText('')
         this.attachmentDrafts.clear()
-        this.scheduleRewindDisarm()
         break
       case 'arm-rewind':
-        this.scheduleRewindDisarm()
         break
       case 'open-rewind':
         this.requestRewind()
@@ -1642,6 +1640,7 @@ export class TuiApplication implements TuiControllerSink {
         this.attachmentDrafts.clear()
         break
     }
+    if (this.composerInput.snapshot.rewindArmed) this.scheduleRewindDisarm()
     this.updateStatus(this.controller.current)
     this.tui.requestRender()
     return true
@@ -1916,11 +1915,16 @@ export class TuiApplication implements TuiControllerSink {
 
   private cancelOrExit(): void {
     const target = this.interruptionTargetKey()
-    if (target === undefined || this.interruptingActivityKey === target) {
+    if (target !== undefined) {
+      if (this.interruptingActivityKey !== target) {
+        this.requestInterrupt()
+        return
+      }
       void this.requestExit(0)
       return
     }
-    this.requestInterrupt()
+    if (this.applyComposerInputAction(this.composerInput.clearDraft(this.composerDraft()))) return
+    void this.requestExit(0)
   }
 
   private cancelActiveInteraction(): boolean {
