@@ -126,6 +126,7 @@ import {
   memoryKeymapGateway,
   type KeymapSettingsGateway,
 } from './keymap-settings.ts'
+import type { PermissionDefaultGateway } from './permission-defaults.ts'
 import {
   resolveKeymapInput,
   type KeymapAction,
@@ -205,6 +206,7 @@ export interface TuiApplicationDependencies {
   vision?: VisionGateway
   web?: WebGateway
   keymap?: KeymapSettingsGateway
+  permissionDefault?: PermissionDefaultGateway
   startup?: TuiStartupOptions
   clipboardImage?: ClipboardImageLoader
   clipboardText?: ClipboardTextWriter
@@ -313,6 +315,7 @@ export class TuiApplication implements TuiControllerSink {
       vision,
       web,
       keymap,
+      permissionDefault,
       startup = { imagePaths: [], plan: false },
       clipboardImage = imageDraftFromClipboard,
       clipboardText,
@@ -366,7 +369,22 @@ export class TuiApplication implements TuiControllerSink {
       this.localCommands(),
       commandSource,
       () => this.refreshAutocomplete(),
-      [{ name: 'permission', handler: () => this.openPermissionConfig() }],
+      [{
+        name: 'permission',
+        onBare: () => this.openPermissionConfig(),
+        ...permissionDefault === undefined
+          ? {}
+          : {
+              afterHostSuccess: async (preset: string) => {
+                try {
+                  await permissionDefault.setDefaultPreset(preset)
+                } catch (error: unknown) {
+                  const reason = error instanceof Error ? error.message : String(error)
+                  throw new Error(`Permission changed for this session, but its default could not be saved: ${reason}`)
+                }
+              },
+            },
+      }],
     )
     this.skillCatalog = new SkillCatalog(
       apiSkillCatalogSource(api),
@@ -1104,7 +1122,11 @@ export class TuiApplication implements TuiControllerSink {
       effort => { void this.runAction(() => this.selectReasoningEffort(effort)) },
       (value) => {
         if (initialStage === 'permissions') close()
-        void this.runAction(() => this.commands.dispatchHost(`/permission ${value}`))
+        void this.runAction(async () => {
+          if (!await this.commands.dispatch(`/permission ${value}`)) {
+            throw new Error('Permission configuration is unavailable in this session.')
+          }
+        })
       },
       active => { void this.runAction(() => this.commands.dispatchHost(active ? '/plan' : '/plan off')) },
       expanded => { this.setDetailsExpanded(expanded) },

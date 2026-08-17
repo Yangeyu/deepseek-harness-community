@@ -189,6 +189,10 @@ reducing the number of visible files.
 - Session-control selectors derive separate Config rows (model, reasoning,
   Permission, Plan, Vision, Web status, keymap, and TUI display) and Task rows
   (Goal, Todos, and runtime) without retaining a second copy of Host state.
+  A successful user-dispatched `/permission <preset>` then writes the official
+  `permission.defaultPreset` setting through a narrow application port; the
+  session projection remains the effective-state authority, and launcher
+  overrides bypass this preference write.
 - `SkillCatalog` generation-binds effective RPC rows to one session;
   `SlashCatalog` merges them with Commands while preserving dispatch semantics.
 - `SkillAuthoringCoordinator` keeps file creation, editor handoff, validation,

@@ -87,11 +87,12 @@ describe('TerminalCommandDirectory', () => {
   it('decorates only the bare Host invocation and keeps argued execution canonical', async () => {
     const host = hostSource([{ name: 'permission', description: 'Switch permission', argumentHint: '<preset>' }])
     const picker = vi.fn()
+    const persist = vi.fn(async () => {})
     const directory = new TerminalCommandDirectory(
       [],
       host.source,
       undefined,
-      [{ name: 'permission', handler: picker }],
+      [{ name: 'permission', onBare: picker, afterHostSuccess: persist }],
     )
     const sessionId = 'session-command' as SessionSummary['sessionId']
     directory.setSession(sessionId)
@@ -106,16 +107,25 @@ describe('TerminalCommandDirectory', () => {
       '/permission workspace-write',
       expect.any(AbortSignal),
     )
+    expect(persist).toHaveBeenCalledWith('workspace-write')
+    expect(host.execute.mock.invocationCallOrder[0]).toBeLessThan(persist.mock.invocationCallOrder[0] ?? 0)
     directory.dispose()
   })
 
-  it('surfaces Host command failures without allowing a prompt fallback', async () => {
+  it('surfaces Host command failures without running post-success behavior', async () => {
     const host = hostSource([{ name: 'permission', description: 'Switch permission' }])
     host.execute.mockResolvedValueOnce({ kind: 'error', text: 'preset rejected' })
-    const directory = new TerminalCommandDirectory([], host.source)
+    const persist = vi.fn(async () => {})
+    const directory = new TerminalCommandDirectory(
+      [],
+      host.source,
+      undefined,
+      [{ name: 'permission', onBare: vi.fn(), afterHostSuccess: persist }],
+    )
     directory.setSession('session-command' as SessionSummary['sessionId'])
 
     await expect(directory.dispatch('/permission invalid')).rejects.toThrow('preset rejected')
+    expect(persist).not.toHaveBeenCalled()
     directory.dispose()
   })
 

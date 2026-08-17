@@ -146,6 +146,10 @@ export class ConfigView implements Component {
       '',
       ...wrapTextWithAnsi(sanitizeTerminalText(description), Math.max(1, width)),
       '',
+      ...wrapTextWithAnsi(
+        this.theme.warning('This selection is also remembered for newly created sessions.'),
+        Math.max(1, width),
+      ),
       this.theme.warning(`Switch to ${sanitizeTerminalText(option?.name ?? 'danger-full-access')}?`),
       this.theme.dim('enter confirm · esc cancel'),
     ]
@@ -196,7 +200,7 @@ export class ConfigView implements Component {
     }
     if (this.stage === 'permissions') {
       const option = this.permissionOptions().find(candidate => candidate.value === action.value)
-      if (option === undefined || this.isCurrentAction(option.value)) return
+      if (option === undefined) return
       if (action.dangerous) {
         this.pendingPermission = option
         this.stage = 'permission-confirm'
@@ -257,7 +261,7 @@ export class ConfigView implements Component {
       return `Session · Effective: ${this.snapshot.models?.current.reasoningEffort ?? 'provider default'}`
     }
     if (this.stage === 'permissions') {
-      return `Session · Effective: ${this.snapshot.permissions?.currentValue ?? 'unavailable'}`
+      return `Current session + new-session default · Effective: ${this.snapshot.permissions?.currentValue ?? 'unavailable'}`
     }
     const plan = this.snapshot.plan
     return plan === undefined

@@ -37,6 +37,7 @@ import {
   TUI_SETTINGS_NAMESPACE,
   TuiSettingsSchema,
 } from './application/keymap-settings.ts'
+import { settingsPermissionDefaultGateway } from './application/permission-defaults.ts'
 
 export { Config, resolveConfig }
 export type { TuiConfig, TuiRuntime }
@@ -196,6 +197,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
       vision: ctx.vision,
       web: ctx.communityWeb,
       keymap,
+      permissionDefault: settingsPermissionDefaultGateway(ctx.settings),
       startup: invocation.startup,
       attachments: ctx.attachments,
     },

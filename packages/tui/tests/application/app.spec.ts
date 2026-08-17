@@ -33,6 +33,7 @@ interface AppInternals {
   controller: {
     current: Readonly<TuiState>
     prompt(text: string, mode: 'queue' | 'steer'): Promise<void>
+    notice(message: string): void
     cancel(): Promise<void>
     answerApproval(prompt: ApprovalPrompt, outcome: 'allowed-once' | 'rejected'): Promise<void>
     rewind(plan: RewindPlan, onProgress?: (phase: 'forking' | 'reloading') => void): Promise<string>
@@ -257,6 +258,7 @@ describe('TuiApplication input routing', () => {
 
   it('applies one ordered startup intent before submitting its initial prompt', async () => {
     const events: string[] = []
+    const setDefaultPreset = vi.fn(async () => {})
     const app = application(
       undefined,
       undefined,
@@ -267,6 +269,7 @@ describe('TuiApplication input routing', () => {
       undefined,
       undefined,
       {
+        permissionDefault: { setDefaultPreset },
         startup: {
           resume: { kind: 'last' },
           prompt: 'continue the task',
@@ -301,6 +304,7 @@ describe('TuiApplication input routing', () => {
       '/plan',
       'prompt:continue the task',
     ])
+    expect(setDefaultPreset).not.toHaveBeenCalled()
     await app.dispose()
   })
 
@@ -1093,6 +1097,7 @@ describe('TuiApplication input routing', () => {
 
   it('opens bare /permission as a picker and executes selections outside model input', async () => {
     const execute = vi.fn(async () => ({ kind: 'success' as const, text: 'preset read-only' }))
+    const setDefaultPreset = vi.fn(async () => {})
     const source: HostCommandSource = {
       list: sessionId => sessionId === undefined ? [] : [{
         name: 'permission',
@@ -1108,7 +1113,9 @@ describe('TuiApplication input routing', () => {
       execute,
       subscribe: () => () => {},
     }
-    const app = application(undefined, undefined, undefined, source)
+    const app = application(undefined, undefined, undefined, source, undefined, {
+      permissionDefault: { setDefaultPreset },
+    })
     const internals = app as unknown as AppInternals
     const state = {
       ...internals.controller.current,
@@ -1142,12 +1149,14 @@ describe('TuiApplication input routing', () => {
         '/permission read-only',
         expect.any(AbortSignal),
       )
+      expect(setDefaultPreset).toHaveBeenCalledWith('read-only')
     })
     expect(internals.configView).toBeUndefined()
     expect(prompt).not.toHaveBeenCalled()
 
     await internals.submit('/compact')
     expect(execute).toHaveBeenCalledWith(state.sessionId, '/compact', expect.any(AbortSignal))
+    expect(setDefaultPreset).toHaveBeenCalledTimes(1)
     expect(prompt).not.toHaveBeenCalled()
 
     await internals.submit('/config permission')
@@ -1160,15 +1169,64 @@ describe('TuiApplication input routing', () => {
         '/permission read-only',
         expect.any(AbortSignal),
       )
+      expect(setDefaultPreset).toHaveBeenCalledTimes(2)
     })
     expect(internals.configView).toBeUndefined()
+
+    await internals.submit('/permission workspace-write')
+    expect(execute).toHaveBeenCalledWith(
+      state.sessionId,
+      '/permission workspace-write',
+      expect.any(AbortSignal),
+    )
+    expect(setDefaultPreset).toHaveBeenLastCalledWith('workspace-write')
 
     await internals.submit('/config plan')
     internals.configView?.handleInput('\r')
     await vi.waitFor(() => {
-      expect(execute).toHaveBeenCalledTimes(4)
+      expect(execute).toHaveBeenCalledTimes(5)
       expect(execute).toHaveBeenCalledWith(state.sessionId, '/plan', expect.any(AbortSignal))
     })
+    expect(setDefaultPreset).toHaveBeenCalledTimes(3)
+    expect(prompt).not.toHaveBeenCalled()
+  })
+
+  it('reports when Permission changes but its new-session default cannot be saved', async () => {
+    const execute = vi.fn(async () => ({ kind: 'success' as const }))
+    const source: HostCommandSource = {
+      list: sessionId => sessionId === undefined ? [] : [{
+        name: 'permission',
+        description: 'Switch permission',
+        argumentHint: '<preset>',
+      }],
+      execute,
+      subscribe: () => () => {},
+    }
+    const app = application(undefined, undefined, undefined, source, undefined, {
+      permissionDefault: {
+        setDefaultPreset: vi.fn(async () => { throw new Error('settings are read-only') }),
+      },
+    })
+    const internals = app as unknown as AppInternals
+    const state = {
+      ...internals.controller.current,
+      sessionId: 'session-permission-partial' as TuiState['sessionId'],
+    }
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue(state)
+    const notice = vi.spyOn(internals.controller, 'notice')
+    const prompt = vi.spyOn(internals.controller, 'prompt').mockResolvedValue()
+    app.render(state)
+
+    await internals.submit('/permission workspace-write')
+
+    expect(execute).toHaveBeenCalledWith(
+      state.sessionId,
+      '/permission workspace-write',
+      expect.any(AbortSignal),
+    )
+    expect(notice).toHaveBeenCalledWith(
+      'Permission changed for this session, but its default could not be saved: settings are read-only',
+    )
     expect(prompt).not.toHaveBeenCalled()
   })
 

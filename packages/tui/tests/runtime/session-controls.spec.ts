@@ -58,6 +58,7 @@ describe('session control selectors', () => {
     expect(configurationRows(snapshot)).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'model', value: 'deepseek/v4', scope: 'Session' }),
       expect.objectContaining({ kind: 'reasoning', value: 'Maximum' }),
+      expect.objectContaining({ kind: 'permissions', scope: 'Session + default' }),
       expect.objectContaining({ kind: 'plan', value: 'off · pending transition' }),
       expect.objectContaining({ kind: 'details', value: 'expanded', scope: 'TUI' }),
     ]))

@@ -21,10 +21,12 @@ export interface HostCommandResult {
   sourceEventSeq?: number
 }
 
-/** Bare-invocation UI attached to an existing Host command. */
+/** TUI behavior attached to an existing Host command without replacing it. */
 export interface TerminalCommandDecoration {
   name: string
-  handler(): void | Promise<void>
+  onBare(): void | Promise<void>
+  /** Runs only after the canonical Host command succeeds. */
+  afterHostSuccess?(argument: string): void | Promise<void>
 }
 
 /** Host-backed command discovery and execution without leaking Cordis into the application. */
@@ -123,10 +125,11 @@ export class TerminalCommandDirectory {
     if (!this.host.some(candidate => candidate.name === parsed.name)) return false
     const decoration = this.decorations.get(parsed.name)
     if (parsed.argument === '' && decoration !== undefined) {
-      await decoration.handler()
+      await decoration.onBare()
       return true
     }
     await this.dispatchHost(text)
+    await decoration?.afterHostSuccess?.(parsed.argument)
     return true
   }
 

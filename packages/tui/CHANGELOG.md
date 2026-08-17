@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+- Remember successful user-selected Permission changes as the official default
+  for newly created sessions while keeping resumed sessions and startup
+  overrides session-specific.
+
 ## 0.1.11 - 2026-08-17
 
 - Render complete file-edit diffs inline in the conversation so they remain

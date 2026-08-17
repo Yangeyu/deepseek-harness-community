@@ -123,10 +123,21 @@ describe('ConfigView', () => {
 
     config.handleInput('j')
     config.handleInput('\r')
-    expect(config.render(80).join('\n')).toContain('Confirm unrestricted access')
+    const confirmation = config.render(80).join('\n')
+    expect(confirmation).toContain('Confirm unrestricted access')
+    expect(confirmation).toContain('remembered for newly created sessions')
     expect(onPermission).not.toHaveBeenCalled()
     config.handleInput('\r')
     expect(onPermission).toHaveBeenCalledWith('danger-full-access')
+  })
+
+  it('allows the effective permission to be reaffirmed as the new-session default', () => {
+    const onPermission = vi.fn()
+    const config = view({ onPermission }, 'permissions')
+
+    config.handleInput('\r')
+
+    expect(onPermission).toHaveBeenCalledWith('workspace-write')
   })
 
   it('toggles terminal details and closes direct section entry on Escape', () => {

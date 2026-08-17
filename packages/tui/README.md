@@ -132,6 +132,8 @@ Interactive options include `-C`/`--cwd`, repeatable `-i`/`--image`,
 `-m`/`--model`, `--effort`, `--permission-mode`, `--plan`, `--no-color`, and
 repeatable launcher-owned `--patch` overlays. A positional prompt is submitted
 after the session, startup settings, and image drafts are ready.
+`--permission-mode` overrides only the selected startup session and does not
+replace the saved Permission default.
 
 `--resume <session-id>` remains a compatibility form. `sessions` is a
 non-interactive Host query; `exec` uses the Harness headless profile and accepts
@@ -225,6 +227,10 @@ Bare `/permission` opens the same Permission selector directly. An argued
 `/permission <preset>`, Plan actions, and every other discovered Host Command
 execute through the Host command registry rather than model prompting. Known
 Commands therefore never appear as user/assistant conversation messages.
+After a user-selected Permission command succeeds for the current session, the
+TUI writes the same preset to the official Permission Settings namespace. New
+sessions inherit that saved default; resumed sessions retain the Permission
+already pinned in their own event history.
 
 ## Web access
 

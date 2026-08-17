@@ -41,7 +41,7 @@ export interface ControlRow<Kind extends string> {
   kind: Kind
   label: string
   value: string
-  scope: 'Session' | 'TUI'
+  scope: 'Session' | 'Session + default' | 'TUI'
   available: boolean
 }
 
@@ -129,7 +129,7 @@ export function configurationRows(
     kind: 'permissions',
     label: 'Permission',
     value: snapshot.permissions?.currentValue ?? 'Unavailable in this profile',
-    scope: 'Session',
+    scope: 'Session + default',
     available: snapshot.permissions !== undefined,
   }, {
     kind: 'plan',

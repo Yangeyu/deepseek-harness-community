@@ -19,6 +19,7 @@ export default defineConfig({
       '@deepseek-ai/dsh-host-apiproxy',
       '@deepseek-ai/dsh-launch-environment',
       '@deepseek-ai/dsh-llm',
+      '@deepseek-ai/dsh-permission-presets',
       '@deepseek-ai/dsh-session',
       '@deepseek-ai/dsh-session-projection',
       '@deepseek-ai/dsh-settings',
