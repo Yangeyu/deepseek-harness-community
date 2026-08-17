@@ -1,7 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
+import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { BailianAdapter } from './adapter.ts'
 import {
@@ -12,84 +11,76 @@ import {
   resolveBailianConfig,
   type ResolvedBailianConfig,
 } from './config.ts'
-import { createBailianProfile, type ResolvedBailianProviderProfile } from './provider.ts'
 
 export { BailianAdapter, type BailianAdapterOptions } from './adapter.ts'
 export {
   assertBailianConfig,
   BAILIAN_DISPLAY_NAME,
   BAILIAN_PROVIDER_ID,
+  BAILIAN_REASONING_EFFORT_IDS,
   Config,
   DEFAULT_BAILIAN_API_KEY_ENV,
   DEFAULT_BAILIAN_BASE_URL,
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   resolveBailianBaseURL,
   resolveBailianConfig,
+  type BailianInputModality,
+  type BailianMaxTokensField,
   type BailianModelConfig,
   type BailianReasoningConfig,
+  type BailianReasoningEffort,
+  type BailianReasoningLevelConfig,
   type Config as BailianConfig,
   type ResolvedBailianConfig,
   type ResolvedBailianModel,
+  type ResolvedBailianReasoningLevel,
   type ResolvedBailianReasoningPolicy,
 } from './config.ts'
-export {
-  BAILIAN_REASONING_EFFORT_IDS,
-  BAILIAN_SELECTABLE_EFFORT_IDS,
-  bailianCompat,
-  createBailianPiModel,
-  type BailianPiModelInput,
-} from './model.ts'
-export {
-  createBailianProfile,
-  createBailianProvider,
-  transformBailianPayload,
-  type ResolvedBailianProviderProfile,
-} from './provider.ts'
-
 export const name = 'llm-bailian'
 export const inject = ['llm']
 export const BAILIAN_SETTINGS_NAMESPACE = settingsNamespace('llm-bailian')
 
-function registrationFacts(profile: ResolvedBailianProviderProfile): object {
-  return {
-    provider: profile.provider,
-    displayName: profile.displayName,
-    retryPolicy: profile.retryPolicy,
-  }
-}
-
-/** Register the single `bailian` provider route with live settings and credentials. */
 export function apply(ctx: Context, config: Config): void {
   let current = () => config
   let lastRaw: Config | undefined
-  let lastResolved: ResolvedBailianConfig | undefined
-  let lastProfiles: ReadonlyMap<string, ResolvedBailianProviderProfile> | undefined
-  const profiles = (): ReadonlyMap<string, ResolvedBailianProviderProfile> => {
+  let lastGood: ResolvedBailianConfig | undefined
+  const options = (): ResolvedBailianConfig => {
     const raw = current()
-    if (raw === lastRaw && lastProfiles !== undefined) return lastProfiles
-    const resolved = resolveBailianConfig(raw)
-    lastRaw = raw
-    lastResolved = resolved
-    lastProfiles = new Map([[BAILIAN_PROVIDER_ID, createBailianProfile(resolved)]])
-    return lastProfiles
+    if (raw === lastRaw && lastGood !== undefined) return lastGood
+    try {
+      const next = resolveBailianConfig(raw)
+      lastRaw = raw
+      lastGood = next
+      return next
+    } catch (error: unknown) {
+      if (lastGood === undefined) throw error
+      lastRaw = raw
+      ctx.logger.error('llm-bailian: keeping the last good configuration after an invalid settings section')
+      ctx.logger.error(error)
+      return lastGood
+    }
   }
-  profiles()
+  options()
 
-  const resolveApiKey = async (): Promise<string> => {
-    const ref = lastResolved?.apiKeyEnv ?? credentialRef('DASHSCOPE_API_KEY')
+  const resolveApiKey = async (snapshot: ResolvedBailianConfig): Promise<string> => {
     const credentials = ctx.get('credentials')
-    const value = credentials === undefined
-      ? launchEnvironmentOf(ctx).get(ref)?.value
-      : (await credentials.resolve(ref))?.value
-    if (value !== undefined && value.length > 0) return assertUsableApiKey(value, name, ref)
+    if (credentials !== undefined) {
+      const hit = await credentials.resolve(snapshot.apiKeyEnv)
+      if (hit !== undefined) return assertUsableApiKey(hit.value, name, snapshot.apiKeyEnv)
+    } else {
+      const hit = launchEnvironmentOf(ctx).get(snapshot.apiKeyEnv)
+      if (hit !== undefined && hit.value.length > 0) {
+        return assertUsableApiKey(hit.value, name, snapshot.apiKeyEnv)
+      }
+    }
     throw new LlmError(
-      `${name}: no API key for provider route "${BAILIAN_PROVIDER_ID}"; store or export ${ref}`,
+      `${name}: no API key for provider route "${BAILIAN_PROVIDER_ID}"; store or export ${snapshot.apiKeyEnv}`,
       'MISSING_CREDENTIAL',
     )
   }
 
   const adapter = new BailianAdapter({
-    profiles,
+    options,
     resolveApiKey,
     resolveAttachments: () => ctx.get('attachments'),
   })
@@ -100,13 +91,12 @@ export function apply(ctx: Context, config: Config): void {
     settingsPath: [],
   }])
   const registration = ctx.llm.registerAdapter([BAILIAN_PROVIDER_ID], adapter)
-  let registeredFacts = registrationFacts(profiles().get(BAILIAN_PROVIDER_ID)!)
-  const refreshRegistration = () => {
-    const profile = profiles().get(BAILIAN_PROVIDER_ID)!
-    const next = registrationFacts(profile)
-    if (deepEqualJson(next, registeredFacts)) return
+  let registeredPolicy = options().retryPolicy
+  const refreshRegistration = (): void => {
+    const policy = options().retryPolicy
+    if (deepEqualJson(policy, registeredPolicy)) return
     registration.replace([BAILIAN_PROVIDER_ID])
-    registeredFacts = next
+    registeredPolicy = policy
   }
   installSettingsSection(ctx, BAILIAN_SETTINGS_NAMESPACE, Config, config, {
     validate: assertBailianConfig,

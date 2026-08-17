@@ -54,7 +54,6 @@ function gateway(route: VisionCapability): VisionGateway & {
       proxySupportsImages: true,
     })),
     setMode: vi.fn(async () => {}),
-    configureRecommendedDashScope: vi.fn(async () => {}),
     analyze,
     admit: vi.fn(async () => {}),
     discard: vi.fn(),

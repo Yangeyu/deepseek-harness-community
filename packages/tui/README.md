@@ -285,7 +285,7 @@ editor.
 In Auto mode, a model that explicitly declares image input receives the image
 natively. A text-only or unknown route uses the configured Vision proxy and
 receives only a bounded, source-attributed, untrusted observation. Missing
-capability, credentials, validation, or provider success retains both the text
+capability, validation, or provider success retains both the text
 and drafts instead of silently sending an image-less prompt.
 
 The same proxy is available to the Agent as `inspect_image`. It reads only a
@@ -301,9 +301,9 @@ export DASHSCOPE_API_KEY='...'
 dsh-tui
 ```
 
-Then open `/config vision` (or `/vision`), select “Configure recommended
-DashScope route,” and confirm. The settings reference `DASHSCOPE_API_KEY`; the
-secret value is not copied into configuration or session events. Completed
+The bundle already registers `bailian/qwen3.7-plus`; `/config vision` selects
+the Vision routing mode only. The secret value is not copied into configuration
+or session events. Completed
 proxy analyses appear after their user prompt as expandable Vision cards and
 timed `/trajectory` records. Pre-submission failures retain the draft and stay
 out of conversation history.

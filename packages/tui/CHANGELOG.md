@@ -4,11 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
-- Add a first-class Alibaba Cloud Bailian provider with source-owned endpoint,
-  credential, and common request policy plus schema-backed per-model
-  capabilities. DeepSeek V4 exposes reasoning levels through
-  `max`, while DashScope-compatible prompts use `system` rather than the
-  unsupported `developer` role.
+## 0.1.12 - 2026-08-17
+
+- Add a first-class Alibaba Cloud Bailian provider with direct HTTP/SSE
+  transport, source-owned credentials, schema-backed model capabilities, and
+  explicit per-effort wire policy. Vision reuses the same `bailian` route
+  instead of maintaining a second pi-ai profile. Keep Vision provider-neutral
+  by selecting its bundled proxy only in composition.
 - Remember successful user-selected Permission changes as the official default
   for newly created sessions while keeping resumed sessions and startup
   overrides session-specific.

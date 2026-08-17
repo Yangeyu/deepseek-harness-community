@@ -1183,13 +1183,6 @@ export class TuiApplication implements TuiControllerSink {
           await this.refreshVisionStatus()
         })
       },
-      () => {
-        void this.runAction(async () => {
-          await vision.configureRecommendedDashScope()
-          await this.refreshVisionStatus()
-          this.controller.notice('Configured dashscope-vision/qwen3.7-plus using DASHSCOPE_API_KEY.')
-        })
-      },
       close,
     )
     this.visionConfigView = view

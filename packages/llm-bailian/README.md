@@ -1,75 +1,65 @@
 # Bailian provider
 
-First-class Alibaba Cloud Bailian provider for DeepSeek Harness. It owns the
-DashScope endpoint, credential contract, and OpenAI-compatible request policy.
-The `llm-bailian` settings section declares the provider connection and the
-models that route serves. `agent-default-model` independently selects one of
-those registered models for new Agent sessions.
+`llm-bailian` is a first-class Alibaba Cloud Bailian Provider for the DeepSeek
+Harness LLM seam. It implements the DashScope OpenAI-compatible HTTP and SSE
+wire protocol directly; it does not depend on OpenAI SDK, pi-ai, or
+`dsh-llm-pi-ai`.
+
+The plugin owns one route, `bailian`, and one settings namespace,
+`llm-bailian`. Consumers select `bailian/<model>` through `ctx.llm`; they do not
+read provider settings or credentials.
+
+The Provider stays in this repository as a private workspace package. The
+published application exposes the same implementation through
+`@vascent/dsh-tui/bailian`; it does not depend on TUI runtime or presentation
+code and can gain a standalone release boundary later without moving sources.
 
 ```yaml
 llm-bailian:
   baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
   models:
-    - id: deepseek-v4-pro-0813
+    deepseek-v4-pro-0813:
       contextWindow: 1000000
-      maxTokens: 393216
+      maxOutputTokens: 393216
+      maxTokensField: max_tokens
       input: [text]
       reasoning:
         defaultEffort: high
-        efforts: [low, high, max]
-    - id: qwen3.7-plus
+        efforts:
+          off: { enableThinking: false }
+          low: { enableThinking: true, reasoningEffort: low }
+          high: { enableThinking: true, reasoningEffort: high }
+          max: { enableThinking: true, reasoningEffort: max }
+    qwen3.7-plus:
+      name: Qwen3.7 Plus
       contextWindow: 1000000
-      maxTokens: 131072
+      maxOutputTokens: 131072
+      maxTokensField: max_completion_tokens
       input: [text, image]
       reasoning:
         defaultEffort: high
+        efforts:
+          off: { enableThinking: false }
+          high: { enableThinking: true }
 ```
 
-`baseURL` is the complete OpenAI-compatible API root. The provider uses it as
-written apart from removing trailing slashes; it does not guess or append API
-paths. `DASHSCOPE_API_KEY` is the default credential reference and secrets stay
-in the Harness credential service or process environment.
+`DASHSCOPE_API_KEY` is the default credential reference. The key is resolved
+through the Harness credential service, or the trusted launch environment when
+that service is absent. It is never stored in provider settings.
 
-Every model entry is explicit configuration rather than a code-owned preset.
-`contextWindow`, `maxTokens`, and `input` are model capabilities consumed by
-Harness. `maxTokens` is not silently applied as a request limit; a caller that
-wants a smaller output cap supplies it on that request. The optional `name`
-field changes only the display label.
+Model IDs are dictionary keys, so private deployments and new models require
+configuration rather than code branches. `contextWindow`, `maxOutputTokens`,
+`maxTokensField`, and `input` describe the exact deployed model. Optional
+`defaultMaxTokens` is the only field that creates a request default;
+`maxOutputTokens` alone never adds a token parameter.
 
-The default Agent model is selected separately:
+Reasoning effort entries explicitly describe their wire fields. A level may
+set `enableThinking`, `reasoningEffort`, `thinkingBudget`, or a valid
+combination. Unsupported efforts fail before a request is sent. This keeps
+Qwen thinking toggles, DeepSeek reasoning levels, and future Bailian model
+dialects data-driven.
 
-```yaml
-agent-default-model:
-  provider: bailian
-  model: deepseek-v4-pro-0813
-  reasoningEffort: max
-```
-
-A private or newly released model uses the same descriptor; no provider code
-or package patch is required:
-
-```yaml
-llm-bailian:
-  baseURL: https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-  models:
-    - id: private-deployment-v7
-      contextWindow: 200000
-      maxTokens: 20000
-      input: [text]
-      reasoning:
-        defaultEffort: max
-        efforts: [low, high, max]
-```
-
-Every reasoning model uses Bailian's `enable_thinking` request parameter.
-`off` is a real selectable effort: it sends `enable_thinking: false` and no
-`reasoning_effort`. The optional `efforts` list contains only values accepted by
-Bailian's `reasoning_effort` parameter; those values are sent unchanged. Omit
-the list for an `enable_thinking`-only model. `thinkingBudget` maps directly to
-Bailian's `thinking_budget`. `off` is automatically available for every
-reasoning model because it is represented by `enable_thinking: false`, not by a
-`reasoning_effort` value. Setting `reasoning: false`, or omitting `reasoning`,
-declares a non-reasoning model.
-
-The runtime settings schema includes every supported field and effort value, so
-schema-backed configuration surfaces can provide completion and validation.
+The transport appends `/chat/completions` to `baseURL`, sends Harness
+attribution headers, resolves durable image attachments into data URLs, and
+maps provider reasoning, text, tool-call, usage, error, timeout, and cancellation
+events into the standard `StreamChunk` contract.

@@ -101,8 +101,4 @@ export interface VisionStatus {
   config: VisionConfig
   proxyRegistered: boolean
   proxySupportsImages: boolean
-  proxyEndpointHost?: string
-  credentialRef?: string
-  credentialConfigured?: boolean
-  credentialSource?: string
 }

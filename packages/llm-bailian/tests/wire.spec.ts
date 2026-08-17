@@ -1,86 +1,92 @@
-import { createServer, type Server } from 'node:http'
+import { createServer, type IncomingHttpHeaders, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
+import { AttachmentId, type AttachmentStore, type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage, ReasoningEffortId, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
   BailianAdapter,
   BAILIAN_PROVIDER_ID,
-  createBailianProfile,
   resolveBailianConfig,
   type BailianModelConfig,
 } from '../src/index.ts'
 
-interface WireRequest {
-  model?: string
-  messages?: Array<{ role?: string; content?: unknown }>
-  reasoning_effort?: string
-  enable_thinking?: boolean
-  thinking_budget?: number
-  max_completion_tokens?: number
-  store?: boolean
+interface CapturedRequest {
+  body: Record<string, unknown>
+  headers: IncomingHttpHeaders
+  url: string | undefined
 }
 
 const servers: Server[] = []
 
-function deepseekModel(id = 'deepseek-v4-pro-0813'): BailianModelConfig {
+type Reply = (response: ServerResponse) => void
+
+function writeSse(response: ServerResponse, payloads: readonly (string | object)[], end = true): void {
+  response.writeHead(200, { 'content-type': 'text/event-stream' })
+  response.write(payloads.map(payload => (
+    `data: ${typeof payload === 'string' ? payload : JSON.stringify(payload)}\n\n`
+  )).join(''))
+  if (end) response.end()
+}
+
+const successfulReply: Reply = response => {
+  writeSse(response, [
+    { choices: [{ delta: { reasoning_content: 'think' }, finish_reason: null }] },
+    { choices: [{ delta: { content: 'ok' }, finish_reason: null }] },
+    {
+      choices: [{ delta: {}, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 3, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 1 } },
+    },
+    '[DONE]',
+  ])
+}
+
+function deepseekModel(): BailianModelConfig {
   return {
-    id,
     contextWindow: 1_000_000,
-    maxTokens: 393_216,
+    maxOutputTokens: 393_216,
+    maxTokensField: 'max_tokens',
     input: ['text'],
     reasoning: {
       defaultEffort: 'high',
-      efforts: ['low', 'high', 'max'],
+      efforts: {
+        off: { enableThinking: false },
+        low: { enableThinking: true, reasoningEffort: 'low' },
+        high: { enableThinking: true, reasoningEffort: 'high' },
+        max: { enableThinking: true, reasoningEffort: 'max' },
+      },
     },
   }
 }
 
-function qwenModel(thinkingBudget?: number): BailianModelConfig {
+function qwenModel(): BailianModelConfig {
   return {
-    id: 'qwen3.7-plus',
     contextWindow: 1_000_000,
-    maxTokens: 131_072,
+    maxOutputTokens: 131_072,
+    maxTokensField: 'max_completion_tokens',
     input: ['text', 'image'],
     reasoning: {
       defaultEffort: 'high',
-      ...thinkingBudget === undefined ? {} : { thinkingBudget },
+      efforts: {
+        off: { enableThinking: false },
+        high: { enableThinking: true, thinkingBudget: 8_192 },
+      },
     },
   }
 }
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => {
+    server.closeAllConnections()
     server.close(error => { if (error === undefined) resolve(); else reject(error) })
   })))
 })
 
-async function endpoint(requests: WireRequest[]): Promise<string> {
+async function endpoint(requests: CapturedRequest[], reply: Reply = successfulReply): Promise<string> {
   const server = createServer(async (request, response) => {
-    let body = ''
-    for await (const chunk of request) body += chunk.toString()
-    requests.push(JSON.parse(body) as WireRequest)
-    response.writeHead(200, { 'content-type': 'text/event-stream' })
-    response.end([
-      `data: ${JSON.stringify({
-        id: 'chatcmpl-test',
-        object: 'chat.completion.chunk',
-        created: 1,
-        model: requests.at(-1)?.model,
-        choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }],
-      })}`,
-      '',
-      `data: ${JSON.stringify({
-        id: 'chatcmpl-test',
-        object: 'chat.completion.chunk',
-        created: 1,
-        model: requests.at(-1)?.model,
-        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      })}`,
-      '',
-      'data: [DONE]',
-      '',
-    ].join('\n'))
+    let raw = ''
+    for await (const chunk of request) raw += chunk.toString()
+    requests.push({ body: JSON.parse(raw) as Record<string, unknown>, headers: request.headers, url: request.url })
+    reply(response)
   })
   servers.push(server)
   await new Promise<void>((resolve, reject) => {
@@ -88,7 +94,7 @@ async function endpoint(requests: WireRequest[]): Promise<string> {
     server.listen(0, '127.0.0.1', resolve)
   })
   const address = server.address() as AddressInfo
-  return `http://127.0.0.1:${address.port}`
+  return `http://127.0.0.1:${String(address.port)}`
 }
 
 async function consume(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> {
@@ -97,122 +103,237 @@ async function consume(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[
   return chunks
 }
 
-describe('Bailian wire contract', () => {
-  it('uses system role and configured reasoning_effort, including max, off, and model default', async () => {
-    const requests: WireRequest[] = []
-    const baseURL = await endpoint(requests)
-    const profile = createBailianProfile(resolveBailianConfig({
-      baseURL,
-      models: [deepseekModel()],
-    }))
-    const profiles = new Map([[BAILIAN_PROVIDER_ID, profile]])
-    const adapter = new BailianAdapter({
-      profiles: () => profiles,
-      resolveApiKey: async () => 'test-key',
-    })
-    const message = createUserMessage({
-      content: [{ type: 'text', text: 'hello' }],
-      source: { kind: 'user' },
-    })
+function adapter(
+  baseURL: string,
+  models: Record<string, BailianModelConfig>,
+  attachments?: AttachmentStore,
+  streamIdleTimeoutMs?: number,
+): BailianAdapter {
+  const config = resolveBailianConfig({
+    baseURL,
+    models,
+    ...streamIdleTimeoutMs === undefined ? {} : { streamIdleTimeoutMs },
+  })
+  return new BailianAdapter({
+    options: () => config,
+    resolveApiKey: async () => 'test-key',
+    ...attachments === undefined ? {} : { resolveAttachments: () => attachments },
+  })
+}
 
-    const maxChunks = await consume(adapter.stream({
+function user(text: string) {
+  return createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } })
+}
+
+describe('Bailian wire contract', () => {
+  it('sends explicit DeepSeek reasoning and max_tokens policy', async () => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests), { 'deepseek-v4-pro-0813': deepseekModel() })
+    const chunks = await consume(client.stream({
       provider: BAILIAN_PROVIDER_ID,
       model: 'deepseek-v4-pro-0813',
       reasoningEffort: ReasoningEffortId('max'),
       system: 'system prompt',
-      messages: [message],
+      messages: [user('hello')],
       maxTokens: 123,
+      stop: ['END'],
     }))
-    expect(maxChunks.some(chunk => chunk.type === 'text-delta' && chunk.text === 'ok')).toBe(true)
-    expect(requests[0]).toMatchObject({
-      model: 'deepseek-v4-pro-0813',
-      reasoning_effort: 'max',
-      enable_thinking: true,
-      max_completion_tokens: 123,
-    })
-    expect(requests[0]?.messages?.[0]?.role).toBe('system')
-    expect(requests[0]?.messages?.some(message => message.role === 'developer')).toBe(false)
-    expect(requests[0]?.store).toBeUndefined()
 
-    await consume(adapter.stream({
-      provider: BAILIAN_PROVIDER_ID,
+    expect(requests[0]?.url).toBe('/chat/completions')
+    expect(requests[0]?.body).toMatchObject({
       model: 'deepseek-v4-pro-0813',
+      enable_thinking: true,
+      reasoning_effort: 'max',
+      max_tokens: 123,
+      stop: ['END'],
+    })
+    expect(requests[0]?.body).not.toHaveProperty('max_completion_tokens')
+    expect(requests[0]?.body).not.toHaveProperty('store')
+    expect(requests[0]?.headers.authorization).toBe('Bearer test-key')
+    expect(requests[0]?.headers['user-agent']).toBeTruthy()
+    expect(requests[0]?.body.messages).toEqual([
+      { role: 'system', content: 'system prompt' },
+      { role: 'user', content: 'hello' },
+    ])
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(chunks.findIndex(chunk => chunk.type === 'usage')).toBeLessThan(chunks.findIndex(chunk => chunk.type === 'finish'))
+  })
+
+  it('uses the configured default and disables reasoning for off', async () => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests), { custom: deepseekModel() })
+    await consume(client.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('one')] }))
+    await consume(client.stream({
+      provider: BAILIAN_PROVIDER_ID,
+      model: 'custom',
       reasoningEffort: ReasoningEffortId('off'),
-      messages: [message],
+      messages: [user('two')],
     }))
-    expect(requests[1]?.enable_thinking).toBe(false)
-    expect(requests[1]?.reasoning_effort).toBeUndefined()
-
-    await consume(adapter.stream({
-      provider: BAILIAN_PROVIDER_ID,
-      model: 'deepseek-v4-pro-0813',
-      messages: [message],
-    }))
-    expect(requests[2]).toMatchObject({
-      reasoning_effort: 'high',
-      enable_thinking: true,
-    })
+    expect(requests[0]?.body).toMatchObject({ enable_thinking: true, reasoning_effort: 'high' })
+    expect(requests[1]?.body).toMatchObject({ enable_thinking: false })
+    expect(requests[1]?.body).not.toHaveProperty('reasoning_effort')
   })
 
-  it('dispatches a custom model without a model-id or mode branch', async () => {
-    const requests: WireRequest[] = []
-    const baseURL = await endpoint(requests)
-    const profile = createBailianProfile(resolveBailianConfig({
-      baseURL,
-      models: [{
-        ...deepseekModel('private-deployment-v7'),
-        contextWindow: 100_000,
-        maxTokens: 10_000,
-        reasoning: { defaultEffort: 'max', efforts: ['max'] },
-      }],
-    }))
-    const adapter = new BailianAdapter({
-      profiles: () => new Map([[BAILIAN_PROVIDER_ID, profile]]),
-      resolveApiKey: async () => 'test-key',
-    })
-    await consume(adapter.stream({
-      provider: BAILIAN_PROVIDER_ID,
-      model: 'private-deployment-v7',
-      messages: [createUserMessage({
-        content: [{ type: 'text', text: 'hello' }],
-        source: { kind: 'user' },
-      })],
-    }))
-    expect(requests[0]).toMatchObject({
-      model: 'private-deployment-v7',
-      reasoning_effort: 'max',
-      enable_thinking: true,
-    })
-  })
-
-  it('uses Qwen enable_thinking and thinking_budget without DeepSeek parameters', async () => {
-    const requests: WireRequest[] = []
-    const baseURL = await endpoint(requests)
-    const profile = createBailianProfile(resolveBailianConfig({
-      baseURL,
-      models: [qwenModel(8_192)],
-    }))
-    const profiles = new Map([[BAILIAN_PROVIDER_ID, profile]])
-    const adapter = new BailianAdapter({
-      profiles: () => profiles,
-      resolveApiKey: async () => 'test-key',
-    })
-    await consume(adapter.stream({
+  it('sends Qwen thinking fields and durable images as data URLs', async () => {
+    const requests: CapturedRequest[] = []
+    const ref: ImageAttachmentRef = {
+      attachmentId: AttachmentId('image-1'),
+      mediaType: 'image/png',
+      bytes: 4,
+      width: 1,
+      height: 1,
+    }
+    const attachments = {
+      readImage: async () => ({ ref, data: Uint8Array.from([1, 2, 3, 4]) }),
+    } as unknown as AttachmentStore
+    const client = adapter(await endpoint(requests), { 'qwen3.7-plus': qwenModel() }, attachments)
+    await consume(client.stream({
       provider: BAILIAN_PROVIDER_ID,
       model: 'qwen3.7-plus',
-      reasoningEffort: ReasoningEffortId('high'),
-      system: 'system prompt',
       messages: [createUserMessage({
-        content: [{ type: 'text', text: 'hello' }],
+        content: [{ type: 'text', text: 'inspect' }, { type: 'image', attachment: ref }],
         source: { kind: 'user' },
       })],
+      maxTokens: 2_048,
     }))
-    expect(requests[0]).toMatchObject({
-      model: 'qwen3.7-plus',
+    expect(requests[0]?.body).toMatchObject({
       enable_thinking: true,
       thinking_budget: 8_192,
+      max_completion_tokens: 2_048,
     })
-    expect(requests[0]?.reasoning_effort).toBeUndefined()
-    expect(requests[0]?.messages?.[0]?.role).toBe('system')
+    expect(requests[0]?.body).not.toHaveProperty('reasoning_effort')
+    expect(requests[0]?.body.messages).toEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'inspect' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AQIDBA==' } },
+      ],
+    }])
+  })
+
+  it('does not send a token field when no request default exists', async () => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests), { custom: deepseekModel() })
+    await consume(client.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('hello')] }))
+    expect(requests[0]?.body).not.toHaveProperty('max_tokens')
+    expect(requests[0]?.body).not.toHaveProperty('max_completion_tokens')
+  })
+
+  it('reassembles fragmented and parallel tool calls', async () => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests, response => {
+      writeSse(response, [
+        {
+          choices: [{
+            delta: {
+              tool_calls: [
+                { index: 0, id: 'call-a', function: { name: 'first', arguments: '{"value"' } },
+                { index: 1, id: 'call-b', function: { name: 'second', arguments: '' } },
+              ],
+            },
+          }],
+        },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: ':1}' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 1, function: { arguments: '{}' } }] } }] },
+        {
+          choices: [{ delta: {}, finish_reason: 'tool_calls' }],
+          usage: { prompt_tokens: 8, completion_tokens: 4 },
+        },
+        '[DONE]',
+      ])
+    }), { custom: deepseekModel() })
+
+    const chunks = await consume(client.stream({
+      provider: BAILIAN_PROVIDER_ID,
+      model: 'custom',
+      messages: [user('use tools')],
+    }))
+
+    expect(chunks.filter(chunk => chunk.type === 'block-end')).toEqual([
+      {
+        type: 'block-end',
+        index: 0,
+        block: { type: 'tool-call', id: 'call-a', name: 'first', arguments: '{"value":1}' },
+      },
+      {
+        type: 'block-end',
+        index: 1,
+        block: { type: 'tool-call', id: 'call-b', name: 'second', arguments: '{}' },
+      },
+    ])
+    expect(chunks.at(-2)).toEqual({
+      type: 'usage',
+      usage: { inputTokens: 8, outputTokens: 4 },
+    })
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+  })
+
+  it('retains HTTP retry and request metadata in provider failures', async () => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests, response => {
+      response.writeHead(429, {
+        'content-type': 'application/json',
+        'retry-after': '2',
+        'x-request-id': 'request-123',
+      })
+      response.end(JSON.stringify({ error: { code: 'Throttling', message: 'slow down' } }))
+    }), { custom: deepseekModel() })
+
+    await expect(consume(client.stream({
+      provider: BAILIAN_PROVIDER_ID,
+      model: 'custom',
+      messages: [user('hello')],
+    }))).rejects.toMatchObject({
+      code: 'RATE_LIMIT',
+      failure: {
+        message: 'slow down',
+        code: 'RATE_LIMIT',
+        status: 429,
+        providerRetryAfterMs: 2_000,
+        requestId: 'request-123',
+      },
+    })
+  })
+
+  it.each([
+    ['malformed JSON', (response: ServerResponse) => writeSse(response, ['{bad json']) , 'MALFORMED_RESPONSE'],
+    ['missing DONE', (response: ServerResponse) => writeSse(response, [
+      { choices: [{ delta: { content: 'partial' }, finish_reason: null }] },
+    ]), 'STREAM_CLOSED'],
+  ] as const)('classifies %s stream failures', async (_label, reply, code) => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests, reply), { custom: deepseekModel() })
+    await expect(consume(client.stream({
+      provider: BAILIAN_PROVIDER_ID,
+      model: 'custom',
+      messages: [user('hello')],
+    }))).rejects.toMatchObject({ code })
+  })
+
+  it('distinguishes caller cancellation from provider idle timeout', async () => {
+    const cancelledRequests: CapturedRequest[] = []
+    const controller = new AbortController()
+    const cancelled = adapter(await endpoint(cancelledRequests, response => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.flushHeaders()
+      setTimeout(() => controller.abort('test cancellation'), 10)
+    }), { custom: deepseekModel() })
+    await expect(consume(cancelled.stream({
+      provider: BAILIAN_PROVIDER_ID,
+      model: 'custom',
+      messages: [user('cancel')],
+      signal: controller.signal,
+    }))).rejects.toMatchObject({ code: 'ABORTED' })
+
+    const timedOutRequests: CapturedRequest[] = []
+    const timedOut = adapter(await endpoint(timedOutRequests, response => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.flushHeaders()
+    }), { custom: deepseekModel() }, undefined, 20)
+    await expect(consume(timedOut.stream({
+      provider: BAILIAN_PROVIDER_ID,
+      model: 'custom',
+      messages: [user('timeout')],
+    }))).rejects.toMatchObject({ code: 'TIMEOUT' })
   })
 })

@@ -105,7 +105,7 @@ describe('TranscriptComponent', () => {
             kind: 'community-vision',
             promptId: 'message-user',
             analysisId: 'analysis-1',
-            provider: 'dashscope-vision',
+            provider: 'bailian',
             model: 'qwen3.7-plus',
             attachments: [{ attachmentId: 'image-1', mediaType: 'image/png', bytes: 10, width: 2, height: 2 }],
             durationMs: 500,
@@ -121,7 +121,7 @@ describe('TranscriptComponent', () => {
     const output = transcript.render(100).join('\n')
     expect(output).toContain('Worked for 500ms · 1 tool')
     expect(output).toContain('Vision · 1 image · qwen3.7-plus')
-    expect(output).toContain('dashscope-vision/qwen3.7-plus')
+    expect(output).toContain('bailian/qwen3.7-plus')
     expect(output.indexOf('What failed?')).toBeLessThan(output.indexOf('Vision · 1 image'))
   })
 

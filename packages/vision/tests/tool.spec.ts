@@ -21,7 +21,7 @@ const limits: ImageAttachmentLimits = {
   mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
 }
 const inspection: VisionInspection = {
-  provider: 'dashscope-vision',
+  provider: 'bailian',
   model: 'qwen-vision',
   attachments: [{
     attachmentId: 'sha256:image' as ImageAttachmentRef['attachmentId'],
@@ -108,7 +108,7 @@ describe('inspect_image', () => {
     expect(current.observe).toHaveBeenCalledWith(target, version, exec)
     expect(value).toMatchObject({
       path: '/workspace/screen.png',
-      provider: 'dashscope-vision',
+      provider: 'bailian',
       model: 'qwen-vision',
       image: { mediaType: 'image/png', width: 320, height: 180 },
       observation: expect.stringContaining('trust="untrusted"'),

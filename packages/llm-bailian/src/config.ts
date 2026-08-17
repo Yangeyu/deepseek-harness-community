@@ -6,74 +6,90 @@ import {
   type ResolvedRetryPolicy,
   type RetryPolicyConfig,
 } from '@deepseek-ai/dsh-llm'
-import type { ModelThinkingLevel, ThinkingLevelMap } from '@earendil-works/pi-ai'
-import {
-  BAILIAN_REASONING_EFFORT_IDS,
-  BAILIAN_SELECTABLE_EFFORT_IDS,
-} from './model.ts'
+import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 
 export const BAILIAN_PROVIDER_ID = 'bailian'
 export const BAILIAN_DISPLAY_NAME = 'Alibaba Cloud Bailian'
 export const DEFAULT_BAILIAN_API_KEY_ENV = 'DASHSCOPE_API_KEY'
 export const DEFAULT_BAILIAN_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
 export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000
-const MAX_TIMER_DELAY_MS = 2_147_483_647
-const BAILIAN_MODALITIES = ['text', 'image'] as const
 
-export interface BailianReasoningConfig {
-  /** Bailian reasoning_effort values; omission means enable_thinking-only. */
-  efforts?: Exclude<ModelThinkingLevel, 'off'>[]
-  /** Reasoning selection used when the caller does not provide one. */
-  defaultEffort: ModelThinkingLevel
-  /** Optional Bailian thinking_budget value. */
+export const BAILIAN_REASONING_EFFORT_IDS = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const
+const BAILIAN_WIRE_REASONING_EFFORT_IDS = BAILIAN_REASONING_EFFORT_IDS.filter(effort => effort !== 'off')
+
+export type BailianReasoningEffort = typeof BAILIAN_REASONING_EFFORT_IDS[number]
+export type BailianInputModality = 'text' | 'image'
+export type BailianMaxTokensField = 'max_tokens' | 'max_completion_tokens'
+
+export interface BailianReasoningLevelConfig {
+  enableThinking?: boolean
+  reasoningEffort?: Exclude<BailianReasoningEffort, 'off'>
   thinkingBudget?: number
 }
 
+export interface BailianReasoningConfig {
+  defaultEffort: BailianReasoningEffort
+  efforts: Partial<Record<BailianReasoningEffort, BailianReasoningLevelConfig>>
+}
+
 export interface BailianModelConfig {
-  /** Model id sent to Bailian. */
-  id: string
-  /** Optional display label; the model id is used when omitted. */
   name?: string
-  /** Total model context capacity. */
+  description?: string
   contextWindow: number
-  /** Maximum output capacity; this does not create a per-request default. */
-  maxTokens: number
-  /** Input modalities advertised to Harness. */
-  input: ('text' | 'image')[]
-  /** Model reasoning capability; omission or false means non-reasoning. */
+  maxOutputTokens: number
+  defaultMaxTokens?: number
+  maxTokensField: BailianMaxTokensField
+  input: BailianInputModality[]
   reasoning?: false | BailianReasoningConfig
 }
 
 export interface Config {
   apiKeyEnv?: string
   baseURL?: string
-  models: BailianModelConfig[]
+  models: Record<string, BailianModelConfig>
   streamIdleTimeoutMs?: number
   retryPolicy?: RetryPolicyConfig
 }
 
-const ReasoningPolicySchema = z.object({
-  efforts: z.array(z.union(BAILIAN_REASONING_EFFORT_IDS))
-    .description('Bailian reasoning_effort values; omit for enable_thinking-only models.'),
-  defaultEffort: z.union(BAILIAN_SELECTABLE_EFFORT_IDS)
-    .description('Default effort when the caller does not select one.'),
-  thinkingBudget: z.number().step(1).min(1)
-    .description('Bailian thinking_budget for enabled requests.'),
+const ReasoningLevelSchema = z.object({
+  enableThinking: z.boolean(),
+  reasoningEffort: z.union(BAILIAN_WIRE_REASONING_EFFORT_IDS),
+  thinkingBudget: z.number().step(1).min(1),
+})
+
+const ReasoningEffortsSchema = z.dict(
+  ReasoningLevelSchema,
+  z.union(BAILIAN_REASONING_EFFORT_IDS),
+) as unknown as z<BailianReasoningConfig['efforts']>
+
+const ReasoningSchema = z.object({
+  defaultEffort: z.union(BAILIAN_REASONING_EFFORT_IDS),
+  efforts: ReasoningEffortsSchema,
 })
 
 const ModelConfigSchema = z.object({
-  id: z.string().description('Model id sent in Bailian requests.'),
-  name: z.string().description('Optional display label; defaults to the model id.'),
-  contextWindow: z.number().step(1).min(1).description('Total model context capacity.'),
-  maxTokens: z.number().step(1).min(1).description('Maximum output capacity, not a request default.'),
-  input: z.array(z.union(BAILIAN_MODALITIES)).description('Input modalities advertised to Harness.'),
-  reasoning: z.union([z.const(false), ReasoningPolicySchema]),
+  name: z.string(),
+  description: z.string(),
+  contextWindow: z.number().step(1).min(1),
+  maxOutputTokens: z.number().step(1).min(1),
+  defaultMaxTokens: z.number().step(1).min(1),
+  maxTokensField: z.union(['max_tokens', 'max_completion_tokens'] as const),
+  input: z.array(z.union(['text', 'image'] as const)),
+  reasoning: z.union([z.const(false), ReasoningSchema]),
 })
 
 export const Config: z<Config> = z.object({
   apiKeyEnv: z.string().role('credential-ref').default(DEFAULT_BAILIAN_API_KEY_ENV),
   baseURL: z.string().default(DEFAULT_BAILIAN_BASE_URL),
-  models: z.array(ModelConfigSchema),
+  models: z.dict(ModelConfigSchema),
   streamIdleTimeoutMs: z.number()
     .min(Number.MIN_VALUE)
     .max(MAX_TIMER_DELAY_MS)
@@ -81,28 +97,41 @@ export const Config: z<Config> = z.object({
   retryPolicy: RetryPolicySchema,
 })
 
-export interface ResolvedBailianReasoningPolicy {
-  readonly defaultEffort: ModelThinkingLevel
-  readonly reasoningEfforts: readonly Exclude<ModelThinkingLevel, 'off'>[]
-  readonly thinkingLevelMap: ThinkingLevelMap
+export interface ResolvedBailianReasoningLevel {
+  readonly enableThinking?: boolean
+  readonly reasoningEffort?: Exclude<BailianReasoningEffort, 'off'>
   readonly thinkingBudget?: number
+}
+
+export interface ResolvedBailianReasoningPolicy {
+  readonly defaultEffort: BailianReasoningEffort
+  readonly efforts: ReadonlyMap<BailianReasoningEffort, ResolvedBailianReasoningLevel>
 }
 
 export interface ResolvedBailianModel {
   readonly id: string
   readonly name: string
+  readonly description?: string
   readonly contextWindow: number
-  readonly maxTokens: number
-  readonly input: readonly ('text' | 'image')[]
+  readonly maxOutputTokens: number
+  readonly defaultMaxTokens?: number
+  readonly maxTokensField: BailianMaxTokensField
+  readonly input: readonly BailianInputModality[]
   readonly reasoning: false | ResolvedBailianReasoningPolicy
 }
 
 export interface ResolvedBailianConfig {
   readonly apiKeyEnv: CredentialRef
   readonly baseURL: string
-  readonly models: readonly ResolvedBailianModel[]
+  readonly models: ReadonlyMap<string, ResolvedBailianModel>
   readonly streamIdleTimeoutMs: number
   readonly retryPolicy: ResolvedRetryPolicy
+}
+
+function nonEmpty(value: string | undefined, path: string): string {
+  const result = value?.trim()
+  if (result === undefined || result.length === 0) throw new Error(`llm-bailian: ${path} must be non-empty`)
+  return result
 }
 
 function positiveInteger(value: number | undefined, path: string): number {
@@ -112,22 +141,21 @@ function positiveInteger(value: number | undefined, path: string): number {
   return value as number
 }
 
-function configuredInput(
-  entry: BailianModelConfig,
-  id: string,
-): readonly ('text' | 'image')[] {
-  if (entry.input === undefined || entry.input.length === 0) {
+function resolveInput(input: readonly BailianInputModality[] | undefined, id: string): readonly BailianInputModality[] {
+  if (input === undefined || input.length === 0) {
     throw new Error(`llm-bailian: model "${id}" input must contain at least one modality`)
   }
-  const seen = new Set<string>()
-  for (const modality of entry.input) {
-    if (!BAILIAN_MODALITIES.includes(modality)) {
+  const modalities = new Set<BailianInputModality>()
+  for (const modality of input) {
+    if (modality !== 'text' && modality !== 'image') {
       throw new Error(`llm-bailian: model "${id}" has unsupported input modality "${String(modality)}"`)
     }
-    if (seen.has(modality)) throw new Error(`llm-bailian: model "${id}" repeats input modality "${modality}"`)
-    seen.add(modality)
+    if (modalities.has(modality)) {
+      throw new Error(`llm-bailian: model "${id}" repeats input modality "${modality}"`)
+    }
+    modalities.add(modality)
   }
-  return [...entry.input]
+  return [...modalities]
 }
 
 function resolveReasoning(
@@ -135,45 +163,50 @@ function resolveReasoning(
   id: string,
 ): false | ResolvedBailianReasoningPolicy {
   if (configured === undefined || configured === false) return false
-  const reasoningEfforts = configured.efforts ?? []
-  if (new Set(reasoningEfforts).size !== reasoningEfforts.length) {
-    throw new Error(`llm-bailian: model "${id}" reasoning.efforts must not contain duplicates`)
+  if (!BAILIAN_REASONING_EFFORT_IDS.includes(configured.defaultEffort)) {
+    throw new Error(`llm-bailian: model "${id}" has unknown defaultEffort "${String(configured.defaultEffort)}"`)
   }
-  const unknownEffort = reasoningEfforts.find(effort => !BAILIAN_REASONING_EFFORT_IDS.includes(effort))
-  if (unknownEffort !== undefined) {
-    throw new Error(`llm-bailian: model "${id}" has unknown reasoning effort "${String(unknownEffort)}"`)
+  const efforts = new Map<BailianReasoningEffort, ResolvedBailianReasoningLevel>()
+  for (const [rawEffort, rawLevel] of Object.entries(configured.efforts ?? {})) {
+    if (!BAILIAN_REASONING_EFFORT_IDS.includes(rawEffort as BailianReasoningEffort)) {
+      throw new Error(`llm-bailian: model "${id}" has unknown reasoning effort "${rawEffort}"`)
+    }
+    const effort = rawEffort as BailianReasoningEffort
+    if (rawLevel === undefined || rawLevel === null || typeof rawLevel !== 'object') {
+      throw new Error(`llm-bailian: model "${id}" reasoning effort "${effort}" must be an object`)
+    }
+    if (effort === 'off' && rawLevel.reasoningEffort !== undefined) {
+      throw new Error(`llm-bailian: model "${id}" reasoning effort "off" cannot send reasoning_effort`)
+    }
+    if (effort === 'off' && rawLevel.thinkingBudget !== undefined) {
+      throw new Error(`llm-bailian: model "${id}" reasoning effort "off" cannot send thinking_budget`)
+    }
+    if (effort === 'off' && rawLevel.enableThinking !== false) {
+      throw new Error(`llm-bailian: model "${id}" reasoning effort "off" must set enableThinking to false`)
+    }
+    if (rawLevel.reasoningEffort !== undefined
+      && !BAILIAN_WIRE_REASONING_EFFORT_IDS.includes(rawLevel.reasoningEffort)) {
+      throw new Error(`llm-bailian: model "${id}" reasoning effort "${effort}" has an invalid wire value`)
+    }
+    const thinkingBudget = rawLevel.thinkingBudget === undefined
+      ? undefined
+      : positiveInteger(rawLevel.thinkingBudget, `model "${id}" reasoning effort "${effort}" thinkingBudget`)
+    if (rawLevel.enableThinking === undefined
+      && rawLevel.reasoningEffort === undefined
+      && thinkingBudget === undefined) {
+      throw new Error(`llm-bailian: model "${id}" reasoning effort "${effort}" must set at least one wire field`)
+    }
+    efforts.set(effort, Object.freeze({
+      ...rawLevel.enableThinking === undefined ? {} : { enableThinking: rawLevel.enableThinking },
+      ...rawLevel.reasoningEffort === undefined ? {} : { reasoningEffort: rawLevel.reasoningEffort },
+      ...thinkingBudget === undefined ? {} : { thinkingBudget },
+    }))
   }
-
-  const defaultEffort = configured.defaultEffort
-  if (defaultEffort === undefined) {
-    throw new Error(`llm-bailian: model "${id}" reasoning.defaultEffort is required`)
+  if (efforts.size === 0) throw new Error(`llm-bailian: model "${id}" reasoning.efforts must not be empty`)
+  if (!efforts.has(configured.defaultEffort)) {
+    throw new Error(`llm-bailian: model "${id}" defaultEffort "${configured.defaultEffort}" is not configured`)
   }
-  const selectableEfforts: readonly ModelThinkingLevel[] = [
-    'off',
-    ...(reasoningEfforts.length === 0 && defaultEffort !== 'off' ? [defaultEffort] : reasoningEfforts),
-  ]
-  if (!selectableEfforts.some(effort => effort !== 'off')) {
-    throw new Error(`llm-bailian: model "${id}" reasoning must offer an enabled effort`)
-  }
-  if (!selectableEfforts.includes(defaultEffort)) {
-    throw new Error(`llm-bailian: model "${id}" defaultEffort "${defaultEffort}" is not supported`)
-  }
-  const thinkingLevelMap = Object.fromEntries(
-    BAILIAN_SELECTABLE_EFFORT_IDS.map(effort => [effort, null]),
-  ) as ThinkingLevelMap
-  for (const effort of selectableEfforts) {
-    if (effort === 'off') delete thinkingLevelMap.off
-    else thinkingLevelMap[effort] = effort
-  }
-  const thinkingBudget = configured.thinkingBudget === undefined
-    ? undefined
-    : positiveInteger(configured.thinkingBudget, `model "${id}" thinkingBudget`)
-  return {
-    defaultEffort,
-    reasoningEfforts: [...reasoningEfforts],
-    thinkingLevelMap,
-    ...thinkingBudget === undefined ? {} : { thinkingBudget },
-  }
+  return Object.freeze({ defaultEffort: configured.defaultEffort, efforts })
 }
 
 export function resolveBailianBaseURL(value: string | undefined): string {
@@ -194,43 +227,55 @@ export function resolveBailianBaseURL(value: string | undefined): string {
   return url.toString().replace(/\/$/u, '')
 }
 
-function resolveModels(models: readonly BailianModelConfig[] | undefined): readonly ResolvedBailianModel[] {
-  if (models === undefined || models.length === 0) {
+function resolveModels(models: Readonly<Record<string, BailianModelConfig>> | undefined): ReadonlyMap<string, ResolvedBailianModel> {
+  if (models === undefined || Object.keys(models).length === 0) {
     throw new Error('llm-bailian: models must contain at least one model')
   }
-  const seen = new Set<string>()
-  return models.map((entry, index) => {
-    const id = entry.id?.trim()
-    if (id === undefined || id.length === 0) throw new Error(`llm-bailian: models[${index}].id is required`)
-    if (seen.has(id)) throw new Error(`llm-bailian: duplicate model id "${id}"`)
-    seen.add(id)
-    const name = entry.name?.trim() || id
+  const resolved = new Map<string, ResolvedBailianModel>()
+  for (const [rawId, entry] of Object.entries(models)) {
+    const id = nonEmpty(rawId, 'model id')
+    if (resolved.has(id)) throw new Error(`llm-bailian: duplicate model id "${id}" after trimming`)
     const contextWindow = positiveInteger(entry.contextWindow, `model "${id}" contextWindow`)
-    const maxTokens = positiveInteger(entry.maxTokens, `model "${id}" maxTokens`)
-    const reasoning = resolveReasoning(entry.reasoning, id)
-    return {
-      id,
-      name,
-      contextWindow,
-      maxTokens,
-      input: configuredInput(entry, id),
-      reasoning,
+    const maxOutputTokens = positiveInteger(entry.maxOutputTokens, `model "${id}" maxOutputTokens`)
+    const defaultMaxTokens = entry.defaultMaxTokens === undefined
+      ? undefined
+      : positiveInteger(entry.defaultMaxTokens, `model "${id}" defaultMaxTokens`)
+    if (defaultMaxTokens !== undefined && defaultMaxTokens > maxOutputTokens) {
+      throw new Error(`llm-bailian: model "${id}" defaultMaxTokens exceeds maxOutputTokens`)
     }
-  })
+    if (entry.maxTokensField !== 'max_tokens' && entry.maxTokensField !== 'max_completion_tokens') {
+      throw new Error(`llm-bailian: model "${id}" maxTokensField is invalid`)
+    }
+    const description = entry.description?.trim()
+    resolved.set(id, Object.freeze({
+      id,
+      name: entry.name?.trim() || id,
+      ...description === undefined || description.length === 0 ? {} : { description },
+      contextWindow,
+      maxOutputTokens,
+      ...defaultMaxTokens === undefined ? {} : { defaultMaxTokens },
+      maxTokensField: entry.maxTokensField,
+      input: Object.freeze(resolveInput(entry.input, id)),
+      reasoning: resolveReasoning(entry.reasoning, id),
+    }))
+  }
+  return resolved
 }
 
 export function resolveBailianConfig(config: Config): ResolvedBailianConfig {
   const streamIdleTimeoutMs = config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS
-  if (!Number.isFinite(streamIdleTimeoutMs) || streamIdleTimeoutMs <= 0 || streamIdleTimeoutMs > MAX_TIMER_DELAY_MS) {
+  if (!Number.isFinite(streamIdleTimeoutMs)
+    || streamIdleTimeoutMs <= 0
+    || streamIdleTimeoutMs > MAX_TIMER_DELAY_MS) {
     throw new Error(`llm-bailian: streamIdleTimeoutMs must be positive and no greater than ${MAX_TIMER_DELAY_MS}`)
   }
-  return {
+  return Object.freeze({
     apiKeyEnv: credentialRef(config.apiKeyEnv?.trim() || DEFAULT_BAILIAN_API_KEY_ENV),
     baseURL: resolveBailianBaseURL(config.baseURL),
     models: resolveModels(config.models),
     streamIdleTimeoutMs,
     retryPolicy: resolveRetryPolicy(config.retryPolicy, 'llm-bailian: retryPolicy'),
-  }
+  })
 }
 
 export function assertBailianConfig(config: Config): void {

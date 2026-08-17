@@ -17,9 +17,8 @@ export default defineConfig({
       '@deepseek-ai/dsh-credentials',
       '@deepseek-ai/dsh-launch-environment',
       '@deepseek-ai/dsh-llm',
-      '@deepseek-ai/dsh-llm-pi-ai',
       '@deepseek-ai/dsh-settings',
-      '@earendil-works/pi-ai',
+      '@deepseek-ai/dsh-timeout',
     ],
   },
 })

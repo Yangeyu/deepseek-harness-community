@@ -4,7 +4,7 @@ import type { VisionConfig } from '../src/types.ts'
 
 const config: VisionConfig = {
   mode: 'auto',
-  proxyProvider: 'dashscope-vision',
+  proxyProvider: 'bailian',
   proxyModel: 'qwen3.7-plus',
   maxObservationChars: 12_000,
   maxTokens: 2_048,
@@ -34,8 +34,8 @@ describe('chooseVisionRoute', () => {
     expect(chooseVisionRoute(
       config,
       model('deepseek', 'chat', ['text']),
-      model('dashscope-vision', 'qwen3.7-plus', ['text', 'image']),
-    )).toEqual({ strategy: 'proxy', provider: 'dashscope-vision', model: 'qwen3.7-plus' })
+      model('bailian', 'qwen3.7-plus', ['text', 'image']),
+    )).toEqual({ strategy: 'proxy', provider: 'bailian', model: 'qwen3.7-plus' })
   })
 
   it('always uses the proxy in proxy mode', () => {

@@ -146,7 +146,7 @@ export function configurationRows(
       ? 'Unavailable in this profile'
       : snapshot.vision.config.mode === 'disabled'
         ? 'disabled'
-        : `${snapshot.vision.config.mode} · ${snapshot.vision.config.proxyProvider}/${snapshot.vision.config.proxyModel}${snapshot.vision.credentialConfigured === false ? ' · credential missing' : ''}`,
+        : `${snapshot.vision.config.mode} · ${snapshot.vision.config.proxyProvider}/${snapshot.vision.config.proxyModel}`,
     scope: 'TUI',
     available: snapshot.vision !== undefined,
   }, {

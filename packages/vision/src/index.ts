@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import {
   BlockAssembler,
   createUserMessage,
@@ -10,11 +9,7 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { settingsNamespace, type SettingsScope } from '@deepseek-ai/dsh-settings'
-import {
-  DEFAULT_VISION_MODEL,
-  DEFAULT_VISION_PROVIDER,
-  VisionConfigSchema,
-} from './config.ts'
+import { VisionConfigSchema } from './config.ts'
 import {
   VISION_SYSTEM_PROMPT,
   visionUserPrompt,
@@ -65,7 +60,6 @@ export type {
 
 const PLUGIN_NAME = 'community-vision'
 const VISION_NAMESPACE = settingsNamespace('vision')
-const PI_AI_NAMESPACE = settingsNamespace('llm-pi-ai')
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -103,23 +97,13 @@ function textOf(blocks: readonly ContentBlock[]): string {
   return blocks.filter(block => block.type === 'text').map(block => block.text).join('\n').trim()
 }
 
-function registeredProfile(value: unknown, provider: string): Record<string, unknown> | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
-  const providers = (value as Record<string, unknown>).providers
-  if (typeof providers !== 'object' || providers === null || Array.isArray(providers)) return undefined
-  const profile = (providers as Record<string, unknown>)[provider]
-  return typeof profile === 'object' && profile !== null && !Array.isArray(profile)
-    ? profile as Record<string, unknown>
-    : undefined
-}
-
 interface VisionInference extends VisionResultMetadata {
   rawObservation: string
 }
 
 /** Host-owned Vision policy, proxy analysis, and staged evidence service. */
 export class VisionService extends Service {
-  static inject = ['agents', 'attachments', 'credentials', 'fs', 'llm', 'settings', 'tools']
+  static inject = ['agents', 'attachments', 'fs', 'llm', 'settings', 'tools']
   static Config = VisionConfigSchema
 
   private readonly settings: SettingsScope<VisionConfig>
@@ -171,64 +155,16 @@ export class VisionService extends Service {
   private async resolveStatus(config: VisionConfig, signal?: AbortSignal): Promise<VisionStatus> {
     const proxy = await this.ctx.llm.resolveModelInfo(config.proxyProvider, config.proxyModel, signal)
       .catch(() => undefined)
-    const profile = registeredProfile(this.ctx.settings.get(PI_AI_NAMESPACE), config.proxyProvider)
-    const rawRef = profile?.apiKeyEnv
-    const ref = typeof rawRef === 'string' && rawRef.trim() !== '' ? rawRef : undefined
-    const rawEndpoint = profile?.baseURL
-    let endpointHost: string | undefined
-    if (typeof rawEndpoint === 'string') {
-      try {
-        endpointHost = new URL(rawEndpoint).host
-      } catch {}
-    }
-    const credential = ref === undefined ? undefined : await this.ctx.credentials.describe(credentialRef(ref))
     signal?.throwIfAborted()
     return {
       config,
       proxyRegistered: proxy !== undefined,
       proxySupportsImages: proxy?.inputModalities?.includes('image') ?? false,
-      ...endpointHost === undefined ? {} : { proxyEndpointHost: endpointHost },
-      ...ref === undefined ? {} : { credentialRef: ref },
-      ...credential === undefined ? {} : {
-        credentialConfigured: credential.configured,
-        ...credential.source === undefined ? {} : { credentialSource: credential.source },
-      },
     }
   }
 
   async setMode(mode: VisionConfig['mode']): Promise<void> {
     await this.settings.update({ mode })
-  }
-
-  async configureRecommendedDashScope(): Promise<void> {
-    const previous = this.ctx.settings.describe().find(descriptor => descriptor.ns === PI_AI_NAMESPACE)?.user
-    await this.ctx.settings.mutate(PI_AI_NAMESPACE, [{
-      op: 'set',
-      path: ['providers', DEFAULT_VISION_PROVIDER],
-      value: {
-        displayName: 'Alibaba Cloud Bailian',
-        apiKeyEnv: 'DASHSCOPE_API_KEY',
-        api: 'openai-completions',
-        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        defaultInput: ['text', 'image'],
-        models: [{
-          id: DEFAULT_VISION_MODEL,
-          name: 'Qwen3.7 Plus',
-          contextWindow: 991_808,
-          maxTokens: 65_536,
-        }],
-      },
-    }])
-    try {
-      await this.settings.update({
-        mode: 'auto',
-        proxyProvider: DEFAULT_VISION_PROVIDER,
-        proxyModel: DEFAULT_VISION_MODEL,
-      })
-    } catch (error: unknown) {
-      await this.ctx.settings.replace(PI_AI_NAMESPACE, typeof previous === 'object' && previous !== null ? previous : {})
-      throw error
-    }
   }
 
   discard(analysisId: string): void {
@@ -306,9 +242,6 @@ export class VisionService extends Service {
     }
     if (!status.proxySupportsImages) {
       throw new VisionError('PROXY_NOT_MULTIMODAL', `Vision proxy ${config.proxyProvider}/${config.proxyModel} does not declare image input support.`)
-    }
-    if (status.credentialRef !== undefined && status.credentialConfigured !== true) {
-      throw new VisionError('CREDENTIAL_MISSING', `Vision credential ${status.credentialRef} is not configured.`)
     }
     const startedAt = Date.now()
     const saved: ImageAttachmentRef[] = []

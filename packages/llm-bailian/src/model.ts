@@ -1,73 +1,84 @@
+import {
+  LlmError,
+  ReasoningEffortId,
+  type GenerateOptions,
+  type LlmModelInfo,
+  type LlmResolvedModelInfo,
+} from '@deepseek-ai/dsh-llm'
 import type {
-  Model,
-  ModelThinkingLevel,
-  OpenAICompletionsCompat,
-  ThinkingLevelMap,
-} from '@earendil-works/pi-ai'
+  BailianReasoningEffort,
+  ResolvedBailianModel,
+  ResolvedBailianReasoningLevel,
+} from './config.ts'
 
-export const BAILIAN_REASONING_EFFORT_IDS = [
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-] as const satisfies readonly Exclude<ModelThinkingLevel, 'off'>[]
+function effortName(effort: string): string {
+  return `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`
+}
 
-export const BAILIAN_SELECTABLE_EFFORT_IDS = [
-  'off',
-  ...BAILIAN_REASONING_EFFORT_IDS,
-] as const satisfies readonly ModelThinkingLevel[]
-
-const COMMON_COMPAT = {
-  supportsStore: false,
-  supportsDeveloperRole: false,
-  supportsUsageInStreaming: true,
-  maxTokensField: 'max_completion_tokens',
-  supportsLongCacheRetention: false,
-} as const satisfies OpenAICompletionsCompat
-
-export function bailianCompat(reasoning: boolean): OpenAICompletionsCompat {
+export function modelInfo(provider: string, model: ResolvedBailianModel): LlmModelInfo {
   return {
-    ...COMMON_COMPAT,
-    // Bailian-specific reasoning fields are applied by the provider payload transform.
-    supportsReasoningEffort: false,
-    ...reasoning ? { thinkingFormat: 'qwen' as const } : {},
+    provider,
+    id: model.id,
+    name: model.name,
+    ...model.description === undefined ? {} : { description: model.description },
+    inputModalities: [...model.input],
   }
 }
 
-export interface BailianPiModelInput {
-  readonly id: string
-  readonly name: string
-  readonly baseURL: string
-  readonly contextWindow: number
-  readonly maxTokens: number
-  readonly input: readonly ('text' | 'image')[]
-  readonly reasoning: false | {
-    readonly thinkingLevelMap: ThinkingLevelMap
+export function resolvedModelInfo(provider: string, model: ResolvedBailianModel): LlmResolvedModelInfo {
+  return {
+    ...modelInfo(provider, model),
+    context: { contextWindow: model.contextWindow },
+    ...model.defaultMaxTokens === undefined ? {} : { defaultMaxTokens: model.defaultMaxTokens },
+    ...model.reasoning === false
+      ? {}
+      : {
+          reasoning: {
+            efforts: [...model.reasoning.efforts.keys()].map(effort => ({
+              id: ReasoningEffortId(effort),
+              name: effortName(effort),
+            })),
+            defaultEffort: ReasoningEffortId(model.reasoning.defaultEffort),
+          },
+        },
   }
 }
 
-const NO_COST = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-} as const
-
-export function createBailianPiModel(input: BailianPiModelInput): Model<'openai-completions'> {
-  return {
-    id: input.id,
-    name: input.name,
-    api: 'openai-completions',
-    provider: 'bailian',
-    baseUrl: input.baseURL,
-    reasoning: input.reasoning !== false,
-    ...input.reasoning === false ? {} : { thinkingLevelMap: { ...input.reasoning.thinkingLevelMap } },
-    input: [...input.input],
-    cost: NO_COST,
-    contextWindow: input.contextWindow,
-    maxTokens: input.maxTokens,
-    compat: bailianCompat(input.reasoning !== false),
+export function resolveReasoningLevel(
+  model: ResolvedBailianModel,
+  requested: GenerateOptions['reasoningEffort'],
+  purpose: GenerateOptions['purpose'],
+): ResolvedBailianReasoningLevel | undefined {
+  if (model.reasoning === false) {
+    if (requested !== undefined) {
+      throw new LlmError(`Bailian model "${model.id}" does not support reasoning`, 'UNSUPPORTED_REASONING_EFFORT')
+    }
+    return undefined
   }
+  const effort = purpose === 'session-title' && model.reasoning.efforts.has('off')
+    ? 'off'
+    : String(requested ?? model.reasoning.defaultEffort) as BailianReasoningEffort
+  const level = model.reasoning.efforts.get(effort)
+  if (level === undefined) {
+    throw new LlmError(
+      `Bailian model "${model.id}" does not support reasoning effort "${effort}"`,
+      'UNSUPPORTED_REASONING_EFFORT',
+    )
+  }
+  return level
+}
+
+export function resolveMaxTokens(model: ResolvedBailianModel, requested: number | undefined): number | undefined {
+  const value = requested ?? model.defaultMaxTokens
+  if (value === undefined) return undefined
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new LlmError('Bailian maxTokens must be a positive safe integer', 'INVALID_REQUEST')
+  }
+  if (value > model.maxOutputTokens) {
+    throw new LlmError(
+      `Bailian maxTokens ${String(value)} exceeds model "${model.id}" output capacity ${String(model.maxOutputTokens)}`,
+      'INVALID_REQUEST',
+    )
+  }
+  return value
 }

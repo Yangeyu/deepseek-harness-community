@@ -15,7 +15,6 @@ export default defineConfig({
       '@deepseek-ai/cordis',
       '@deepseek-ai/dsh-agent',
       '@deepseek-ai/dsh-attachment',
-      '@deepseek-ai/dsh-credentials',
       '@deepseek-ai/dsh-fs',
       '@deepseek-ai/dsh-llm',
       '@deepseek-ai/dsh-session',

@@ -73,7 +73,7 @@ describe('trajectory records', () => {
             kind: 'community-vision',
             promptId: 'message-user',
             analysisId: 'analysis-1',
-            provider: 'dashscope-vision',
+            provider: 'bailian',
             model: 'qwen3.7-plus',
             attachments: [],
             durationMs: 1_500,

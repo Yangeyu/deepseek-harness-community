@@ -21,7 +21,6 @@ export interface VisionGateway {
   capability(provider: string, model: string, signal?: AbortSignal): Promise<VisionCapability>
   status(signal?: AbortSignal): Promise<VisionStatus>
   setMode(mode: VisionConfig['mode']): Promise<void>
-  configureRecommendedDashScope(): Promise<void>
   analyze(request: VisionRequest, signal?: AbortSignal): Promise<VisionAnalysis>
   admit(request: VisionAdmissionRequest): void | Promise<void>
   discard(analysisId: string): void
@@ -108,9 +107,6 @@ export class AttachmentCoordinator {
         const status = await this.vision.status(abort.signal)
         if (!status.proxyRegistered || !status.proxySupportsImages) {
           throw new Error(`Vision proxy ${status.config.proxyProvider}/${status.config.proxyModel} is not ready. Open /config vision.`)
-        }
-        if (status.credentialRef !== undefined && status.credentialConfigured !== true) {
-          throw new Error(`Vision credential ${status.credentialRef} is missing. Open /config vision after configuring it.`)
         }
         const analysis = await this.vision.analyze({
           analysisId,

@@ -20,5 +20,6 @@ runtime, declaration, and source-map artifacts to `dist/` for bundling by the
 TUI workspace.
 
 Vision policy lives in the `vision` settings namespace. Provider endpoints,
-model catalogs, and credential references remain owned by the Harness
-`llm-pi-ai` settings namespace.
+model catalogs, wire policy, and credentials remain owned by the selected LLM
+Provider. Vision itself has no provider or model default; the TUI bundle
+selects `bailian/qwen3.7-plus` in its composition layer.

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=none
 # The base bundle is installed automatically for a new profile. This patch
 # selects community capability providers and adds the TUI-specific host plane.
 
@@ -15,6 +16,7 @@
 
 - id: tools
   config:
+    # yaml-language-server-disable Unresolved tag
     mode: !!js process.env.DSH_TOOLS_MODE
 
 # Keep the official model-tool contract while delegating provider policy to one
@@ -38,6 +40,7 @@
     - id: storage-json
       name: '@deepseek-ai/dsh-storage-json'
       config:
+        # yaml-language-server-disable Unresolved tag
         root: !!js dshHomePath('storages')
 
     - id: storage-domain
@@ -55,29 +58,46 @@
       config:
         baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
         models:
-          - id: deepseek-v4-pro-0813
+          deepseek-v4-pro-0813:
             contextWindow: 1000000
-            maxTokens: 393216
+            maxOutputTokens: 393216
+            maxTokensField: max_tokens
             input:
               - text
             reasoning:
               defaultEffort: high
               efforts:
-                - low
-                - high
-                - max
-          - id: qwen3.7-plus
+                off:
+                  enableThinking: false
+                low:
+                  enableThinking: true
+                  reasoningEffort: low
+                high:
+                  enableThinking: true
+                  reasoningEffort: high
+                max:
+                  enableThinking: true
+                  reasoningEffort: max
+          qwen3.7-plus:
+            name: Qwen3.7 Plus
             contextWindow: 1000000
-            maxTokens: 131072
+            maxOutputTokens: 131072
+            maxTokensField: max_completion_tokens
             input:
               - text
               - image
             reasoning:
               defaultEffort: high
+              efforts:
+                off:
+                  enableThinking: false
+                high:
+                  enableThinking: true
 
     - id: memory
       name: '@vascent/deepseek-harness-tui/memory'
       config:
+        # yaml-language-server-disable Unresolved tag
         root: !!js dshHomePath('memories')
         useMemories: true
         generateMemories: true
@@ -93,7 +113,7 @@
       name: '@vascent/deepseek-harness-tui/vision'
       config:
         mode: auto
-        proxyProvider: dashscope-vision
+        proxyProvider: bailian
         proxyModel: qwen3.7-plus
 
     - id: community-web

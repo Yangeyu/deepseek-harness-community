@@ -2,159 +2,113 @@ import { describe, expect, it } from 'vitest'
 import {
   BailianAdapter,
   BAILIAN_PROVIDER_ID,
-  Config,
-  createBailianProfile,
   DEFAULT_BAILIAN_BASE_URL,
   resolveBailianBaseURL,
   resolveBailianConfig,
   type BailianModelConfig,
 } from '../src/index.ts'
+import { httpErrorCode } from '../src/transport.ts'
 
-function deepseekModel(id = 'deepseek-v4-pro-0813'): BailianModelConfig {
+function deepseekModel(): BailianModelConfig {
   return {
-    id,
     contextWindow: 1_000_000,
-    maxTokens: 393_216,
+    maxOutputTokens: 393_216,
+    maxTokensField: 'max_tokens',
     input: ['text'],
     reasoning: {
       defaultEffort: 'high',
-      efforts: ['low', 'high', 'max'],
-    },
-  }
-}
-
-function qwenModel(): BailianModelConfig {
-  return {
-    id: 'qwen3.7-plus',
-    contextWindow: 1_000_000,
-    maxTokens: 131_072,
-    input: ['text', 'image'],
-    reasoning: {
-      defaultEffort: 'high',
+      efforts: {
+        off: { enableThinking: false },
+        low: { enableThinking: true, reasoningEffort: 'low' },
+        high: { enableThinking: true, reasoningEffort: 'high' },
+        max: { enableThinking: true, reasoningEffort: 'max' },
+      },
     },
   }
 }
 
 describe('Bailian config', () => {
-  it('uses an explicit OpenAI-compatible API root without guessing paths', () => {
+  it('normalizes an explicit API root without guessing paths', () => {
     expect(resolveBailianBaseURL(undefined)).toBe(DEFAULT_BAILIAN_BASE_URL)
     expect(resolveBailianBaseURL(`${DEFAULT_BAILIAN_BASE_URL}/`)).toBe(DEFAULT_BAILIAN_BASE_URL)
     expect(resolveBailianBaseURL('https://dashscope.aliyuncs.com')).toBe('https://dashscope.aliyuncs.com')
   })
 
-  it('registers configured model capabilities without applying a hidden request cap', async () => {
-    const config = resolveBailianConfig({ models: [deepseekModel()] })
-    expect(config.models[0]).toMatchObject({
-      id: 'deepseek-v4-pro-0813',
-      name: 'deepseek-v4-pro-0813',
-      contextWindow: 1_000_000,
-      maxTokens: 393_216,
-      reasoning: {
-        defaultEffort: 'high',
-        reasoningEfforts: ['low', 'high', 'max'],
-      },
+  it('keeps output capacity separate from an optional request default', async () => {
+    const config = resolveBailianConfig({
+      models: { 'deepseek-v4-pro-0813': deepseekModel() },
     })
-    const profile = createBailianProfile(config)
-    expect(profile.provider).toBe(BAILIAN_PROVIDER_ID)
-    expect(profile.configuredMaxTokens.size).toBe(0)
-    const info = await new BailianAdapter({
-      profiles: () => new Map([[BAILIAN_PROVIDER_ID, profile]]),
-      resolveApiKey: async () => 'unused-for-model-resolution',
-    }).resolveModel(BAILIAN_PROVIDER_ID, 'deepseek-v4-pro-0813')
+    expect(config.models.get('deepseek-v4-pro-0813')).toMatchObject({
+      id: 'deepseek-v4-pro-0813',
+      contextWindow: 1_000_000,
+      maxOutputTokens: 393_216,
+    })
+    const adapter = new BailianAdapter({
+      options: () => config,
+      resolveApiKey: async () => 'unused',
+    })
+    const info = await adapter.resolveModel(BAILIAN_PROVIDER_ID, 'deepseek-v4-pro-0813')
     expect(info.defaultMaxTokens).toBeUndefined()
     expect(info.reasoning?.efforts.map(effort => effort.id)).toEqual(['off', 'low', 'high', 'max'])
     expect(info.reasoning?.defaultEffort).toBe('high')
   })
 
-  it('uses configured capabilities for an arbitrary model id without a code branch', async () => {
-    const model = deepseekModel('team-deployment-v7')
-    model.name = 'Team Deployment V7'
-    model.reasoning = {
-      defaultEffort: 'max',
-      efforts: ['low', 'max'],
-    }
-    const config = resolveBailianConfig({ models: [model] })
-    expect(config.models[0]).toMatchObject({
-      id: 'team-deployment-v7',
-      name: 'Team Deployment V7',
-      reasoning: {
-        defaultEffort: 'max',
-        reasoningEfforts: ['low', 'max'],
-        thinkingLevelMap: {
-          minimal: null,
-          low: 'low',
-          medium: null,
-          high: null,
-          xhigh: null,
-          max: 'max',
+  it('resolves arbitrary deployment ids entirely from configuration', async () => {
+    const config = resolveBailianConfig({
+      models: {
+        'team-deployment-v7': {
+          ...deepseekModel(),
+          name: 'Team Deployment V7',
+          defaultMaxTokens: 8_192,
+          reasoning: {
+            defaultEffort: 'max',
+            efforts: {
+              off: { enableThinking: false },
+              max: { enableThinking: true, reasoningEffort: 'max' },
+            },
+          },
         },
       },
     })
-    const info = await new BailianAdapter({
-      profiles: () => new Map([[BAILIAN_PROVIDER_ID, createBailianProfile(config)]]),
-      resolveApiKey: async () => 'unused-for-model-resolution',
-    }).resolveModel(BAILIAN_PROVIDER_ID, 'team-deployment-v7')
-    expect(info.reasoning?.efforts.map(effort => effort.id)).toEqual(['off', 'low', 'max'])
-    expect(info.reasoning?.defaultEffort).toBe('max')
+    const adapter = new BailianAdapter({ options: () => config, resolveApiKey: async () => 'unused' })
+    const info = await adapter.resolveModel(BAILIAN_PROVIDER_ID, 'team-deployment-v7')
+    expect(info).toMatchObject({ name: 'Team Deployment V7', defaultMaxTokens: 8_192 })
+    expect(info.reasoning?.efforts.map(effort => effort.id)).toEqual(['off', 'max'])
   })
 
-  it('represents enable_thinking-only models without a mode discriminator', () => {
-    const model = qwenModel()
-    if (model.reasoning !== false && model.reasoning !== undefined) model.reasoning.thinkingBudget = 8_192
-    const config = resolveBailianConfig({ models: [model] })
-    expect(config.models[0]?.reasoning).toMatchObject({
-      defaultEffort: 'high',
-      reasoningEfforts: [],
-      thinkingBudget: 8_192,
-    })
-  })
-
-  it('requires an explicit non-empty model catalog', () => {
-    expect(() => resolveBailianConfig({ models: [] })).toThrow('models must contain at least one model')
+  it('rejects incomplete or contradictory model policy', () => {
+    expect(() => resolveBailianConfig({ models: {} })).toThrow('models must contain at least one model')
     expect(() => resolveBailianConfig({
-      models: [
-        deepseekModel(),
-        deepseekModel(),
-      ],
-    })).toThrow('duplicate model id "deepseek-v4-pro-0813"')
+      models: {
+        broken: {
+          ...deepseekModel(),
+          defaultMaxTokens: 400_000,
+        },
+      },
+    })).toThrow('defaultMaxTokens exceeds maxOutputTokens')
+    expect(() => resolveBailianConfig({
+      models: {
+        broken: {
+          ...deepseekModel(),
+          reasoning: {
+            defaultEffort: 'high',
+            efforts: { off: { enableThinking: false } },
+          },
+        },
+      },
+    })).toThrow('defaultEffort "high" is not configured')
   })
 
-  it('requires every model capability consumed by Harness', () => {
-    expect(() => resolveBailianConfig({
-      models: [{
-        id: 'custom-model',
-        input: ['text'],
-      } as BailianModelConfig],
-    })).toThrow('model "custom-model" contextWindow must be a positive safe integer')
-    expect(() => resolveBailianConfig({
-      models: [{
-        id: 'custom-model',
-        contextWindow: 10_000,
-        maxTokens: 1_000,
-        input: [],
-      }],
-    })).toThrow('model "custom-model" input must contain at least one modality')
+  it('fails exact resolution for an unconfigured model', async () => {
+    const config = resolveBailianConfig({ models: { configured: deepseekModel() } })
+    const adapter = new BailianAdapter({ options: () => config, resolveApiKey: async () => 'unused' })
+    await expect(adapter.resolveModel(BAILIAN_PROVIDER_ID, 'unknown')).rejects.toMatchObject({ code: 'UNKNOWN_MODEL' })
   })
 
-  it('publishes only developer-facing model and reasoning fields through the schema', () => {
-    const serialized = JSON.stringify(Config.toJSON())
-    expect(serialized).toContain('"models"')
-    expect(serialized).toContain('"reasoning"')
-    expect(serialized).toContain('"defaultEffort"')
-    expect(serialized).toContain('"maxTokens"')
-    expect(serialized).not.toContain('"preset"')
-    expect(serialized).not.toContain('"defaultMaxTokens"')
-    expect(serialized).not.toContain('"supportsReasoningEffort"')
-    expect(serialized).not.toContain('reasoning-effort')
-    expect(serialized).not.toContain('qwen-thinking')
-
-    const parsed = new Config({
-      baseURL: DEFAULT_BAILIAN_BASE_URL,
-      models: [deepseekModel(), qwenModel()],
-    })
-    expect(resolveBailianConfig(parsed).models.map(model => model.id)).toEqual([
-      'deepseek-v4-pro-0813',
-      'qwen3.7-plus',
-    ])
+  it('maps provider HTTP failures to stable Harness codes', () => {
+    expect(httpErrorCode(401)).toBe('AUTH')
+    expect(httpErrorCode(429)).toBe('RATE_LIMIT')
+    expect(httpErrorCode(500)).toBe('SERVER')
+    expect(httpErrorCode(400, { message: 'maximum context length exceeded' })).toBe('CONTEXT_WINDOW_EXCEEDED')
   })
 })

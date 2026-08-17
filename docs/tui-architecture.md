@@ -275,10 +275,10 @@ architecture required to support that sequence.
 - Extend Transcript and Trajectory from that supported `user/message` source
   instead of inventing an out-of-repository session event or retaining a
   second UI-owned result store.
-- Keep generic compatible-provider declarations in `dsh-llm-pi-ai`. A
-  first-class provider package owns provider-specific endpoint, credential,
-  configured model capabilities, and wire-parameter policy; `/config Vision`
-  selects policy and route without duplicating provider configuration.
+- Keep generic compatible-provider declarations in `dsh-llm-pi-ai`. The
+  first-class Bailian package directly owns its endpoint, credential, model
+  capabilities, request serialization, and SSE translation; `/config Vision`
+  selects routing policy without reading or writing provider configuration.
 - Keep key sequences in `input/keymap.ts`, durable preference access behind a
   narrow application gateway, and selection UI in `presentation/config`.
   `TuiApplication` handles semantic actions only. Standard and Legacy are data
