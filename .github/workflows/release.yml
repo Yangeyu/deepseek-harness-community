@@ -28,6 +28,7 @@ jobs:
           package_version=$(node --print "require('./package.json').version")
           test "$GITHUB_REF_NAME" = "v${package_version}"
       - run: pnpm run check
+      - run: pnpm run install:check
       - run: mkdir artifacts
       - run: npm pack --pack-destination artifacts --ignore-scripts
       - name: Publish the installable package to npm

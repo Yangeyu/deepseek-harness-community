@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Align the DeepSeek Harness dependency graph on `0.1.0-rc.7` and gate
+  releases with a strict clean-install check so peer-version drift cannot
+  silently ship another uninstallable package.
+
 ## 0.1.12 - 2026-08-17
 
 - Add a first-class Alibaba Cloud Bailian provider with direct HTTP/SSE

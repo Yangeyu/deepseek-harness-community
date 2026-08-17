@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import {
   BlockAssembler,
   createUserMessage,
@@ -244,14 +243,9 @@ export class VisionService extends Service {
       throw new VisionError('PROXY_NOT_MULTIMODAL', `Vision proxy ${config.proxyProvider}/${config.proxyModel} does not declare image input support.`)
     }
     const startedAt = Date.now()
-    const saved: ImageAttachmentRef[] = []
-    await this.validateBatch(request.images)
     signal?.throwIfAborted()
-    for (const image of request.images) {
-      const ref = await this.ctx.attachments.saveImage(image)
-      saved.push(ref)
-      signal?.throwIfAborted()
-    }
+    const saved = await this.ctx.attachments.saveImages(request.images)
+    signal?.throwIfAborted()
     const info = await this.ctx.llm.resolveModelInfo(config.proxyProvider, config.proxyModel, signal)
     if (!info.inputModalities?.includes('image')) {
       throw new VisionError('PROXY_NOT_MULTIMODAL', `Vision proxy ${info.provider}/${info.id} does not declare image input support.`)
@@ -288,18 +282,6 @@ export class VisionService extends Service {
 
   private assertImages(images: readonly VisionImageInput[]): void {
     if (images.length === 0) throw new VisionError('NO_IMAGES', 'Vision analysis requires at least one image.')
-  }
-
-  private async validateBatch(images: readonly VisionImageInput[]): Promise<void> {
-    const limits = this.ctx.attachments.imageLimits
-    if (images.length > limits.maxImagesPerMessage) {
-      throw new VisionError('TOO_MANY_IMAGES', `A message may contain at most ${String(limits.maxImagesPerMessage)} images.`)
-    }
-    const bytes = images.reduce((total, image) => total + image.data.byteLength, 0)
-    if (bytes > limits.maxMessageImageBytes) {
-      throw new VisionError('IMAGES_TOO_LARGE', `Attached images exceed the ${String(limits.maxMessageImageBytes)} byte message limit.`)
-    }
-    await Promise.all(images.map(image => this.ctx.attachments.validateImage(image)))
   }
 
   private failureError(failure: LlmFailure): VisionError {
