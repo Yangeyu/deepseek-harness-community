@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { visionUserPrompt, wrapObservation } from '../src/observation.ts'
+import { visionUserPrompt, wrapObservation, wrapToolObservation } from '../src/observation.ts'
 
 describe('visionUserPrompt', () => {
   it('keeps the user request as visual context', () => {
@@ -33,5 +33,16 @@ describe('wrapObservation', () => {
     expect(result.truncated).toBe(true)
     expect(result.text).not.toContain('\u001B')
     expect(result.text).toContain('abcd\n… observation truncated …')
+  })
+})
+
+describe('wrapToolObservation', () => {
+  it('binds untrusted evidence to the inspected path instead of an adjacent Prompt', () => {
+    const result = wrapToolObservation('button says Continue', 'proxy', 'vision', 100)
+
+    expect(result.text).toContain('workspace image inspected by the Agent')
+    expect(result.text).toContain('only for the image path named by the tool result')
+    expect(result.text).not.toContain('immediately preceding user message')
+    expect(result.text).toContain('trust="untrusted"')
   })
 })

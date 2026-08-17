@@ -43,9 +43,14 @@ export interface VisionRequest {
   images: readonly VisionImageInput[]
 }
 
-/** Provider facts shared by analysis, admission carriers, and durable evidence. */
-export interface VisionEvidenceMetadata {
-  analysisId: string
+/** One provider-neutral request shared by composer admission and Agent inspection. */
+export interface VisionInspectionRequest {
+  userText: string
+  images: readonly VisionImageInput[]
+}
+
+/** Provider facts shared by direct inspection, admission carriers, and durable evidence. */
+export interface VisionResultMetadata {
   provider: string
   model: string
   attachments: readonly ImageAttachmentRef[]
@@ -53,6 +58,15 @@ export interface VisionEvidenceMetadata {
   truncated: boolean
   finishReason: string
   usage?: TokenUsage
+}
+
+export interface VisionInspection extends VisionResultMetadata {
+  observation: string
+}
+
+/** Durable evidence adds an identity to the common provider result. */
+export interface VisionEvidenceMetadata extends VisionResultMetadata {
+  analysisId: string
 }
 
 export interface VisionAnalysis extends VisionEvidenceMetadata {

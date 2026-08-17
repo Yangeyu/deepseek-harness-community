@@ -39,7 +39,9 @@ export function resolveLeadingSlash(
   text: string,
   candidates: readonly SlashCandidate[],
 ): SlashResolution {
-  const match = /^\s*\/(\S+)/.exec(text)
+  // Commands and Skills are one path-free name. A Unix absolute path shares
+  // the leading slash but is ordinary prompt text, not an unknown command.
+  const match = /^\s*\/([^\s/]+)(?=\s|$)/.exec(text)
   const token = match?.[1]
   if (token === undefined) return { kind: 'none' }
   const name = normalizedName(token)

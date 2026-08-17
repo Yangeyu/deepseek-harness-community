@@ -43,6 +43,7 @@ describe('slash catalog', () => {
       candidate: expect.objectContaining({ name: 'review' }),
     })
     expect(resolveLeadingSlash('explain /review', catalog)).toEqual({ kind: 'none' })
+    expect(resolveLeadingSlash('/Users/name/project/README.md update this file', catalog)).toEqual({ kind: 'none' })
     expect(resolveLeadingSlash('/missing', catalog)).toEqual({ kind: 'unknown', name: 'missing' })
   })
 

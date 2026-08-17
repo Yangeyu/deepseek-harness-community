@@ -19,9 +19,11 @@ import {
   VISION_SYSTEM_PROMPT,
   visionUserPrompt,
   wrapObservation,
+  wrapToolObservation,
 } from './observation.ts'
 import { chooseVisionRoute } from './routing.ts'
 import { VisionObservationStage } from './events.ts'
+import { createInspectImageTool } from './tool.ts'
 import type {
   VisionAdmissionRequest,
   VisionAnalysis,
@@ -30,15 +32,19 @@ import type {
   VisionEvidenceMetadata,
   VisionEvidenceSource,
   VisionImageInput,
+  VisionInspection,
+  VisionInspectionRequest,
   VisionObservationBlock,
   VisionRequest,
+  VisionResultMetadata,
   VisionStatus,
   VisionSubmissionSource,
 } from './types.ts'
 
 export { VisionConfigSchema as Config }
 export { chooseVisionRoute } from './routing.ts'
-export { VISION_SYSTEM_PROMPT, visionUserPrompt, wrapObservation } from './observation.ts'
+export { detectImageMediaType, imageDimensions } from './image.ts'
+export { VISION_SYSTEM_PROMPT, visionUserPrompt, wrapObservation, wrapToolObservation } from './observation.ts'
 export type {
   VisionAdmissionRequest,
   VisionAnalysis,
@@ -47,9 +53,12 @@ export type {
   VisionEvidenceMetadata,
   VisionEvidenceSource,
   VisionImageInput,
+  VisionInspection,
+  VisionInspectionRequest,
   VisionMode,
   VisionObservationBlock,
   VisionRequest,
+  VisionResultMetadata,
   VisionStatus,
   VisionUnavailableReason,
 } from './types.ts'
@@ -104,9 +113,13 @@ function registeredProfile(value: unknown, provider: string): Record<string, unk
     : undefined
 }
 
+interface VisionInference extends VisionResultMetadata {
+  rawObservation: string
+}
+
 /** Host-owned Vision policy, proxy analysis, and staged evidence service. */
 export class VisionService extends Service {
-  static inject = ['agents', 'attachments', 'credentials', 'llm', 'settings']
+  static inject = ['agents', 'attachments', 'credentials', 'fs', 'llm', 'settings', 'tools']
   static Config = VisionConfigSchema
 
   private readonly settings: SettingsScope<VisionConfig>
@@ -116,6 +129,14 @@ export class VisionService extends Service {
     super(ctx, 'vision')
     this.settings = ctx.settings.register(VISION_NAMESPACE, VisionConfigSchema, { base: config, applies: 'live' })
     this.observations = new VisionObservationStage(ctx)
+    ctx.tools.register(createInspectImageTool({
+      fs: ctx.fs,
+      imageLimits: ctx.attachments.imageLimits,
+      inspect: (request, signal) => this.inspect(request, signal),
+      observe: (target, version, exec) => {
+        ctx.emit('fs/observed', target, { kind: 'present', version }, exec)
+      },
+    }))
   }
 
   get config(): VisionConfig {
@@ -144,7 +165,10 @@ export class VisionService extends Service {
   }
 
   async status(signal?: AbortSignal): Promise<VisionStatus> {
-    const config = this.config
+    return this.resolveStatus(this.config, signal)
+  }
+
+  private async resolveStatus(config: VisionConfig, signal?: AbortSignal): Promise<VisionStatus> {
     const proxy = await this.ctx.llm.resolveModelInfo(config.proxyProvider, config.proxyModel, signal)
       .catch(() => undefined)
     const profile = registeredProfile(this.ctx.settings.get(PI_AI_NAMESPACE), config.proxyProvider)
@@ -221,13 +245,62 @@ export class VisionService extends Service {
   }
 
   async analyze(request: VisionRequest, signal?: AbortSignal): Promise<VisionAnalysis> {
-    if (request.images.length === 0) throw new VisionError('NO_IMAGES', 'Vision analysis requires at least one image.')
+    this.assertImages(request.images)
     if (this.ctx.agents.get(SessionId(request.sessionId)) === undefined) {
       throw new VisionError('SESSION_UNAVAILABLE', 'The active session is no longer available.')
     }
     const config = this.config
+    const { rawObservation, ...inference } = await this.runInference(request, config, signal)
+    const wrapped = wrapObservation(
+      rawObservation,
+      inference.provider,
+      inference.model,
+      config.maxObservationChars,
+    )
+    const truncated = inference.truncated || wrapped.truncated
+    const source: VisionEvidenceMetadata = {
+      analysisId: request.analysisId,
+      ...inference,
+      truncated,
+    }
+    this.observations.set(request.analysisId, {
+      sessionId: request.sessionId,
+      observation: wrapped.text,
+      source,
+    })
+    return {
+      analysisId: request.analysisId,
+      ...inference,
+      observation: wrapped.text,
+      truncated,
+    }
+  }
+
+  /** Inspect images without creating a user Prompt or requiring a multimodal main model. */
+  async inspect(request: VisionInspectionRequest, signal?: AbortSignal): Promise<VisionInspection> {
+    this.assertImages(request.images)
+    const config = this.config
+    const { rawObservation, ...inference } = await this.runInference(request, config, signal)
+    const wrapped = wrapToolObservation(
+      rawObservation,
+      inference.provider,
+      inference.model,
+      config.maxObservationChars,
+    )
+    return {
+      ...inference,
+      observation: wrapped.text,
+      truncated: inference.truncated || wrapped.truncated,
+    }
+  }
+
+  private async runInference(
+    request: VisionInspectionRequest,
+    config: VisionConfig,
+    signal?: AbortSignal,
+  ): Promise<VisionInference> {
     if (config.mode === 'disabled') throw new VisionError('VISION_DISABLED', 'Vision is disabled. Open /config vision to enable it.')
-    const status = await this.status(signal)
+    const status = await this.resolveStatus(config, signal)
     if (!status.proxyRegistered) {
       throw new VisionError('PROXY_UNAVAILABLE', `Vision proxy ${config.proxyProvider}/${config.proxyModel} is unavailable.`)
     }
@@ -267,35 +340,21 @@ export class VisionService extends Service {
     if (finish.kind === 'error' || finish.kind === 'aborted') throw this.failureError(finish.failure)
     const raw = textOf(assembler.blocks())
     if (raw === '') throw new VisionError('EMPTY_OBSERVATION', 'The Vision model returned no readable observation.')
-    const wrapped = wrapObservation(raw, info.provider, info.id, config.maxObservationChars)
-    const truncated = wrapped.truncated || finish.kind === 'max-tokens'
     const durationMs = Date.now() - startedAt
-    const source: VisionEvidenceMetadata = {
-      analysisId: request.analysisId,
-      provider: info.provider,
-      model: info.id,
-      attachments: saved,
-      durationMs,
-      finishReason: finish.kind,
-      truncated,
-      ...assembler.usage === undefined ? {} : { usage: assembler.usage },
-    }
-    this.observations.set(request.analysisId, {
-      sessionId: request.sessionId,
-      observation: wrapped.text,
-      source,
-    })
     return {
-      analysisId: request.analysisId,
       provider: info.provider,
       model: info.id,
-      observation: wrapped.text,
+      rawObservation: raw,
       attachments: saved,
       durationMs,
-      truncated,
       finishReason: finish.kind,
+      truncated: finish.kind === 'max-tokens',
       ...assembler.usage === undefined ? {} : { usage: assembler.usage },
     }
+  }
+
+  private assertImages(images: readonly VisionImageInput[]): void {
+    if (images.length === 0) throw new VisionError('NO_IMAGES', 'Vision analysis requires at least one image.')
   }
 
   private async validateBatch(images: readonly VisionImageInput[]): Promise<void> {

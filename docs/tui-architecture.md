@@ -159,10 +159,16 @@ reducing the number of visible files.
   while owning workspace `@path` discovery through one abortable path-source
   port. It inserts a visible workspace-relative reference; the system-prompt
   contract tells the Agent to resolve and inspect that path instead of copying
-  hidden file contents into the durable user message.
+  hidden file contents into the durable user message. Raster references use
+  native `read_image` on image-capable routes or proxy-backed `inspect_image`
+  when the active model is text-only.
 - `ComposerEditorFrame` is the presentation boundary around `pi-tui`'s Editor.
   It places autocomplete above the bottom-anchored input frame and keeps image
   markers inside that frame, so changing candidate count cannot move the input.
+- `VisionService` owns one attachment-validated proxy inference core for both
+  composer admission and the workspace-contained `inspect_image` Agent tool.
+  Tool inspection returns bounded untrusted text and never adds image blocks to
+  a text-only main-model route.
 - Session-control selectors derive separate Config rows (model, reasoning,
   Permission, Plan, keymap, and TUI display) and Task rows (Goal, Todos, and runtime)
   without retaining a second copy of Host state.

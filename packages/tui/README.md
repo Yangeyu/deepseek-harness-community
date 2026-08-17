@@ -171,7 +171,9 @@ typing to filter, use `↑`/`↓` to move, and confirm with `Enter` or `Tab`. Fi
 are inserted as `@relative/path `; directories remain open-ended so another
 path segment can be selected. Paths containing spaces are quoted. The visible
 reference stays in the prompt, and the Agent resolves it against the active
-working directory before reading it with workspace tools. The picker grows
+working directory before reading it with workspace tools. Raster image
+references use native `read_image` when the active model accepts images, or the
+proxy-backed `inspect_image` fallback on text-only routes. The picker grows
 upward so filtering candidates does not move the input frame or footer.
 
 The first fixed-footer row intentionally shows only the active provider/model
@@ -223,6 +225,12 @@ natively. A text-only or unknown route uses the configured Vision proxy and
 receives only a bounded, source-attributed, untrusted observation. Missing
 capability, credentials, validation, or provider success retains both the text
 and drafts instead of silently sending an image-less prompt.
+
+The same proxy is available to the Agent as `inspect_image`. It reads only a
+regular PNG, JPEG, WebP, or GIF whose resolved identity remains inside the
+active workspace, enforces the attachment byte and media limits, and returns
+text-only untrusted evidence. This makes `@image-path` references and image
+paths discovered in files usable even when the active model is text-only.
 
 For the recommended Alibaba Cloud Bailian route:
 

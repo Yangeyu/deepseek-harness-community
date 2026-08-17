@@ -1,4 +1,11 @@
-import { Editor, stripTerminalSequences, type Terminal } from '@earendil-works/pi-tui'
+import {
+  Editor,
+  stripTerminalSequences,
+  type Component,
+  type OverlayHandle,
+  type OverlayOptions,
+  type Terminal,
+} from '@earendil-works/pi-tui'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -63,6 +70,7 @@ interface AppInternals {
   tui: {
     requestRender(): void
     hasOverlay(): boolean
+    showOverlay(component: Component, options?: OverlayOptions): OverlayHandle
     getFocusedComponent(): { handleInput?(data: string): void } | null
     beginTextSelection(x: number, y: number): boolean
     updateTextSelection(x: number, y: number): boolean
@@ -382,11 +390,18 @@ describe('TuiApplication input routing', () => {
     const internals = app as unknown as AppInternals
     const prompt = approvalPrompt()
     const scrollTranscript = vi.fn(() => true)
+    const showOverlay = vi.spyOn(internals.tui, 'showOverlay')
     internals.layout.scrollTranscript = scrollTranscript
     internals.transcript.handlePointer = vi.fn(() => false)
 
     internals.requestApproval(prompt)
     expect(internals.tui.hasOverlay()).toBe(true)
+    expect(showOverlay).toHaveBeenCalledWith(expect.anything(), {
+      anchor: 'bottom-center',
+      width: '100%',
+      maxHeight: '40%',
+      margin: { left: 1, right: 1, bottom: 1 },
+    })
 
     expect(internals.handleGlobalInput('\u001b[<64;8;9M')).toEqual({ consume: true })
     expect(scrollTranscript).toHaveBeenCalledWith(-3)
@@ -1065,6 +1080,19 @@ describe('TuiApplication input routing', () => {
     expect(prompt).toHaveBeenCalledOnce()
     expect(prompt).toHaveBeenCalledWith('/review focus on races', 'queue')
     expect(internals.editor.getExpandedText()).toBe('/control')
+  })
+
+  it('submits a leading Unix absolute path as ordinary prompt text', async () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const prompt = vi.spyOn(internals.controller, 'prompt').mockResolvedValue()
+    const text = '/Users/yinfinity/Workplace/project/README.md 在这个文件随便写一句话'
+
+    await internals.submit(text)
+
+    expect(prompt).toHaveBeenCalledOnce()
+    expect(prompt).toHaveBeenCalledWith(text, 'queue')
+    expect(internals.editor.getExpandedText()).toBe('')
   })
 
   it('prints a copyable session resume command after restoring the terminal', async () => {

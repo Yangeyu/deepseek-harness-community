@@ -1880,7 +1880,12 @@ export class TuiApplication implements TuiControllerSink {
       () => { this.cancelActiveInteraction() },
       prompt.reason === undefined ? guidance : `${prompt.reason}\n${guidance}`,
     )
-    const handle = this.tui.showOverlay(dialog, { width: '80%', maxHeight: '70%', margin: 1 })
+    const handle = this.tui.showOverlay(dialog, {
+      anchor: 'bottom-center',
+      width: '100%',
+      maxHeight: '40%',
+      margin: { left: 1, right: 1, bottom: 1 },
+    })
     this.setInteractionOverlay(key, handle)
   }
 
