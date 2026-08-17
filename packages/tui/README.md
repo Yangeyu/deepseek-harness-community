@@ -9,7 +9,7 @@ outside the upstream Harness `packages/` tree:
 ```text
 Workplace/
 ├── deepseek-harness/            # upstream project
-└── deepseek-harness-community/  # launcher, Memory, and TUI
+└── deepseek-harness-community/  # launcher, providers, services, and TUI
 ```
 
 Keeping upstream and community code separate makes ownership explicit. The
@@ -91,12 +91,19 @@ dsh-tui
 The release pipeline builds verified `dist/` artifacts before packaging, so
 installation does not build this workspace on the target machine. Generated
 artifacts are not committed. The bundle's `cordis.patch.yml` layers the required
-Host services, its bundled `./memory`, `./vision`, and `./web` entries, and the terminal
-entry point over the automatically installed `dsh-base` profile. Library and
-Cordis consumers use the public `@vascent/dsh-tui/tui`,
+Host services, its bundled `./bailian`, `./memory`, `./vision`, and `./web`
+entries, and the terminal entry point over the automatically installed
+`dsh-base` profile. Library and Cordis consumers use the public
+`@vascent/dsh-tui/tui`, `@vascent/dsh-tui/bailian`,
 `@vascent/dsh-tui/memory`, `@vascent/dsh-tui/vision`, and
-`@vascent/dsh-tui/web` subpaths from the same
-installation.
+`@vascent/dsh-tui/web` subpaths from the same installation.
+
+The bundled Bailian route follows the same boundary as mainstream
+OpenAI-compatible providers: `llm-bailian` owns the credential reference,
+complete API root, and served model capabilities, while
+`agent-default-model` selects one registered provider/model pair for new
+sessions. The concrete schema-backed configuration lives in
+[`packages/llm-bailian/README.md`](../llm-bailian/README.md).
 
 ## Develop
 
@@ -439,6 +446,7 @@ commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/attach`,
 
 ```text
 Cordis bundle entry
+  -> Bailian LLM provider (endpoint, credential, common request policy, model capabilities)
   -> file-backed Memory plugin (context, tools, quiet learner, mutations)
   -> Vision plugin (routing, proxy analysis, observation staging, events)
   -> Web plugin (registry-driven search policy + Tavily extraction)

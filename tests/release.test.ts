@@ -11,13 +11,14 @@ interface PackageManifest {
 }
 
 const workspacePackageFiles = [
+  'packages/llm-bailian/package.json',
   'packages/memory/package.json',
   'packages/tui/package.json',
   'packages/vision/package.json',
   'packages/web/package.json',
 ] as const
 
-test('publishes one package with public TUI, Memory, Vision, and Web entry points', async () => {
+test('publishes one package with public TUI, Bailian, Memory, Vision, and Web entry points', async () => {
   const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
   assert.equal(root.name, '@vascent/dsh-tui')
   assert.notEqual(root.private, true)
@@ -26,6 +27,7 @@ test('publishes one package with public TUI, Memory, Vision, and Web entry point
   const expectedExports = {
     '.': './packages/tui/dist/index.js',
     './tui': './packages/tui/dist/index.js',
+    './bailian': './packages/tui/dist/bailian.js',
     './memory': './packages/tui/dist/memory.js',
     './vision': './packages/tui/dist/vision.js',
     './web': './packages/tui/dist/web.js',

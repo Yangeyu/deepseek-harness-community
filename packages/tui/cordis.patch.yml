@@ -48,6 +48,33 @@
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
 
+    # Provider connection and served model capabilities are explicit here;
+    # agent-default-model independently selects one registered model.
+    - id: llm-bailian
+      name: '@vascent/deepseek-harness-tui/bailian'
+      config:
+        baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+        models:
+          - id: deepseek-v4-pro-0813
+            contextWindow: 1000000
+            maxTokens: 393216
+            input:
+              - text
+            reasoning:
+              defaultEffort: high
+              efforts:
+                - low
+                - high
+                - max
+          - id: qwen3.7-plus
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+              - image
+            reasoning:
+              defaultEffort: high
+
     - id: memory
       name: '@vascent/deepseek-harness-tui/memory'
       config:

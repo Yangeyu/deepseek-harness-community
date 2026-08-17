@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/bailian.ts', 'src/memory.ts', 'src/vision.ts', 'src/web.ts'],
+  entry: ['src/index.ts'],
   outDir: 'dist',
   format: ['esm'],
   platform: 'node',
@@ -13,25 +13,13 @@ export default defineConfig({
     onlyBundle: false,
     neverBundle: [
       '@deepseek-ai/cordis',
-      '@deepseek-ai/dsh-agent',
       '@deepseek-ai/dsh-attachment',
       '@deepseek-ai/dsh-credentials',
-      '@deepseek-ai/dsh-host-apiproxy',
       '@deepseek-ai/dsh-launch-environment',
       '@deepseek-ai/dsh-llm',
       '@deepseek-ai/dsh-llm-pi-ai',
-      '@deepseek-ai/dsh-permission-presets',
-      '@deepseek-ai/dsh-session',
-      '@deepseek-ai/dsh-session-projection',
       '@deepseek-ai/dsh-settings',
-      '@deepseek-ai/dsh-system-prompt',
-      '@deepseek-ai/dsh-token-meter',
-      '@deepseek-ai/dsh-tools',
-      '@deepseek-ai/dsh-web',
-      '@deepseek-ai/dsh-web-search-deepseek',
-      '@earendil-works/pi-tui',
       '@earendil-works/pi-ai',
-      '@vscode/ripgrep',
     ],
   },
 })

@@ -8,6 +8,7 @@ This repository keeps the upstream Harness checkout separate and owns the integr
 deepseek-harness-community/
 ├── bin/              # minimal JavaScript executable shims
 ├── src/launcher.ts   # typed profile setup and launcher implementation
+├── packages/llm-bailian/ # first-class Bailian provider and model policy
 ├── packages/memory/  # Markdown-backed project memory plugin
 ├── packages/vision/  # image routing, proxy analysis, and staged evidence
 ├── packages/web/     # selectable Web search policy and page-reading providers
@@ -28,7 +29,7 @@ Then start the TUI from any project directory:
 dsh-tui
 ```
 
-The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DEEPSEEK_API_KEY` before beginning a model-backed session. `web_search` automatically uses Tavily when `TAVILY_API_KEY` is configured and otherwise uses DeepSeek Official; `web_extract` uses Tavily. `/config web` changes the persisted search policy and reports every provider without displaying credential values. For image understanding with a text-only DeepSeek route, set `DASHSCOPE_API_KEY`, open `/config vision`, and confirm the recommended `qwen3.7-plus` route. `DSH_HOME` continues to override the Harness data directory.
+The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DASHSCOPE_API_KEY` for the bundled Bailian route or `DEEPSEEK_API_KEY` for DeepSeek Official before beginning a model-backed session. `web_search` automatically uses Tavily when `TAVILY_API_KEY` is configured and otherwise uses DeepSeek Official; `web_extract` uses Tavily. `/config web` changes the persisted search policy and reports every provider without displaying credential values. For image understanding with a text-only route, open `/config vision` and confirm the recommended `qwen3.7-plus` proxy. `DSH_HOME` continues to override the Harness data directory.
 
 ## Command line
 
@@ -66,6 +67,10 @@ All three version aliases print the root package version as `dsh-tui <version>`.
   provides the launcher, bundled profile, and public TUI entry point.
 - [`packages/tui`](packages/tui) owns the public terminal-client API and Cordis
   bundle implementation exposed as `@vascent/dsh-tui/tui`.
+- [`packages/llm-bailian`](packages/llm-bailian) owns the first-class Bailian
+  provider, endpoint validation, credential reference, common request
+  policy, and schema-backed model capabilities exposed as
+  `@vascent/dsh-tui/bailian`.
 - [`packages/memory`](packages/memory) owns the public file-backed Memory API
   exposed as `@vascent/dsh-tui/memory`.
 - [`packages/vision`](packages/vision) owns the public, terminal-independent
@@ -74,7 +79,7 @@ All three version aliases print the root package version as `dsh-tui <version>`.
   page-extraction adapters exposed as `@vascent/dsh-tui/web`, while official
   Harness packages retain the model-tool contracts.
 
-The four workspaces remain independently owned modules, but their manifests
+The five workspaces remain independently owned modules, but their manifests
 block standalone registry publication. One npm artifact therefore exposes all
 public APIs without creating separate package versions or release pipelines.
 The long-term ownership boundaries and staged design are documented in
@@ -92,7 +97,7 @@ pnpm run check
 pnpm dev
 ```
 
-`pnpm dev` builds the current Memory, Vision, Web, and TUI sources, then launches the local
+`pnpm dev` builds the current Bailian, Memory, Vision, Web, and TUI sources, then launches the local
 bundle through an isolated `tui-dev` profile. It does not use the globally
 installed `dsh-tui` package or modify the regular `tui` profile. Run it from the
 project you want the agent to edit; pass TUI arguments after `--`, for example

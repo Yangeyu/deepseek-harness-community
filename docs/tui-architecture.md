@@ -10,6 +10,7 @@ state.
 Harness Host
   session log · projections · LLM · attachments · commands · tools · persistence
       │
+      ├── Bailian provider (endpoint · credentials · common request policy · model capabilities)
       ├── Vision service (routing · proxy analysis · staged evidence)
       ├── Web service (official registry · community provider adapters)
       │
@@ -102,7 +103,7 @@ reducing the number of visible files.
    are hard boundaries. Returned file Diff evidence remains top-level
    regardless of execution status. Thought, tool, Diff, and Activity summaries
    consume one shared running/completed/failed/interrupted state model.
-12. Memory, Vision, Web, and TUI remain independent implementations but use the same
+12. Bailian, Memory, Vision, Web, and TUI remain independent implementations but use the same
     lifecycle conventions: stable identity, monotonic terminal state, explicit
     recorded boundaries, explicit failure, snapshot-before-notify publication,
     and symmetric cleanup. Domain packages never import terminal lifecycle or
@@ -274,9 +275,10 @@ architecture required to support that sequence.
 - Extend Transcript and Trajectory from that supported `user/message` source
   instead of inventing an out-of-repository session event or retaining a
   second UI-owned result store.
-- Keep provider endpoint, protocol, catalog, and credential references in
-  `dsh-llm-pi-ai`; `/config Vision` selects policy and route without duplicating
-  provider configuration.
+- Keep generic compatible-provider declarations in `dsh-llm-pi-ai`. A
+  first-class provider package owns provider-specific endpoint, credential,
+  configured model capabilities, and wire-parameter policy; `/config Vision`
+  selects policy and route without duplicating provider configuration.
 - Keep key sequences in `input/keymap.ts`, durable preference access behind a
   narrow application gateway, and selection UI in `presentation/config`.
   `TuiApplication` handles semantic actions only. Standard and Legacy are data

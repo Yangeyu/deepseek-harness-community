@@ -34,6 +34,10 @@
       "types": "./packages/tui/dist/memory.d.ts",
       "default": "./packages/tui/dist/memory.js"
     },
+    "./bailian": {
+      "types": "./packages/tui/dist/bailian.d.ts",
+      "default": "./packages/tui/dist/bailian.js"
+    },
     "./vision": {
       "types": "./packages/tui/dist/vision.d.ts",
       "default": "./packages/tui/dist/vision.js"
@@ -70,7 +74,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-vision run build && pnpm --filter @vascent/deepseek-harness-web run build && pnpm --filter @vascent/deepseek-harness-tui run build && tsdown",
+    "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-llm-bailian run build && pnpm --filter @vascent/deepseek-harness-vision run build && pnpm --filter @vascent/deepseek-harness-web run build && pnpm --filter @vascent/deepseek-harness-tui run build && tsdown",
     "lint": "oxlint --deny-warnings src tests tsdown.config.ts && pnpm --filter './packages/*' run lint",
     "typecheck": "tsc --noEmit && pnpm --filter './packages/*' run typecheck",
     "test": "vitest run tests/launcher.test.ts tests/release.test.ts && pnpm --filter './packages/*' run test",
@@ -97,6 +101,7 @@
     "@deepseek-ai/dsh-goal": "0.1.0-rc.6",
     "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.1.0-rc.6",
     "@deepseek-ai/dsh-permission-presets": "0.1.0-rc.6",
     "@deepseek-ai/dsh-plan-mode": "0.1.0-rc.6",
     "@deepseek-ai/dsh-session": "0.1.0-rc.6",
@@ -115,6 +120,7 @@
     "@deepseek-ai/dsh-web-search-deepseek": "0.1.0-rc.6",
     "@deepseek-ai/dsh-workspace": "0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1",
+    "@earendil-works/pi-ai": "^0.82.1",
     "@earendil-works/pi-tui": "^0.84.2",
     "@vscode/ripgrep": "^1.18.0",
     "cli-highlight": "^2.1.11",

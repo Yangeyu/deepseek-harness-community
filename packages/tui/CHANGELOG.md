@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Add a first-class Alibaba Cloud Bailian provider with source-owned endpoint,
+  credential, and common request policy plus schema-backed per-model
+  capabilities. DeepSeek V4 exposes reasoning levels through
+  `max`, while DashScope-compatible prompts use `system` rather than the
+  unsupported `developer` role.
 - Remember successful user-selected Permission changes as the official default
   for newly created sessions while keeping resumed sessions and startup
   overrides session-specific.
