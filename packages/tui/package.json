@@ -80,6 +80,7 @@
     "@deepseek-ai/dsh-workspace": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/schemastery": "^3.18.1",
     "@earendil-works/pi-tui": "^0.84.2",
+    "@vscode/ripgrep": "^1.18.0",
     "cli-highlight": "^2.1.11",
     "diff": "^9.0.0",
     "yaml": "^2.4.2"

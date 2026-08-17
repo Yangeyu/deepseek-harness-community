@@ -1,30 +1,8 @@
-import { stripTerminalSequences, visibleWidth, type Component } from '@earendil-works/pi-tui'
+import { stripTerminalSequences } from '@earendil-works/pi-tui'
 import { describe, expect, it, vi } from 'vitest'
 import type { AttachmentDraft } from '../../src/application/attachments/drafts.ts'
-import { AttachmentComposerFrame, AttachmentRail } from '../../src/presentation/attachments.ts'
+import { AttachmentRail } from '../../src/presentation/attachments.ts'
 import { createTheme } from '../../src/presentation/theme.ts'
-
-class FakeEditor implements Component {
-  invalidate(): void {}
-
-  render(width: number): string[] {
-    return [
-      '─'.repeat(width),
-      ` draft${' '.repeat(Math.max(0, width - 6))}`,
-      '─'.repeat(width),
-    ]
-  }
-}
-
-function draft(id: string): AttachmentDraft {
-  return {
-    id,
-    name: `${id}.png`,
-    mediaType: 'image/png',
-    data: Uint8Array.from([1]),
-    source: 'clipboard',
-  }
-}
 
 function railDraft(index: number): AttachmentDraft {
   return {
@@ -62,28 +40,5 @@ describe('AttachmentRail', () => {
 
     expect(remove).toHaveBeenCalledWith(1)
     expect(exit).toHaveBeenCalledOnce()
-  })
-})
-
-describe('AttachmentComposerFrame', () => {
-  it('renders structured image markers inside the Editor border', () => {
-    const frame = new AttachmentComposerFrame(new FakeEditor(), createTheme(false))
-    frame.setDrafts([draft('one'), draft('two')])
-
-    const output = frame.render(48)
-
-    expect(output[1]).toContain('[Image #1] [Image #2]')
-    expect(output[1]).toContain('draft')
-    expect(output.every(line => visibleWidth(line) === 48)).toBe(true)
-  })
-
-  it('delegates to the Editor without reserving marker width when there are no images', () => {
-    const frame = new AttachmentComposerFrame(new FakeEditor(), createTheme(false))
-
-    expect(frame.render(24)).toEqual([
-      '─'.repeat(24),
-      ` draft${' '.repeat(18)}`,
-      '─'.repeat(24),
-    ])
   })
 })

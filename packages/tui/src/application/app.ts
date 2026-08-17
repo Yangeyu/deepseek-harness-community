@@ -1,5 +1,4 @@
 import {
-  CombinedAutocompleteProvider,
   Editor,
   Key,
   ProcessTerminal,
@@ -112,10 +111,8 @@ import {
   AttachmentCoordinator,
   type VisionGateway,
 } from './attachments/coordinator.ts'
-import {
-  AttachmentComposerFrame,
-  AttachmentRail,
-} from '../presentation/attachments.ts'
+import { AttachmentRail } from '../presentation/attachments.ts'
+import { ComposerEditorFrame } from '../presentation/composer-editor.ts'
 import { VisionConfigView } from '../presentation/config/vision-view.ts'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
 import { KeymapView } from '../presentation/config/keymap-view.ts'
@@ -139,6 +136,11 @@ import {
   createClipboardTextWriter,
   type ClipboardTextWriter,
 } from './text-clipboard.ts'
+import {
+  ComposerAutocompleteProvider,
+  listWorkspacePaths,
+  type WorkspacePathSource,
+} from './autocomplete.ts'
 
 function isWorking(state: Readonly<TuiState>): boolean {
   return composerExecutionActivity(state) !== undefined
@@ -168,6 +170,7 @@ export interface TuiApplicationDependencies {
   clipboardImage?: ClipboardImageLoader
   clipboardText?: ClipboardTextWriter
   attachments?: PromptAttachmentReader
+  workspacePaths?: WorkspacePathSource
   terminal?: Terminal
 }
 
@@ -201,7 +204,7 @@ export class TuiApplication implements TuiControllerSink {
   private readonly editor: Editor
   private readonly transcript: TranscriptComponent
   private readonly attachmentRail: AttachmentRail
-  private readonly attachmentComposer: AttachmentComposerFrame
+  private readonly composerEditor: ComposerEditorFrame
   private readonly attachmentDrafts = new AttachmentDraftStore()
   private readonly attachmentCoordinator: AttachmentCoordinator | undefined
   private readonly vision: VisionGateway | undefined
@@ -245,6 +248,7 @@ export class TuiApplication implements TuiControllerSink {
   private readonly clipboardImage: ClipboardImageLoader
   private readonly clipboardText: ClipboardTextWriter
   private readonly promptAttachmentReader: PromptAttachmentReader | undefined
+  private readonly workspacePaths: WorkspacePathSource
   private clipboardPastePending = false
   private readonly rewindTransaction: RewindTransaction
 
@@ -264,6 +268,7 @@ export class TuiApplication implements TuiControllerSink {
       clipboardImage = imageDraftFromClipboard,
       clipboardText,
       attachments,
+      workspacePaths = listWorkspacePaths,
       terminal = new ProcessTerminal(),
     } = dependencies
     this.terminal = terminal
@@ -271,6 +276,7 @@ export class TuiApplication implements TuiControllerSink {
     this.clipboardImage = clipboardImage
     this.clipboardText = clipboardText ?? createClipboardTextWriter(terminal)
     this.promptAttachmentReader = attachments
+    this.workspacePaths = workspacePaths
     this.theme = createTheme(config.color)
     this.tui = new SelectableMainScreen(this.terminal, config.showHardwareCursor)
     this.controller = new HarnessController(api, this, config.cwd, config.historyMessages)
@@ -302,7 +308,7 @@ export class TuiApplication implements TuiControllerSink {
       ? undefined
       : new AttachmentCoordinator(this.attachmentDrafts, vision)
     this.editor = new Editor(this.tui, this.theme.editor, { paddingX: 1, autocompleteMaxVisible: 10 })
-    this.attachmentComposer = new AttachmentComposerFrame(this.editor, this.theme)
+    this.composerEditor = new ComposerEditorFrame(this.editor, this.theme)
     this.commands = new TerminalCommandDirectory(
       this.localCommands(),
       commandSource,
@@ -319,10 +325,7 @@ export class TuiApplication implements TuiControllerSink {
       { open: (document, created) => this.openSkillDocument(document, created) },
       message => this.controller.notice(message),
     )
-    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(
-      slashAutocompleteRows(this.slashCandidates()),
-      config.cwd,
-    ))
+    this.editor.setAutocompleteProvider(this.createAutocompleteProvider(config.cwd))
     this.autocompleteCwd = config.cwd
     this.editor.onChange = text => {
       if (!this.composerInput.observeEditorText(text) || this.disposed) return
@@ -338,7 +341,7 @@ export class TuiApplication implements TuiControllerSink {
       this.header,
       this.transcript,
       this.status,
-      this.attachmentComposer,
+      this.composerEditor,
       this.footer,
       () => this.terminal.rows,
       this.attachmentRail,
@@ -357,7 +360,7 @@ export class TuiApplication implements TuiControllerSink {
         this.updateStatus(this.controller.current)
       }
       this.attachmentRail.setDrafts(drafts)
-      this.attachmentComposer.setDrafts(drafts)
+      this.composerEditor.setDrafts(drafts)
       if (drafts.length === 0 && this.attachmentRailFocused) this.leaveAttachmentRail()
       this.tui.requestRender()
     })
@@ -874,12 +877,17 @@ export class TuiApplication implements TuiControllerSink {
 
   private refreshAutocomplete(cwd = this.controller.current.cwd, requestRender = true): void {
     if (this.disposed) return
-    this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(
-      slashAutocompleteRows(this.slashCandidates()),
-      cwd,
-    ))
+    this.editor.setAutocompleteProvider(this.createAutocompleteProvider(cwd))
     this.autocompleteCwd = cwd
     if (requestRender) this.tui.requestRender()
+  }
+
+  private createAutocompleteProvider(cwd: string): ComposerAutocompleteProvider {
+    return new ComposerAutocompleteProvider(
+      slashAutocompleteRows(this.slashCandidates()),
+      cwd,
+      this.workspacePaths,
+    )
   }
 
   private slashCandidates() {

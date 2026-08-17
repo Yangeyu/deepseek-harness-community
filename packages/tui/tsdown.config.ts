@@ -25,6 +25,7 @@ export default defineConfig({
       '@deepseek-ai/dsh-token-meter',
       '@deepseek-ai/dsh-tools',
       '@earendil-works/pi-tui',
+      '@vscode/ripgrep',
     ],
   },
 })

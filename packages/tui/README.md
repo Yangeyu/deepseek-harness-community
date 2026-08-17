@@ -49,6 +49,8 @@ The initial terminal client supports:
 - reconnect and history resynchronization;
 - merged discovery of TUI-local interactions and agent-scoped Harness commands,
   with one catalog driving both autocomplete and `/help`;
+- fuzzy `@path` references for ignored-aware workspace files and directories,
+  with quoted insertion for paths containing spaces;
 - a scoped `/config` center for model, reasoning, permissions, Plan Mode,
   Vision, and terminal display preferences, plus a separate `/task` surface for durable
   Goals, read-only Todos, and runtime actions;
@@ -134,6 +136,7 @@ After a normal exit, the restored shell prints a copyable
 | `Ctrl+V` | Attach the current macOS clipboard image |
 | `Alt+A` | Focus and manage the attachment rail |
 | `Alt+Backspace` | Remove the latest image draft |
+| `@` | Find and insert a file or directory reference from the active workspace |
 | `Ctrl+C` | Cancel while running; exit while idle |
 | `Ctrl+O` | Toggle all Activity details |
 | `Shift+Tab` | Cycle supported reasoning efforts |
@@ -147,6 +150,14 @@ while preserving `Alt+Enter` for multiline input. The Legacy preset restores
 `Alt+Enter` queueing only while a turn is running, so idle multiline input
 remains available. Keymap resolution is context-aware; idle `Tab` still belongs
 to the editor and autocomplete.
+
+Typing `@` at a token boundary opens a fuzzy workspace-path picker. Continue
+typing to filter, use `↑`/`↓` to move, and confirm with `Enter` or `Tab`. Files
+are inserted as `@relative/path `; directories remain open-ended so another
+path segment can be selected. Paths containing spaces are quoted. The visible
+reference stays in the prompt, and the Agent resolves it against the active
+working directory before reading it with workspace tools. The picker grows
+upward so filtering candidates does not move the input frame or footer.
 
 The first fixed-footer row intentionally shows only the active provider/model
 and reasoning effort. Shortcut discovery belongs to `/keymap`; the existing

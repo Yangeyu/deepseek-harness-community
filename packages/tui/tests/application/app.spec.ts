@@ -1,4 +1,4 @@
-import { Editor, type Terminal } from '@earendil-works/pi-tui'
+import { Editor, stripTerminalSequences, type Terminal } from '@earendil-works/pi-tui'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -36,14 +36,17 @@ interface AppInternals {
   }
   editor: Editor
   attachmentDrafts: { snapshot: readonly AttachmentDraft[] }
-  attachmentComposer: { render(width: number): string[] }
+  composerEditor: { render(width: number): string[] }
   footer: { render(width: number): string[] }
   status: { render(width: number): string[] }
   transcript: {
     render(width: number): string[]
     handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean
   }
-  layout: { transcriptRowAt(screenRow: number, viewportTop: number): number }
+  layout: {
+    render(width: number): string[]
+    transcriptRowAt(screenRow: number, viewportTop: number): number
+  }
   trajectoryView?: { handleInput(data: string): void; render(width: number): string[] }
   configView?: { handleInput(data: string): void; render(width: number): string[] }
   keymapView?: { handleInput(data: string): void; render(width: number): string[] }
@@ -161,6 +164,52 @@ afterEach(() => {
 })
 
 describe('TuiApplication input routing', () => {
+  it('opens and applies workspace file suggestions for @ input', async () => {
+    const workspacePaths = vi.fn(async () => [
+      { path: 'README.md', isDirectory: false },
+      { path: 'src/read-model.ts', isDirectory: false },
+    ])
+    const app = application(undefined, undefined, undefined, undefined, undefined, { workspacePaths })
+    const internals = app as unknown as AppInternals
+
+    for (const character of '@rea') internals.editor.handleInput(character)
+    const before = internals.layout.render(80).map(stripTerminalSequences)
+    const inputRow = before.findIndex(line => line.includes('@rea'))
+
+    await vi.waitFor(() => { expect(internals.editor.isShowingAutocomplete()).toBe(true) })
+    const after = internals.layout.render(80).map(stripTerminalSequences)
+    const suggestionRow = after.findIndex(line => line.includes('README.md'))
+    const inputRowWithSuggestions = after.findIndex(line => line.includes('@rea'))
+
+    expect(inputRow).toBeGreaterThanOrEqual(0)
+    expect(inputRowWithSuggestions).toBe(inputRow)
+    expect(suggestionRow).toBeGreaterThanOrEqual(0)
+    expect(suggestionRow).toBeLessThan(inputRowWithSuggestions)
+
+    internals.editor.handleInput('\r')
+    expect(internals.editor.getText()).toBe('@README.md ')
+    expect(workspacePaths).toHaveBeenCalledWith('/workspace', expect.any(AbortSignal))
+  })
+
+  it('keeps slash suggestions above the same bottom-anchored input row', async () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+
+    for (const character of '/he') internals.editor.handleInput(character)
+    const before = internals.layout.render(80).map(stripTerminalSequences)
+    const inputRow = before.findIndex(line => line.includes('/he'))
+
+    await vi.waitFor(() => { expect(internals.editor.isShowingAutocomplete()).toBe(true) })
+    const after = internals.layout.render(80).map(stripTerminalSequences)
+    const suggestionRow = after.findIndex(line => line.includes('help'))
+    const inputRowWithSuggestions = after.findIndex(line => line.includes('/he'))
+
+    expect(inputRow).toBeGreaterThanOrEqual(0)
+    expect(inputRowWithSuggestions).toBe(inputRow)
+    expect(suggestionRow).toBeGreaterThanOrEqual(0)
+    expect(suggestionRow).toBeLessThan(inputRowWithSuggestions)
+  })
+
   it('copies a dragged primary-button selection without dispatching a block click', async () => {
     const clipboardText = vi.fn(async () => {})
     const app = application(undefined, undefined, undefined, undefined, undefined, { clipboardText })
@@ -254,7 +303,7 @@ describe('TuiApplication input routing', () => {
     await Promise.all([first, second])
 
     expect(internals.attachmentDrafts.snapshot).toHaveLength(1)
-    expect(internals.attachmentComposer.render(80).join('\n')).toContain('[Image #1]')
+    expect(internals.composerEditor.render(80).join('\n')).toContain('[Image #1]')
   })
 
   it('treats the leading image marker as one removable Composer attachment', async () => {
@@ -281,7 +330,7 @@ describe('TuiApplication input routing', () => {
 
     expect(internals.handleGlobalInput('\u007F')).toEqual({ consume: true })
     expect(internals.attachmentDrafts.snapshot).toEqual([])
-    expect(internals.attachmentComposer.render(80).join('\n')).not.toContain('[Image #1]')
+    expect(internals.composerEditor.render(80).join('\n')).not.toContain('[Image #1]')
   })
 
   it('restores complete Prompt text and durable images after a successful Rewind', async () => {
@@ -500,12 +549,12 @@ describe('TuiApplication input routing', () => {
     expect(internals.handleGlobalInput('\u001b')).toEqual({ consume: true })
     expect(internals.editor.getExpandedText()).toBe('')
     expect(internals.attachmentDrafts.snapshot).toEqual([])
-    expect(internals.attachmentComposer.render(80).join('\n')).not.toContain('[Image #1]')
+    expect(internals.composerEditor.render(80).join('\n')).not.toContain('[Image #1]')
 
     expect(internals.handleGlobalInput('\u001b[A')).toEqual({ consume: true })
     expect(internals.editor.getExpandedText()).toBe('inspect this')
     expect(internals.attachmentDrafts.snapshot).toEqual([attachment])
-    expect(internals.attachmentComposer.render(80).join('\n')).toContain('[Image #1]')
+    expect(internals.composerEditor.render(80).join('\n')).toContain('[Image #1]')
 
     expect(internals.handleGlobalInput('\u001b[B')).toEqual({ consume: true })
     expect(internals.editor.getExpandedText()).toBe('')

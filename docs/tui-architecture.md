@@ -141,6 +141,14 @@ reducing the number of visible files.
   effective agent-scoped `ctx.commands` descriptors. Help and autocomplete read
   the same descriptor list, while a narrow application port executes resolved
   Host commands and supports bare-invocation UI decorations.
+- `ComposerAutocompleteProvider` keeps slash completion delegated to `pi-tui`
+  while owning workspace `@path` discovery through one abortable path-source
+  port. It inserts a visible workspace-relative reference; the system-prompt
+  contract tells the Agent to resolve and inspect that path instead of copying
+  hidden file contents into the durable user message.
+- `ComposerEditorFrame` is the presentation boundary around `pi-tui`'s Editor.
+  It places autocomplete above the bottom-anchored input frame and keeps image
+  markers inside that frame, so changing candidate count cannot move the input.
 - Session-control selectors derive separate Config rows (model, reasoning,
   Permission, Plan, keymap, and TUI display) and Task rows (Goal, Todos, and runtime)
   without retaining a second copy of Host state.

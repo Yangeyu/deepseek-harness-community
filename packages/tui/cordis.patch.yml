@@ -6,6 +6,8 @@
   config:
     persona: >-
       You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
+      Tokens written as @path or @"path with spaces" are explicit file or directory references relative to that working directory;
+      inspect the referenced paths with workspace tools before answering and never infer their contents from the path alone.
 
 - id: hmr
   disabled: true

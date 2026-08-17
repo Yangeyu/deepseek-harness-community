@@ -101,6 +101,9 @@ importers:
       '@earendil-works/pi-tui':
         specifier: ^0.84.2
         version: 0.84.2
+      '@vscode/ripgrep':
+        specifier: ^1.18.0
+        version: 1.18.0
       cli-highlight:
         specifier: ^2.1.11
         version: 2.1.11
@@ -241,6 +244,9 @@ importers:
       '@earendil-works/pi-tui':
         specifier: ^0.84.2
         version: 0.84.2
+      '@vscode/ripgrep':
+        specifier: ^1.18.0
+        version: 1.18.0
       cli-highlight:
         specifier: ^2.1.11
         version: 2.1.11
