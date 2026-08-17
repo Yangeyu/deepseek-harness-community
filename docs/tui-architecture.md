@@ -169,10 +169,12 @@ reducing the number of visible files.
 - `ComposerEditorFrame` is the presentation boundary around `pi-tui`'s Editor.
   It places autocomplete above the bottom-anchored input frame and keeps image
   markers inside that frame, so changing candidate count cannot move the input.
-- `ComposerAnchoredLayout` frames every editor-replacing surface as the same
-  bounded bottom dock. Approval uses a compact decision component inside that
-  frame; lifecycle ownership remains in the interaction queue rather than in
-  presentation-specific overlays.
+- `ComposerAnchoredLayout` owns one discriminated active-surface contract.
+  `readable` surfaces replace the editor with a bounded bottom frame for
+  approvals, Rewind, and configuration; `workspace` surfaces replace the whole
+  viewport and receive every available content column. Framing, replacement,
+  restoration, and focus lifecycle stay shared without coupling workspace
+  geometry to decision-card reading width.
 - `VisionService` owns one attachment-validated proxy inference core for both
   composer admission and the workspace-contained `inspect_image` Agent tool.
   Tool inspection returns bounded untrusted text and never adds image blocks to
@@ -211,6 +213,11 @@ reducing the number of visible files.
   each other's models.
   `TranscriptComponent` paints and interacts with those items, while
   `TrajectoryView` provides the diagnostic hierarchy. None owns persistence.
+  Trajectory records keep a Tool's callable name separate from its operation
+  title; one presentation projection then orders ledger identity, detail heading,
+  and Summary consistently. One ledger-row painter owns focus for every record
+  kind, and the shared focus theme preserves its background across nested ANSI
+  styles and truncation resets.
 - `rewind/contracts` is independent of Cordis, Memory, Node, and pi-tui.
   The injected `RewindConversationHistory` rebuilds Prompt checkpoints from the
   active Session log. `rewind/domain` owns only the bounded reversible-effect

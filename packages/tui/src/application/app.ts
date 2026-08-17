@@ -1038,7 +1038,7 @@ export class TuiApplication implements TuiControllerSink {
     const close = (): void => {
       if (this.trajectoryView === undefined) return
       this.trajectoryView = undefined
-      this.layout.setComposerOverride(undefined)
+      this.layout.setActiveSurface(undefined)
       this.composerModalActive = false
       this.tui.setFocus(this.editor)
       this.tui.requestRender()
@@ -1054,7 +1054,7 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.trajectoryView = trajectory
     this.composerModalActive = true
-    this.layout.setComposerOverride(trajectory)
+    this.layout.setActiveSurface({ kind: 'workspace', component: trajectory })
     this.tui.setFocus(trajectory)
     this.tui.requestRender()
   }
@@ -1088,7 +1088,7 @@ export class TuiApplication implements TuiControllerSink {
     const close = (): void => {
       if (this.configView === undefined) return
       this.configView = undefined
-      this.layout.setComposerOverride(undefined)
+      this.layout.setActiveSurface(undefined)
       this.composerModalActive = false
       this.tui.setFocus(this.editor)
       this.tui.requestRender()
@@ -1125,7 +1125,7 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.configView = view
     this.composerModalActive = true
-    this.layout.setComposerOverride(view)
+    this.layout.setActiveSurface({ kind: 'readable', component: view })
     this.tui.setFocus(view)
     this.tui.requestRender()
     if ((initialStage === 'root' || initialStage === 'reasoning')
@@ -1147,7 +1147,7 @@ export class TuiApplication implements TuiControllerSink {
     const close = (): void => {
       if (this.visionConfigView === undefined) return
       this.visionConfigView = undefined
-      this.layout.setComposerOverride(undefined)
+      this.layout.setActiveSurface(undefined)
       this.composerModalActive = false
       this.tui.setFocus(this.editor)
       this.tui.requestRender()
@@ -1172,7 +1172,7 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.visionConfigView = view
     this.composerModalActive = true
-    this.layout.setComposerOverride(view)
+    this.layout.setActiveSurface({ kind: 'readable', component: view })
     this.tui.setFocus(view)
     this.tui.requestRender()
   }
@@ -1182,7 +1182,7 @@ export class TuiApplication implements TuiControllerSink {
     const close = (): void => {
       if (this.keymapView === undefined) return
       this.keymapView = undefined
-      this.layout.setComposerOverride(undefined)
+      this.layout.setActiveSurface(undefined)
       this.composerModalActive = false
       this.tui.setFocus(this.editor)
       this.tui.requestRender()
@@ -1200,7 +1200,7 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.keymapView = view
     this.composerModalActive = true
-    this.layout.setComposerOverride(view)
+    this.layout.setActiveSurface({ kind: 'readable', component: view })
     this.tui.setFocus(view)
     this.tui.requestRender()
   }
@@ -1214,7 +1214,7 @@ export class TuiApplication implements TuiControllerSink {
     const close = (): void => {
       if (this.webConfigView === undefined) return
       this.webConfigView = undefined
-      this.layout.setComposerOverride(undefined)
+      this.layout.setActiveSurface(undefined)
       this.composerModalActive = false
       this.tui.setFocus(this.editor)
       this.tui.requestRender()
@@ -1234,7 +1234,7 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.webConfigView = view
     this.composerModalActive = true
-    this.layout.setComposerOverride(view)
+    this.layout.setActiveSurface({ kind: 'readable', component: view })
     this.tui.setFocus(view)
     this.tui.requestRender()
   }
@@ -1265,7 +1265,7 @@ export class TuiApplication implements TuiControllerSink {
     const close = (): void => {
       if (this.taskView === undefined) return
       this.taskView = undefined
-      this.layout.setComposerOverride(undefined)
+      this.layout.setActiveSurface(undefined)
       this.composerModalActive = false
       this.tui.setFocus(this.editor)
       this.tui.requestRender()
@@ -1281,7 +1281,7 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.taskView = view
     this.composerModalActive = true
-    this.layout.setComposerOverride(view)
+    this.layout.setActiveSurface({ kind: 'readable', component: view })
     this.tui.setFocus(view)
     this.tui.requestRender()
   }
@@ -1291,7 +1291,7 @@ export class TuiApplication implements TuiControllerSink {
     const close = (): void => {
       if (this.skillsView === undefined) return
       this.skillsView = undefined
-      this.layout.setComposerOverride(undefined)
+      this.layout.setActiveSurface(undefined)
       this.composerModalActive = false
       this.tui.setFocus(this.editor)
       this.tui.requestRender()
@@ -1312,7 +1312,7 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.skillsView = view
     this.composerModalActive = true
-    this.layout.setComposerOverride(view)
+    this.layout.setActiveSurface({ kind: 'readable', component: view })
     this.tui.setFocus(view)
     this.tui.requestRender()
     void this.skillCatalog.refresh()
@@ -1517,7 +1517,7 @@ export class TuiApplication implements TuiControllerSink {
     this.rewindPointDialog = dialog
     this.rewindProgress = undefined
     this.composerModalActive = true
-    this.layout.setComposerOverride(dialog)
+    this.layout.setActiveSurface({ kind: 'readable', component: dialog })
     this.tui.setFocus(dialog)
     this.tui.requestRender()
   }
@@ -1553,7 +1553,7 @@ export class TuiApplication implements TuiControllerSink {
       () => this.showRewindPointList(summary.pointId),
     )
     this.rewindPointDialog = undefined
-    this.layout.setComposerOverride(dialog)
+    this.layout.setActiveSurface({ kind: 'readable', component: dialog })
     this.tui.setFocus(dialog)
     this.tui.requestRender()
   }
@@ -1591,7 +1591,7 @@ export class TuiApplication implements TuiControllerSink {
     }
     this.composerModalActive = true
     this.rewindPointDialog = undefined
-    this.layout.setComposerOverride(this.rewindProgress)
+    this.layout.setActiveSurface({ kind: 'readable', component: this.rewindProgress })
     this.tui.setFocus(null)
     this.rewindProgress.setText([
       this.theme.bold('Rewind'),
@@ -1602,7 +1602,7 @@ export class TuiApplication implements TuiControllerSink {
   }
 
   private closeRewindSurface(): void {
-    this.layout.setComposerOverride(undefined)
+    this.layout.setActiveSurface(undefined)
     this.rewindProgress = undefined
     this.rewindSummaries = undefined
     this.rewindPointDialog = undefined
@@ -1707,7 +1707,7 @@ export class TuiApplication implements TuiControllerSink {
     if (this.tui.hasOverlay() || this.composerModalActive) return
     const models = await this.controller.refreshModels()
     const close = (): void => {
-      this.layout.setComposerOverride(undefined)
+      this.layout.setActiveSurface(undefined)
       this.composerModalActive = false
       this.tui.setFocus(this.editor)
       this.tui.requestRender()
@@ -1722,7 +1722,7 @@ export class TuiApplication implements TuiControllerSink {
       close,
     )
     this.composerModalActive = true
-    this.layout.setComposerOverride(dialog)
+    this.layout.setActiveSurface({ kind: 'readable', component: dialog })
     this.tui.setFocus(dialog)
     this.tui.requestRender()
   }
@@ -1734,7 +1734,7 @@ export class TuiApplication implements TuiControllerSink {
     const sessionId = String(state.sessionId)
     const overview = await this.memory.overview(state.cwd, sessionId)
     const close = (): void => {
-      this.layout.setComposerOverride(undefined)
+      this.layout.setActiveSurface(undefined)
       this.composerModalActive = false
       this.tui.setFocus(this.editor)
       this.tui.requestRender()
@@ -1747,7 +1747,7 @@ export class TuiApplication implements TuiControllerSink {
       close,
     )
     this.composerModalActive = true
-    this.layout.setComposerOverride(dialog)
+    this.layout.setActiveSurface({ kind: 'readable', component: dialog })
     this.tui.setFocus(dialog)
     this.tui.requestRender()
   }
@@ -1965,12 +1965,12 @@ export class TuiApplication implements TuiControllerSink {
     )
     const previousFocus = this.tui.getFocusedComponent()
     const previousModalActive = this.composerModalActive
-    const restoreComposer = this.layout.pushComposerOverride(dialog)
+    const restoreSurface = this.layout.pushActiveSurface({ kind: 'readable', component: dialog })
     this.composerModalActive = true
     this.tui.setFocus(dialog)
     this.tui.requestRender()
     this.setInteractionSurface(key, () => {
-      if (!restoreComposer()) return
+      if (!restoreSurface()) return
       this.composerModalActive = previousModalActive
       this.tui.setFocus(previousFocus)
       this.tui.requestRender()

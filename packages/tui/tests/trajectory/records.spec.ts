@@ -146,6 +146,8 @@ describe('trajectory records', () => {
     expect(result[2]).toMatchObject({ turn: 1, step: 1 })
     expect(result[3]).toMatchObject({
       title: 'echo NAVIGATION_OK',
+      toolName: 'bash',
+      summary: 'Completed',
       result: 'NAVIGATION_OK',
       schema: { name: 'bash' },
     })

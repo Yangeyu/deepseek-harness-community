@@ -1,7 +1,9 @@
+import { Text, visibleWidth } from '@earendil-works/pi-tui'
 import { describe, expect, it, vi } from 'vitest'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type { TuiState } from '../../src/runtime/controller.ts'
 import { createTheme } from '../../src/presentation/theme.ts'
+import { ComposerAnchoredLayout } from '../../src/presentation/layout.ts'
 import { TrajectoryView } from '../../src/trajectory/view.ts'
 import { state, timedTraceEvents, toolEvents } from './fixtures.ts'
 
@@ -37,7 +39,7 @@ describe('TrajectoryView', () => {
 
     view.handleInput('k')
     view.handleInput('\r')
-    expect(view.render(100).join('\n')).toContain('Trajectory · echo NAVIGATION_OK')
+    expect(view.render(100).join('\n')).toContain('Trajectory · bash · echo NAVIGATION_OK')
 
     view.handleInput('\t')
     const top = view.render(100)
@@ -64,10 +66,12 @@ describe('TrajectoryView', () => {
       vi.fn(),
     )
 
-    expect(view.render(100).join('\n')).toContain('TOOL      echo NAVIGATION_OK · bash · Completed')
+    expect(view.render(100).join('\n')).toContain('TOOL      bash · Completed')
     view.handleInput('\r')
     expect(view.render(100).join('\n')).toContain('[Summary]')
     expect(view.render(100).join('\n')).toContain('Event        tool/call → tool/result')
+    expect(view.render(100).join('\n')).toContain('Tool         bash')
+    expect(view.render(100).join('\n')).toContain('Operation    echo NAVIGATION_OK')
 
     view.handleInput('\t')
     expect(view.render(100).join('\n')).toContain('echo NAVIGATION_OK')
@@ -75,7 +79,7 @@ describe('TrajectoryView', () => {
     expect(view.render(100).join('\n')).toContain('NAVIGATION_OK')
 
     view.handleInput('\u001b')
-    expect(view.render(100).join('\n')).toContain('TOOL      echo NAVIGATION_OK · bash · Completed')
+    expect(view.render(100).join('\n')).toContain('TOOL      bash · Completed')
     view.handleInput('\u001b')
     expect(close).toHaveBeenCalledOnce()
   })
@@ -97,7 +101,43 @@ describe('TrajectoryView', () => {
     expect(view.render(100).join('\n')).toContain('bash · Completed')
   })
 
-  it('keeps duration visible when a narrow ledger row truncates a long title', () => {
+  it('keeps the focus band active after truncating a long event without share metrics', () => {
+    const approval = {
+      event: {
+        type: 'approval/decided',
+        seq: 5,
+        time: 1_800,
+        data: {
+          id: '5ff5203a-bb2b-4e5d-96d2-24801be72c-long-approval-identifier',
+          decision: 'approved',
+        },
+      },
+    } as TuiState['events'][number]
+    const view = new TrajectoryView(
+      state([...toolEvents(true), approval]),
+      () => 10,
+      createTheme(true),
+      async () => false,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )
+
+    const eventRow = view.render(100).find(line => line.includes('approval/decided')) ?? ''
+    view.handleInput('k')
+    const toolRow = view.render(100).find(line => line.includes('TOOL')) ?? ''
+    const focus = '\u001b[48;2;42;70;98m'
+
+    expect(eventRow.startsWith(focus)).toBe(true)
+    expect(toolRow.startsWith(focus)).toBe(true)
+    expect(eventRow).toContain(`\u001b[0m${focus}…\u001b[0m${focus}`)
+    expect(eventRow.endsWith('\u001b[49m')).toBe(true)
+    expect(toolRow.endsWith('\u001b[49m')).toBe(true)
+    expect(visibleWidth(eventRow)).toBe(100)
+    expect(visibleWidth(toolRow)).toBe(100)
+  })
+
+  it('keeps duration visible while omitting verbose tool operations from a narrow ledger row', () => {
     const entries = toolEvents(true)
     const call = entries[0]
     if (call?.event.type === 'tool/call') {
@@ -117,9 +157,11 @@ describe('TrajectoryView', () => {
     )
 
     const output = view.render(52).join('\n')
+    const toolRow = output.split('\n').find(line => line.includes('TOOL')) ?? ''
 
     expect(output).toContain('300ms')
-    expect(output).toContain('…')
+    expect(toolRow).toContain('bash · Completed')
+    expect(toolRow).not.toContain('a very long tool title')
   })
 
   it('renders a responsive split trace explorer with bottleneck and complete Summary details', () => {
@@ -136,11 +178,13 @@ describe('TrajectoryView', () => {
     view.handleInput('k')
     const overview = view.render(140).join('\n')
 
-    expect(overview).toContain('Bottleneck · slow tool · 700 ms')
+    expect(overview).toContain('Bottleneck · bash · slow tool · 700 ms')
     expect(overview).toContain('EXECUTION')
-    expect(overview).toContain('DETAIL · slow tool')
+    expect(overview).toContain('DETAIL · bash · slow tool')
     expect(overview).toContain('Duration     700 ms')
     expect(overview).toContain('Bottleneck   Slowest timed block in Step 1')
+    expect(overview).toContain('Tool         bash')
+    expect(overview).toContain('Operation    slow tool')
     expect(overview).toContain('▲')
 
     view.handleInput('\r')
@@ -149,6 +193,32 @@ describe('TrajectoryView', () => {
     expect(input).toContain('[Input]')
     expect(input).toContain('Detail focus')
     expect(input).toContain('slow tool')
+  })
+
+  it('keeps the responsive detail pane when rendered through a full-width application surface', () => {
+    const view = new TrajectoryView(
+      state(timedTraceEvents()),
+      () => 20,
+      createTheme(false),
+      async () => false,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )
+    const layout = new ComposerAnchoredLayout(
+      new Text('', 0, 0),
+      new Text('', 0, 0),
+      new Text('', 0, 0),
+      new Text('', 0, 0),
+      new Text('', 0, 0),
+      () => 20,
+    )
+    layout.setActiveSurface({ kind: 'workspace', component: view })
+
+    const output = layout.render(140).join('\n')
+
+    expect(output).toContain('DETAIL · bash · fast tool')
+    expect(output).toContain('Tool         bash')
   })
 
   it('collapses and expands semantic hierarchy nodes with h/l', () => {
@@ -167,13 +237,13 @@ describe('TrajectoryView', () => {
     const collapsed = view.render(100).join('\n')
     expect(collapsed).toContain('1/4 visible')
     expect(collapsed).toContain('▸ • TURN')
-    expect(collapsed).not.toContain('fast tool · bash')
+    expect(collapsed).not.toContain('bash · Completed')
 
     view.handleInput('l')
     const expanded = view.render(100).join('\n')
     expect(expanded).toContain('4 records')
     expect(expanded).toContain('▾ • TURN')
-    expect(expanded).toContain('fast tool · bash')
+    expect(expanded.match(/bash · Completed/gu)).toHaveLength(2)
   })
 
   it('wraps the complete Summary text instead of reusing the truncated ledger preview', () => {
@@ -247,7 +317,7 @@ describe('TrajectoryView', () => {
 
     view.setState(state([...toolEvents(true), assistant]))
 
-    expect(view.render(100).join('\n')).toContain('Trajectory · echo NAVIGATION_OK')
+    expect(view.render(100).join('\n')).toContain('Trajectory · bash · echo NAVIGATION_OK')
     expect(view.render(100).join('\n')).not.toContain('Trajectory · Assistant response')
   })
 

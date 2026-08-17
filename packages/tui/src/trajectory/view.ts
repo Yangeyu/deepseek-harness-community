@@ -37,10 +37,42 @@ function stepKey(turn: number, step: number): string {
   return `${String(turn)}:${String(step)}`
 }
 
+interface TrajectoryRecordPresentation {
+  readonly heading: string
+  readonly ledger: string
+  readonly summary: readonly string[]
+}
+
+/** Keep record identity ordering consistent across the ledger and detail pane. */
+function recordPresentation(record: TrajectoryRecord): TrajectoryRecordPresentation {
+  const description = (record.detail ?? record.summary).split('\n')
+  if (record.toolName === undefined) {
+    return {
+      heading: record.title,
+      ledger: `${record.title} · ${record.summary}`,
+      summary: [record.title, ...description],
+    }
+  }
+  const operation = (record.detail ?? record.title).split('\n')
+  const operationDiffers = operation.length > 1 || operation[0] !== record.toolName
+  return {
+    heading: operationDiffers ? `${record.toolName} · ${operation[0] ?? record.title}` : record.toolName,
+    ledger: `${record.toolName} · ${record.summary}`,
+    summary: [
+      `Tool         ${record.toolName}`,
+      ...operationDiffers ? [
+        `Operation    ${operation[0] ?? record.title}`,
+        ...operation.slice(1).map(line => `             ${line}`),
+      ] : [],
+    ],
+  }
+}
+
 function tabValue(record: TrajectoryRecord, tab: TrajectoryTab, metrics: TrajectoryMetrics): string[] {
   const timing = trajectoryTiming(record)
   switch (tab) {
-    case 'summary':
+    case 'summary': {
+      const presentation = recordPresentation(record)
       return [
         `Status       ${timing.status}`,
         `Duration     ${metrics.durationMs === undefined ? 'Not measured' : formatExecutionDuration(metrics.durationMs, 'detail')}`,
@@ -55,12 +87,12 @@ function tabValue(record: TrajectoryRecord, tab: TrajectoryTab, metrics: Traject
         `Event        ${record.type}${record.completionType === undefined ? '' : ` → ${record.completionType}`}`,
         `Sequence     ${String(record.seq)}${record.completionSeq === undefined ? '' : ` → ${String(record.completionSeq)}`}`,
         '',
-        record.title,
-        ...(record.detail ?? record.summary).split('\n'),
+        ...presentation.summary,
         '',
         `Started      ${timing.startedAt === undefined ? 'Not recorded' : new Date(timing.startedAt).toISOString()}`,
         `Completed    ${timing.completedAt === undefined ? 'Still running or not applicable' : new Date(timing.completedAt).toISOString()}`,
       ]
+    }
     case 'payload':
       return record.payload === undefined ? ['No payload recorded for this event.'] : displayUnknown(record.payload).split('\n')
     case 'result':
@@ -111,6 +143,11 @@ function kindLabel(kind: TrajectoryKind): string {
 function padVisible(text: string, width: number): string {
   const clipped = truncateToWidth(text, Math.max(0, width), '…')
   return `${clipped}${' '.repeat(Math.max(0, width - visibleWidth(clipped)))}`
+}
+
+function paintLedgerRow(text: string, selected: boolean, width: number, theme: TuiTheme): string {
+  const row = padVisible(text, width)
+  return selected ? theme.focusRow(theme.bold(row)) : row
 }
 
 function compactDuration(milliseconds: number | undefined): string {
@@ -388,12 +425,12 @@ export class TrajectoryView implements Component {
       `seq ${String(record.seq)}`,
     ].filter(value => value !== undefined).join(' · ')
     const header = split ? [
-      truncateToWidth(this.theme.bold(this.theme.accent(`DETAIL · ${record.title}`)), width),
+      truncateToWidth(this.theme.bold(this.theme.accent(`DETAIL · ${recordPresentation(record).heading}`)), width),
       truncateToWidth(this.theme.dim(`${kindLabel(record.kind)} · ${location}`), width),
       truncateToWidth(tabs, width),
       this.theme.dim('─'.repeat(Math.max(0, width))),
     ] : [
-      truncateToWidth(this.theme.bold(this.theme.accent(`Trajectory · ${record.title}`)), width),
+      truncateToWidth(this.theme.bold(this.theme.accent(`Trajectory · ${recordPresentation(record).heading}`)), width),
       truncateToWidth(this.theme.dim(`${kindLabel(record.kind)} · ${location}`), width),
       truncateToWidth(tabs, width),
       '',
@@ -438,7 +475,7 @@ export class TrajectoryView implements Component {
     const bottleneckMetrics = bottleneck === undefined ? undefined : metrics.get(bottleneck.key)
     const bottleneckLine = bottleneck === undefined || bottleneckMetrics?.durationMs === undefined
       ? 'Bottleneck · no timed operation available yet'
-      : `Bottleneck · ${bottleneck.title} · ${formatExecutionDuration(bottleneckMetrics.durationMs, 'detail')}${
+      : `Bottleneck · ${recordPresentation(bottleneck).heading} · ${formatExecutionDuration(bottleneckMetrics.durationMs, 'detail')}${
         bottleneckMetrics.shareOfParent === undefined
           ? ''
           : ` · ${(bottleneckMetrics.shareOfParent * 100).toFixed(1)}% of ${bottleneckMetrics.parentTitle ?? 'parent'}`
@@ -492,7 +529,13 @@ export class TrajectoryView implements Component {
     metrics: TrajectoryMetrics,
   ): string {
     if (width < 28) {
-      return truncateToWidth(`${selected ? '›' : ' '} ${kindLabel(record.kind)} ${record.title}`, width, '…')
+      const cursor = selected ? this.theme.accent('›') : ' '
+      return paintLedgerRow(
+        `${cursor} ${kindLabel(record.kind)} ${recordPresentation(record).ledger}`,
+        selected,
+        width,
+        this.theme,
+      )
     }
     const branch = record.kind === 'turn'
       ? ''
@@ -530,9 +573,9 @@ export class TrajectoryView implements Component {
     const offsetCell = padVisible(`+${compactDuration(metrics.offsetMs)}`, 7)
     const suffix = detailed ? `${offsetCell} ${durationCell} ${bar}` : durationCell
     const contentWidth = Math.max(1, width - visibleWidth(prefix) - visibleWidth(suffix) - 1)
-    const content = padVisible(`${record.title} · ${record.summary}`, contentWidth)
+    const content = padVisible(recordPresentation(record).ledger, contentWidth)
     const line = `${prefix}${content} ${suffix}`
-    return truncateToWidth(selected ? this.theme.bold(line) : line, width, '…')
+    return paintLedgerRow(line, selected, width, this.theme)
   }
 
   private visibleRecordIndexes(): number[] {

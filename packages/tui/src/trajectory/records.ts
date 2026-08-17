@@ -31,6 +31,8 @@ interface TrajectoryRecordBase {
   turn?: number
   step?: number
   title: string
+  /** Stable callable identity; title remains the human-readable operation. */
+  toolName?: string
   summary: string
   detail?: string
   payload?: unknown
@@ -424,8 +426,8 @@ export function buildTrajectoryRecords(
           turn: event.data.turn,
           step: event.data.step,
           title: displayTitle,
-          summary: `${event.data.name} · ${stateWord(node)}`,
-          detail: displayTitle,
+          toolName: event.data.name,
+          summary: stateWord(node),
           ...result === undefined ? {} : { result: toolResult(result) },
           payload: {
             callId: event.data.callId,

@@ -21,7 +21,7 @@ describe('ComposerAnchoredLayout', () => {
     expect(lines.slice(-3).map(line => line.trim())).toEqual(['status', 'editor', 'footer'])
   })
 
-  it('temporarily replaces and restores the current composer surface', () => {
+  it('temporarily replaces and restores the current active surface', () => {
     const layout = new ComposerAnchoredLayout(
       new Text('header', 0, 0),
       new Text('message', 0, 0),
@@ -32,18 +32,18 @@ describe('ComposerAnchoredLayout', () => {
     )
     const trajectory = new Text('trajectory', 0, 0)
     const approval = new Text('approval', 0, 0)
-    layout.setComposerOverride(trajectory)
+    layout.setActiveSurface({ kind: 'workspace', component: trajectory })
 
-    const restore = layout.pushComposerOverride(approval)
+    const restore = layout.pushActiveSurface({ kind: 'readable', component: approval })
     expect(layout.render(80).at(-1)?.trim()).toContain('approval')
 
     expect(restore()).toBe(true)
-    expect(layout.render(80).at(-1)?.trim()).toContain('trajectory')
+    expect(layout.render(80).join('\n')).toContain('trajectory')
     expect(restore()).toBe(false)
-    expect(layout.render(80).at(-1)?.trim()).toContain('trajectory')
+    expect(layout.render(80).join('\n')).toContain('trajectory')
   })
 
-  it('does not overwrite a composer surface that replaced a temporary override', () => {
+  it('does not overwrite an active surface that replaced a temporary surface', () => {
     const layout = new ComposerAnchoredLayout(
       new Text('header', 0, 0),
       new Text('message', 0, 0),
@@ -52,14 +52,17 @@ describe('ComposerAnchoredLayout', () => {
       new Text('footer', 0, 0),
       () => 8,
     )
-    const restore = layout.pushComposerOverride(new Text('approval', 0, 0))
-    layout.setComposerOverride(new Text('new surface', 0, 0))
+    const restore = layout.pushActiveSurface({
+      kind: 'readable',
+      component: new Text('approval', 0, 0),
+    })
+    layout.setActiveSurface({ kind: 'readable', component: new Text('new surface', 0, 0) })
 
     expect(restore()).toBe(false)
     expect(layout.render(80).at(-1)?.trim()).toContain('new surface')
   })
 
-  it('frames every composer surface as a distinct bottom dock without adding rows', () => {
+  it('frames a readable surface as a distinct bottom dock without adding rows', () => {
     const layout = new ComposerAnchoredLayout(
       new Text('header', 0, 0),
       new Text('message', 0, 0),
@@ -68,7 +71,10 @@ describe('ComposerAnchoredLayout', () => {
       new Text('footer', 0, 0),
       () => 8,
     )
-    layout.setComposerOverride(new Text('Permission required\nReason\n\nAllow once\nEsc cancel', 0, 0))
+    layout.setActiveSurface({
+      kind: 'readable',
+      component: new Text('Permission required\nReason\n\nAllow once\nEsc cancel', 0, 0),
+    })
 
     const lines = layout.render(80)
     const surface = lines.slice(-5)
@@ -80,7 +86,7 @@ describe('ComposerAnchoredLayout', () => {
     expect(visibleWidth(surface.at(-1) ?? '')).toBe(80)
   })
 
-  it('bounds surface content width while extending its boundary across the viewport', () => {
+  it('bounds readable content width while extending its boundary across the viewport', () => {
     let renderedWidth = 0
     const surface = {
       render: (width: number): string[] => {
@@ -97,12 +103,39 @@ describe('ComposerAnchoredLayout', () => {
       new Text('footer', 0, 0),
       () => 8,
     )
-    layout.setComposerOverride(surface)
+    layout.setActiveSurface({ kind: 'readable', component: surface })
 
     const lines = layout.render(180)
     expect(renderedWidth).toBe(100)
     expect(visibleWidth(lines.at(-3) ?? '')).toBe(180)
     expect(visibleWidth(lines.at(-1) ?? '')).toBe(180)
+  })
+
+  it('gives a workspace surface the full viewport and available content width', () => {
+    let renderedWidth = 0
+    const surface = {
+      render: (width: number): string[] => {
+        renderedWidth = width
+        return ['Workspace', 'content', 'Esc close']
+      },
+      invalidate: () => {},
+    }
+    const layout = new ComposerAnchoredLayout(
+      new Text('header', 0, 0),
+      new Text('message', 0, 0),
+      new Text('status', 0, 0),
+      new Text('editor', 0, 0),
+      new Text('footer', 0, 0),
+      () => 8,
+    )
+    layout.setActiveSurface({ kind: 'workspace', component: surface })
+
+    const lines = layout.render(180)
+    expect(renderedWidth).toBe(177)
+    expect(lines).toHaveLength(8)
+    expect(visibleWidth(lines[0] ?? '')).toBe(180)
+    expect(visibleWidth(lines[2] ?? '')).toBe(180)
+    expect(lines.slice(3)).toEqual(Array<string>(5).fill(''))
   })
 
   it('follows the conversation tail and scrolls through the non-fixed header', () => {

@@ -12,6 +12,11 @@ All notable changes to this project are documented in this file.
 - Restore source-attributed local file edits outside the session workspace by
   retaining each observed target's canonical identity, preflighting multi-root
   plans atomically, and migrating schema 2 relative mutation paths.
+- Separate readable decision surfaces from full-viewport workspaces so
+  `/trajectory` retains its responsive detail pane, and make Tool ledger rows
+  scan by callable name and lifecycle state while Summary retains the operation;
+  highlight the selected ledger row across its complete width even when an
+  embedded ANSI reset is emitted during truncation.
 - Add official `web_search` and provider-neutral `web_extract` tool support
   through a registry-driven live search policy and Tavily page reading. Automatic
   routing prefers ready providers without request-time retries; `/config web`

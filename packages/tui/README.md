@@ -189,14 +189,26 @@ semantic event, `Enter` to inspect it, and `Tab` or `←`/`→` to move through 
 Input, Output, Schema, and Timing. Each ledger row reserves fixed Start, Time, and
 relative Share columns so long titles cannot hide duration; the header and `▲`
 marker identify the current bottleneck. `h`/`l` collapses or expands Turn and Step
-nodes, while `g`/`G` jumps to the first or last visible record.
+nodes, while `g`/`G` jumps to the first or last visible record. Tool rows use the
+stable callable name plus lifecycle state as their compact identity; the selected
+detail Summary retains both that name and the human-readable operation, with full
+arguments and results under Input and Output. The selected ledger row uses a
+full-width focus background so its hierarchy, timing, and share remain visually
+connected while navigating, including when a long label is truncated.
 
-At 120 columns or wider, the ledger and selected detail render side by side;
-narrow terminals retain the single-pane `Enter`/`Esc` drill-down flow. Summary
+Once the framed workspace has 120 content columns, the ledger and selected detail
+render side by side; narrow terminals retain the single-pane `Enter`/`Esc`
+drill-down flow. Summary
 wraps the complete semantic text and includes duration, parent share, lifecycle,
 location, and sequence information. `PageUp` at the earliest loaded record fetches
 an older, message-aligned history page without losing live tail events. `Ctrl+C`
 remains an interrupt while the session is running.
+
+Editor-replacing UI uses one explicit surface contract: approvals, Rewind, and
+configuration are readable bottom surfaces, while `/trajectory` is a workspace
+surface that replaces the viewport and receives all available content columns.
+The common frame and focus lifecycle stay unified without imposing decision-card
+geometry on diagnostic workspaces.
 
 `/config` is the unified configuration entry for the active session and TUI.
 It shows Model, Reasoning, Permission, Plan Mode, Vision, Web, Keybindings, and

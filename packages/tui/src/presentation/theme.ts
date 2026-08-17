@@ -17,6 +17,7 @@ export interface TuiTheme {
   diffAdded: Paint
   diffRemoved: Paint
   error: Paint
+  focusRow: Paint
   hover: Paint
   reasoning: Paint
   success: Paint
@@ -39,6 +40,16 @@ function ansiSequence(enabled: boolean, open: string, close: string): Paint {
   return enabled ? text => `\u001b[${open}m${text}\u001b[${close}m` : text => text
 }
 
+// oxlint-disable-next-line no-control-regex -- Terminal SGR sequences are the syntax being parsed.
+const SGR_SEQUENCE = /\u001b\[[0-?]*[ -/]*m/gu
+
+/** Keep a row-owned background active across nested styles and truncation resets. */
+function ansiBackground(enabled: boolean, open: string): Paint {
+  if (!enabled) return text => text
+  const start = `\u001b[${open}m`
+  return text => `${start}${text.replace(SGR_SEQUENCE, sequence => `${sequence}${start}`)}\u001b[49m`
+}
+
 /** Build the complete color-disabled or standard-ANSI theme. */
 export function createTheme(enabled: boolean): TuiTheme {
   const accent = ansi(enabled, 36, 39)
@@ -46,6 +57,7 @@ export function createTheme(enabled: boolean): TuiTheme {
   const diffAdded = ansiSequence(enabled, '48;2;12;48;28', '49')
   const diffRemoved = ansiSequence(enabled, '48;2;58;23;31', '49')
   const error = ansi(enabled, 31, 39)
+  const focusRow = ansiBackground(enabled, '48;2;42;70;98')
   // Never delegate text contrast to terminal-specific SGR dim. Keep both
   // secondary levels explicit so their hierarchy is stable across terminals.
   const secondary = ansiSequence(enabled, '38;2;188;198;214', '39')
@@ -76,6 +88,7 @@ export function createTheme(enabled: boolean): TuiTheme {
     diffAdded,
     diffRemoved,
     error,
+    focusRow,
     hover,
     reasoning,
     success,

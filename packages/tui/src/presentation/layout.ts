@@ -10,8 +10,11 @@ import {
 type Paint = (text: string) => string
 
 const identityPaint: Paint = text => text
-/** Bound reading measure without making the dock itself look like a floating card. */
-const SURFACE_CONTENT_COLUMNS = 100
+const READABLE_SURFACE_COLUMNS = 100
+
+export type ActiveSurface =
+  | { readonly kind: 'readable'; readonly component: Component }
+  | { readonly kind: 'workspace'; readonly component: Component }
 
 function trimVisibleEnd(line: string): string {
   if (!line.includes('\u001b')) return line.trimEnd()
@@ -24,7 +27,7 @@ function trimVisibleEnd(line: string): string {
 
 /** Main-screen layout with a fixed composer and a scrollable conversation viewport. */
 export class ComposerAnchoredLayout extends Container {
-  private composerOverride: Component | undefined
+  private activeSurface: ActiveSurface | undefined
   private conversationTop: number | undefined
   private renderedTranscriptTop = 0
   private renderedTranscriptRows = 0
@@ -57,13 +60,20 @@ export class ComposerAnchoredLayout extends Container {
   }
 
   override render(width: number): string[] {
+    const viewportRows = Math.max(0, this.viewportRows())
+    if (this.activeSurface?.kind === 'workspace') {
+      const lines = this.renderActiveSurface(width, this.activeSurface)
+      return [
+        ...lines.slice(0, viewportRows),
+        ...Array<string>(Math.max(0, viewportRows - lines.length)).fill(''),
+      ]
+    }
     const header = this.header.render(width)
     const transcript = this.transcript.render(width)
     const composer = this.renderComposer(width)
     const transcriptStart = header.length + 1
     const conversation = [...header, '', ...transcript]
-    const viewportRows = Math.max(0, this.viewportRows())
-    const composerGapRows = this.composerOverride === undefined && viewportRows > composer.length ? 1 : 0
+    const composerGapRows = this.activeSurface === undefined && viewportRows > composer.length ? 1 : 0
     const availableRows = Math.max(0, viewportRows - composer.length - composerGapRows)
     this.conversationPageRows = Math.max(1, availableRows)
     this.maxConversationTop = Math.max(0, conversation.length - availableRows)
@@ -86,23 +96,23 @@ export class ComposerAnchoredLayout extends Container {
     ]
   }
 
-  /** Replace the editor area with an inline modal surface, or restore the editor. */
-  setComposerOverride(component: Component | undefined): void {
-    if (this.composerOverride !== undefined) this.removeChild(this.composerOverride)
-    this.composerOverride = component
-    if (component !== undefined) this.addChild(component)
+  /** Replace the editor with a readable dock, or the whole viewport with a workspace. */
+  setActiveSurface(surface: ActiveSurface | undefined): void {
+    if (this.activeSurface !== undefined) this.removeChild(this.activeSurface.component)
+    this.activeSurface = surface
+    if (surface !== undefined) this.addChild(surface.component)
   }
 
-  /** Temporarily replace the composer surface and restore it only while this override still owns it. */
-  pushComposerOverride(component: Component): () => boolean {
-    const previous = this.composerOverride
-    this.setComposerOverride(component)
+  /** Temporarily replace the active surface and restore it only while this value still owns it. */
+  pushActiveSurface(surface: ActiveSurface): () => boolean {
+    const previous = this.activeSurface
+    this.setActiveSurface(surface)
     let active = true
     return () => {
       if (!active) return false
       active = false
-      if (this.composerOverride !== component) return false
-      this.setComposerOverride(previous)
+      if (this.activeSurface !== surface) return false
+      this.setActiveSurface(previous)
       return true
     }
   }
@@ -138,7 +148,7 @@ export class ComposerAnchoredLayout extends Container {
   }
 
   private renderComposer(width: number): string[] {
-    if (this.composerOverride !== undefined) return this.renderComposerSurface(width)
+    if (this.activeSurface !== undefined) return this.renderActiveSurface(width, this.activeSurface)
     return [
       ...this.status.render(width),
       ...this.attachments?.render(width) ?? [],
@@ -147,10 +157,13 @@ export class ComposerAnchoredLayout extends Container {
     ]
   }
 
-  private renderComposerSurface(width: number): string[] {
+  private renderActiveSurface(width: number, surface: ActiveSurface): string[] {
     const safeWidth = Math.max(1, width)
-    const contentWidth = Math.max(1, Math.min(SURFACE_CONTENT_COLUMNS, safeWidth - 3))
-    const lines = this.composerOverride?.render(contentWidth) ?? []
+    const availableWidth = Math.max(1, safeWidth - 3)
+    const contentWidth = surface.kind === 'workspace'
+      ? availableWidth
+      : Math.min(READABLE_SURFACE_COLUMNS, availableWidth)
+    const lines = surface.component.render(contentWidth)
     return lines.map((line, index) => {
       const edge = index === 0 ? 'top' : index === lines.length - 1 ? 'bottom' : 'middle'
       return this.renderSurfaceLine(line, safeWidth, edge)
