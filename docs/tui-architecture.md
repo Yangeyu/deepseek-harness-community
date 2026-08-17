@@ -174,9 +174,9 @@ reducing the number of visible files.
   composer admission and the workspace-contained `inspect_image` Agent tool.
   Tool inspection returns bounded untrusted text and never adds image blocks to
   a text-only main-model route.
-- `CommunityWebService` registers Brave Search and Tavily Extract directly into
-  the official `ctx.web` search seam and owns a separate provider-neutral
-  extraction seam. It owns vendor HTTP mapping and credential status;
+- `CommunityWebService` registers Tavily Search directly into the official
+  `ctx.web` search seam and Tavily Extract into a separate provider-neutral
+  extraction seam. Both adapters share one Tavily transport and credential;
   `dsh-web` and `dsh-tool-web` retain search selection and the official model
   tool, while the community layer owns only the distinct `web_extract` schema.
 - Session-control selectors derive separate Config rows (model, reasoning,

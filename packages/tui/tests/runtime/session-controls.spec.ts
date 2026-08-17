@@ -71,8 +71,8 @@ describe('session control selectors', () => {
 
     const ready = configurationSnapshot(undefined, {}, false, undefined, 'standard', {
       search: {
-        id: 'community-brave',
-        credentialRef: 'BRAVE_API_KEY',
+        id: 'community-tavily',
+        credentialRef: 'TAVILY_API_KEY',
         credentialConfigured: true,
         credentialWritable: true,
       },
@@ -87,7 +87,7 @@ describe('session control selectors', () => {
       expect.objectContaining({
         kind: 'web',
         available: true,
-        value: 'community-brave + community-tavily · ready',
+        value: 'community-tavily · ready',
       }),
     ]))
   })

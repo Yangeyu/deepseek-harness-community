@@ -2,9 +2,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { credentialRef, type CredentialInfo } from '@deepseek-ai/dsh-credentials'
 import { settingsNamespace, type SettingsScope } from '@deepseek-ai/dsh-settings'
 import { WebError } from '@deepseek-ai/dsh-web'
-import { BraveSearchProvider } from './brave.ts'
 import {
-  BRAVE_PROVIDER_ID,
   CommunityWebConfigSchema,
   resolveCommunityWebConfig,
   TAVILY_PROVIDER_ID,
@@ -12,17 +10,16 @@ import {
   type ResolvedCommunityWebConfig,
 } from './config.ts'
 import type { WebExtractProvider, WebExtractRequest, WebExtractResult } from './extract.ts'
-import { TavilyExtractProvider } from './tavily.ts'
+import { TavilyClient } from './tavily-client.ts'
+import { TavilyExtractProvider } from './tavily-extract.ts'
+import { TavilySearchProvider } from './tavily-search.ts'
 import { createWebExtractTool } from './tool.ts'
 
-export { BraveSearchProvider, type BraveSearchProviderOptions } from './brave.ts'
 export {
-  BRAVE_PROVIDER_ID,
   CommunityWebConfigSchema as Config,
-  DEFAULT_BRAVE_API_KEY_ENV,
-  DEFAULT_BRAVE_ENDPOINT,
   DEFAULT_TAVILY_API_KEY_ENV,
-  DEFAULT_TAVILY_ENDPOINT,
+  DEFAULT_TAVILY_EXTRACT_ENDPOINT,
+  DEFAULT_TAVILY_SEARCH_ENDPOINT,
   DEFAULT_EXTRACT_MAX_OUTPUT_CHARS,
   DEFAULT_TAVILY_TIMEOUT_SECONDS,
   resolveCommunityWebConfig,
@@ -30,9 +27,12 @@ export {
   type CommunityWebConfig,
   type ResolvedCommunityWebConfig,
   type TavilyExtractDepth,
+  type TavilySearchDepth,
 } from './config.ts'
 export type { WebExtractProvider, WebExtractRequest, WebExtractResult } from './extract.ts'
-export { TavilyExtractProvider, type TavilyExtractProviderOptions } from './tavily.ts'
+export { TavilyClient, type TavilyClientOptions } from './tavily-client.ts'
+export { TavilyExtractProvider, type TavilyExtractProviderOptions } from './tavily-extract.ts'
+export { TavilySearchProvider, type TavilySearchProviderOptions } from './tavily-search.ts'
 export { createWebExtractTool, WEB_EXTRACT_TIMEOUT_MS, WEB_EXTRACT_TOOL_NAME } from './tool.ts'
 
 export const name = 'community-web'
@@ -89,6 +89,7 @@ export class CommunityWebService extends Service {
   static Config = CommunityWebConfigSchema
 
   private readonly settings: SettingsScope<CommunityWebConfig>
+  private readonly tavily: TavilyClient
   private readonly extractProviders = new Map<string, WebExtractProvider>()
 
   constructor(ctx: Context, config: CommunityWebConfig) {
@@ -97,8 +98,9 @@ export class CommunityWebService extends Service {
       base: config,
       applies: 'live',
     })
-    ctx.web.registerSearchProvider(new BraveSearchProvider(() => this.braveOptions()))
-    this.registerExtractProvider(new TavilyExtractProvider(() => this.tavilyOptions()))
+    this.tavily = new TavilyClient(() => this.tavilyClientOptions())
+    ctx.web.registerSearchProvider(new TavilySearchProvider(this.tavily, () => this.tavilySearchOptions()))
+    this.registerExtractProvider(new TavilyExtractProvider(this.tavily, () => this.tavilyExtractOptions()))
     ctx.tools.register(createWebExtractTool({
       extract: (request, signal) => this.extract(request, signal),
     }))
@@ -115,14 +117,11 @@ export class CommunityWebService extends Service {
 
   async status(signal?: AbortSignal): Promise<CommunityWebStatus> {
     const config = this.config
-    const [brave, tavily] = await Promise.all([
-      this.ctx.credentials.describe(credentialRef(config.braveApiKeyEnv)),
-      this.ctx.credentials.describe(credentialRef(config.tavilyApiKeyEnv)),
-    ])
+    const tavily = await this.ctx.credentials.describe(credentialRef(config.tavilyApiKeyEnv))
     signal?.throwIfAborted()
     return {
-      search: providerStatus(BRAVE_PROVIDER_ID, config.braveEndpoint, config.braveApiKeyEnv, brave),
-      extract: providerStatus(TAVILY_PROVIDER_ID, config.tavilyEndpoint, config.tavilyApiKeyEnv, tavily),
+      search: providerStatus(TAVILY_PROVIDER_ID, config.tavilySearchEndpoint, config.tavilyApiKeyEnv, tavily),
+      extract: providerStatus(TAVILY_PROVIDER_ID, config.tavilyExtractEndpoint, config.tavilyApiKeyEnv, tavily),
     }
   }
 
@@ -156,26 +155,28 @@ export class CommunityWebService extends Service {
     }
   }
 
-  private braveOptions() {
+  private tavilyClientOptions() {
     const config = this.config
     return {
-      endpoint: config.braveEndpoint,
-      apiKeyRef: config.braveApiKeyEnv,
-      resolveApiKey: async () => (
-        await this.ctx.credentials.resolve(credentialRef(config.braveApiKeyEnv))
-      )?.value,
-      extraSnippets: config.braveExtraSnippets,
-    }
-  }
-
-  private tavilyOptions() {
-    const config = this.config
-    return {
-      endpoint: config.tavilyEndpoint,
       apiKeyRef: config.tavilyApiKeyEnv,
       resolveApiKey: async () => (
         await this.ctx.credentials.resolve(credentialRef(config.tavilyApiKeyEnv))
       )?.value,
+    }
+  }
+
+  private tavilySearchOptions() {
+    const config = this.config
+    return {
+      endpoint: config.tavilySearchEndpoint,
+      searchDepth: config.tavilySearchDepth,
+    }
+  }
+
+  private tavilyExtractOptions() {
+    const config = this.config
+    return {
+      endpoint: config.tavilyExtractEndpoint,
       extractDepth: config.tavilyExtractDepth,
       maxOutputChars: config.extractMaxOutputChars,
       timeoutSeconds: config.tavilyTimeoutSeconds,

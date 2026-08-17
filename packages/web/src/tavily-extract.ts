@@ -1,29 +1,16 @@
 import { WebError } from '@deepseek-ai/dsh-web'
 import { TAVILY_PROVIDER_ID, type TavilyExtractDepth } from './config.ts'
 import type { WebExtractProvider, WebExtractRequest, WebExtractResult } from './extract.ts'
-import {
-  cleanMessage,
-  errorDetail,
-  isAbortFailure,
-  providerAborted,
-  requiredApiKey,
-  responsePayload,
-  throwIfAborted,
-  usableCredentialReference,
-  usableEndpoint,
-  type FetchImplementation,
-} from './http.ts'
+import { cleanMessage } from './http.ts'
+import { TavilyClient } from './tavily-client.ts'
 
 const MAX_URL_CHARS = 8_192
 
 export interface TavilyExtractProviderOptions {
   endpoint: string
-  apiKeyRef: string
-  resolveApiKey: () => Promise<string | undefined>
   extractDepth: TavilyExtractDepth
   maxOutputChars: number
   timeoutSeconds: number
-  fetch?: FetchImplementation
 }
 
 function targetUrl(value: string): string {
@@ -80,23 +67,18 @@ function mapResponse(payload: unknown, requestedUrl: string, maximum: number): W
   }
 }
 
-function errorCode(status: number): string {
-  if (status === 401 || status === 403) return 'WEB_UNAUTHORIZED'
-  if (status === 429) return 'WEB_RATE_LIMITED'
-  if (status === 432 || status === 433) return 'WEB_QUOTA_EXCEEDED'
-  return 'WEB_PROVIDER_ERROR'
-}
-
 /** Tavily adapter for the community-owned, provider-neutral extraction seam. */
 export class TavilyExtractProvider implements WebExtractProvider {
   readonly id = TAVILY_PROVIDER_ID
 
-  constructor(private readonly options: () => TavilyExtractProviderOptions) {}
+  constructor(
+    private readonly client: TavilyClient,
+    private readonly options: () => TavilyExtractProviderOptions,
+  ) {}
 
   available(): boolean {
     const options = this.options()
-    return usableEndpoint(options.endpoint)
-      && usableCredentialReference(options.apiKeyRef)
+    return this.client.available(options.endpoint)
       && Number.isInteger(options.maxOutputChars)
       && options.maxOutputChars > 0
       && options.timeoutSeconds >= 1
@@ -106,37 +88,14 @@ export class TavilyExtractProvider implements WebExtractProvider {
   async extract(request: WebExtractRequest, signal?: AbortSignal): Promise<WebExtractResult> {
     const options = this.options()
     const url = targetUrl(request.url)
-    const apiKey = await requiredApiKey('Tavily Extract', options.apiKeyRef, options.resolveApiKey, signal)
-    throwIfAborted('Tavily Extract', signal)
-    let response: Response
-    try {
-      response = await (options.fetch ?? globalThis.fetch)(options.endpoint, {
-        method: 'POST',
-        redirect: 'error',
-        headers: {
-          accept: 'application/json',
-          authorization: `Bearer ${apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          urls: url,
-          extract_depth: options.extractDepth,
-          include_images: false,
-          format: 'markdown',
-          timeout: options.timeoutSeconds,
-          include_usage: true,
-        }),
-        ...signal === undefined ? {} : { signal },
-      })
-    } catch (error: unknown) {
-      if (signal?.aborted === true || isAbortFailure(error)) throw providerAborted('Tavily Extract', signal, error)
-      throw new WebError(`Tavily Extract request failed: ${cleanMessage(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
-    }
-    const payload = await responsePayload(response, 'Tavily Extract', signal)
-    if (!response.ok) {
-      const detail = errorDetail(payload) ?? `Tavily Extract API error (HTTP ${String(response.status)})`
-      throw new WebError(detail, errorCode(response.status))
-    }
+    const payload = await this.client.post('Tavily Extract', options.endpoint, {
+      urls: url,
+      extract_depth: options.extractDepth,
+      include_images: false,
+      format: 'markdown',
+      timeout: options.timeoutSeconds,
+      include_usage: true,
+    }, signal)
     return mapResponse(payload, url, options.maxOutputChars)
   }
 }

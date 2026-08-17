@@ -1,8 +1,8 @@
 # Community Web providers
 
-This package composes two independent Web capabilities:
+This package composes two independent Web capabilities over one Tavily client:
 
-- `community-brave` implements search through the official DeepSeek Harness
+- `community-tavily` implements search through the official DeepSeek Harness
   `ctx.web` seam and its `web_search` tool.
 - `community-tavily` implements the package's provider-neutral extraction seam,
   exposed to the model as `web_extract`.
@@ -13,6 +13,7 @@ official search selection and its model contract. Tavily is not adapted as
 that upstream contract. The separate extraction seam keeps its URL/content
 semantics honest and replaceable.
 
-Credentials are references resolved for every operation and are never stored in
-this package's settings. The default references are `BRAVE_API_KEY` and
-`TAVILY_API_KEY`.
+Search and extraction share authentication, JSON transport, cancellation, and
+error mapping without merging their request or result contracts. The credential
+is resolved for every operation and is never stored in package settings. Its
+default reference is `TAVILY_API_KEY`.

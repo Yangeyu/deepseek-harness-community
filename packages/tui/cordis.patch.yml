@@ -18,11 +18,11 @@
     mode: !!js process.env.DSH_TOOLS_MODE
 
 # Keep the official search capability and model-tool contract while selecting
-# the community search implementation explicitly. Page extraction remains a
-# separate capability because Tavily does not expose origin HTTP response data.
+# Tavily explicitly. Page extraction remains separate because Tavily does not
+# expose origin HTTP response data.
 - id: web
   config:
-    searchProvider: community-brave
+    searchProvider: community-tavily
 
 - id: tool-web
   config:
@@ -73,10 +73,10 @@
     - id: community-web
       name: '@vascent/deepseek-harness-tui/web'
       config:
-        braveApiKeyEnv: BRAVE_API_KEY
         extractProvider: community-tavily
         extractMaxOutputChars: 60000
         tavilyApiKeyEnv: TAVILY_API_KEY
+        tavilySearchDepth: basic
         tavilyExtractDepth: basic
         tavilyTimeoutSeconds: 30
 

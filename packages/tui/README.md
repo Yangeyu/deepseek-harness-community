@@ -66,8 +66,8 @@ The initial terminal client supports:
   Output, Schema, and Timing inspection;
 - explicit image drafts from files or the macOS clipboard, automatic native
   multimodal routing, and a configurable DashScope proxy for text-only models;
-- official `web_search` plus provider-neutral `web_extract`, backed by independently selected
-  Brave Search and Tavily Extract providers;
+- official `web_search` plus provider-neutral `web_extract`, both backed by
+  Tavily through independent capability adapters;
 - an application-owned transcript viewport with pointer and keyboard scrolling,
   stable history position, and automatic tail following.
 
@@ -218,17 +218,18 @@ Commands therefore never appear as user/assistant conversation messages.
 
 The profile retains the official Harness `ctx.web` registry and official
 `web_search` model tool. The community Web package contributes
-`community-brave` to that search seam and owns a separate, provider-neutral
-`web_extract` capability backed by `community-tavily`. Extraction is not
+`community-tavily` to that search seam and owns a separate, provider-neutral
+`web_extract` capability backed by the same Tavily client. Extraction is not
 presented as official `web_fetch`: Tavily returns readable content but not the
 origin response status required by the upstream fetch contract. Provider
 selection is explicit, so the bundled DeepSeek search adapter can remain
-installed without creating registration-order fallbacks.
+installed without creating registration-order fallbacks. Search and extraction
+share authentication, cancellation, and error mapping but retain independent
+request and result contracts.
 
 Configure both credential references before launch:
 
 ```sh
-export BRAVE_API_KEY='...'
 export TAVILY_API_KEY='...'
 dsh-tui
 ```
@@ -400,7 +401,7 @@ commands: `/help`, `/clear`, `/new`, `/resume`, `/model`, `/attach`,
 Cordis bundle entry
   -> file-backed Memory plugin (context, tools, quiet learner, mutations)
   -> Vision plugin (routing, proxy analysis, observation staging, events)
-  -> Web plugin (Brave search + Tavily extraction adapters over ctx.web)
+  -> Web plugin (Tavily search + extraction adapters over shared transport)
   -> in-process ApiProxy client
      -> application/ (bootstrap orchestration and local interactions)
         ├─ input/ (semantic keymap actions and context-aware binding resolution)

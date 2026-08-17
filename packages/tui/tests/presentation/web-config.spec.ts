@@ -5,9 +5,9 @@ import { createTheme } from '../../src/presentation/theme.ts'
 
 const status = {
   search: {
-    id: 'community-brave',
-    endpointHost: 'api.search.brave.com',
-    credentialRef: 'BRAVE_API_KEY',
+    id: 'community-tavily',
+    endpointHost: 'api.tavily.com',
+    credentialRef: 'TAVILY_API_KEY',
     credentialConfigured: true,
     credentialSource: 'env',
     credentialWritable: true,
@@ -16,7 +16,8 @@ const status = {
     id: 'community-tavily',
     endpointHost: 'api.tavily.com',
     credentialRef: 'TAVILY_API_KEY',
-    credentialConfigured: false,
+    credentialConfigured: true,
+    credentialSource: 'env',
     credentialWritable: true,
   },
 }
@@ -26,10 +27,8 @@ describe('WebConfigView', () => {
     const view = new WebConfigView(status, createTheme(false), vi.fn(), vi.fn())
     const output = view.render(100).join('\n')
 
-    expect(output).toContain('community-brave · api.search.brave.com')
-    expect(output).toContain('BRAVE_API_KEY configured via env')
     expect(output).toContain('community-tavily · api.tavily.com')
-    expect(output).toContain('TAVILY_API_KEY missing')
+    expect(output.match(/TAVILY_API_KEY configured via env/gu)).toHaveLength(1)
     expect(output).not.toContain('secret')
   })
 

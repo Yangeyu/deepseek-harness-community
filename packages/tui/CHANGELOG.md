@@ -5,9 +5,9 @@ All notable changes to this project are documented in this file.
 ## Unreleased
 
 - Add official `web_search` and provider-neutral `web_extract` tool support
-  through explicitly selected Brave Search and Tavily Extract providers, per-operation Harness
-  credential resolution, bounded output, stable error mapping, cancellation,
-  and a secret-free `/config web` status surface.
+  through one explicitly selected Tavily provider, shared per-operation Harness
+  credential resolution and transport, bounded output, stable error mapping,
+  cancellation, and a secret-free `/config web` status surface.
 
 ## 0.1.10 - 2026-08-17
 

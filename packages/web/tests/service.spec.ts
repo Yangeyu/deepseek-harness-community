@@ -3,7 +3,6 @@ import type { WebSearchProvider } from '@deepseek-ai/dsh-web'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  BRAVE_PROVIDER_ID,
   CommunityWebService,
   TAVILY_PROVIDER_ID,
   type WebExtractProvider,
@@ -32,23 +31,23 @@ describe('CommunityWebService', () => {
     } as unknown as Context['settings'])
     ctx.provide('credentials', {
       resolve: vi.fn(async () => ({ value: 'must-not-appear', source: 'env' })),
-      describe: vi.fn(async (reference: string) => ({
-        configured: reference === 'BRAVE_API_KEY',
-        source: reference === 'BRAVE_API_KEY' ? 'env' : undefined,
+      describe: vi.fn(async () => ({
+        configured: true,
+        source: 'env',
         writable: true,
       })),
     } as unknown as Context['credentials'])
 
     const service = new CommunityWebService(ctx, {})
-    expect(registerSearchProvider.mock.calls[0]?.[0]).toMatchObject({ id: BRAVE_PROVIDER_ID })
+    expect(registerSearchProvider.mock.calls[0]?.[0]).toMatchObject({ id: TAVILY_PROVIDER_ID })
     expect(registerTool.mock.calls[0]?.[0]).toMatchObject({ name: 'web_extract' })
     expect(section).toHaveBeenCalledWith(expect.objectContaining({ name: 'tool:web_extract' }))
     const status = await service.status()
     expect(status).toEqual({
       search: {
-        id: BRAVE_PROVIDER_ID,
-        endpointHost: 'api.search.brave.com',
-        credentialRef: 'BRAVE_API_KEY',
+        id: TAVILY_PROVIDER_ID,
+        endpointHost: 'api.tavily.com',
+        credentialRef: 'TAVILY_API_KEY',
         credentialConfigured: true,
         credentialSource: 'env',
         credentialWritable: true,
@@ -57,7 +56,8 @@ describe('CommunityWebService', () => {
         id: TAVILY_PROVIDER_ID,
         endpointHost: 'api.tavily.com',
         credentialRef: 'TAVILY_API_KEY',
-        credentialConfigured: false,
+        credentialConfigured: true,
+        credentialSource: 'env',
         credentialWritable: true,
       },
     })

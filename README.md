@@ -10,7 +10,7 @@ deepseek-harness-community/
 ├── src/launcher.ts   # typed profile setup and launcher implementation
 ├── packages/memory/  # Markdown-backed project memory plugin
 ├── packages/vision/  # image routing, proxy analysis, and staged evidence
-├── packages/web/     # Brave search and Tavily page-reading providers
+├── packages/web/     # Tavily search and page-reading providers
 └── packages/tui/     # terminal UI bundle
 ```
 
@@ -28,7 +28,7 @@ Then start the TUI from any project directory:
 dsh-tui
 ```
 
-The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DEEPSEEK_API_KEY` before beginning a model-backed session. Set `BRAVE_API_KEY` and `TAVILY_API_KEY` to enable the bundled `web_search` and `web_extract` tools; `/config web` reports both credentials without displaying their values. For image understanding with a text-only DeepSeek route, set `DASHSCOPE_API_KEY`, open `/config vision`, and confirm the recommended `qwen3.7-plus` route. `DSH_HOME` continues to override the Harness data directory.
+The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DEEPSEEK_API_KEY` before beginning a model-backed session. Set `TAVILY_API_KEY` to enable the bundled `web_search` and `web_extract` tools; `/config web` reports its status without displaying the value. For image understanding with a text-only DeepSeek route, set `DASHSCOPE_API_KEY`, open `/config vision`, and confirm the recommended `qwen3.7-plus` route. `DSH_HOME` continues to override the Harness data directory.
 
 ## Command line
 
@@ -70,7 +70,7 @@ All three version aliases print the root package version as `dsh-tui <version>`.
   exposed as `@vascent/dsh-tui/memory`.
 - [`packages/vision`](packages/vision) owns the public, terminal-independent
   Vision API exposed as `@vascent/dsh-tui/vision`.
-- [`packages/web`](packages/web) owns the public Brave/Tavily Provider adapters
+- [`packages/web`](packages/web) owns the public Tavily Provider adapters
   exposed as `@vascent/dsh-tui/web` while the official Harness packages retain
   the provider registry and model-tool contracts.
 

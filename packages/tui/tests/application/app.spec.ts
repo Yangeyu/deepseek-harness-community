@@ -1005,11 +1005,10 @@ describe('TuiApplication input routing', () => {
   it('opens Web provider status without exposing credential values', async () => {
     const status = vi.fn(async () => ({
       search: {
-        id: 'community-brave',
-        endpointHost: 'api.search.brave.com',
-        credentialRef: 'BRAVE_API_KEY',
-        credentialConfigured: true,
-        credentialSource: 'env',
+        id: 'community-tavily',
+        endpointHost: 'api.tavily.com',
+        credentialRef: 'TAVILY_API_KEY',
+        credentialConfigured: false,
         credentialWritable: true,
       },
       extract: {
@@ -1027,7 +1026,7 @@ describe('TuiApplication input routing', () => {
 
     const output = internals.webConfigView?.render(100).join('\n') ?? ''
     expect(status).toHaveBeenCalledOnce()
-    expect(output).toContain('community-brave')
+    expect(output).toContain('community-tavily')
     expect(output).toContain('TAVILY_API_KEY missing')
     expect(output).not.toContain('must-not-appear')
     internals.webConfigView?.handleInput('\u001b')

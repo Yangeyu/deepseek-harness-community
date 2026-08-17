@@ -17,13 +17,18 @@ function credential(status: CommunityWebProviderStatus): string {
   return `${status.credentialRef} configured${status.credentialSource === undefined ? '' : ` via ${status.credentialSource}`}`
 }
 
-function providerLines(label: string, status: CommunityWebProviderStatus, theme: TuiTheme): string[] {
+function capabilityLines(label: string, status: CommunityWebProviderStatus, theme: TuiTheme): string[] {
   const endpoint = status.endpointHost === undefined ? '' : ` · ${status.endpointHost}`
   return [
     theme.bold(label),
     `  ${sanitizeTerminalText(status.id)}${sanitizeTerminalText(endpoint)}`,
-    `  ${status.credentialConfigured ? theme.success('✓') : theme.warning('!')} ${sanitizeTerminalText(credential(status))}`,
   ]
+}
+
+function credentialStatuses(status: CommunityWebStatus): CommunityWebProviderStatus[] {
+  const unique = new Map<string, CommunityWebProviderStatus>()
+  for (const provider of [status.search, status.extract]) unique.set(provider.credentialRef, provider)
+  return [...unique.values()]
 }
 
 /** Read-only, secret-safe status for the selected Web providers. */
@@ -50,16 +55,22 @@ export class WebConfigView implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    const missing = [this.status.search, this.status.extract]
+    const credentials = credentialStatuses(this.status)
+    const missing = credentials
       .filter(status => !status.credentialConfigured)
       .map(status => status.credentialRef)
     const lines = [
       this.theme.bold('Web'),
-      this.theme.dim('Official web_search plus provider-neutral web_extract'),
+      this.theme.dim('Tavily-backed web_search and web_extract'),
       '',
-      ...providerLines('Search', this.status.search, this.theme),
+      this.theme.bold('Credential'),
+      ...credentials.map(status => (
+        `  ${status.credentialConfigured ? this.theme.success('✓') : this.theme.warning('!')} ${sanitizeTerminalText(credential(status))}`
+      )),
       '',
-      ...providerLines('Page reading', this.status.extract, this.theme),
+      ...capabilityLines('Search', this.status.search, this.theme),
+      '',
+      ...capabilityLines('Page reading', this.status.extract, this.theme),
     ]
     if (missing.length > 0) {
       lines.push(

@@ -1,19 +1,25 @@
 import { describe, expect, it, vi } from 'vitest'
-import { TavilyExtractProvider } from '../src/tavily.ts'
+import { TavilyClient } from '../src/tavily-client.ts'
+import { TavilyExtractProvider, type TavilyExtractProviderOptions } from '../src/tavily-extract.ts'
 
 function provider(
   fetch: typeof globalThis.fetch,
-  overrides: Partial<ConstructorParameters<typeof TavilyExtractProvider>[0] extends () => infer T ? T : never> = {},
+  overrides: Partial<TavilyExtractProviderOptions> & {
+    resolveApiKey?: () => Promise<string | undefined>
+  } = {},
 ): TavilyExtractProvider {
-  return new TavilyExtractProvider(() => ({
-    endpoint: 'https://api.tavily.com/extract',
+  const { resolveApiKey = async () => 'tavily-secret', ...providerOverrides } = overrides
+  const client = new TavilyClient(() => ({
     apiKeyRef: 'TAVILY_API_KEY',
-    resolveApiKey: async () => 'tavily-secret',
+    resolveApiKey,
+    fetch,
+  }))
+  return new TavilyExtractProvider(client, () => ({
+    endpoint: 'https://api.tavily.com/extract',
     extractDepth: 'basic',
     maxOutputChars: 60_000,
     timeoutSeconds: 30,
-    fetch,
-    ...overrides,
+    ...providerOverrides,
   }))
 }
 

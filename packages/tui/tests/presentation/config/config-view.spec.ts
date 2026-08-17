@@ -35,8 +35,8 @@ function snapshot() {
     plan: { active: false, pending: false },
     web: {
       search: {
-        id: 'community-brave',
-        credentialRef: 'BRAVE_API_KEY',
+        id: 'community-tavily',
+        credentialRef: 'TAVILY_API_KEY',
         credentialConfigured: true,
         credentialWritable: true,
       },

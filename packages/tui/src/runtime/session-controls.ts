@@ -108,6 +108,9 @@ export function configurationRows(
   snapshot: ConfigurationSnapshot,
 ): readonly ControlRow<ConfigurationRowKind>[] {
   const current = snapshot.models?.current
+  const webProviders = snapshot.web === null || snapshot.web === undefined
+    ? undefined
+    : [...new Set([snapshot.web.search.id, snapshot.web.extract.id])].join(' + ')
   return [{
     kind: 'model',
     label: 'Model',
@@ -152,8 +155,8 @@ export function configurationRows(
       : snapshot.web === null
         ? 'Loading provider status…'
         : [snapshot.web.search, snapshot.web.extract].every(provider => provider.credentialConfigured)
-          ? `${snapshot.web.search.id} + ${snapshot.web.extract.id} · ready`
-          : `${snapshot.web.search.id} + ${snapshot.web.extract.id} · credential missing`,
+          ? `${webProviders} · ready`
+          : `${webProviders} · credential missing`,
     scope: 'TUI',
     available: snapshot.web !== undefined,
   }, {
