@@ -58,7 +58,7 @@ describe('ComposerFooter', () => {
 
     const [identity, metrics] = footer.render(80)
     expect(identity).not.toContain('\u001b[2m')
-    expect(metrics).toContain('\u001b[38;2;148;163;184m')
+    expect(metrics).toContain('\u001b[38;2;188;198;214m')
     expect(metrics).not.toContain('\u001b[2m')
   })
 })

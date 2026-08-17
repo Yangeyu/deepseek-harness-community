@@ -9,6 +9,7 @@ function plan(): RewindPlan {
     turn: 2,
     input: { text: 'fix it again', attachments: [] },
     createdAt: 1,
+    codeScope: 'backward',
     state: 'safe',
     files: [],
     participants: [],
@@ -22,7 +23,7 @@ function rewindPort(overrides: Partial<RewindPort> = {}): RewindPort {
     list: vi.fn(() => []),
     plan: vi.fn(async () => plan()),
     restore: vi.fn(async () => async () => {}),
-    continueFrom: vi.fn(async () => {}),
+    commit: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
     ...overrides,
   }
@@ -48,11 +49,11 @@ describe('RewindTransaction', () => {
     const transaction = new RewindTransaction(rewind, conversation)
     const selected = plan()
 
-    await expect(transaction.execute(selected)).resolves.toBe('forked-session')
+    await expect(transaction.execute(selected, 'code-and-conversation')).resolves.toBe('forked-session')
 
     expect(rewind.restore).toHaveBeenCalledWith(selected)
     expect(conversation.rewind).toHaveBeenCalledWith(selected, expect.any(Function))
-    expect(rewind.continueFrom).toHaveBeenCalledWith(selected, 'forked-session')
+    expect(rewind.commit).toHaveBeenCalledWith(selected, 'code-and-conversation', 'forked-session')
   })
 
   it('compensates reversible state when the conversation commit fails', async () => {
@@ -63,10 +64,36 @@ describe('RewindTransaction', () => {
     })
     const phases: string[] = []
 
-    await expect(transaction.execute(plan(), phase => { phases.push(phase) })).rejects.toThrow('fork failed')
+    await expect(transaction.execute(plan(), 'code-and-conversation', phase => { phases.push(phase) })).rejects.toThrow('fork failed')
 
     expect(rollback).toHaveBeenCalledOnce()
-    expect(rewind.continueFrom).not.toHaveBeenCalled()
+    expect(rewind.commit).not.toHaveBeenCalled()
     expect(phases).toContain('compensating')
+  })
+
+  it('can restore only conversation without applying reversible effects', async () => {
+    const rewind = rewindPort()
+    const conversation = { rewind: vi.fn(async () => 'forked-session') }
+    const transaction = new RewindTransaction(rewind, conversation)
+    const selected = plan()
+
+    await expect(transaction.execute(selected, 'conversation-only')).resolves.toBe('forked-session')
+
+    expect(rewind.restore).not.toHaveBeenCalled()
+    expect(conversation.rewind).toHaveBeenCalledOnce()
+    expect(rewind.commit).toHaveBeenCalledWith(selected, 'conversation-only', 'forked-session')
+  })
+
+  it('can restore only code without forking or replacing the conversation', async () => {
+    const rewind = rewindPort()
+    const conversation = { rewind: vi.fn(async () => 'forked-session') }
+    const transaction = new RewindTransaction(rewind, conversation)
+    const selected = plan()
+
+    await expect(transaction.execute(selected, 'code-only')).resolves.toBe('session')
+
+    expect(rewind.restore).toHaveBeenCalledWith(selected)
+    expect(conversation.rewind).not.toHaveBeenCalled()
+    expect(rewind.commit).toHaveBeenCalledWith(selected, 'code-only', undefined)
   })
 })

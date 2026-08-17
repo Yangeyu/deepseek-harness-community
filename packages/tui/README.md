@@ -328,20 +328,25 @@ not listed as Rewind points: the current Host conversation API can restore only
 completed-turn boundaries. The adapter makes that capability boundary explicit
 rather than presenting a steer that cannot be restored faithfully.
 
-`Esc Esc` opens the retained Prompt boundaries. Key release and repeat events do
-not count as the second press. `Enter` prepares a stale-guarded reverse plan
+`Esc Esc` and `/rewind` enter the same Rewind workflow over Prompt boundaries
+rebuilt from the active Host Session log. A newly opened or resumed conversation
+therefore has checkpoints as soon as it has accepted user turns; visibility does
+not depend on which session owns reversible file effects. Key release and repeat
+events do not count as the second Esc press. `Enter` prepares a stale-guarded reverse plan
 for the selected turn and every later turn. Exact matches are `safe`;
 non-overlapping later edits are `mergeable` and preserved;
 overlapping edits are `conflict`; provider outcomes without a reversible
-before-state are `unsupported`. Restore is selected by default only for safe
-or mergeable plans and the confirmation lists the exact affected paths.
-Successful confirmation restores those AI-owned text mutations, reverts the
-corresponding Memory mutations, forks the conversation, and refills the
-selected Prompt's text and attached images. Attachments are verified from their
-durable Host references before any workspace, Memory, or conversation mutation;
+before-state are `unsupported`. The confirmation lists the exact affected paths
+and independently offers **Restore code and conversation**, **Restore
+conversation only**, and **Restore code only**. Conversation-only remains
+available when code restore is blocked or no source-attributed code state is
+retained. Restoring conversation forks at the checkpoint and refills the
+selected Prompt's text and attached images; restoring code reverts only the
+listed AI-owned text and corresponding Memory mutations. Attachments are
+verified from their durable Host references before a conversation restore;
 missing image data therefore cannot produce a partial restore. Workspace and
-Memory changes are compensated if a later phase
-fails. Native filesystem calls that do not publish the semantic mutation
+Memory changes are compensated if a later conversation phase fails. Native
+filesystem calls that do not publish the semantic mutation
 contract, including arbitrary shell-side edits, are deliberately excluded
 rather than guessed. The history limit defaults to 20 through `rewindHistory`;
 earlier boundaries follow the forked conversation for repeated Rewind. A
@@ -350,19 +355,22 @@ not a second checkpoint. Native image blocks and proxy Vision evidence enrich
 the same retained Prompt input. Evidence carries the admitted Prompt identity,
 so delayed events cannot attach an image to a nearby user message.
 
-The active editing timeline survives TUI shutdown under
-`$DSH_HOME/rewind/v2`, so `dsh-tui --resume <session-id>` can Rewind edits made
-before restart. Storage is scoped to one canonical workspace lineage, uses
+The active reversible-effect timeline survives TUI shutdown under
+`$DSH_HOME/rewind/v2`, so `dsh-tui --resume <session-id>` can Rewind attributed
+edits made before restart while Prompt visibility continues to come from the
+Session log. Storage is scoped to one canonical workspace lineage, uses
 private versioned manifests and content-addressed objects, and is bounded to 16
 MiB per object, 64 MiB per timeline, and 512 MiB globally. Invalid history is
-quarantined. Opening another session does not take ownership until that session
-produces its first attributed edit.
+quarantined. Opening another session never hides its Prompt checkpoints and does
+not take effect ownership until that session produces its first attributed edit.
 
-After a successful Rewind, the forked session owns a cursor before the selected
-turn. The future segment remains durable until a new turn is sent from that
-point, when it is discarded as a new branch. This release exposes backward
-Rewind only; forward timeline navigation is reserved for the next interaction
-iteration.
+After a code-and-conversation Rewind, the forked session owns a code/effect
+cursor before the selected turn. Code-only restore moves the same cursor without
+forking; conversation-only restore forks without moving it. A retained future
+code segment is discarded only when a new attributed branch replaces it. This
+release exposes backward code restore only; a forward checkpoint remains
+available for conversation-only restore and reports that forward code restore
+is not implemented yet.
 
 ## Memory
 

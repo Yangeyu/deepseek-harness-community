@@ -8,9 +8,12 @@ import {
   RewindService,
   type PreparedRewindParticipant,
   type RewindParticipant,
+  type RewindPointInput,
 } from '../../src/rewind/index.ts'
+import { TestRewindConversationHistory } from './history-fixture.ts'
 
 const temporaryDirectories: string[] = []
+const histories = new WeakMap<RewindService, TestRewindConversationHistory>()
 
 async function workspace(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-rewind-test-'))
@@ -21,11 +24,21 @@ async function workspace(): Promise<string> {
 }
 
 function service(history = 10, participants: readonly RewindParticipant[] = []): RewindService {
-  return new RewindService({ history }, new LocalWorkspaceRewind(), participants)
+  const conversation = new TestRewindConversationHistory()
+  const rewind = new RewindService({ history }, conversation, new LocalWorkspaceRewind(), participants)
+  histories.set(rewind, conversation)
+  return rewind
+}
+
+function admit(rewind: RewindService, point: RewindPointInput): Promise<void> {
+  const history = histories.get(rewind)
+  if (history === undefined) throw new Error('test Rewind history is unavailable')
+  history.record(point)
+  return rewind.recordPoint(point)
 }
 
 async function begin(rewind: RewindService, root: string, turn = 1, sessionId = 'session'): Promise<void> {
-  await rewind.recordPoint({
+  await admit(rewind, {
     pointId: `${sessionId}-prompt-${String(turn)}`,
     sessionId,
     turn,
@@ -81,7 +94,7 @@ describe('RewindService', () => {
   it('serializes prompt admission before same-turn effects', async () => {
     const root = await workspace()
     const rewind = service()
-    const point = rewind.recordPoint({
+    const point = admit(rewind, {
       pointId: 'prompt-1',
       sessionId: 'session',
       turn: 1,
@@ -112,7 +125,7 @@ describe('RewindService', () => {
       promptSeq: 1,
       createdAt: 1,
     }
-    await rewind.recordPoint({ ...base, input: { text: 'inspect image', attachments: [] } })
+    await admit(rewind, { ...base, input: { text: 'inspect image', attachments: [] } })
     const attachment: ImageAttachmentRef = {
       attachmentId: 'attachment-1' as ImageAttachmentRef['attachmentId'],
       mediaType: 'image/png',
@@ -120,7 +133,7 @@ describe('RewindService', () => {
       width: 1,
       height: 1,
     }
-    await rewind.recordPoint({ ...base, input: { text: 'inspect image', attachments: [attachment] } })
+    await admit(rewind, { ...base, input: { text: 'inspect image', attachments: [attachment] } })
 
     const [summary] = await list(rewind)
     expect(summary).toMatchObject({ pointId: 'prompt-1', imageCount: 1 })
@@ -259,7 +272,7 @@ describe('RewindService', () => {
     expect(plan.files[0]?.state === 'conflict' ? plan.files[0].reason : '').toContain('outside the active workspace')
   })
 
-  it('keeps bounded history and moves only ancestors to the forked session', async () => {
+  it('keeps bounded history while both source and fork read checkpoints from their Session logs', async () => {
     const root = await workspace()
     const rewind = service(3)
     await begin(rewind, root, 1)
@@ -270,9 +283,10 @@ describe('RewindService', () => {
     expect(summaries.map(summary => summary.turn)).toEqual([2, 3, 4])
 
     const plan = await rewind.plan('session', summaries[1]?.pointId ?? '')
-    await rewind.continueFrom(plan, 'forked')
-    expect(rewind.list('forked').map(summary => summary.turn)).toEqual([2])
-    expect(() => rewind.list('session')).toThrow('no rewind point')
+    histories.get(rewind)?.fork('session', 'forked', plan.turn)
+    await rewind.commit(plan, 'code-and-conversation', 'forked')
+    expect(rewind.list('forked').map(summary => summary.turn)).toEqual([1, 2])
+    expect(rewind.list('session').map(summary => summary.turn)).toEqual([2, 3, 4])
   })
 
   it('tracks opaque participant effects without importing their payload type', async () => {
@@ -335,10 +349,13 @@ describe('RewindService', () => {
 
   it('marks reversible content outside configured byte budgets as unsupported', async () => {
     const root = await workspace()
+    const conversation = new TestRewindConversationHistory()
     const rewind = new RewindService(
       { history: 10, maxMutationBytes: 8, maxSessionBytes: 16 },
+      conversation,
       new LocalWorkspaceRewind(),
     )
+    histories.set(rewind, conversation)
     await begin(rewind, root)
     record(rewind, { root, before: '12345', after: '67890' })
 

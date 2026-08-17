@@ -207,9 +207,11 @@ reducing the number of visible files.
   `TranscriptComponent` paints and interacts with those items, while
   `TrajectoryView` provides the diagnostic hierarchy. None owns persistence.
 - `rewind/contracts` is independent of Cordis, Memory, Node, and pi-tui.
-  `rewind/domain` owns bounded history and pure reverse planning;
-  `rewind/application` owns the active timeline Repository port, restore, and
-  conversation compensation; and
+  The injected `RewindConversationHistory` rebuilds Prompt checkpoints from the
+  active Session log. `rewind/domain` owns only the bounded reversible-effect
+  lineage and pure reverse planning; `rewind/application` joins those two
+  sources and owns the active timeline Repository port, restore, and conversation
+  compensation; and
   `rewind/adapters` is the only layer that translates Prompt nodes, Host
   filesystem events, Memory payloads, durable Harness-home files, or the local
   workspace. Presentation consumes only the `RewindPort`, point summaries, and
@@ -297,9 +299,11 @@ architecture required to support that sequence.
   identity, validates the canonical text-mutation contract, and attributes it
   through stable root-call, session, and turn identities without parsing tool
   names or presentation diffs.
-- `RewindJournal` retains only Prompt boundaries, attributed workspace facts,
-  opaque participant references, and a cursor over one active workspace
-  lineage. `RewindService` builds `safe`,
+- `RewindJournal` retains only the Prompt identities needed to attribute
+  workspace facts and opaque participant references plus a cursor over one
+  active workspace effect lineage. It is not the source of visible checkpoints.
+  `RewindService` reads those from `HostRewindConversationHistory`, joins effect
+  metadata by stable Prompt identity, and builds `safe`,
   `mergeable`, `conflict`, or `unsupported` plans through an injected workspace
   backend; the pure planner preserves non-overlapping later edits.
 - The injected `RewindRepository` persists that lineage independently of UI
@@ -308,17 +312,21 @@ architecture required to support that sequence.
   optimistic revision checks, quarantines invalid state, applies byte budgets,
   and conditionally removes stale history if a newer snapshot cannot be
   committed.
-- Workspace and explicit participants form one reversible stage before
-  `RewindTransaction` commits the conversation fork. Memory payloads remain in
-  its adapter, and any failed later phase compensates completed stages.
+- Workspace and explicit participants form one optional reversible stage before
+  `RewindTransaction` optionally commits a conversation fork. One transaction
+  path supports code-and-conversation, conversation-only, and code-only restore.
+  Memory payloads remain in its adapter, and any failed later conversation phase
+  compensates completed code stages.
   Composer restoration first verifies attachment references through the Host
   store, then restores text and image drafts together after the fork succeeds.
-  Presentation defaults safe and mergeable plans to Restore,
-  defaults blocked plans to Cancel, and lists exact paths before confirmation.
-- Session resume reactivates the same owner lineage. Another session does not
-  replace it until its first attributed edit. Rewind moves a durable cursor and
-  retains the future segment until a new Prompt branches from the restored point;
-  only backward navigation is exposed in this milestone.
+  Presentation defaults safe and mergeable code plans to code-and-conversation,
+  defaults blocked or code-empty plans to conversation-only, and lists exact
+  paths before confirmation.
+- New and resumed Sessions expose checkpoints directly from their logs, whether
+  or not they own the code lineage. Another session replaces effect ownership
+  only on its first attributed edit. Code restore moves a durable cursor and
+  retains the future segment until a new attributed Prompt branches from the
+  restored point; only backward code navigation is exposed in this milestone.
 
 ### Following architecture work
 

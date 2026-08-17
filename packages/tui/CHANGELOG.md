@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Rebuild Rewind checkpoints from the active Session log so new and resumed
+  conversations no longer depend on reversible-effect ownership, and offer
+  independent code-and-conversation, conversation-only, and code-only restore.
+- Replace terminal-dependent dim text with one explicit high-contrast secondary
+  foreground while keeping structural borders visually subordinate.
 - Add official `web_search` and provider-neutral `web_extract` tool support
   through one explicitly selected Tavily provider, shared per-operation Harness
   credential resolution and transport, bounded output, stable error mapping,

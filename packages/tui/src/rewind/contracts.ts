@@ -9,6 +9,12 @@ export type RewindBlockedState = Extract<RewindPlanState, 'conflict' | 'unsuppor
 /** Direction along the retained editing timeline. */
 export type RewindDirection = 'backward' | 'forward'
 
+/** User-selected dimensions of one checkpoint restore. */
+export type RewindAction = 'code-and-conversation' | 'conversation-only' | 'code-only'
+
+/** Whether the selected checkpoint can move the active code/effect cursor. */
+export type RewindCodeScope = 'backward' | 'none' | 'forward-unavailable'
+
 interface WorkspaceMutationSource {
   readonly sessionId: string
   readonly turn: number
@@ -88,6 +94,11 @@ export interface RewindPointInput {
   readonly previousTurnEndSeq?: number
 }
 
+/** Canonical Prompt checkpoints projected from the active Session log. */
+export interface RewindConversationHistory {
+  list(sessionId: string): readonly RewindPointInput[]
+}
+
 /** Opaque participant effect attributed to one user turn. */
 export interface RewindEffectInput {
   readonly participantId: string
@@ -156,6 +167,8 @@ export interface RewindPlan {
   readonly input: RewindPromptInput
   readonly createdAt: number
   readonly previousTurnEndSeq?: number
+  readonly codeScope: RewindCodeScope
+  readonly codeReason?: string
   readonly state: RewindPlanState
   readonly files: readonly RewindFilePlan[]
   readonly participants: readonly RewindParticipantImpact[]
@@ -170,7 +183,7 @@ export interface RewindPort {
   list(sessionId: string): RewindPointSummary[]
   plan(sessionId: string, pointId: string): Promise<RewindPlan>
   restore(plan: RewindPlan): Promise<RewindCompensation>
-  continueFrom(plan: RewindPlan, targetSessionId: string): Promise<void>
+  commit(plan: RewindPlan, action: RewindAction, targetSessionId?: string): Promise<void>
   close(): Promise<void>
 }
 

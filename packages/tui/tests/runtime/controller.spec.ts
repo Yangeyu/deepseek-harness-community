@@ -634,6 +634,7 @@ describe('HarnessController', () => {
       input: { text: 'redo this', attachments: [] },
       createdAt: 1,
       previousTurnEndSeq: 17,
+      codeScope: 'backward',
       state: 'safe',
       files: [],
       participants: [],

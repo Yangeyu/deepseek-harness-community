@@ -298,7 +298,7 @@ describe('TranscriptComponent', () => {
     const expanded = transcript.render(80).join('\n')
     expect(expanded).toContain('⌄ • Thought')
     expect(expanded).toContain('thought 1')
-    expect(expanded).toContain('\u001b[38;2;148;163;184m')
+    expect(expanded).toContain('\u001b[38;2;188;198;214m')
     expect(expanded).not.toContain('thought 8')
     expect(expanded.split('\n').filter(line => line.includes('│'))).toHaveLength(3)
 

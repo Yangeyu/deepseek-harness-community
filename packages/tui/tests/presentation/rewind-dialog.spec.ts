@@ -13,6 +13,7 @@ function plan(overrides: Partial<RewindPlan> = {}): RewindPlan {
     input: { text: 'fix the parser', attachments: [] },
     createdAt: Date.now(),
     previousTurnEndSeq: 15,
+    codeScope: 'backward',
     state: 'safe',
     files: [
       { path: 'src/parser.ts', state: 'safe', added: 4, removed: 2 },
@@ -29,20 +30,20 @@ describe('RewindDialog', () => {
     const dialog = new RewindDialog(plan(), () => 24, createTheme(false), confirm, cancel)
 
     const output = dialog.render(80).join('\n')
-    expect(output).toContain('Confirm you want to restore')
+    expect(output).toContain('Choose what to restore')
     expect(output).toContain('fix the parser')
     expect(output).toContain('1 source-attributed file is included')
     expect(output).toContain('● src/parser.ts')
-    expect(output).toContain('1 memory update will be reverted')
-    expect(output).toContain('› 1. Restore workspace, memory, and conversation')
+    expect(output).toContain('1 memory update will be reverted when code state is restored')
+    expect(output).toContain('› 1. Restore code and conversation')
 
     dialog.handleInput('\r')
-    expect(confirm).toHaveBeenCalledOnce()
+    expect(confirm).toHaveBeenCalledWith('code-and-conversation')
     expect(cancel).not.toHaveBeenCalled()
     expect(dialog.render(40).every(line => visibleWidth(line) <= 40)).toBe(true)
   })
 
-  it('defaults a blocked plan to Cancel and does not confirm an unavailable restore', () => {
+  it('keeps conversation-only Rewind available when code restore is blocked', () => {
     const confirm = vi.fn()
     const cancel = vi.fn()
     const dialog = new RewindDialog(plan({
@@ -50,10 +51,11 @@ describe('RewindDialog', () => {
       files: [{ path: 'src/parser.ts', state: 'conflict', reason: 'A later change overlaps the AI edit.' }],
     }), () => 24, createTheme(false), confirm, cancel)
 
-    expect(dialog.render(80).join('\n')).toContain('› 2. Never mind')
-    dialog.handleInput('\u001b[A')
+    const output = dialog.render(80).join('\n')
+    expect(output).toContain('1. Restore code and conversation (unavailable)')
+    expect(output).toContain('› 2. Restore conversation only')
     dialog.handleInput('\r')
-    expect(confirm).not.toHaveBeenCalled()
+    expect(confirm).toHaveBeenCalledWith('conversation-only')
     expect(cancel).not.toHaveBeenCalled()
   })
 
@@ -66,15 +68,25 @@ describe('RewindDialog', () => {
 
     let output = dialog.render(32)
     expect(output.length).toBeLessThanOrEqual(10)
-    expect(output.join('\n')).toContain('1. Restore workspace')
+    expect(output.join('\n')).toContain('1. Restore code')
     for (let page = 0; page < 20; page += 1) {
       dialog.handleInput('\u001b[6~')
       output = dialog.render(32)
     }
     expect(output.length).toBeLessThanOrEqual(10)
     expect(output.join('\n')).toContain('feature-11.ts')
-    expect(output.join('\n')).toContain('1. Restore workspace')
+    expect(output.join('\n')).toContain('1. Restore code')
     expect(output.every(line => visibleWidth(line) <= 32)).toBe(true)
+  })
+
+  it('selects code-only restore as an independent action', () => {
+    const confirm = vi.fn()
+    const dialog = new RewindDialog(plan(), () => 24, createTheme(false), confirm, vi.fn())
+
+    dialog.handleInput('3')
+    dialog.handleInput('\r')
+
+    expect(confirm).toHaveBeenCalledWith('code-only')
   })
 })
 describe('RewindPointDialog', () => {
@@ -97,5 +109,22 @@ describe('RewindPointDialog', () => {
 
     dialog.handleInput('\u001b')
     expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('renders an empty file impact below actionable secondary text', () => {
+    const summaries = [
+      { pointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', imageCount: 0, createdAt: 1, workspaceFiles: 0, unsupportedFiles: 0, participants: [] },
+    ]
+    const output = new RewindPointDialog(
+      summaries,
+      undefined,
+      () => 20,
+      createTheme(true),
+      vi.fn(),
+      vi.fn(),
+    ).render(80).join('\n')
+
+    expect(output).toContain('\u001b[38;2;164;176;194mNo AI file edits\u001b[39m')
+    expect(output).not.toContain('\u001b[38;2;188;198;214mNo AI file edits\u001b[39m')
   })
 })

@@ -1,4 +1,6 @@
 import type {
+  RewindAction,
+  RewindCompensation,
   RewindConversationPort,
   RewindPlan,
   RewindPointSummary,
@@ -26,22 +28,47 @@ export class RewindTransaction {
 
   async execute(
     plan: RewindPlan,
+    action: RewindAction,
     onPhase?: (phase: RewindTransactionPhase) => void,
   ): Promise<string> {
-    const compensate = await this.rewind.restore(plan)
-    let targetSessionId: string
-    try {
-      targetSessionId = await this.conversation.rewind(plan, phase => { onPhase?.(phase) })
-    } catch (error: unknown) {
-      onPhase?.('compensating')
+    const restoresCode = action !== 'conversation-only' && plan.codeScope === 'backward'
+    const restoresConversation = action !== 'code-only'
+    const compensate: RewindCompensation = restoresCode
+      ? await this.rewind.restore(plan)
+      : async () => {}
+    let targetSessionId = plan.sessionId
+    if (restoresConversation) {
       try {
-        await compensate()
-      } catch (compensationError: unknown) {
-        throw new Error(`conversation rewind failed (${String(error)}) and compensation also failed (${String(compensationError)})`)
+        targetSessionId = await this.conversation.rewind(plan, phase => { onPhase?.(phase) })
+      } catch (error: unknown) {
+        if (restoresCode) {
+          onPhase?.('compensating')
+          try {
+            await compensate()
+          } catch (compensationError: unknown) {
+            throw new Error(`conversation rewind failed (${String(error)}) and compensation also failed (${String(compensationError)})`)
+          }
+        }
+        throw error
+      }
+    }
+    try {
+      await this.rewind.commit(
+        plan,
+        action,
+        restoresConversation ? targetSessionId : undefined,
+      )
+    } catch (error: unknown) {
+      if (restoresCode) {
+        onPhase?.('compensating')
+        try {
+          await compensate()
+        } catch (compensationError: unknown) {
+          throw new Error(`Rewind commit failed (${String(error)}) and compensation also failed (${String(compensationError)})`)
+        }
       }
       throw error
     }
-    await this.rewind.continueFrom(plan, targetSessionId)
     return targetSessionId
   }
 }

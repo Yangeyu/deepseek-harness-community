@@ -43,14 +43,14 @@ function ansiSequence(enabled: boolean, open: string, close: string): Paint {
 export function createTheme(enabled: boolean): TuiTheme {
   const accent = ansi(enabled, 36, 39)
   const bold = ansi(enabled, 1, 22)
-  const dim = ansi(enabled, 2, 22)
   const diffAdded = ansiSequence(enabled, '48;2;12;48;28', '49')
   const diffRemoved = ansiSequence(enabled, '48;2;58;23;31', '49')
   const error = ansi(enabled, 31, 39)
-  // SGR dim delegates contrast to the terminal and can make persistent chrome
-  // nearly invisible. Use a stable, high-luminance secondary foreground for
-  // information that is subordinate but still needs to remain readable.
-  const secondary = ansiSequence(enabled, '38;2;148;163;184', '39')
+  // Never delegate text contrast to terminal-specific SGR dim. Keep both
+  // secondary levels explicit so their hierarchy is stable across terminals.
+  const secondary = ansiSequence(enabled, '38;2;188;198;214', '39')
+  const dim = ansiSequence(enabled, '38;2;164;176;194', '39')
+  const structure = ansiSequence(enabled, '38;2;100;116;139', '39')
   const reasoning = secondary
   const success = ansi(enabled, 32, 39)
   // Tool titles need more luminance than standard ANSI blue on dark terminals.
@@ -79,7 +79,7 @@ export function createTheme(enabled: boolean): TuiTheme {
     hover,
     reasoning,
     success,
-    surfaceBorder: secondary,
+    surfaceBorder: structure,
     tool,
     underline,
     user,
@@ -87,7 +87,7 @@ export function createTheme(enabled: boolean): TuiTheme {
     warning,
     select,
     editor: {
-      borderColor: dim,
+      borderColor: structure,
       selectList: select,
     },
     markdown: {
@@ -104,8 +104,8 @@ export function createTheme(enabled: boolean): TuiTheme {
         return language === '' ? '' : dim(`  ${language}`)
       },
       quote: dim,
-      quoteBorder: dim,
-      hr: dim,
+      quoteBorder: structure,
+      hr: structure,
       listBullet: accent,
       bold,
       italic: ansi(enabled, 3, 23),

@@ -47,6 +47,7 @@ import { SelectableMainScreen } from '../presentation/selectable-main-screen.ts'
 import { TrajectoryView } from '../trajectory/view.ts'
 import {
   RewindTransaction,
+  type RewindAction,
   type RewindPlan,
   type RewindPointSummary,
   type RewindPort,
@@ -1532,9 +1533,13 @@ export class TuiApplication implements TuiControllerSink {
       plan,
       () => this.terminal.rows,
       this.theme,
-      () => {
-        this.showRewindProgress('Restoring AI-owned workspace edits…')
-        void this.performRewind(plan)
+      (action) => {
+        this.showRewindProgress(action === 'conversation-only'
+          ? 'Restoring conversation checkpoint…'
+          : action === 'code-only'
+            ? 'Restoring source-attributed code state…'
+            : 'Restoring code and conversation checkpoint…')
+        void this.performRewind(plan, action)
       },
       () => this.showRewindPointList(summary.pointId),
     )
@@ -1544,19 +1549,26 @@ export class TuiApplication implements TuiControllerSink {
     this.tui.requestRender()
   }
 
-  private async performRewind(plan: RewindPlan): Promise<void> {
+  private async performRewind(
+    plan: RewindPlan,
+    action: RewindAction = 'code-and-conversation',
+  ): Promise<void> {
     try {
-      const draft = await preparePromptDraft(plan.input, this.promptAttachmentReader)
-      await this.rewindTransaction.execute(plan, (phase) => {
+      const draft = action === 'code-only'
+        ? undefined
+        : await preparePromptDraft(plan.input, this.promptAttachmentReader)
+      await this.rewindTransaction.execute(plan, action, (phase) => {
         this.showRewindProgress(phase === 'forking'
           ? 'Rewinding conversation…'
           : phase === 'opening'
             ? 'Reloading rewound session…'
             : 'Rewind failed; restoring the current workspace and memory…')
       })
-      this.resetComposerInput()
-      this.editor.setText(draft.text)
-      this.attachmentDrafts.replaceAll(draft.attachments)
+      if (draft !== undefined) {
+        this.resetComposerInput()
+        this.editor.setText(draft.text)
+        this.attachmentDrafts.replaceAll(draft.attachments)
+      }
     } catch (error: unknown) {
       this.controller.notice(error instanceof Error ? error.message : String(error))
     } finally {

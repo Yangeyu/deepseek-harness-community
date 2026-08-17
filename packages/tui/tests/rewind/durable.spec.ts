@@ -8,10 +8,13 @@ import {
   FileRewindRepository,
   LocalWorkspaceRewind,
   MemoryRewindParticipant,
+  type RewindPointInput,
   RewindService,
 } from '../../src/rewind/index.ts'
+import { TestRewindConversationHistory } from './history-fixture.ts'
 
 const temporaryDirectories: string[] = []
+const histories = new WeakMap<RewindService, TestRewindConversationHistory>()
 
 async function temporary(name: string): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), name))
@@ -19,13 +22,20 @@ async function temporary(name: string): Promise<string> {
   return path
 }
 
-function service(storageRoot: string, participant?: MemoryRewindParticipant): RewindService {
-  return new RewindService(
+function service(
+  storageRoot: string,
+  conversation: TestRewindConversationHistory,
+  participant?: MemoryRewindParticipant,
+): RewindService {
+  const rewind = new RewindService(
     { history: 20 },
+    conversation,
     new LocalWorkspaceRewind(),
     participant === undefined ? [] : [participant],
     new FileRewindRepository(storageRoot),
   )
+  histories.set(rewind, conversation)
+  return rewind
 }
 
 async function begin(
@@ -35,7 +45,7 @@ async function begin(
   sessionId = 'session',
   attachments: readonly ImageAttachmentRef[] = [],
 ): Promise<void> {
-  await rewind.recordPoint({
+  const point: RewindPointInput = {
     pointId: `${sessionId}-prompt-${String(turn)}`,
     sessionId,
     turn,
@@ -43,7 +53,11 @@ async function begin(
     input: { text: `turn ${String(turn)}`, attachments },
     promptSeq: turn,
     createdAt: turn,
-  })
+  }
+  const history = histories.get(rewind)
+  if (history === undefined) throw new Error('test Rewind history is unavailable')
+  history.record(point)
+  await rewind.recordPoint(point)
 }
 
 function record(rewind: RewindService, root: string, turn: number, before: string, after: string, sessionId = 'session'): void {
@@ -72,8 +86,9 @@ describe('durable Rewind lifecycle', () => {
     const path = join(workspaceRoot, 'a.txt')
     const before = 'before\n'
     const after = 'after\n'
+    const conversation = new TestRewindConversationHistory()
     await writeFile(path, before)
-    const first = service(storageRoot)
+    const first = service(storageRoot, conversation)
     const attachment: ImageAttachmentRef = {
       attachmentId: 'attachment-1' as ImageAttachmentRef['attachmentId'],
       mediaType: 'image/png',
@@ -88,7 +103,7 @@ describe('durable Rewind lifecycle', () => {
     await first.settle('session')
     await first.close()
 
-    const resumed = service(storageRoot)
+    const resumed = service(storageRoot, conversation)
     await resumed.activate('session', workspaceRoot)
     const [point] = resumed.list('session')
     const plan = await resumed.plan('session', point?.pointId ?? '')
@@ -103,9 +118,10 @@ describe('durable Rewind lifecycle', () => {
   it('hydrates opaque Memory effects and restores them with the workspace after restart', async () => {
     const storageRoot = await temporary('dsh-rewind-memory-storage-')
     const workspaceRoot = await temporary('dsh-rewind-memory-workspace-')
+    const conversation = new TestRewindConversationHistory()
     await writeFile(join(workspaceRoot, 'a.txt'), 'unchanged\n')
     const firstMemory = new MemoryRewindParticipant({ settle: vi.fn(async () => {}), restore: vi.fn(async () => {}) })
-    const first = service(storageRoot, firstMemory)
+    const first = service(storageRoot, conversation, firstMemory)
     await begin(first, workspaceRoot, 1)
     const mutation: MemoryMutation = {
       id: 'memory-1',
@@ -125,7 +141,7 @@ describe('durable Rewind lifecycle', () => {
 
     const restore = vi.fn(async () => {})
     const resumedMemory = new MemoryRewindParticipant({ settle: vi.fn(async () => {}), restore })
-    const resumed = service(storageRoot, resumedMemory)
+    const resumed = service(storageRoot, conversation, resumedMemory)
     await resumed.activate('session', workspaceRoot)
     const [point] = resumed.list('session')
     const plan = await resumed.plan('session', point?.pointId ?? '')
@@ -138,41 +154,48 @@ describe('durable Rewind lifecycle', () => {
   it('persists the fork owner and retains future nodes until the restored session starts a new turn', async () => {
     const storageRoot = await temporary('dsh-rewind-fork-storage-')
     const workspaceRoot = await temporary('dsh-rewind-fork-workspace-')
-    const first = service(storageRoot)
+    const conversation = new TestRewindConversationHistory()
+    const first = service(storageRoot, conversation)
     await begin(first, workspaceRoot, 1)
     await begin(first, workspaceRoot, 2)
+    await writeFile(join(workspaceRoot, 'a.txt'), 'after\n')
+    record(first, workspaceRoot, 2, 'before\n', 'after\n')
+    await first.settle('session')
     const points = first.list('session')
     const plan = await first.plan('session', points[1]?.pointId ?? '')
-    await first.continueFrom(plan, 'forked')
+    expect(plan.codeScope).toBe('backward')
+    conversation.fork('session', 'forked', plan.turn)
+    await first.commit(plan, 'code-and-conversation', 'forked')
     await first.close()
 
-    const resumed = service(storageRoot)
+    const resumed = service(storageRoot, conversation)
     await resumed.activate('forked', workspaceRoot)
     expect(resumed.list('forked').map(point => point.turn)).toEqual([1])
-    expect(() => resumed.list('session')).toThrow('no rewind point')
+    expect(resumed.list('session').map(point => point.turn)).toEqual([1, 2])
     await begin(resumed, workspaceRoot, 3, 'forked')
     expect(resumed.list('forked').map(point => point.turn)).toEqual([1, 3])
     await resumed.close()
 
-    const reopened = service(storageRoot)
+    const reopened = service(storageRoot, conversation)
     await reopened.activate('forked', workspaceRoot)
     expect(reopened.list('forked').map(point => point.turn)).toEqual([1, 3])
     await reopened.close()
   })
 
-  it('keeps the prior owner until another session produces its first attributed edit', async () => {
+  it('shows a new session immediately and changes only effect ownership on its first edit', async () => {
     const storageRoot = await temporary('dsh-rewind-owner-storage-')
     const workspaceRoot = await temporary('dsh-rewind-owner-workspace-')
-    const first = service(storageRoot)
+    const conversation = new TestRewindConversationHistory()
+    const first = service(storageRoot, conversation)
     await begin(first, workspaceRoot, 1)
     await begin(first, workspaceRoot, 1, 'other')
 
     expect(first.list('session')).toHaveLength(1)
-    expect(() => first.list('other')).toThrow('no rewind point')
+    expect(first.list('other')).toHaveLength(1)
 
     record(first, workspaceRoot, 1, 'before\n', 'after\n', 'other')
     await first.settle('other')
-    expect(() => first.list('session')).toThrow('no rewind point')
+    expect(first.list('session')).toHaveLength(1)
     expect(first.list('other')).toHaveLength(1)
     await first.close()
   })
@@ -181,8 +204,10 @@ describe('durable Rewind lifecycle', () => {
     const storageRoot = await temporary('dsh-rewind-failed-storage-')
     const workspaceRoot = await temporary('dsh-rewind-failed-workspace-')
     const warning = vi.fn()
+    const conversation = new TestRewindConversationHistory()
     const first = new RewindService(
       { history: 20, onPersistenceError: warning },
+      conversation,
       new LocalWorkspaceRewind(),
       [],
       new FileRewindRepository(storageRoot, {
@@ -191,6 +216,7 @@ describe('durable Rewind lifecycle', () => {
         maxGlobalBytes: 128,
       }),
     )
+    histories.set(first, conversation)
     await begin(first, workspaceRoot, 1)
     record(first, workspaceRoot, 1, 'old', 'new')
     await first.settle('session')
@@ -208,28 +234,54 @@ describe('durable Rewind lifecycle', () => {
   it('does not let a stale TUI process overwrite or remove a newer timeline revision', async () => {
     const storageRoot = await temporary('dsh-rewind-concurrent-storage-')
     const workspaceRoot = await temporary('dsh-rewind-concurrent-workspace-')
-    const first = service(storageRoot)
+    const canonicalRoot = new LocalWorkspaceRewind().canonicalizeRoot(workspaceRoot)
+    const conversation = new TestRewindConversationHistory()
+    const durableTurns = async (): Promise<readonly number[] | undefined> => {
+      const repository = new FileRewindRepository(storageRoot)
+      const entry = await repository.load(canonicalRoot)
+      await repository.close()
+      return entry?.value.timeline.nodes.map(point => point.turn)
+    }
+    const first = service(storageRoot, conversation)
     await begin(first, workspaceRoot, 1)
+    await writeFile(join(workspaceRoot, 'a.txt'), 'after-1')
+    record(first, workspaceRoot, 1, 'before-1', 'after-1')
     await first.settle('session')
+    expect(await durableTurns()).toEqual([1])
 
     const warning = vi.fn()
     const stale = new RewindService(
       { history: 20, onPersistenceError: warning },
+      conversation,
       new LocalWorkspaceRewind(),
       [],
       new FileRewindRepository(storageRoot),
     )
+    histories.set(stale, conversation)
     await stale.activate('session', workspaceRoot)
     await begin(first, workspaceRoot, 2)
     await first.settle('session')
+    expect(await durableTurns()).toEqual([1, 2])
     await begin(stale, workspaceRoot, 3)
     await stale.settle('session')
+    expect(await durableTurns()).toEqual([1, 2])
     await stale.close()
     await first.close()
 
-    const reopened = service(storageRoot)
+    expect(warning.mock.calls.map(([error]) => String(error))).toEqual([
+      'RewindRepositoryConflictError: durable Rewind history changed in another process',
+    ])
+
+    const loadWarning = vi.fn()
+    const repository = new FileRewindRepository(storageRoot, { onWarning: loadWarning })
+    const durable = await repository.load(canonicalRoot)
+    expect(loadWarning).not.toHaveBeenCalled()
+    expect(durable?.value.timeline.nodes.map(point => point.turn)).toEqual([1, 2])
+    await repository.close()
+
+    const reopened = service(storageRoot, conversation)
     await reopened.activate('session', workspaceRoot)
-    expect(reopened.list('session').map(point => point.turn)).toEqual([1, 2])
+    expect(reopened.list('session').map(point => point.turn)).toEqual([1, 2, 3])
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({ name: 'RewindRepositoryConflictError' }))
     await reopened.close()
   })

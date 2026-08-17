@@ -59,7 +59,7 @@ describe('RewindJournal', () => {
     history.recordPoint(point('session', 2, 'two'))
     const released = history.recordPoint(point('session', 3, 'three'))
 
-    expect(history.list('session').map(point => point.turn)).toEqual([2, 3])
+    expect(history.activePoints('session').map(point => point.turn)).toEqual([2, 3])
     expect(released.released).toEqual([{
       participantId: 'memory',
       effectId: 'effect-1',
@@ -79,8 +79,8 @@ describe('RewindJournal', () => {
     })
 
     expect(enriched.changed).toBe(true)
-    expect(history.list('session')).toHaveLength(1)
-    expect(history.list('session')[0]?.input.attachments).toEqual([attachment()])
+    expect(history.activePoints('session')).toHaveLength(1)
+    expect(history.activePoints('session')[0]?.input.attachments).toEqual([attachment()])
     expect(history.recordPoint({
       ...admitted,
       input: { text: admitted.input.text, attachments: [attachment()] },
@@ -92,11 +92,11 @@ describe('RewindJournal', () => {
     history.recordPoint(point('session', 1, 'one'))
     history.recordPoint(point('session', 2, 'two'))
     history.recordEffect({ participantId: 'memory', effectId: 'effect-2', sourceSessionId: 'session', sourceTurn: 2 })
-    const points = history.list('session')
+    const points = history.activePoints('session')
 
-    const selected = history.select('session', points[0]?.id ?? '')
+    const selected = history.selectEffects('session', points[0]?.id ?? '')
 
-    expect(selected.point.turn).toBe(1)
+    expect(selected.codeScope).toBe('backward')
     expect(selected.effects.map(effect => effect.effectId)).toEqual(['effect-2'])
   })
 
@@ -106,17 +106,29 @@ describe('RewindJournal', () => {
     history.recordPoint(point('session', 2, 'two'))
     history.recordEffect({ participantId: 'memory', effectId: 'future-effect', sourceSessionId: 'session', sourceTurn: 2 })
     history.recordPoint(point('session', 3, 'three'))
-    const points = history.list('session')
+    const points = history.activePoints('session')
 
-    history.continueFrom('session', points[1]?.id ?? '', 'forked')
+    history.commit('session', points[1]?.id ?? '', 'code-and-conversation', 'forked')
 
-    expect(history.list('forked').map(point => point.turn)).toEqual([1])
+    expect(history.activePoints('forked').map(point => point.turn)).toEqual([1])
     expect(history.snapshot('/workspace')).toMatchObject({ cursor: 1, nodes: [{ turn: 1 }, { turn: 2 }, { turn: 3 }] })
 
     const branch = history.recordPoint(point('forked', 3, 'replacement'))
 
     expect(branch.released.map(effect => effect.effectId)).toEqual(['future-effect'])
-    expect(history.list('forked').map(point => point.turn)).toEqual([1, 3])
+    expect(history.activePoints('forked').map(point => point.turn)).toEqual([1, 3])
     expect(history.snapshot('/workspace')).toMatchObject({ cursor: 2, nodes: [{ turn: 1 }, { turn: 3 }] })
+  })
+
+  it('does not make another Session Prompt depend on the current effect owner', () => {
+    const history = journal()
+    history.recordPoint(point('session', 1, 'one'))
+
+    const observed = history.recordPoint(point('other', 1, 'independent'))
+
+    expect(observed.durable).toBe(false)
+    expect(history.activePoints('session')).toHaveLength(1)
+    expect(history.activePoints('other')).toEqual([])
+    expect(history.selectEffects('other', 'other-prompt-1').codeScope).toBe('none')
   })
 })

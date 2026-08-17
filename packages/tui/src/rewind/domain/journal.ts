@@ -2,6 +2,8 @@ import type {
   CanonicalWorkspaceMutation,
   RewindEffectInput,
   RewindEffectReference,
+  RewindAction,
+  RewindCodeScope,
   RewindPointInput,
   RewindPromptInput,
   WorkspaceMutation,
@@ -61,10 +63,19 @@ export interface RewindTimelineSnapshot {
   readonly nodes: readonly RewindPointSnapshot[]
 }
 
-export interface RewindSelection {
-  readonly point: RewindPointSnapshot
+export interface RewindEffectSelection {
+  readonly codeScope: RewindCodeScope
+  readonly codeReason?: string
+  readonly lineageId?: string
+  readonly workspaceRoot?: string
   readonly workspaceMutations: readonly WorkspaceMutation[]
   readonly effects: readonly RewindEffectReference[]
+}
+
+export interface RewindJournalClaimResult {
+  readonly changed: boolean
+  readonly workspaceRoot: string
+  readonly released: readonly RewindEffectReference[]
 }
 
 export interface RewindJournalMutationResult {
@@ -209,12 +220,12 @@ function enrichPoint(point: RewindPoint, input: RewindPointInput): boolean {
 }
 
 /**
- * One active, bounded editing timeline per workspace. Future nodes survive a
- * navigation until the restored session admits a new durable Prompt.
+ * One active, bounded reversible-effect lineage per workspace. Prompt visibility
+ * belongs to the Session log; this journal only indexes checkpoints needed to
+ * attribute, restore, and branch code or participant effects.
  */
 export class RewindJournal {
   private readonly timelines = new Map<string, RewindTimeline>()
-  private readonly pending = new Map<string, RewindPoint[]>()
 
   constructor(private readonly limits: RewindJournalLimits) {
     for (const [name, value] of Object.entries(limits)) {
@@ -225,7 +236,7 @@ export class RewindJournal {
     }
   }
 
-  /** Restore one durable timeline without exposing its storage representation. */
+  /** Restore one durable effect lineage without making it a conversation source of truth. */
   hydrate(input: RewindTimelineSnapshot): void {
     if (input.lineageId.trim() === ''
       || input.workspaceRoot.trim() === ''
@@ -278,7 +289,7 @@ export class RewindJournal {
     })
   }
 
-  /** Snapshot all retained nodes, including the future segment after cursor. */
+  /** Snapshot all effect checkpoints, including the retained future after the cursor. */
   snapshot(workspaceRoot: string): RewindTimelineSnapshot | undefined {
     const timeline = this.timelines.get(workspaceRoot)
     if (timeline === undefined) return undefined
@@ -292,74 +303,69 @@ export class RewindJournal {
     }
   }
 
-  /** Register a prompt boundary, retaining it durably only for the active workspace owner. */
+  /** Observe a Prompt only when it belongs to the active effect lineage. */
   recordPoint(input: RewindPointInput): RewindJournalPointResult {
     validatePoint(input)
     const timeline = this.timelines.get(input.workspaceRoot)
     if (timeline === undefined) {
-      const created: RewindTimeline = {
-        lineageId: globalThis.crypto.randomUUID(),
-        workspaceRoot: input.workspaceRoot,
-        ownerSessionId: input.sessionId,
-        cursor: 0,
-        updatedAt: Date.now(),
-        nodes: [],
-      }
+      const created = this.timeline(input.sessionId, input.workspaceRoot, [input])
       this.timelines.set(input.workspaceRoot, created)
-      const released = this.append(created, input)
-      return { changed: true, durable: true, workspaceRoot: input.workspaceRoot, released }
+      return { changed: true, durable: true, workspaceRoot: input.workspaceRoot, released: [] }
     }
-    if (timeline.ownerSessionId === input.sessionId) {
-      const applied = timeline.nodes.slice(0, timeline.cursor)
-      const existing = applied.find(point => point.id === input.pointId
-        || (point.sessionId === input.sessionId && point.turn === input.turn))
-      if (existing !== undefined) {
-        const changed = enrichPoint(existing, input)
-        if (changed) timeline.updatedAt = Date.now()
-        return { changed, durable: true, workspaceRoot: input.workspaceRoot, released: [] }
-      }
-      if ((applied.filter(point => point.sessionId === input.sessionId).at(-1)?.turn ?? 0) > input.turn) {
-        return { changed: false, durable: true, workspaceRoot: input.workspaceRoot, released: [] }
-      }
-      const future = timeline.nodes.splice(timeline.cursor)
-      const released = [...effectIds(future), ...this.append(timeline, input)]
-      return { changed: true, durable: true, workspaceRoot: input.workspaceRoot, released }
-    }
-
-    const existing = this.pending.get(input.sessionId) ?? []
-    const pendingPoint = existing.find(point => point.id === input.pointId || point.turn === input.turn)
-    if (pendingPoint !== undefined) {
-      return {
-        changed: enrichPoint(pendingPoint, input),
-        durable: false,
-        workspaceRoot: input.workspaceRoot,
-        released: [],
-      }
-    }
-    if ((existing.at(-1)?.turn ?? 0) > input.turn) {
+    if (timeline.ownerSessionId !== input.sessionId) {
       return { changed: false, durable: false, workspaceRoot: input.workspaceRoot, released: [] }
     }
-    const next = [...existing, newPoint(input)].slice(-this.limits.history)
-    this.pending.set(input.sessionId, next)
-    return { changed: true, durable: false, workspaceRoot: input.workspaceRoot, released: [] }
+    const retained = timeline.nodes.find(point => point.id === input.pointId)
+    if (retained !== undefined) {
+      const changed = retained.sessionId === input.sessionId && enrichPoint(retained, input)
+      if (changed) timeline.updatedAt = Date.now()
+      return { changed, durable: true, workspaceRoot: input.workspaceRoot, released: [] }
+    }
+    const applied = timeline.nodes.slice(0, timeline.cursor)
+    const latestForSession = applied.filter(point => point.sessionId === input.sessionId).at(-1)
+    if ((latestForSession?.turn ?? 0) > input.turn) {
+      return { changed: false, durable: true, workspaceRoot: input.workspaceRoot, released: [] }
+    }
+    const future = timeline.nodes.splice(timeline.cursor)
+    const released = [...effectIds(future), ...this.append(timeline, input)]
+    return { changed: true, durable: true, workspaceRoot: input.workspaceRoot, released }
   }
 
-  workspaceRoot(sessionId: string, turn: number): string | undefined {
-    const timeline = this.timelineForOwner(sessionId)
-    const active = timeline?.nodes.slice(0, timeline.cursor)
-      .find(point => point.sessionId === sessionId && point.turn === turn)
-    if (active !== undefined) return active.workspaceRoot
-    return this.pending.get(sessionId)?.find(point => point.turn === turn)?.workspaceRoot
+  /** Atomically make one Session's canonical checkpoints the active effect lineage. */
+  claim(sessionId: string, points: readonly RewindPointInput[]): RewindJournalClaimResult {
+    if (points.length === 0) throw new Error('cannot claim a Rewind lineage without Prompt checkpoints')
+    const ordered = [...points].sort((left, right) => left.promptSeq - right.promptSeq)
+    for (const point of ordered) {
+      validatePoint(point)
+      if (point.sessionId !== sessionId) throw new Error('rewind lineage contains a foreign session')
+    }
+    const workspaceRoot = ordered[0]?.workspaceRoot
+    if (workspaceRoot === undefined || ordered.some(point => point.workspaceRoot !== workspaceRoot)) {
+      throw new Error('rewind lineage contains multiple workspace roots')
+    }
+    const current = this.timelines.get(workspaceRoot)
+    if (current?.ownerSessionId === sessionId) {
+      let changed = false
+      const released: RewindEffectReference[] = []
+      for (const point of ordered) {
+        const recorded = this.recordPoint(point)
+        changed = recorded.changed || changed
+        released.push(...recorded.released)
+      }
+      return { changed, workspaceRoot, released }
+    }
+    const released = current === undefined ? [] : effectIds(current.nodes)
+    this.timelines.set(workspaceRoot, this.timeline(sessionId, workspaceRoot, ordered))
+    return { changed: true, workspaceRoot, released }
   }
 
   recordWorkspaceMutation(
     input: WorkspaceMutationInput,
     canonical: CanonicalWorkspaceMutation,
   ): RewindJournalMutationResult {
-    const claimed = this.claimPending(input.sessionId)
     const point = this.pointFor(input.sessionId, input.turn)
     if (point === undefined || point.workspaceMutations.some(mutation => mutation.callId === input.callId)) {
-      return { recorded: false, released: claimed.released, ...claimed.workspaceRoot === undefined ? {} : { workspaceRoot: claimed.workspaceRoot } }
+      return { recorded: false, released: [] }
     }
     const common = {
       id: globalThis.crypto.randomUUID(),
@@ -373,8 +379,8 @@ export class RewindJournal {
     }
     if (canonical.kind === 'unsupported') {
       point.workspaceMutations.push({ ...common, kind: 'unsupported', reason: canonical.reason })
-      this.touch(claimed.workspaceRoot)
-      return { recorded: true, workspaceRoot: point.workspaceRoot, released: claimed.released }
+      this.touch(point.workspaceRoot)
+      return { recorded: true, workspaceRoot: point.workspaceRoot, released: [] }
     }
     const timeline = this.timelineForOwner(input.sessionId)
     const currentBytes = timeline === undefined ? 0 : this.timelineBytes(timeline)
@@ -395,64 +401,108 @@ export class RewindJournal {
       })
     }
     this.touch(point.workspaceRoot)
-    return { recorded: true, workspaceRoot: point.workspaceRoot, released: claimed.released }
+    return { recorded: true, workspaceRoot: point.workspaceRoot, released: [] }
   }
 
   recordEffect(input: RewindEffectInput): RewindJournalMutationResult & { readonly status: 'recorded' | 'duplicate' | 'missing-point' } {
     const retained = [...this.timelines.values()].some(timeline => timeline.nodes.some(candidate => candidate.effects.some(effect => (
       effect.participantId === input.participantId && effect.effectId === input.effectId
-    )))) || [...this.pending.values()].some(points => points.some(candidate => candidate.effects.some(effect => (
-      effect.participantId === input.participantId && effect.effectId === input.effectId
     ))))
     if (retained) return { status: 'duplicate', recorded: false, released: [] }
-    const claimed = this.claimPending(input.sourceSessionId)
     const point = this.pointFor(input.sourceSessionId, input.sourceTurn)
-    if (point === undefined) {
-      return { status: 'missing-point', recorded: false, released: claimed.released, ...claimed.workspaceRoot === undefined ? {} : { workspaceRoot: claimed.workspaceRoot } }
-    }
+    if (point === undefined) return { status: 'missing-point', recorded: false, released: [] }
     point.effects.push({ ...input })
     this.touch(point.workspaceRoot)
-    return { status: 'recorded', recorded: true, workspaceRoot: point.workspaceRoot, released: claimed.released }
+    return { status: 'recorded', recorded: true, workspaceRoot: point.workspaceRoot, released: [] }
   }
 
-  list(sessionId: string): RewindPointSnapshot[] {
-    const timeline = this.requireTimeline(sessionId)
-    const points = timeline.nodes.slice(0, timeline.cursor)
-    if (points.length === 0) throw new Error('no rewind point is available for this session')
-    return points.map(point => snapshot(point, sessionId))
+  /** Active effect metadata used only to annotate canonical Session checkpoints. */
+  activePoints(sessionId: string): RewindPointSnapshot[] {
+    const timeline = this.timelineForOwner(sessionId)
+    return (timeline?.nodes.slice(0, timeline.cursor) ?? []).map(point => snapshot(point))
   }
 
-  select(sessionId: string, pointId: string): RewindSelection {
-    const timeline = this.requireTimeline(sessionId)
-    const applied = timeline.nodes.slice(0, timeline.cursor)
-    const pointIndex = applied.findIndex(candidate => candidate.id === pointId)
-    const point = applied[pointIndex]
-    if (point === undefined) throw new Error('the selected rewind point is no longer available')
-    const selected = applied.slice(pointIndex)
+  selectEffects(sessionId: string, pointId: string): RewindEffectSelection {
+    const timeline = this.timelineForOwner(sessionId)
+    if (timeline === undefined) return { codeScope: 'none', workspaceMutations: [], effects: [] }
+    const pointIndex = timeline.nodes.findIndex(candidate => candidate.id === pointId)
+    if (pointIndex === -1) {
+      return {
+        codeScope: 'none',
+        lineageId: timeline.lineageId,
+        workspaceRoot: timeline.workspaceRoot,
+        workspaceMutations: [],
+        effects: [],
+      }
+    }
+    if (pointIndex >= timeline.cursor) {
+      return {
+        codeScope: 'forward-unavailable',
+        codeReason: 'The code checkpoint is ahead of the current Rewind cursor; forward code restore is not available yet.',
+        lineageId: timeline.lineageId,
+        workspaceRoot: timeline.workspaceRoot,
+        workspaceMutations: [],
+        effects: [],
+      }
+    }
+    const selected = timeline.nodes.slice(pointIndex, timeline.cursor)
+    const workspaceMutations = selected
+      .flatMap(candidate => candidate.workspaceMutations)
+      .sort((left, right) => left.order - right.order)
+    const effects = selected.flatMap(candidate => candidate.effects)
+    if (workspaceMutations.length === 0 && effects.length === 0) {
+      return {
+        codeScope: 'none',
+        codeReason: 'No source-attributed code or participant effects are retained for this checkpoint.',
+        lineageId: timeline.lineageId,
+        workspaceRoot: timeline.workspaceRoot,
+        workspaceMutations,
+        effects,
+      }
+    }
     return {
-      point: snapshot(point, sessionId),
-      workspaceMutations: selected
-        .flatMap(candidate => candidate.workspaceMutations)
-        .sort((left, right) => left.order - right.order),
-      effects: selected.flatMap(candidate => candidate.effects),
+      codeScope: 'backward',
+      lineageId: timeline.lineageId,
+      workspaceRoot: timeline.workspaceRoot,
+      workspaceMutations,
+      effects,
     }
   }
 
-  /** Move the cursor without deleting the future segment. */
-  continueFrom(sessionId: string, pointId: string, targetSessionId: string): string {
-    if (sessionId === targetSessionId) throw new Error('rewind must continue in a distinct conversation session')
-    const timeline = this.requireTimeline(sessionId)
-    const selectedIndex = timeline.nodes.slice(0, timeline.cursor).findIndex(point => point.id === pointId)
-    if (selectedIndex === -1) throw new Error('the restored rewind point is no longer available')
-    timeline.cursor = selectedIndex
-    timeline.ownerSessionId = targetSessionId
+  /** Commit the independently selected conversation and code dimensions. */
+  commit(
+    sessionId: string,
+    pointId: string,
+    action: RewindAction,
+    targetSessionId?: string,
+    expectedLineageId?: string,
+  ): string | undefined {
+    const timeline = this.timelineForOwner(sessionId)
+    if (timeline === undefined) {
+      if (expectedLineageId !== undefined) {
+        throw new Error('the active code lineage changed after the Rewind plan was prepared')
+      }
+      return undefined
+    }
+    if (expectedLineageId !== undefined && timeline.lineageId !== expectedLineageId) {
+      throw new Error('the active code lineage changed after the Rewind plan was prepared')
+    }
+    const includesConversation = action !== 'code-only'
+    const includesCode = action !== 'conversation-only'
+    if (includesConversation) {
+      if (targetSessionId === undefined || targetSessionId === sessionId) {
+        throw new Error('conversation rewind must continue in a distinct session')
+      }
+      timeline.ownerSessionId = targetSessionId
+    } else if (targetSessionId !== undefined) {
+      throw new Error('code-only rewind must not replace the conversation session')
+    }
+    if (includesCode) {
+      const selectedIndex = timeline.nodes.slice(0, timeline.cursor).findIndex(point => point.id === pointId)
+      if (selectedIndex !== -1) timeline.cursor = selectedIndex
+    }
     timeline.updatedAt = Date.now()
-    this.pending.delete(targetSessionId)
     return timeline.workspaceRoot
-  }
-
-  timelineRoot(sessionId: string): string | undefined {
-    return this.timelineForOwner(sessionId)?.workspaceRoot
   }
 
   allEffects(workspaceRoot: string): RewindEffectReference[] {
@@ -461,6 +511,22 @@ export class RewindJournal {
 
   ownerSessionIds(): string[] {
     return [...new Set([...this.timelines.values()].map(timeline => timeline.ownerSessionId))]
+  }
+
+  private timeline(
+    ownerSessionId: string,
+    workspaceRoot: string,
+    points: readonly RewindPointInput[],
+  ): RewindTimeline {
+    const nodes = points.slice(-this.limits.history).map(newPoint)
+    return {
+      lineageId: globalThis.crypto.randomUUID(),
+      workspaceRoot,
+      ownerSessionId,
+      cursor: nodes.length,
+      updatedAt: Date.now(),
+      nodes,
+    }
   }
 
   private append(timeline: RewindTimeline, input: RewindPointInput): RewindEffectReference[] {
@@ -474,47 +540,14 @@ export class RewindJournal {
     return effectIds(removed)
   }
 
-  private claimPending(sessionId: string): { readonly workspaceRoot?: string; readonly released: readonly RewindEffectReference[] } {
-    const pending = this.pending.get(sessionId)
-    if (pending === undefined || pending.length === 0) {
-      const workspaceRoot = this.timelineForOwner(sessionId)?.workspaceRoot
-      return workspaceRoot === undefined ? { released: [] } : { workspaceRoot, released: [] }
-    }
-    const workspaceRoot = pending[0]?.workspaceRoot
-    if (workspaceRoot === undefined || pending.some(point => point.workspaceRoot !== workspaceRoot)) {
-      this.pending.delete(sessionId)
-      return { released: [] }
-    }
-    const previous = this.timelines.get(workspaceRoot)
-    const released = previous === undefined ? [] : effectIds(previous.nodes)
-    this.timelines.set(workspaceRoot, {
-      lineageId: globalThis.crypto.randomUUID(),
-      workspaceRoot,
-      ownerSessionId: sessionId,
-      cursor: pending.length,
-      updatedAt: Date.now(),
-      nodes: pending,
-    })
-    this.pending.delete(sessionId)
-    return { workspaceRoot, released }
-  }
-
   private timelineForOwner(sessionId: string): RewindTimeline | undefined {
     return [...this.timelines.values()].find(timeline => timeline.ownerSessionId === sessionId)
   }
 
-  private requireTimeline(sessionId: string): RewindTimeline {
-    const timeline = this.timelineForOwner(sessionId)
-    if (timeline !== undefined) return timeline
-    throw new Error('no rewind point is available for this session')
-  }
-
   private pointFor(sessionId: string, turn: number): RewindPoint | undefined {
     const timeline = this.timelineForOwner(sessionId)
-    const active = timeline?.nodes.slice(0, timeline.cursor)
+    return timeline?.nodes.slice(0, timeline.cursor)
       .find(point => point.sessionId === sessionId && point.turn === turn)
-    if (active !== undefined) return active
-    return this.pending.get(sessionId)?.find(point => point.turn === turn)
   }
 
   private timelineBytes(timeline: RewindTimeline): number {
@@ -523,8 +556,8 @@ export class RewindJournal {
     ), 0), 0)
   }
 
-  private touch(workspaceRoot: string | undefined): void {
-    const timeline = workspaceRoot === undefined ? undefined : this.timelines.get(workspaceRoot)
+  private touch(workspaceRoot: string): void {
+    const timeline = this.timelines.get(workspaceRoot)
     if (timeline !== undefined) timeline.updatedAt = Date.now()
   }
 }

@@ -46,7 +46,7 @@ describe('ApprovalDialog', () => {
     )
 
     const output = dialog.render(80).join('\n')
-    expect(output).toContain('\u001b[38;2;148;163;184m')
+    expect(output).toContain('\u001b[38;2;188;198;214m')
     expect(output).not.toContain('\u001b[2m')
     expect(stripTerminalSequences(output)).toContain('Broader access is required.')
   })

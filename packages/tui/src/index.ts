@@ -18,6 +18,7 @@ import {
   installRewindWorkspaceAdapter,
   installRewindPromptAdapter,
   FileRewindRepository,
+  HostRewindConversationHistory,
   LocalWorkspaceRewind,
   MemoryRewindParticipant,
   RewindService,
@@ -42,6 +43,7 @@ export type { TuiConfig, TuiRuntime }
 export { HarnessController } from './runtime/controller.ts'
 export { TerminalCommandDirectory } from './runtime/commands.ts'
 export type {
+  RewindAction,
   RewindFilePlan,
   RewindParticipantImpact,
   RewindPlan,
@@ -154,6 +156,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
       onIngestionError: error => { ctx.logger.warn(`Rewind ingestion failed: ${String(error)}`) },
       onPersistenceError: error => { ctx.logger.warn(`durable Rewind failed: ${String(error)}`) },
     },
+    new HostRewindConversationHistory(ctx),
     new LocalWorkspaceRewind(),
     [memoryRewind],
     rewindRepository,

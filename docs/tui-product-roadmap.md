@@ -117,14 +117,16 @@ are in [`tui-v0.1.8-design.md`](tui-v0.1.8-design.md).
   call identities plus before/after snapshot references.
 - Plan each restore as `safe`, `mergeable`, `conflict`, or `unsupported`; only
   AI-owned mutations participate in the default restore plan.
-- Verify and refill complete Prompt text and attachments around the same
-  preflighted workspace, Memory, and conversation transaction.
-- Persist one active editing lineage per canonical workspace so the owner
-  session can resume after TUI restart with the same bounded Rewind history.
+- Verify and refill complete Prompt text and attachments around one transaction
+  supporting code-and-conversation, conversation-only, and code-only restore.
+- Rebuild visible checkpoints from each active Session log and persist one active
+  reversible-effect lineage per canonical workspace, so new and resumed Sessions
+  never depend on effect ownership to expose Rewind.
 - Retain a durable cursor and future segment after restore; discard that future
   only when the forked session admits a new durable turn-entry Prompt.
-- Keep `Restore` selected by default for safe plans, disable it for unresolved
-  conflicts, and show exact affected paths and ownership before confirmation.
+- Default safe code plans to code-and-conversation, keep conversation-only
+  available through code conflicts, and show exact affected paths and ownership
+  before confirmation.
 - Remove whole-worktree inference, tool-name parsing, duplicated checkpoint
   state, compatibility bridges, and TUI-owned Git restore code after cutover.
 

@@ -14,8 +14,8 @@ Session event log
   turn/start + user/message(source=user)
                   │ stable identity · text · durable attachment references
                   ▼
-runtime/lifecycle/host ── PromptNode ── rewind/adapters/prompt
-                  │ RewindPointInput
+runtime/lifecycle/host ── PromptNode ── rewind/adapters/conversation
+                  │ canonical RewindConversationHistory
                   ├─────────────────────────────────────┐
 Host execution events
   fs/observed + tools/result + tool/call
@@ -39,7 +39,7 @@ MemoryRewindParticipant ─── RewindEffectInput ─────────�
                   │ RewindPointSummary / immutable RewindPlan
                   ▼
 RewindTransaction
-  attachment preflight -> reversible participants -> conversation commit
+  optional attachment preflight -> optional reversible effects -> optional conversation fork
                   │
                   ▼
 TUI application and dialogs
@@ -50,16 +50,19 @@ TUI application and dialogs
   prompt. Text, native-image, and proxy-image submission all become the same
   `PromptNode` only after the canonical user message is committed. That node
   owns the complete restorable input: text plus immutable attachment references.
-- The Prompt adapter selects `turn-entry` nodes and translates them into Rewind
-  points. The workspace Host adapter owns only filesystem event vocabulary and
-  source correlation.
+- The conversation adapter replays `turn-entry` nodes from the active Session
+  log as visible Rewind points. The Prompt adapter supplies the same projection
+  to the ordered effect-attribution path. The workspace Host adapter owns only
+  filesystem event vocabulary and source correlation.
 - Pure contracts and domain modules import no Cordis, Memory, Node, or pi-tui
   types.
-- The Rewind service owns history, restore classification, participant order,
-  and reversible compensation through injected ports.
+- The Rewind service joins Session-owned checkpoint history with Journal-owned
+  effect metadata and owns restore classification, participant order, and
+  reversible compensation through injected ports.
 - The Repository port owns no domain decisions. Its file adapter supplies
   atomic, bounded, integrity-checked storage below the Harness home.
-- The application transaction owns the final conversation commit boundary.
+- The application transaction owns the independent code and conversation commit
+  dimensions.
 - Presentation owns no mutation detection or restore policy.
 
 ## Prompt boundary contract
@@ -132,19 +135,22 @@ would discard unowned work.
 
 ## Transaction
 
-1. Read and verify every selected Prompt attachment through the Host attachment
-   service. A missing or inconsistent object aborts before any mutation.
+1. For an action that restores conversation, read and verify every selected
+   Prompt attachment through the Host attachment service. A missing or
+   inconsistent object aborts before any mutation.
 2. Wait for already-scheduled Memory learning for the source session to settle,
    then prepare one stable set of attributed workspace and Memory mutations.
 3. Preflight all attributed workspace files against the prepared plan.
-4. Apply workspace targets atomically per file; compensate already-applied
-   files if any workspace write fails.
-5. Revert Memory mutations newest-first using Memory's stale guards.
-6. Fork or recreate the conversation before the selected turn.
-7. If Memory or conversation fails, reapply Memory and compensate workspace.
-8. Move the timeline cursor before the selected point, assign the forked
-   session as owner, retain the future segment, and atomically refill Composer
-   text and image drafts from the verified Prompt input.
+4. If code restore is selected, apply workspace targets atomically per file and
+   compensate already-applied files if any workspace write fails.
+5. If code restore is selected, revert Memory mutations newest-first using
+   Memory's stale guards.
+6. If conversation restore is selected, fork or recreate the conversation
+   before the selected turn.
+7. If a later conversation phase fails, reapply Memory and compensate workspace.
+8. Commit the selected dimensions: move the effect cursor only for code restore,
+   transfer ownership only for a conversation fork, and refill Composer text
+   and image drafts only from a verified conversation restore.
 
 No step changes the Git index, executes `git reset`, or scans unrelated files.
 Workspace mutation content is bounded per mutation and per session; an edit
@@ -153,11 +159,12 @@ retained without limit.
 
 ## Durable timeline
 
-Rewind persists one active editing lineage per canonical workspace under
-`$DSH_HOME/rewind/v2`. A versioned manifest contains Prompt identity, event
-sequence, durable attachment references, ordering, cursor state, and content
-hashes; workspace states and opaque participant payloads live in SHA-256-addressed
-objects. Writes are atomic and serialized by
+Rewind persists one active reversible-effect lineage per canonical workspace
+under `$DSH_HOME/rewind/v2`. Visible checkpoints are rebuilt from the Host
+Session log, while the versioned manifest retains only the Prompt identity and
+metadata needed to join event ordering, cursor state, workspace content hashes,
+and opaque participant effects. Workspace states and participant payloads live
+in SHA-256-addressed objects. Writes are atomic and serialized by
 a cross-process lock. Each save also compares the revision loaded by its
 process, so a stale TUI cannot overwrite or delete a newer process's lineage.
 Invalid manifests are quarantined instead of repaired by guessing, and a failed
@@ -169,15 +176,16 @@ timeline, and 512 MiB globally. Global compaction evicts the least recently
 updated workspace lineage. The manifest and objects are private Harness data,
 not project files and not Git state.
 
-Resuming the owner session activates the durable lineage before Rewind is
-listed. Merely opening another session does not discard it; that session claims
-the workspace lineage only when it records its first attributed workspace or
-participant mutation. After Rewind, future nodes remain behind the cursor until
-the forked session admits a new durable `turn-entry` Prompt, at which point that
-future is discarded as a new branch. Forward navigation is intentionally not
-presented in this version.
+Resuming any session lists its Prompt checkpoints from that Session immediately;
+the effect owner is not a visibility gate. Merely opening another session does
+not discard the durable lineage; that session claims it only when it records its
+first attributed workspace or participant mutation. Code restore keeps future
+effect nodes behind the cursor until the owning session admits a new attributed
+`turn-entry` Prompt, at which point that future is discarded as a new branch.
+Forward code navigation is intentionally not presented in this version.
 
-The Host session log remains authoritative for conversation events. A custom
+The Host Session log remains authoritative for both conversation events and
+visible Prompt checkpoints. A custom
 downstream Rewind event is not appended because the current session event
 registry cannot safely register that event as a required or ignorable durable
 type. The Repository therefore stores only Rewind-owned facts through an

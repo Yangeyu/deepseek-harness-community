@@ -64,7 +64,7 @@ export class RewindPointDialog implements Component {
     const end = Math.min(this.summaries.length, start + maxVisible)
     const lines = [
       this.theme.bold('Rewind'),
-      this.theme.dim('Restore the workspace and conversation to the point before…'),
+      this.theme.dim('Choose a checkpoint, then restore code, conversation, or both…'),
       '',
     ]
     if (start > 0) lines.push(this.theme.dim(`  ↑ ${start} more above`), '')
@@ -77,20 +77,23 @@ export class RewindPointDialog implements Component {
       const fileStatus = summary.workspaceFiles === 0
         ? 'No AI file edits'
         : `${summary.workspaceFiles} AI-edited file${summary.workspaceFiles === 1 ? '' : 's'} this turn`
-      const unsupportedStatus = summary.unsupportedFiles === 0
-        ? ''
-        : ` · ${summary.unsupportedFiles} unsupported`
-      const imageStatus = summary.imageCount === 0
-        ? ''
-        : ` · ${summary.imageCount} image${summary.imageCount === 1 ? '' : 's'}`
-      const participantStatus = summary.participants.map(participant => (
-        ` · ${participant.changes} ${participant.label.toLowerCase()} update${participant.changes === 1 ? '' : 's'}`
-      )).join('')
+      const status = [
+        summary.workspaceFiles === 0 ? this.theme.dim(fileStatus) : this.theme.secondary(fileStatus),
+        summary.unsupportedFiles === 0
+          ? ''
+          : this.theme.warning(` · ${summary.unsupportedFiles} unsupported`),
+        summary.imageCount === 0
+          ? ''
+          : this.theme.secondary(` · ${summary.imageCount} image${summary.imageCount === 1 ? '' : 's'}`),
+        ...summary.participants.map(participant => this.theme.secondary(
+          ` · ${participant.changes} ${participant.label.toLowerCase()} update${participant.changes === 1 ? '' : 's'}`,
+        )),
+      ].join('')
       lines.push(truncateToWidth(
         `${cursor} ${selected ? this.theme.bold(prompt) : prompt}`,
         width,
       ))
-      lines.push(truncateToWidth(`    ${this.theme.dim(`${fileStatus}${unsupportedStatus}${imageStatus}${participantStatus}`)}`, width), '')
+      lines.push(truncateToWidth(`    ${status}`, width), '')
     }
     if (end < this.summaries.length) lines.push(this.theme.dim(`  ↓ ${this.summaries.length - end} more below`), '')
     lines.push(this.theme.dim('↑/↓ select · Enter continue · Esc cancel'))

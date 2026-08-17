@@ -12,7 +12,7 @@ import {
   type TuiMemoryPort,
   type TuiRuntime,
 } from '../../src/application/app.ts'
-import type { RewindPlan, RewindPort } from '../../src/rewind/index.ts'
+import type { RewindAction, RewindPlan, RewindPort } from '../../src/rewind/index.ts'
 import { resolveConfig } from '../../src/application/config.ts'
 import type { TuiState } from '../../src/runtime/controller.ts'
 import type { HostCommandSource } from '../../src/runtime/commands.ts'
@@ -81,7 +81,7 @@ interface AppInternals {
   resolveInteraction(resolution: InteractionResolution): void
   pasteImage(): Promise<void>
   requestRewind(): void
-  performRewind(plan: RewindPlan): Promise<void>
+  performRewind(plan: RewindPlan, action?: RewindAction): Promise<void>
   requestExit(code: number): Promise<void>
   submit(value: string, forcedMode?: 'queue' | 'steer'): Promise<void>
 }
@@ -102,7 +102,7 @@ function rewindPort(overrides: Partial<RewindPort> = {}): RewindPort {
     list: vi.fn(() => []),
     plan: vi.fn(async () => { throw new Error('no test Rewind plan') }),
     restore: vi.fn(async () => async () => {}),
-    continueFrom: vi.fn(async () => {}),
+    commit: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
     ...overrides,
   }
@@ -116,6 +116,7 @@ function rewindPlan(attachments: readonly ImageAttachmentRef[] = []): RewindPlan
     turn: 1,
     input: { text: 'inspect image', attachments },
     createdAt: 1,
+    codeScope: 'backward',
     state: 'safe',
     files: [],
     participants: [],
@@ -506,8 +507,8 @@ describe('TuiApplication input routing', () => {
       name: 'image.png',
     }
     const restore = vi.fn(async () => async () => {})
-    const continueFrom = vi.fn(async () => {})
-    const app = application(rewindPort({ restore, continueFrom }), undefined, undefined, undefined, undefined, {
+    const commit = vi.fn(async () => {})
+    const app = application(rewindPort({ restore, commit }), undefined, undefined, undefined, undefined, {
       attachments: {
         readImage: vi.fn(async () => ({
           ref,
@@ -521,7 +522,7 @@ describe('TuiApplication input routing', () => {
     await internals.performRewind(rewindPlan([ref]))
 
     expect(restore).toHaveBeenCalledOnce()
-    expect(continueFrom).toHaveBeenCalledWith(expect.anything(), 'forked')
+    expect(commit).toHaveBeenCalledWith(expect.anything(), 'code-and-conversation', 'forked')
     expect(internals.editor.getExpandedText()).toBe('inspect image')
     expect(internals.attachmentDrafts.snapshot).toEqual([expect.objectContaining({
       name: 'image.png',
@@ -550,6 +551,30 @@ describe('TuiApplication input routing', () => {
     expect(restore).not.toHaveBeenCalled()
     expect(rewind).not.toHaveBeenCalled()
     expect(internals.attachmentDrafts.snapshot).toEqual([])
+  })
+
+  it('restores code only without reading attachments or replacing the Composer', async () => {
+    const ref: ImageAttachmentRef = {
+      attachmentId: 'missing' as ImageAttachmentRef['attachmentId'],
+      mediaType: 'image/png',
+      bytes: 4,
+      width: 1,
+      height: 1,
+    }
+    const commit = vi.fn(async () => {})
+    const app = application(rewindPort({ commit }), undefined, undefined, undefined, undefined, {
+      attachments: { readImage: vi.fn(async () => { throw new Error('must not be read') }) },
+    })
+    const internals = app as unknown as AppInternals
+    internals.editor.setText('keep this draft')
+    const conversation = vi.fn(async () => 'forked')
+    internals.controller.rewind = conversation
+
+    await internals.performRewind(rewindPlan([ref]), 'code-only')
+
+    expect(conversation).not.toHaveBeenCalled()
+    expect(commit).toHaveBeenCalledWith(expect.anything(), 'code-only', undefined)
+    expect(internals.editor.getExpandedText()).toBe('keep this draft')
   })
 
   it('queues with Tab while working and leaves Alt+Enter for multiline input', () => {
