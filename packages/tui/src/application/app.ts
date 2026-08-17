@@ -23,6 +23,7 @@ import type { ResolvedConfig } from './config.ts'
 import {
   HarnessController,
   type ApprovalPrompt,
+  type InteractionResolution,
   type QuestionPrompt,
   type TuiControllerSink,
   type TuiState,
@@ -146,6 +147,27 @@ function isWorking(state: Readonly<TuiState>): boolean {
   return composerExecutionActivity(state) !== undefined
 }
 
+interface QueuedInteraction {
+  key: string
+  open(): void
+}
+
+interface ActiveInteraction extends QueuedInteraction {
+  close: (() => void) | undefined
+  phase: 'open' | 'responding' | 'cancelling'
+}
+
+function approvalInteractionKey(
+  sessionId: ApprovalPrompt['sessionId'],
+  approvalId: ApprovalPrompt['approvalId'],
+): string {
+  return `approval:${String(sessionId)}:${String(approvalId)}`
+}
+
+function questionInteractionKey(sessionId: QuestionPrompt['sessionId'], rpcId: QuestionPrompt['rpcId']): string {
+  return `question:${String(sessionId)}:${String(rpcId)}`
+}
+
 /** Launcher-owned exit function used instead of calling process.exit from raw mode. */
 export interface TuiRuntime {
   exit(code: number): void
@@ -226,14 +248,14 @@ export class TuiApplication implements TuiControllerSink {
   private rewindArmTimer: ReturnType<typeof setTimeout> | undefined
   private disposed = false
   private exiting = false
-  private interactionActive = false
+  private activeInteraction: ActiveInteraction | undefined
   private composerModalActive = false
   private rewindProgress: Text | undefined
   private rewindSummaries: RewindPointSummary[] | undefined
   private rewindPointDialog: RewindPointDialog | undefined
   private memoryActivity: MemoryActivity = { state: 'idle' }
   private readonly removeMemoryActivity: () => void
-  private readonly interactionQueue: Array<() => void> = []
+  private readonly interactionQueue: QueuedInteraction[] = []
   private readonly commands: TerminalCommandDirectory
   private readonly skillCatalog: SkillCatalog
   private readonly skillAuthoring: SkillAuthoringCoordinator
@@ -447,11 +469,20 @@ export class TuiApplication implements TuiControllerSink {
   }
 
   requestApproval(prompt: ApprovalPrompt): void {
-    this.enqueueInteraction(() => this.showApproval(prompt))
+    const key = approvalInteractionKey(prompt.sessionId, prompt.approvalId)
+    this.enqueueInteraction({ key, open: () => this.showApproval(prompt) })
   }
 
   requestQuestions(prompt: QuestionPrompt): void {
-    this.enqueueInteraction(() => this.showQuestion(prompt, 0, []))
+    const key = questionInteractionKey(prompt.sessionId, prompt.rpcId)
+    this.enqueueInteraction({ key, open: () => this.showQuestion(prompt, 0, []) })
+  }
+
+  resolveInteraction(resolution: InteractionResolution): void {
+    const key = resolution.type === 'approval/resolved'
+      ? approvalInteractionKey(resolution.sessionId, resolution.approvalId)
+      : questionInteractionKey(resolution.sessionId, resolution.questionRpcId)
+    this.completeInteraction(key)
   }
 
   private updateStatus(state: Readonly<TuiState>): void {
@@ -537,6 +568,7 @@ export class TuiApplication implements TuiControllerSink {
     if (!keyRelease && this.tui.clearTextSelection()) this.tui.requestRender()
     if (keyRelease && escape) return { consume: true }
     if (escape && isKeyRepeat(data)) return { consume: true }
+    if (escape && this.cancelActiveInteraction()) return { consume: true }
     if (this.composerModalActive) return undefined
     if (this.attachmentRailFocused) {
       if (keyRelease) return undefined
@@ -608,6 +640,7 @@ export class TuiApplication implements TuiControllerSink {
   private handleKeymapAction(action: KeymapAction): void {
     switch (action) {
       case 'app.cancel-or-exit':
+        if (this.cancelActiveInteraction()) return
         if (this.imageSubmissionBusy) this.attachmentCoordinator?.cancel()
         else if (isWorking(this.controller.current)) void this.runAction(() => this.controller.cancel())
         else void this.requestExit(0)
@@ -637,33 +670,38 @@ export class TuiApplication implements TuiControllerSink {
   private handleMouse(mouse: MouseAction): void {
     const blocked = this.composerModalActive || this.tui.hasOverlay()
     const renderState = this.tui.captureRenderState()
-    const transcriptLine = blocked
-      ? -1
-      : this.layout.transcriptRowAt(mouse.y, renderState.previousViewportTop)
-    let changed = this.transcript.handlePointer(transcriptLine, 'move')
-    if (blocked) {
+    const transcriptLine = this.layout.transcriptRowAt(mouse.y, renderState.previousViewportTop)
+    let changed = false
+    if (mouse.kind === 'wheel') {
       changed = this.tui.clearTextSelection() || changed
-    } else if (mouse.kind === 'wheel') {
-      changed = this.tui.clearTextSelection() || changed
-      const blockScrolled = this.transcript.handlePointer(
-        transcriptLine,
-        mouse.direction < 0 ? 'wheel-up' : 'wheel-down',
-      )
+      if (!blocked) changed = this.transcript.handlePointer(transcriptLine, 'move') || changed
+      const blockScrolled = blocked
+        ? false
+        : this.transcript.handlePointer(
+            transcriptLine,
+            mouse.direction < 0 ? 'wheel-up' : 'wheel-down',
+          )
       changed = blockScrolled || changed
       if (!blockScrolled) changed = this.layout.scrollTranscript(mouse.direction * 3) || changed
-    } else if (mouse.kind === 'press') {
-      changed = this.tui.beginTextSelection(mouse.x, mouse.y) || changed
-    } else if (mouse.kind === 'drag') {
-      changed = this.tui.updateTextSelection(mouse.x, mouse.y) || changed
-    } else if (mouse.kind === 'release') {
-      const result = this.tui.finishTextSelection(mouse.x, mouse.y)
-      changed = result.changed || changed
-      if (result.kind === 'selection') {
-        void this.clipboardText(result.text).catch((error: unknown) => {
-          this.controller.notice(`Could not copy selection: ${error instanceof Error ? error.message : String(error)}`)
-        })
-      } else if (result.kind === 'click') {
-        changed = this.transcript.handlePointer(transcriptLine, 'click') || changed
+    } else if (blocked) {
+      changed = this.transcript.handlePointer(-1, 'move') || changed
+      changed = this.tui.clearTextSelection() || changed
+    } else {
+      changed = this.transcript.handlePointer(transcriptLine, 'move') || changed
+      if (mouse.kind === 'press') {
+        changed = this.tui.beginTextSelection(mouse.x, mouse.y) || changed
+      } else if (mouse.kind === 'drag') {
+        changed = this.tui.updateTextSelection(mouse.x, mouse.y) || changed
+      } else if (mouse.kind === 'release') {
+        const result = this.tui.finishTextSelection(mouse.x, mouse.y)
+        changed = result.changed || changed
+        if (result.kind === 'selection') {
+          void this.clipboardText(result.text).catch((error: unknown) => {
+            this.controller.notice(`Could not copy selection: ${error instanceof Error ? error.message : String(error)}`)
+          })
+        } else if (result.kind === 'click') {
+          changed = this.transcript.handlePointer(transcriptLine, 'click') || changed
+        }
       }
     }
     if (changed) {
@@ -1639,47 +1677,112 @@ export class TuiApplication implements TuiControllerSink {
     await this.selectReasoningEffort(next)
   }
 
-  private enqueueInteraction(job: () => void): void {
-    this.interactionQueue.push(job)
+  private enqueueInteraction(interaction: QueuedInteraction): void {
+    if (this.activeInteraction?.key === interaction.key
+      || this.interactionQueue.some(candidate => candidate.key === interaction.key)) return
+    this.interactionQueue.push(interaction)
     this.startNextInteraction()
   }
 
   private startNextInteraction(): void {
-    if (this.interactionActive) return
+    if (this.activeInteraction !== undefined) return
     const next = this.interactionQueue.shift()
     if (next === undefined) return
-    this.interactionActive = true
-    next()
+    this.activeInteraction = {
+      ...next,
+      close: undefined,
+      phase: 'open',
+    }
+    next.open()
   }
 
-  private completeInteraction(): void {
-    this.interactionActive = false
+  private setInteractionOverlay(key: string, handle: OverlayHandle): void {
+    const active = this.activeInteraction
+    if (active?.key !== key) {
+      handle.hide()
+      return
+    }
+    active.close?.()
+    active.close = () => { handle.hide() }
+  }
+
+  private hideInteractionOverlay(key: string): void {
+    const active = this.activeInteraction
+    if (active?.key !== key) return
+    active.close?.()
+    active.close = undefined
+  }
+
+  private completeInteraction(key: string): void {
+    const active = this.activeInteraction
+    if (active?.key !== key) {
+      const queued = this.interactionQueue.findIndex(candidate => candidate.key === key)
+      if (queued !== -1) this.interactionQueue.splice(queued, 1)
+      return
+    }
+    active.close?.()
+    this.activeInteraction = undefined
     this.startNextInteraction()
   }
 
+  private respondToInteraction(key: string, action: () => Promise<void>): void {
+    const active = this.activeInteraction
+    if (active?.key !== key || active.phase !== 'open') return
+    active.phase = 'responding'
+    void action().then(
+      () => { this.completeInteraction(key) },
+      (error: unknown) => { this.reopenInteraction(key, 'responding', error) },
+    )
+  }
+
+  private cancelActiveInteraction(): boolean {
+    const active = this.activeInteraction
+    if (active === undefined) return false
+    if (active.phase === 'cancelling') return true
+    const key = active.key
+    active.phase = 'cancelling'
+    void this.controller.cancel().then(
+      () => { this.completeInteraction(key) },
+      (error: unknown) => { this.reopenInteraction(key, 'cancelling', error) },
+    )
+    return true
+  }
+
+  private reopenInteraction(
+    key: string,
+    phase: ActiveInteraction['phase'],
+    error: unknown,
+  ): void {
+    const active = this.activeInteraction
+    if (active?.key !== key || active.phase !== phase) return
+    active.phase = 'open'
+    this.controller.notice(error instanceof Error ? error.message : String(error))
+    this.tui.requestRender()
+  }
+
   private showApproval(prompt: ApprovalPrompt): void {
-    let handle: OverlayHandle
+    const key = approvalInteractionKey(prompt.sessionId, prompt.approvalId)
     const settle = (outcome: 'allowed-once' | 'rejected'): void => {
-      handle.hide()
-      void this.runAction(() => this.controller.answerApproval(prompt, outcome))
-        .finally(() => this.completeInteraction())
+      this.respondToInteraction(key, () => this.controller.answerApproval(prompt, outcome))
     }
+    const guidance = 'Esc / Ctrl+C interrupts the task. Reject only declines this tool call.'
     const dialog = new ChoiceDialog(
       `Allow ${sanitizeTerminalText(prompt.toolName)}?`,
       [
+        { value: 'allowed-once', label: 'Allow once' },
         {
-          value: 'allowed-once',
-          label: 'Allow once',
-          ...prompt.reason === undefined ? {} : { description: prompt.reason },
+          value: 'rejected',
+          label: 'Reject and continue',
+          description: 'Decline this tool call without stopping the task.',
         },
-        { value: 'rejected', label: 'Reject' },
       ],
       this.theme,
       item => settle(item.value === 'allowed-once' ? 'allowed-once' : 'rejected'),
-      () => settle('rejected'),
-      prompt.reason,
+      () => { this.cancelActiveInteraction() },
+      prompt.reason === undefined ? guidance : `${prompt.reason}\n${guidance}`,
     )
-    handle = this.tui.showOverlay(dialog, { width: '80%', maxHeight: '70%', margin: 1 })
+    const handle = this.tui.showOverlay(dialog, { width: '80%', maxHeight: '70%', margin: 1 })
+    this.setInteractionOverlay(key, handle)
   }
 
   private showQuestion(
@@ -1687,44 +1790,37 @@ export class TuiApplication implements TuiControllerSink {
     index: number,
     answers: Array<{ id: string; selected: string[]; custom?: string }>,
   ): void {
+    const key = questionInteractionKey(prompt.sessionId, prompt.rpcId)
     const question = prompt.questions[index]
     if (question === undefined) {
-      void this.runAction(() => this.controller.answerQuestions(prompt, answers))
-        .finally(() => this.completeInteraction())
+      this.respondToInteraction(key, () => this.controller.answerQuestions(prompt, answers))
       return
     }
-    let handle: OverlayHandle
-    const close = (): void => { handle.hide() }
+    const close = (): void => { this.hideInteractionOverlay(key) }
     const next = (answer: { id: string; selected: string[]; custom?: string }): void => {
+      const completed = [...answers, answer]
+      if (index + 1 >= prompt.questions.length) {
+        this.respondToInteraction(key, () => this.controller.answerQuestions(prompt, completed))
+        return
+      }
       close()
-      this.showQuestion(prompt, index + 1, [...answers, answer])
+      this.showQuestion(prompt, index + 1, completed)
     }
-    const cancel = (): void => {
-      close()
-      void this.runAction(() => this.controller.cancelQuestions(prompt))
-        .finally(() => this.completeInteraction())
-    }
+    const cancel = (): void => { this.cancelActiveInteraction() }
     const custom = (selected: string[]): void => {
       close()
-      let inputHandle: OverlayHandle
       const input = new TextInputDialog(
         this.tui,
         `${questionTitle(question)} · Other`,
         this.theme,
         text => {
           if (text.trim() === '') return
-          inputHandle.hide()
-          this.showQuestion(prompt, index + 1, [
-            ...answers,
-            { id: question.id, selected, custom: text },
-          ])
+          next({ id: question.id, selected, custom: text })
         },
-        () => {
-          inputHandle.hide()
-          cancel()
-        },
+        cancel,
       )
-      inputHandle = this.tui.showOverlay(input, { width: '85%', maxHeight: '70%', margin: 1 })
+      const inputHandle = this.tui.showOverlay(input, { width: '85%', maxHeight: '70%', margin: 1 })
+      this.setInteractionOverlay(key, inputHandle)
     }
     const options = (question.options ?? []).map(option => ({
       value: option.label,
@@ -1740,11 +1836,12 @@ export class TuiApplication implements TuiControllerSink {
         custom,
         cancel,
       )
-      handle = this.tui.showOverlay(dialog, { width: '85%', maxHeight: '80%', margin: 1 })
+      const handle = this.tui.showOverlay(dialog, { width: '85%', maxHeight: '80%', margin: 1 })
+      this.setInteractionOverlay(key, handle)
       return
     }
     if (options.length === 0) {
-      handle = this.tui.showOverlay(new TextInputDialog(
+      const handle = this.tui.showOverlay(new TextInputDialog(
         this.tui,
         questionTitle(question),
         this.theme,
@@ -1754,6 +1851,7 @@ export class TuiApplication implements TuiControllerSink {
         },
         cancel,
       ), { width: '85%', maxHeight: '70%', margin: 1 })
+      this.setInteractionOverlay(key, handle)
       return
     }
     const customValue = '__dsh_tui_custom__'
@@ -1767,7 +1865,8 @@ export class TuiApplication implements TuiControllerSink {
       cancel,
       question.detail,
     )
-    handle = this.tui.showOverlay(dialog, { width: '85%', maxHeight: '80%', margin: 1 })
+    const handle = this.tui.showOverlay(dialog, { width: '85%', maxHeight: '80%', margin: 1 })
+    this.setInteractionOverlay(key, handle)
   }
 
   private async runAction(action: () => Promise<void>): Promise<void> {

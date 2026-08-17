@@ -40,6 +40,11 @@ export type ApprovalPrompt = Extract<MuxFrame, { type: 'approval/requested' }> &
 /** Answerable question batch delivered by the mux stream. */
 export type QuestionPrompt = Extract<MuxFrame, { type: 'question/requested' }> & { rpcId: RpcId }
 
+/** Authoritative Host notification that a pending terminal interaction is no longer answerable. */
+export type InteractionResolution =
+  | Extract<MuxFrame, { type: 'approval/resolved' }>
+  | Extract<MuxFrame, { type: 'question/resolved' }>
+
 /** Renderer-facing state for the one active terminal session. */
 export interface TuiState {
   sessionId: SessionId | undefined
@@ -64,6 +69,7 @@ export interface TuiControllerSink {
   render(state: Readonly<TuiState>): void
   requestApproval(prompt: ApprovalPrompt): void
   requestQuestions(prompt: QuestionPrompt): void
+  resolveInteraction?(resolution: InteractionResolution): void
 }
 
 interface RpcResultLike<T> {
@@ -406,20 +412,6 @@ export class HarnessController {
     })
   }
 
-  /** Cancel a question batch without manufacturing an answer. */
-  async cancelQuestions(prompt: QuestionPrompt): Promise<void> {
-    const response: ClientResponse = {
-      type: 'client-response',
-      rpcId: prompt.rpcId,
-      result: {
-        ok: false,
-        error: { code: 'cancelled', message: 'the user cancelled the question', details: {} },
-      },
-    }
-    const receipt = await this.api.respond(response)
-    if (!receipt.accepted) throw new Error(`question cancellation was ${receipt.reason}`)
-  }
-
   private async respond(rpcId: RpcId, value: unknown): Promise<void> {
     const response: ClientResponse = {
       type: 'client-response',
@@ -557,6 +549,8 @@ export class HarnessController {
       this.patch({ error: frame.error.message })
       return
     }
+    if (frame.sessionId !== this.state.sessionId) return
+    this.patch({ connected: true })
     if (frame.type === 'approval/requested') {
       this.sink.requestApproval({ ...frame, rpcId: request.rpcId })
       return
@@ -565,8 +559,6 @@ export class HarnessController {
       this.sink.requestQuestions({ ...frame, rpcId: request.rpcId })
       return
     }
-    if (frame.sessionId !== this.state.sessionId) return
-    this.patch({ connected: true })
     switch (frame.type) {
       case 'session/event':
         await this.appendEvent({ event: frame.event, ...frame.view === undefined ? {} : { view: frame.view } })
@@ -585,9 +577,11 @@ export class HarnessController {
       case 'session/projection':
         this.applyProjection(frame.key, frame.value, frame.seq)
         return
-      case 'session/jobs':
       case 'approval/resolved':
       case 'question/resolved':
+        this.sink.resolveInteraction?.(frame)
+        return
+      case 'session/jobs':
         return
     }
   }

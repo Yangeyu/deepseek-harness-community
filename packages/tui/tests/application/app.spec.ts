@@ -20,11 +20,17 @@ import type { VisionGateway } from '../../src/application/attachments/coordinato
 import type { NewAttachmentDraft } from '../../src/application/attachments/drafts.ts'
 import type { AttachmentDraft } from '../../src/application/attachments/drafts.ts'
 import { buildLifecycleSnapshot } from '../../src/runtime/lifecycle/index.ts'
+import type {
+  ApprovalPrompt,
+  InteractionResolution,
+} from '../../src/runtime/controller.ts'
 
 interface AppInternals {
   controller: {
     current: Readonly<TuiState>
     prompt(text: string, mode: 'queue' | 'steer'): Promise<void>
+    cancel(): Promise<void>
+    answerApproval(prompt: ApprovalPrompt, outcome: 'allowed-once' | 'rejected'): Promise<void>
     rewind(plan: RewindPlan, onProgress?: (phase: 'forking' | 'reloading') => void): Promise<string>
   }
   skillCatalog: {
@@ -46,6 +52,7 @@ interface AppInternals {
   layout: {
     render(width: number): string[]
     transcriptRowAt(screenRow: number, viewportTop: number): number
+    scrollTranscript(delta: number): boolean
   }
   trajectoryView?: { handleInput(data: string): void; render(width: number): string[] }
   configView?: { handleInput(data: string): void; render(width: number): string[] }
@@ -55,6 +62,8 @@ interface AppInternals {
   composerModalActive: boolean
   tui: {
     requestRender(): void
+    hasOverlay(): boolean
+    getFocusedComponent(): { handleInput?(data: string): void } | null
     beginTextSelection(x: number, y: number): boolean
     updateTextSelection(x: number, y: number): boolean
     finishTextSelection(x: number, y: number):
@@ -63,6 +72,8 @@ interface AppInternals {
       | { kind: 'selection'; changed: boolean; text: string }
   }
   handleGlobalInput(data: string): { consume?: boolean } | undefined
+  requestApproval(prompt: ApprovalPrompt): void
+  resolveInteraction(resolution: InteractionResolution): void
   pasteImage(): Promise<void>
   requestRewind(): void
   performRewind(plan: RewindPlan): Promise<void>
@@ -103,6 +114,29 @@ function rewindPlan(attachments: readonly ImageAttachmentRef[] = []): RewindPlan
     state: 'safe',
     files: [],
     participants: [],
+  }
+}
+
+function approvalPrompt(): ApprovalPrompt {
+  return {
+    type: 'approval/requested',
+    sessionId: 'session-1',
+    approvalId: 'approval-1',
+    rpcId: 'rpc-approval-1',
+    toolName: 'shell',
+    reason: 'The command needs workspace access.',
+  } as ApprovalPrompt
+}
+
+function approvalResolution(
+  prompt: ApprovalPrompt,
+  outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable',
+): InteractionResolution {
+  return {
+    type: 'approval/resolved',
+    sessionId: prompt.sessionId,
+    approvalId: prompt.approvalId,
+    outcome,
   }
 }
 
@@ -246,6 +280,25 @@ describe('TuiApplication input routing', () => {
 
     internals.handleGlobalInput('\u001b[<0;1;1m')
     expect(handlePointer).toHaveBeenCalledWith(0, 'click')
+  })
+
+  it('keeps transcript wheel scrolling available behind an interaction overlay', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const prompt = approvalPrompt()
+    const scrollTranscript = vi.fn(() => true)
+    internals.layout.scrollTranscript = scrollTranscript
+    internals.transcript.handlePointer = vi.fn(() => false)
+
+    internals.requestApproval(prompt)
+    expect(internals.tui.hasOverlay()).toBe(true)
+
+    expect(internals.handleGlobalInput('\u001b[<64;8;9M')).toEqual({ consume: true })
+    expect(scrollTranscript).toHaveBeenCalledWith(-3)
+    expect(internals.transcript.handlePointer).not.toHaveBeenCalledWith(expect.any(Number), 'wheel-up')
+
+    internals.resolveInteraction(approvalResolution(prompt, 'cancelled'))
+    expect(internals.tui.hasOverlay()).toBe(false)
   })
 
   it('uses Ctrl+V as the primary image paste shortcut and keeps Alt+V compatible', () => {
@@ -482,6 +535,48 @@ describe('TuiApplication input routing', () => {
     expect(internals.editor.getExpandedText()).toBe('first prompt')
     internals.editor.handleInput('\u001b[B')
     expect(internals.editor.getExpandedText()).toBe('')
+  })
+
+  it.each([
+    ['Escape', '\u001b'],
+    ['Ctrl+C', '\u0003'],
+  ])('%s interrupts an approval turn without manufacturing a rejection', async (_label, input) => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const prompt = approvalPrompt()
+    const cancel = vi.fn(async () => {})
+    const answerApproval = vi.fn(async () => {})
+    internals.controller.cancel = cancel
+    internals.controller.answerApproval = answerApproval
+
+    internals.requestApproval(prompt)
+    expect(internals.tui.hasOverlay()).toBe(true)
+
+    expect(internals.handleGlobalInput(input)).toEqual({ consume: true })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(answerApproval).not.toHaveBeenCalled()
+    await vi.waitFor(() => { expect(internals.tui.hasOverlay()).toBe(false) })
+  })
+
+  it('keeps explicit approval rejection separate from turn interruption', async () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const prompt = approvalPrompt()
+    const cancel = vi.fn(async () => {})
+    const answerApproval = vi.fn(async () => {})
+    internals.controller.cancel = cancel
+    internals.controller.answerApproval = answerApproval
+
+    internals.requestApproval(prompt)
+    const dialog = internals.tui.getFocusedComponent()
+    dialog?.handleInput?.('\u001b[B')
+    dialog?.handleInput?.('\r')
+
+    await vi.waitFor(() => {
+      expect(answerApproval).toHaveBeenCalledWith(prompt, 'rejected')
+      expect(internals.tui.hasOverlay()).toBe(false)
+    })
+    expect(cancel).not.toHaveBeenCalled()
   })
 
   it('counts physical Escape presses without treating release or repeat as the second press', () => {

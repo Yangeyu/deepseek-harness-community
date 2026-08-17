@@ -20,6 +20,10 @@ import {
 
 const rpcId = 'rpc-test' as RpcId
 
+interface ControllerInternals {
+  handleMux(request: RpcRequest<MuxFrame>): Promise<void>
+}
+
 function ok<T>(value: T): { rpcId: RpcId; result: { ok: true; value: T } } {
   return { rpcId, result: { ok: true, value } }
 }
@@ -65,6 +69,30 @@ function fakeApi(projections?: SessionProjectionsBlock): { api: IApiClient; prom
 }
 
 describe('HarnessController', () => {
+  it('forwards authoritative interaction resolutions for the active session', async () => {
+    const { api } = fakeApi()
+    const resolveInteraction = vi.fn()
+    const controller = new HarnessController(api, {
+      render: vi.fn(),
+      requestApproval: vi.fn(),
+      requestQuestions: vi.fn(),
+      resolveInteraction,
+    }, '/workspace', 100)
+    await controller.start()
+    const internals = controller as unknown as ControllerInternals
+
+    const resolution = {
+      type: 'approval/resolved',
+      sessionId: controller.current.sessionId,
+      approvalId: 'approval-test',
+      outcome: 'cancelled',
+    } as Extract<MuxFrame, { type: 'approval/resolved' }>
+    await internals.handleMux({ rpcId, payload: resolution })
+
+    expect(resolveInteraction).toHaveBeenCalledWith(resolution)
+    controller.dispose()
+  })
+
   it('creates a session and preserves explicit queue and steer modes', async () => {
     const { api, prompt } = fakeApi()
     const sink: TuiControllerSink = {
