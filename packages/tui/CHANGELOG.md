@@ -2,8 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 0.1.11 - 2026-08-17
 
+- Render complete file-edit diffs inline in the conversation so they remain
+  top-level evidence and the pointer wheel scrolls one conversation viewport.
+- Add a workspace-contained `inspect_image` Agent tool that reuses the Vision
+  proxy for text-only models, validates bounded raster files before reading,
+  and returns source-attributed untrusted text for referenced or discovered
+  image paths.
 - Rebuild Rewind checkpoints from the active Session log so new and resumed
   conversations no longer depend on reversible-effect ownership, and offer
   independent code-and-conversation, conversation-only, and code-only restore.
