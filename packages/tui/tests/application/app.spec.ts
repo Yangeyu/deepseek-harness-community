@@ -39,14 +39,26 @@ interface AppInternals {
   attachmentComposer: { render(width: number): string[] }
   footer: { render(width: number): string[] }
   status: { render(width: number): string[] }
-  transcript: { render(width: number): string[] }
+  transcript: {
+    render(width: number): string[]
+    handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean
+  }
+  layout: { transcriptRowAt(screenRow: number, viewportTop: number): number }
   trajectoryView?: { handleInput(data: string): void; render(width: number): string[] }
   configView?: { handleInput(data: string): void; render(width: number): string[] }
   keymapView?: { handleInput(data: string): void; render(width: number): string[] }
   taskView?: { handleInput(data: string): void; render(width: number): string[] }
   skillsView?: { handleInput(data: string): void; render(width: number): string[] }
   composerModalActive: boolean
-  tui: { requestRender(): void }
+  tui: {
+    requestRender(): void
+    beginTextSelection(x: number, y: number): boolean
+    updateTextSelection(x: number, y: number): boolean
+    finishTextSelection(x: number, y: number):
+      | { kind: 'none'; changed: false }
+      | { kind: 'click'; changed: boolean }
+      | { kind: 'selection'; changed: boolean; text: string }
+  }
   handleGlobalInput(data: string): { consume?: boolean } | undefined
   pasteImage(): Promise<void>
   requestRewind(): void
@@ -149,6 +161,44 @@ afterEach(() => {
 })
 
 describe('TuiApplication input routing', () => {
+  it('copies a dragged primary-button selection without dispatching a block click', async () => {
+    const clipboardText = vi.fn(async () => {})
+    const app = application(undefined, undefined, undefined, undefined, undefined, { clipboardText })
+    const internals = app as unknown as AppInternals
+    internals.layout.transcriptRowAt = vi.fn(() => 0)
+    internals.transcript.handlePointer = vi.fn(() => false)
+    internals.tui.beginTextSelection = vi.fn(() => true)
+    internals.tui.updateTextSelection = vi.fn(() => true)
+    internals.tui.finishTextSelection = vi.fn(() => ({
+      kind: 'selection' as const,
+      changed: false,
+      text: 'selected output',
+    }))
+
+    expect(internals.handleGlobalInput('\u001b[<0;1;1M')).toEqual({ consume: true })
+    expect(internals.handleGlobalInput('\u001b[<32;8;1M')).toEqual({ consume: true })
+    expect(internals.handleGlobalInput('\u001b[<0;8;1m')).toEqual({ consume: true })
+    await vi.waitFor(() => { expect(clipboardText).toHaveBeenCalledWith('selected output') })
+
+    expect(internals.transcript.handlePointer).not.toHaveBeenCalledWith(0, 'click')
+  })
+
+  it('dispatches a title click only after a primary-button gesture ends without selection', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    internals.layout.transcriptRowAt = vi.fn(() => 0)
+    const handlePointer = vi.fn(() => true)
+    internals.transcript.handlePointer = handlePointer
+    internals.tui.beginTextSelection = vi.fn(() => true)
+    internals.tui.finishTextSelection = vi.fn(() => ({ kind: 'click' as const, changed: false }))
+
+    internals.handleGlobalInput('\u001b[<0;1;1M')
+    expect(handlePointer).not.toHaveBeenCalledWith(0, 'click')
+
+    internals.handleGlobalInput('\u001b[<0;1;1m')
+    expect(handlePointer).toHaveBeenCalledWith(0, 'click')
+  })
+
   it('uses Ctrl+V as the primary image paste shortcut and keeps Alt+V compatible', () => {
     const app = application()
     const internals = app as unknown as AppInternals

@@ -12,6 +12,15 @@ export interface MouseReport {
   release: boolean
 }
 
+/** Pointer intent resolved from one terminal mouse report. */
+export type MouseAction =
+  | { kind: 'move'; x: number; y: number }
+  | { kind: 'press'; x: number; y: number }
+  | { kind: 'drag'; x: number; y: number }
+  | { kind: 'release'; x: number; y: number }
+  | { kind: 'wheel'; x: number; y: number; direction: -1 | 1 }
+  | { kind: 'ignored'; x: number; y: number }
+
 /** Decode an SGR mouse report, leaving all keyboard input untouched. */
 export function parseMouseReport(data: string): MouseReport | undefined {
   // oxlint-disable-next-line no-control-regex -- ESC is the SGR mouse-report prefix.
@@ -23,4 +32,22 @@ export function parseMouseReport(data: string): MouseReport | undefined {
     y: Number.parseInt(match[3] ?? '', 10) - 1,
     release: match[4] === 'm',
   }
+}
+
+/** Resolve terminal button bits before application behavior is selected. */
+export function resolveMouseAction(report: MouseReport): MouseAction {
+  const point = { x: report.x, y: report.y }
+  if (report.release) return { kind: 'release', ...point }
+  if ((report.button & 64) !== 0) {
+    return { kind: 'wheel', direction: (report.button & 1) === 0 ? -1 : 1, ...point }
+  }
+  if ((report.button & 32) !== 0) {
+    const button = report.button & 3
+    if (button === 0) return { kind: 'drag', ...point }
+    if (button === 3) return { kind: 'move', ...point }
+    return { kind: 'ignored', ...point }
+  }
+  return (report.button & 3) === 0
+    ? { kind: 'press', ...point }
+    : { kind: 'ignored', ...point }
 }

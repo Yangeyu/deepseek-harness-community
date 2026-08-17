@@ -4,7 +4,6 @@ import {
   Key,
   ProcessTerminal,
   Text,
-  TuiMainScreen,
   isKeyRelease,
   isKeyRepeat,
   matchesKey,
@@ -43,6 +42,7 @@ import { composerStats } from '../presentation/stats.ts'
 import { DiffLineLocator } from '../presentation/diff-location.ts'
 import { TranscriptComponent } from '../presentation/transcript.ts'
 import { ComposerAnchoredLayout } from '../presentation/layout.ts'
+import { SelectableMainScreen } from '../presentation/selectable-main-screen.ts'
 import { TrajectoryView } from '../trajectory/view.ts'
 import {
   RewindTransaction,
@@ -51,10 +51,9 @@ import {
   type RewindPort,
 } from '../rewind/index.ts'
 import {
-  DISABLE_MOUSE_TRACKING,
-  ENABLE_MOUSE_TRACKING,
   parseMouseReport,
-  type MouseReport,
+  resolveMouseAction,
+  type MouseAction,
 } from '../presentation/mouse.ts'
 import {
   TerminalCommandDirectory,
@@ -136,6 +135,10 @@ import {
   type ComposerDraft,
   type ComposerInputAction,
 } from './composer-input.ts'
+import {
+  createClipboardTextWriter,
+  type ClipboardTextWriter,
+} from './text-clipboard.ts'
 
 function isWorking(state: Readonly<TuiState>): boolean {
   return composerExecutionActivity(state) !== undefined
@@ -163,6 +166,7 @@ export interface TuiApplicationDependencies {
   keymap?: KeymapSettingsGateway
   initialImagePaths?: readonly string[]
   clipboardImage?: ClipboardImageLoader
+  clipboardText?: ClipboardTextWriter
   attachments?: PromptAttachmentReader
   terminal?: Terminal
 }
@@ -188,7 +192,7 @@ function resumeHint(sessionId: TuiState['sessionId']): string | undefined {
 /** Main-screen pi-tui application for one in-process Harness API client. */
 export class TuiApplication implements TuiControllerSink {
   private readonly terminal: Terminal
-  private readonly tui: TuiMainScreen
+  private readonly tui: SelectableMainScreen
   private readonly theme: TuiTheme
   private readonly controller: HarnessController
   private readonly header: Text
@@ -239,6 +243,7 @@ export class TuiApplication implements TuiControllerSink {
   private attachmentRailFocused = false
   private readonly initialImagePaths: readonly string[]
   private readonly clipboardImage: ClipboardImageLoader
+  private readonly clipboardText: ClipboardTextWriter
   private readonly promptAttachmentReader: PromptAttachmentReader | undefined
   private clipboardPastePending = false
   private readonly rewindTransaction: RewindTransaction
@@ -257,15 +262,17 @@ export class TuiApplication implements TuiControllerSink {
       keymap,
       initialImagePaths = [],
       clipboardImage = imageDraftFromClipboard,
+      clipboardText,
       attachments,
       terminal = new ProcessTerminal(),
     } = dependencies
     this.terminal = terminal
     this.initialImagePaths = initialImagePaths
     this.clipboardImage = clipboardImage
+    this.clipboardText = clipboardText ?? createClipboardTextWriter(terminal)
     this.promptAttachmentReader = attachments
     this.theme = createTheme(config.color)
-    this.tui = new TuiMainScreen(this.terminal, config.showHardwareCursor)
+    this.tui = new SelectableMainScreen(this.terminal, config.showHardwareCursor)
     this.controller = new HarnessController(api, this, config.cwd, config.historyMessages)
     this.rewindTransaction = new RewindTransaction(rewind, {
       rewind: async (plan, onPhase) => String(await this.controller.rewind(plan, onPhase)),
@@ -371,7 +378,6 @@ export class TuiApplication implements TuiControllerSink {
     this.terminal.setTitle(this.config.title)
     this.removeInputListener = this.tui.addInputListener(data => this.handleGlobalInput(data))
     this.tui.start()
-    this.terminal.write(ENABLE_MOUSE_TRACKING)
     await this.controller.start(this.config.sessionId)
     await this.loadInitialImages()
   }
@@ -389,7 +395,6 @@ export class TuiApplication implements TuiControllerSink {
     this.removeAttachmentListener()
     this.removeKeymapListener()
     this.attachmentCoordinator?.cancel(false)
-    this.terminal.write(DISABLE_MOUSE_TRACKING)
     this.removeInputListener?.()
     this.tui.stop()
     await this.terminal.drainInput(250, 30)
@@ -521,11 +526,12 @@ export class TuiApplication implements TuiControllerSink {
   private handleGlobalInput(data: string): { consume?: boolean } | undefined {
     const mouse = parseMouseReport(data)
     if (mouse !== undefined) {
-      this.handleMouse(mouse)
+      this.handleMouse(resolveMouseAction(mouse))
       return { consume: true }
     }
     const escape = matchesKey(data, Key.escape)
     const keyRelease = isKeyRelease(data)
+    if (!keyRelease && this.tui.clearTextSelection()) this.tui.requestRender()
     if (keyRelease && escape) return { consume: true }
     if (escape && isKeyRepeat(data)) return { consume: true }
     if (this.composerModalActive) return undefined
@@ -625,23 +631,37 @@ export class TuiApplication implements TuiControllerSink {
     }
   }
 
-  private handleMouse(mouse: MouseReport): void {
+  private handleMouse(mouse: MouseAction): void {
     const blocked = this.composerModalActive || this.tui.hasOverlay()
     const renderState = this.tui.captureRenderState()
     const transcriptLine = blocked
       ? -1
       : this.layout.transcriptRowAt(mouse.y, renderState.previousViewportTop)
     let changed = this.transcript.handlePointer(transcriptLine, 'move')
-    if (!blocked && (mouse.button & 64) !== 0) {
-      const direction = (mouse.button & 1) === 0 ? -1 : 1
+    if (blocked) {
+      changed = this.tui.clearTextSelection() || changed
+    } else if (mouse.kind === 'wheel') {
+      changed = this.tui.clearTextSelection() || changed
       const blockScrolled = this.transcript.handlePointer(
         transcriptLine,
-        direction < 0 ? 'wheel-up' : 'wheel-down',
+        mouse.direction < 0 ? 'wheel-up' : 'wheel-down',
       )
       changed = blockScrolled || changed
-      if (!blockScrolled) changed = this.layout.scrollTranscript(direction * 3) || changed
-    } else if (!blocked && mouse.button === 0 && !mouse.release) {
-      changed = this.transcript.handlePointer(transcriptLine, 'click') || changed
+      if (!blockScrolled) changed = this.layout.scrollTranscript(mouse.direction * 3) || changed
+    } else if (mouse.kind === 'press') {
+      changed = this.tui.beginTextSelection(mouse.x, mouse.y) || changed
+    } else if (mouse.kind === 'drag') {
+      changed = this.tui.updateTextSelection(mouse.x, mouse.y) || changed
+    } else if (mouse.kind === 'release') {
+      const result = this.tui.finishTextSelection(mouse.x, mouse.y)
+      changed = result.changed || changed
+      if (result.kind === 'selection') {
+        void this.clipboardText(result.text).catch((error: unknown) => {
+          this.controller.notice(`Could not copy selection: ${error instanceof Error ? error.message : String(error)}`)
+        })
+      } else if (result.kind === 'click') {
+        changed = this.transcript.handlePointer(transcriptLine, 'click') || changed
+      }
     }
     if (changed) {
       this.updateStatus(this.controller.current)
@@ -1171,7 +1191,6 @@ export class TuiApplication implements TuiControllerSink {
       return
     }
 
-    this.terminal.write(DISABLE_MOUSE_TRACKING)
     this.tui.stop()
     try {
       await runExternalEditor(editor, document.path, [
@@ -1183,7 +1202,6 @@ export class TuiApplication implements TuiControllerSink {
       await this.terminal.drainInput(100, 20)
       if (!this.disposed) {
         this.tui.start()
-        this.terminal.write(ENABLE_MOUSE_TRACKING)
         this.tui.requestRender()
       }
     }

@@ -81,8 +81,8 @@ reducing the number of visible files.
    silently drops an attachment.
 9. Raw terminal sequences resolve to semantic actions before application
    behavior runs. Context owns gesture availability: idle editor input is never
-   consumed by a running-turn binding, and persisted keymap choices contain no
-   task or session state.
+   consumed by a running-turn binding, persisted keymap choices contain no task
+   or session state, and raw mouse button bits never reach interaction policy.
 10. Kitty repeat and release events are consumed without emitting another
     semantic action. Asynchronous clipboard intake is single-flight, so one
     physical paste cannot create duplicate drafts even when a terminal emits
@@ -123,6 +123,11 @@ reducing the number of visible files.
 - Title rows are the only click targets. The pointer wheel first scrolls an
   expanded bounded child or Diff; when that target cannot scroll, the same
   gesture falls through to conversation scrolling.
+- Main-screen text selection owns rendered cell coordinates, grapheme-aware
+  highlighting, and plain-text extraction. The application owns clipboard I/O.
+  A primary press starts one gesture; dragging updates selection, while release
+  either copies a non-empty range or dispatches the existing title click. Block
+  actions therefore never run speculatively on button press.
 - Diff is intentionally specialized: returned file evidence never enters an
   Activity group, remains top-level regardless of execution status, and opens
   by default. It shares status and pointer semantics, not the child layout.

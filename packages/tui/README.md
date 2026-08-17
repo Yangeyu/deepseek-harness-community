@@ -241,8 +241,12 @@ The pointer wheel scrolls expanded thinking and long inline diffs inside their
 bounded viewports; at a block boundary or
 over ordinary output, the same wheel scrolls the conversation. Scrolling upward
 pauses automatic tail following, and PageDown or a downward wheel returns to
-live output. Hold the terminal's mouse-bypass modifier (usually Shift) when
-native terminal text selection is needed.
+live output. Drag directly across rendered TUI text to select it; the selected
+cells are highlighted and copied to the system clipboard when the primary
+button is released. A primary-button gesture toggles a block only when it did
+not form a text selection. Platform clipboard commands are preferred locally,
+with OSC 52 as the remote-terminal fallback; Shift remains available only when
+terminal-native selection is explicitly desired.
 
 Rewind registers a boundary from the durable user message accepted into each
 user-authored turn. Text, native-image, and proxy-image submissions follow the
