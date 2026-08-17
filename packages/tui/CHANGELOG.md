@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.10 - 2026-08-17
+
+- Add drag-based mouse text selection across rendered TUI content and copy the
+  completed selection to the system clipboard without changing application
+  focus or command interaction.
+- Add `@` workspace file references with ranked path matching, keyboard and
+  mouse selection, and the same above-composer suggestion surface used by slash
+  commands so opening results does not move the input.
+- Preserve approval and question interactions while runtime cancellation
+  settles, and keep interruption ownership tied to the active operation.
+- Add stable workspace and Git branch context to the composer footer, improve
+  persistent status contrast, and make repeated `Ctrl+C` exit deterministically
+  when interrupted work does not settle.
+- Expand `dsh-tui` into a side-effect-free typed command surface with canonical
+  session resume, session listing, headless execution, diagnostics, shell
+  completion, profile configuration and plugin delegation, startup controls,
+  command help, and `-v`/`-V`/`--version` aliases.
+
 ## 0.1.9 - 2026-08-17
 
 - Make idle `Esc` clear and retain one unified text-and-image Composer draft,
