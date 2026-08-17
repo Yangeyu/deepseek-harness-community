@@ -133,9 +133,9 @@ reducing the number of visible files.
 - Failed Activity and child nodes disclose once by default and remain manually
   collapsible. Interrupted nodes are terminal but stay compact unless the user
   opens them.
-- Title rows are the only click targets. The pointer wheel first scrolls an
-  expanded bounded child or Diff; when that target cannot scroll, the same
-  gesture falls through to conversation scrolling.
+- Title rows are the only click targets. The pointer wheel scrolls an expanded
+  bounded Thought first; every other target falls through to conversation
+  scrolling.
 - Main-screen text selection owns rendered cell coordinates, grapheme-aware
   highlighting, and plain-text extraction. The application owns clipboard I/O.
   A primary press starts one gesture; dragging updates selection, while release
@@ -143,7 +143,8 @@ reducing the number of visible files.
   actions therefore never run speculatively on button press.
 - Diff is intentionally specialized: returned file evidence never enters an
   Activity group, remains top-level regardless of execution status, and opens
-  by default. It shares status and pointer semantics, not the child layout.
+  by default. Its compacted content renders inline in the conversation and
+  never owns a nested viewport.
 
 ## Current components
 

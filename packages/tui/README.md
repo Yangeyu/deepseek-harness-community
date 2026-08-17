@@ -263,11 +263,11 @@ Thought settles immediately. Thought, tool, and Diff titles share `◦` running,
 hard Activity boundaries: returned Diff evidence remains a top-level
 conversation card regardless of execution status and opens by default.
 `Ctrl+O` expands or collapses Activity, Thought, and tool details together.
-The pointer wheel scrolls expanded thinking and long inline diffs inside their
-bounded viewports; at a block boundary or
-over ordinary output, the same wheel scrolls the conversation. Scrolling upward
-pauses automatic tail following, and PageDown or a downward wheel returns to
-live output. Drag directly across rendered TUI text to select it; the selected
+The pointer wheel scrolls expanded thinking inside its bounded viewport. File
+diffs render inline without a nested scroll window, so the wheel over them and
+ordinary output scrolls the conversation. Scrolling upward pauses automatic
+tail following, and PageDown or a downward wheel returns to live output. Drag
+directly across rendered TUI text to select it; the selected
 cells are highlighted and copied to the system clipboard when the primary
 button is released. A primary-button gesture toggles a block only when it did
 not form a text selection. Platform clipboard commands are preferred locally,

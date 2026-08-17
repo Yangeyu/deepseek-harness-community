@@ -798,7 +798,7 @@ describe('TranscriptComponent', () => {
     expect(collapsed).not.toContain('1 test failed')
   })
 
-  it('shows applied file diffs by default and scrolls them with the pointer', () => {
+  it('shows complete applied file diffs inline and leaves wheel scrolling to the conversation', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
@@ -859,12 +859,10 @@ describe('TranscriptComponent', () => {
     expect(summaryColumn).toBe(titleColumn)
     expect(removedColumn).toBeGreaterThan(summaryColumn)
     expect(plainInitial).not.toContain('stale')
-    expect(plainInitial).not.toContain('"new"')
-
-    expect(transcript.handlePointer(1, 'wheel-down')).toBe(true)
-    const scrolled = transcript.render(80).join('\n')
-    expect(stripTerminalSequences(scrolled)).toContain('3 + const mode = "new"')
-    expect(scrolled).toContain('\u001b[48;2;12;48;28m')
+    expect(plainInitial).toContain('3 + const mode = "new"')
+    expect(plainInitial).toContain('5   end()')
+    expect(initial).toContain('\u001b[48;2;12;48;28m')
+    expect(transcript.handlePointer(1, 'wheel-down')).toBe(false)
     expect(transcript.handlePointer(0, 'move')).toBe(true)
     expect(transcript.render(80).join('\n')).not.toContain('\u001b[7m')
     expect(transcript.handlePointer(0, 'click')).toBe(true)

@@ -61,8 +61,8 @@ export class TranscriptComponent implements Component {
   private readonly disclosure = new ExecutionDisclosureState()
   private readonly collapsedDiffs = new Set<string>()
   private readonly pausedThinking = new Set<string>()
-  private readonly blockOffsets = new Map<string, number>()
-  private readonly blockMaxOffsets = new Map<string, number>()
+  private readonly thinkingOffsets = new Map<string, number>()
+  private readonly thinkingMaxOffsets = new Map<string, number>()
   private blockHits: BlockHit[] = []
   private activityExecutionKeys = new Map<string, readonly string[]>()
   private hoveredBlockKey: string | undefined
@@ -83,8 +83,8 @@ export class TranscriptComponent implements Component {
       this.disclosure.clear()
       this.collapsedDiffs.clear()
       this.pausedThinking.clear()
-      this.blockOffsets.clear()
-      this.blockMaxOffsets.clear()
+      this.thinkingOffsets.clear()
+      this.thinkingMaxOffsets.clear()
       this.hoveredBlockKey = undefined
     }
     this.state = state
@@ -121,18 +121,16 @@ export class TranscriptComponent implements Component {
         this.disclosure.toggle(hit.key, this.showDetails)
         if (hit.kind === 'thinking') {
           this.pausedThinking.delete(hit.key)
-          this.blockOffsets.delete(hit.key)
+          this.thinkingOffsets.delete(hit.key)
+          this.thinkingMaxOffsets.delete(hit.key)
         }
       } else if (!this.collapsedDiffs.delete(hit.key)) {
         this.collapsedDiffs.add(hit.key)
-        this.blockOffsets.delete(hit.key)
       }
       return true
     }
-    if (hit === undefined || hit.kind === 'activity' || hit.kind === 'tool' ||
-      (hit.kind === 'thinking' && !this.isChildExpanded(hit.key)) ||
-      (hit.kind === 'diff' && this.collapsedDiffs.has(hit.key))) return false
-    return this.scrollBlock(hit.key, action === 'wheel-up' ? -3 : 3, hit.kind === 'thinking')
+    if (hit?.kind !== 'thinking' || !this.isChildExpanded(hit.key)) return false
+    return this.scrollThinking(hit.key, action === 'wheel-up' ? -3 : 3)
   }
 
   render(width: number): string[] {
@@ -334,7 +332,7 @@ export class TranscriptComponent implements Component {
       this.theme.markdown,
       { color: this.theme.reasoning },
     ).render(contentWidth)
-    const { offset, maxOffset } = this.resolveBlockOffset(
+    const { offset, maxOffset } = this.resolveThinkingOffset(
       thinking.key,
       content.length,
       this.thinkingMaxLines,
@@ -398,14 +396,12 @@ export class TranscriptComponent implements Component {
       width,
     )
     if (collapsed) return [title]
-    const { offset } = this.resolveBlockOffset(diff.key, model.lines.length, this.maxToolOutputLines, false)
-    const visible = model.lines.slice(offset, offset + this.maxToolOutputLines)
     const numberWidth = Math.max(2, ...model.lines.map(line => String(line.number ?? '').length))
     const contentWidth = Math.max(1, width - DIFF_CONTENT_INDENT.length)
     return [
       title,
       truncateToWidth(this.theme.reasoning(`${DIFF_CONTENT_INDENT}└ ${diffSummary(model.added, model.removed)}`), width),
-      ...visible.flatMap(line => this.renderDiffLine(line, contentWidth, numberWidth)
+      ...model.lines.flatMap(line => this.renderDiffLine(line, contentWidth, numberWidth)
         .map(rendered => `${DIFF_CONTENT_INDENT}${rendered}`)),
     ]
   }
@@ -499,24 +495,22 @@ export class TranscriptComponent implements Component {
     return visual.bold ? this.theme.bold(painted) : painted
   }
 
-  private resolveBlockOffset(key: string, lines: number, limit: number, follow: boolean): { offset: number; maxOffset: number } {
+  private resolveThinkingOffset(key: string, lines: number, limit: number, follow: boolean): { offset: number; maxOffset: number } {
     const maxOffset = Math.max(0, lines - limit)
-    this.blockMaxOffsets.set(key, maxOffset)
-    const offset = follow ? maxOffset : Math.max(0, Math.min(maxOffset, this.blockOffsets.get(key) ?? 0))
-    this.blockOffsets.set(key, offset)
+    this.thinkingMaxOffsets.set(key, maxOffset)
+    const offset = follow ? maxOffset : Math.max(0, Math.min(maxOffset, this.thinkingOffsets.get(key) ?? 0))
+    this.thinkingOffsets.set(key, offset)
     return { offset, maxOffset }
   }
 
-  private scrollBlock(key: string, delta: number, thinking: boolean): boolean {
-    const maxOffset = this.blockMaxOffsets.get(key) ?? 0
-    const current = this.blockOffsets.get(key) ?? 0
+  private scrollThinking(key: string, delta: number): boolean {
+    const maxOffset = this.thinkingMaxOffsets.get(key) ?? 0
+    const current = this.thinkingOffsets.get(key) ?? 0
     const next = Math.max(0, Math.min(maxOffset, current + delta))
     if (next === current) return false
-    this.blockOffsets.set(key, next)
-    if (thinking) {
-      if (next === maxOffset && delta > 0) this.pausedThinking.delete(key)
-      else if (delta < 0) this.pausedThinking.add(key)
-    }
+    this.thinkingOffsets.set(key, next)
+    if (next === maxOffset && delta > 0) this.pausedThinking.delete(key)
+    else if (delta < 0) this.pausedThinking.add(key)
     return true
   }
 }
