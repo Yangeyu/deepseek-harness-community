@@ -153,6 +153,10 @@ reducing the number of visible files.
   releases, wheel input, and passive position. Passive movement invalidates the
   presentation only when its fold-title target changes, preserving hover
   feedback without rebuilding on movement within the same title.
+- A successful disclosure click preserves the last rendered conversation top
+  before the transcript changes height. This transfers viewport ownership from
+  automatic tail following to the user without coupling Layout to Activity,
+  Thought, tool, or Diff keys. Explicit follow actions resume tail ownership.
 - Main-screen text selection owns rendered cell coordinates, grapheme-aware
   highlighting, and plain-text extraction. The application owns clipboard I/O.
   A primary press starts one gesture; dragging updates selection, while release

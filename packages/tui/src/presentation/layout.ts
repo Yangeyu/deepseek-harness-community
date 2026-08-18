@@ -59,6 +59,11 @@ export class ComposerAnchoredLayout extends Container {
     return this.conversationTop === undefined
   }
 
+  /** Preserve the last rendered viewport while user disclosure changes transcript height. */
+  preserveTranscriptViewport(): void {
+    this.conversationTop ??= this.maxConversationTop
+  }
+
   override render(width: number): string[] {
     const viewportRows = Math.max(0, this.viewportRows())
     if (this.activeSurface?.kind === 'workspace') {

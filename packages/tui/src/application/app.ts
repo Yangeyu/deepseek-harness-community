@@ -803,7 +803,9 @@ export class TuiApplication implements TuiControllerSink {
             this.controller.notice(`Could not copy selection: ${error instanceof Error ? error.message : String(error)}`)
           })
         } else if (result.kind === 'click') {
-          changed = this.transcript.handlePointer(transcriptLine, 'click') || changed
+          const disclosureChanged = this.transcript.handlePointer(transcriptLine, 'click')
+          if (disclosureChanged) this.layout.preserveTranscriptViewport()
+          changed = disclosureChanged || changed
         }
       }
     }

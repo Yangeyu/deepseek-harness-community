@@ -57,6 +57,7 @@ interface AppInternals {
   layout: {
     render(width: number): string[]
     transcriptRowAt(screenRow: number, viewportTop: number): number
+    preserveTranscriptViewport(): void
     scrollTranscript(delta: number): boolean
   }
   trajectoryView?: { handleInput(data: string): void; render(width: number): string[] }
@@ -382,14 +383,17 @@ describe('TuiApplication input routing', () => {
     internals.layout.transcriptRowAt = vi.fn(() => 0)
     const handlePointer = vi.fn(() => true)
     internals.transcript.handlePointer = handlePointer
+    internals.layout.preserveTranscriptViewport = vi.fn()
     internals.tui.beginTextSelection = vi.fn(() => true)
     internals.tui.finishTextSelection = vi.fn(() => ({ kind: 'click' as const, changed: false }))
 
     internals.handleGlobalInput('\u001b[<0;1;1M')
     expect(handlePointer).not.toHaveBeenCalledWith(0, 'click')
+    expect(internals.layout.preserveTranscriptViewport).not.toHaveBeenCalled()
 
     internals.handleGlobalInput('\u001b[<0;1;1m')
     expect(handlePointer).toHaveBeenCalledWith(0, 'click')
+    expect(internals.layout.preserveTranscriptViewport).toHaveBeenCalledOnce()
   })
 
   it('renders hover only when the pointer enters or leaves a fold title', () => {

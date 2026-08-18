@@ -174,6 +174,44 @@ describe('ComposerAnchoredLayout', () => {
       .toEqual(['header', '', 'line 1'])
   })
 
+  it('preserves the rendered viewport when user disclosure grows below it', () => {
+    const transcript = new Text(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n'), 0, 0)
+    const layout = new ComposerAnchoredLayout(
+      new Text('header', 0, 0),
+      transcript,
+      new Text('', 0, 0),
+      new Text('editor', 0, 0),
+      new Text('footer', 0, 0),
+      () => 8,
+    )
+
+    const collapsed = layout.render(80)
+    const titleRow = collapsed.findIndex(line => line.trim() === 'line 10')
+    expect(titleRow).toBe(2)
+    expect(layout.followsTranscriptTail).toBe(true)
+
+    layout.preserveTranscriptViewport()
+    transcript.setText([
+      ...Array.from({ length: 10 }, (_, index) => `line ${index + 1}`),
+      'detail 1',
+      'detail 2',
+      'detail 3',
+      'line 11',
+      'line 12',
+    ].join('\n'))
+
+    const expanded = layout.render(80)
+    expect(expanded[titleRow]?.trim()).toBe('line 10')
+    expect(layout.followsTranscriptTail).toBe(false)
+
+    transcript.setText(`${transcript.render(80).join('\n')}\nline 13`)
+    expect(layout.render(80)[titleRow]?.trim()).toBe('line 10')
+
+    expect(layout.followTranscript()).toBe(true)
+    expect(layout.render(80).slice(0, 5).map(line => line.trim()))
+      .toEqual(['detail 2', 'detail 3', 'line 11', 'line 12', 'line 13'])
+  })
+
   it('pages the transcript and maps screen rows to full transcript lines', () => {
     const layout = new ComposerAnchoredLayout(
       new Text('header\ncontext', 0, 0),
