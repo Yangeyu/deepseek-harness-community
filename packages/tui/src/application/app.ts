@@ -158,7 +158,6 @@ import {
   imageMarkerInsertion,
   removeImageMarker,
 } from '../prompt-content.ts'
-import { decodeEditorImageReferences } from '../presentation/image-references.ts'
 import { InlineReferenceEditor } from '../presentation/inline-reference-editor.ts'
 
 function isWorking(state: Readonly<TuiState>): boolean {
@@ -421,7 +420,7 @@ export class TuiApplication implements TuiControllerSink {
     this.editor.onSubmit = text => {
       // pi-tui's submitValue passes the raw Editor lines (U+2800-encoded references),
       // so the durable text must be decoded here before history or submission.
-      const decoded = decodeEditorImageReferences(text, this.attachmentDrafts.placeholders)
+      const decoded = this.editor.decodeReferences(text)
       this.resetComposerInput()
       this.editor.addToHistory(decoded)
       void this.submit(decoded)
@@ -842,7 +841,7 @@ export class TuiApplication implements TuiControllerSink {
     // reference-decoding getters), and the Editor reset that precedes submission detaches
     // every active draft. Decode first, then reconcile against the durable text, so the
     // attachment branch re-activates exactly the drafts whose references survived.
-    const text = decodeEditorImageReferences(value, this.attachmentDrafts.placeholders).trim()
+    const text = this.editor.decodeReferences(value).trim()
     this.attachmentDrafts.reconcileText(text)
     if (text === '' && this.attachmentDrafts.snapshot.length === 0) return
     try {

@@ -93,7 +93,12 @@ reducing the number of visible files.
    appends missing references or pairs images by count. Native providers retain
    compiled content-block order, while the Vision proxy places each binary image
    immediately after the same explicit reference. Marker synthesis exists only
-   at named legacy replay and Rewind read boundaries.
+   at named legacy replay and Rewind read boundaries. Submissions decode the raw
+   Editor submit path instead of reading presentation state, so a reference is
+   never durable in its encoded separator form. Two contract edges follow from
+   the one-reference-per-draft rule: a submission that races still-loading
+   clipboard bytes lets the image intentionally not attach, and a detached
+   draft re-binds if its live reference reappears in Composer text.
    Native and proxy routes produce the same human Prompt lifecycle. Proxy
    observations are source-attributed children of that Prompt, never rewritten
    as human text. Native image blocks and proxy evidence enrich the same Prompt

@@ -150,6 +150,11 @@ export class InlineReferenceEditor extends Editor {
     super.addToHistory(encodeEditorImageReferences(text, this.activeReferences()))
   }
 
+  /** Decode registered references out of raw Editor text, even after the buffer was reset. */
+  decodeReferences(text: string): string {
+    return decodeEditorImageReferences(text, this.activeReferences())
+  }
+
   private activeReferences(): readonly string[] {
     return [...new Set(this.references())]
       .filter(reference => reference !== '')

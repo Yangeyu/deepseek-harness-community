@@ -25,7 +25,7 @@ export interface ImageMarkerOccurrence {
   readonly index: number
 }
 
-export function imageMarker(number: number): string {
+function imageMarker(number: number): string {
   return `[Image #${String(number)}]`
 }
 
@@ -164,7 +164,7 @@ export function compilePromptDocument<Image extends InlineImageToken>(
 }
 
 /** Project exact durable text without inventing image positions. */
-export function promptTextFromContent(content: readonly PromptTextBlock[]): string {
+function promptTextFromContent(content: readonly PromptTextBlock[]): string {
   const textBlocks = content
     .filter(block => block.type === 'text')
     .map(block => block.text ?? '')

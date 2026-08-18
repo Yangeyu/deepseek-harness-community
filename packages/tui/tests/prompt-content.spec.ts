@@ -3,7 +3,6 @@ import {
   compilePromptDocument,
   imageMarkerInsertion,
   legacyPromptTextFromContent,
-  promptTextFromContent,
   removeImageMarker,
   restoreLegacyImageMarkers,
 } from '../src/prompt-content.ts'
@@ -45,21 +44,17 @@ describe('inline Prompt content', () => {
   })
 
   it('keeps exact durable text separate from the legacy replay fallback', () => {
-    expect(promptTextFromContent([
+    expect(legacyPromptTextFromContent([
       { type: 'text', text: 'before [Image #1]' },
       { type: 'image' },
       { type: 'text', text: ' after' },
     ])).toBe('before [Image #1] after')
-    expect(promptTextFromContent([
-      { type: 'text', text: 'legacy' },
-      { type: 'image' },
-    ])).toBe('legacy')
     expect(restoreLegacyImageMarkers('legacy', 2)).toBe('legacy [Image #1] [Image #2]')
     expect(legacyPromptTextFromContent([
       { type: 'text', text: 'legacy' },
       { type: 'image' },
     ])).toBe('legacy [Image #1]')
-    expect(promptTextFromContent([
+    expect(legacyPromptTextFromContent([
       { type: 'text', text: 'first' },
       { type: 'text', text: 'second' },
     ])).toBe('first\nsecond')

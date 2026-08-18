@@ -79,13 +79,6 @@ export class AttachmentDraftStore {
     return removed
   }
 
-  add(input: NewAttachmentDraft, occupiedText = ''): AttachmentDraft {
-    const reservation = this.reserve(occupiedText)
-    const draft = this.complete(reservation, input)
-    if (draft === undefined) throw new Error('Attachment reservation expired before completion.')
-    return draft
-  }
-
   setError(ids: readonly string[], error: string): void {
     const selected = new Set(ids)
     this.active = this.active.map(item => selected.has(item.id)

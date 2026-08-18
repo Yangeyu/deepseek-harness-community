@@ -214,6 +214,27 @@ function application(
   return app
 }
 
+function visionFixture(): VisionGateway {
+  return {
+    config: {
+      mode: 'auto',
+      proxyProvider: 'proxy',
+      proxyModel: 'vision',
+      maxObservationChars: 12_000,
+      maxTokens: 2_048,
+    },
+  } as VisionGateway
+}
+
+function clipboardPng(): NewAttachmentDraft {
+  return {
+    name: 'clipboard.png',
+    mediaType: 'image/png',
+    data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
+    source: 'clipboard',
+  }
+}
+
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
@@ -485,15 +506,7 @@ describe('TuiApplication input routing', () => {
     const clipboardImage = vi.fn(() => new Promise<NewAttachmentDraft>((resolve) => {
       resolveClipboard = resolve
     }))
-    const vision = {
-      config: {
-        mode: 'auto',
-        proxyProvider: 'proxy',
-        proxyModel: 'vision',
-        maxObservationChars: 12_000,
-        maxTokens: 2_048,
-      },
-    } as VisionGateway
+    const vision = visionFixture()
     const app = application(undefined, undefined, undefined, undefined, undefined, {
       vision,
       clipboardImage,
@@ -506,12 +519,7 @@ describe('TuiApplication input routing', () => {
     const second = internals.pasteImage()
     expect(clipboardImage).toHaveBeenCalledOnce()
     expect(internals.editor.getExpandedText()).toBe('before [Image #1] after')
-    resolveClipboard({
-      name: 'clipboard.png',
-      mediaType: 'image/png',
-      data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
-      source: 'clipboard',
-    })
+    resolveClipboard(clipboardPng())
     await Promise.all([first, second])
 
     expect(internals.attachmentDrafts.snapshot).toHaveLength(1)
@@ -520,23 +528,10 @@ describe('TuiApplication input routing', () => {
   })
 
   it('retains a Composer image created by the paste-image command', async () => {
-    const vision = {
-      config: {
-        mode: 'auto',
-        proxyProvider: 'proxy',
-        proxyModel: 'vision',
-        maxObservationChars: 12_000,
-        maxTokens: 2_048,
-      },
-    } as VisionGateway
+    const vision = visionFixture()
     const app = application(undefined, undefined, undefined, undefined, undefined, {
       vision,
-      clipboardImage: async () => ({
-        name: 'clipboard.png',
-        mediaType: 'image/png',
-        data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
-        source: 'clipboard',
-      }),
+      clipboardImage: async () => clipboardPng(),
     })
     const internals = app as unknown as AppInternals
 
@@ -549,23 +544,10 @@ describe('TuiApplication input routing', () => {
   })
 
   it('treats an inline image reference as one editing unit', async () => {
-    const vision = {
-      config: {
-        mode: 'auto',
-        proxyProvider: 'proxy',
-        proxyModel: 'vision',
-        maxObservationChars: 12_000,
-        maxTokens: 2_048,
-      },
-    } as VisionGateway
+    const vision = visionFixture()
     const app = application(undefined, undefined, undefined, undefined, undefined, {
       vision,
-      clipboardImage: async () => ({
-        name: 'clipboard.png',
-        mediaType: 'image/png',
-        data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
-        source: 'clipboard',
-      }),
+      clipboardImage: async () => clipboardPng(),
     })
     const internals = app as unknown as AppInternals
     await internals.pasteImage()
@@ -601,23 +583,10 @@ describe('TuiApplication input routing', () => {
   })
 
   it('attaches images when the Editor submit callback delivers raw encoded references', async () => {
-    const vision = {
-      config: {
-        mode: 'auto',
-        proxyProvider: 'proxy',
-        proxyModel: 'vision',
-        maxObservationChars: 12_000,
-        maxTokens: 2_048,
-      },
-    } as VisionGateway
+    const vision = visionFixture()
     const app = application(undefined, undefined, undefined, undefined, undefined, {
       vision,
-      clipboardImage: async () => ({
-        name: 'clipboard.png',
-        mediaType: 'image/png',
-        data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
-        source: 'clipboard',
-      }),
+      clipboardImage: async () => clipboardPng(),
     })
     const internals = app as unknown as AppInternals
     const base = internals.controller.current
@@ -659,23 +628,10 @@ describe('TuiApplication input routing', () => {
   })
 
   it('removes session-scoped image tokens without dropping plain draft text on session switch', async () => {
-    const vision = {
-      config: {
-        mode: 'auto',
-        proxyProvider: 'proxy',
-        proxyModel: 'vision',
-        maxObservationChars: 12_000,
-        maxTokens: 2_048,
-      },
-    } as VisionGateway
+    const vision = visionFixture()
     const app = application(undefined, undefined, undefined, undefined, undefined, {
       vision,
-      clipboardImage: async () => ({
-        name: 'clipboard.png',
-        mediaType: 'image/png',
-        data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
-        source: 'clipboard',
-      }),
+      clipboardImage: async () => clipboardPng(),
     })
     const internals = app as unknown as AppInternals
     app.render({ ...internals.controller.current, sessionId: 'first-session' as never })
@@ -690,15 +646,7 @@ describe('TuiApplication input routing', () => {
 
   it('discards an in-flight clipboard reservation when its session changes', async () => {
     let resolveClipboard!: (draft: NewAttachmentDraft) => void
-    const vision = {
-      config: {
-        mode: 'auto',
-        proxyProvider: 'proxy',
-        proxyModel: 'vision',
-        maxObservationChars: 12_000,
-        maxTokens: 2_048,
-      },
-    } as VisionGateway
+    const vision = visionFixture()
     const app = application(undefined, undefined, undefined, undefined, undefined, {
       vision,
       clipboardImage: () => new Promise(resolve => { resolveClipboard = resolve }),
@@ -709,12 +657,7 @@ describe('TuiApplication input routing', () => {
     const paste = internals.pasteImage()
     expect(internals.editor.getExpandedText()).toBe('[Image #1] ')
     app.render({ ...internals.controller.current, sessionId: 'next-session' as never })
-    resolveClipboard({
-      name: 'clipboard.png',
-      mediaType: 'image/png',
-      data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
-      source: 'clipboard',
-    })
+    resolveClipboard(clipboardPng())
     await paste
 
     expect(internals.editor.getExpandedText()).toBe('')
@@ -1002,23 +945,10 @@ describe('TuiApplication input routing', () => {
   it('clears and restores text and images as one Composer draft', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
-    const vision = {
-      config: {
-        mode: 'auto',
-        proxyProvider: 'proxy',
-        proxyModel: 'vision',
-        maxObservationChars: 12_000,
-        maxTokens: 2_048,
-      },
-    } as VisionGateway
+    const vision = visionFixture()
     const app = application(undefined, undefined, undefined, undefined, undefined, {
       vision,
-      clipboardImage: async () => ({
-        name: 'clipboard.png',
-        mediaType: 'image/png',
-        data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
-        source: 'clipboard',
-      }),
+      clipboardImage: async () => clipboardPng(),
     })
     const internals = app as unknown as AppInternals
     await internals.pasteImage()
