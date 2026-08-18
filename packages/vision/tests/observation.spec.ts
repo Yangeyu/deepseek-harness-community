@@ -1,13 +1,58 @@
 import { describe, expect, it } from 'vitest'
-import { visionUserPrompt, wrapObservation, wrapToolObservation } from '../src/observation.ts'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import {
+  visionImageReference,
+  visionInferenceContent,
+  visionUserPrompt,
+  wrapObservation,
+  wrapToolObservation,
+} from '../src/observation.ts'
+import type { VisionRequest } from '../src/types.ts'
+
+const legacyCompatibleRequest: VisionRequest = {
+  analysisId: 'analysis-1',
+  sessionId: 'session-1',
+  userText: 'describe this image',
+  images: [{
+    data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
+    mediaType: 'image/png',
+  }],
+}
 
 describe('visionUserPrompt', () => {
-  it('keeps the user request as visual context', () => {
-    expect(visionUserPrompt('Which panel failed?', 2)).toContain('User request: Which panel failed?')
+  it('keeps unlabeled image requests source-compatible', () => {
+    expect(visionImageReference(legacyCompatibleRequest.images[0]!, 0)).toBe('[Image #1]')
+  })
+
+  it('keeps exact image references bound to the user request', () => {
+    const prompt = visionUserPrompt(
+      'Compare [Image #2] with [Image #1].',
+      ['[Image #2]', '[Image #1]'],
+    )
+
+    expect(prompt).toContain('User request: Compare [Image #2] with [Image #1].')
+    expect(prompt).toContain('Attached image references: [Image #2], [Image #1]')
+    expect(prompt).toContain('immediately preceded by its exact reference label')
   })
 
   it('provides a useful default for an image-only message', () => {
-    expect(visionUserPrompt('  ', 1)).toContain('Describe the attached visual evidence.')
+    expect(visionUserPrompt('  ', ['[Image #1]'])).toContain('Describe the attached visual evidence.')
+  })
+
+  it('places each binary image immediately after its stable reference', () => {
+    const first = { attachmentId: 'first', mediaType: 'image/png' } as ImageAttachmentRef
+    const second = { attachmentId: 'second', mediaType: 'image/png' } as ImageAttachmentRef
+
+    expect(visionInferenceContent('Compare [Image #2] with [Image #1].', [
+      { reference: '[Image #2]', attachment: second },
+      { reference: '[Image #1]', attachment: first },
+    ])).toEqual([
+      { type: 'text', text: 'Image reference: [Image #2]' },
+      { type: 'image', attachment: second },
+      { type: 'text', text: 'Image reference: [Image #1]' },
+      { type: 'image', attachment: first },
+      { type: 'text', text: expect.stringContaining('User request: Compare [Image #2] with [Image #1].') },
+    ])
   })
 })
 

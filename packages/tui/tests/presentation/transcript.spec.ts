@@ -89,7 +89,7 @@ describe('TranscriptComponent', () => {
           id: 'message-user',
           role: 'user',
           source: { kind: 'user' },
-          content: [{ type: 'text', text: 'What failed?' }],
+          content: [{ type: 'text', text: 'What [Image #1] failed?' }],
         },
       },
     }), entry({
@@ -119,10 +119,45 @@ describe('TranscriptComponent', () => {
     transcript.setDetails(true)
 
     const output = transcript.render(100).join('\n')
+    expect(output).toContain('What [Image #1] failed?')
     expect(output).toContain('Worked for 500ms · 1 tool')
     expect(output).toContain('Vision · 1 image · qwen3.7-plus')
     expect(output).toContain('bailian/qwen3.7-plus')
-    expect(output.indexOf('What failed?')).toBeLessThan(output.indexOf('Vision · 1 image'))
+    expect(output.indexOf('What [Image #1] failed?')).toBeLessThan(output.indexOf('Vision · 1 image'))
+  })
+
+  it('keeps native image markers on the admitted user prompt', () => {
+    const theme = createTheme(true)
+    const image = (attachmentId: string) => ({
+      type: 'image' as const,
+      attachment: { attachmentId, mediaType: 'image/png', bytes: 10, width: 2, height: 2 },
+    })
+    const transcript = new TranscriptComponent(state([entry({
+      event: {
+        type: 'user/message',
+        seq: 0,
+        time: 1_000,
+        surfaceOp: 'append',
+        data: {
+          id: 'message-user',
+          role: 'user',
+          source: { kind: 'user' },
+          content: [
+            { type: 'text', text: 'Compare [Image #2]' },
+            image('image-2'),
+            { type: 'text', text: ' with [Image #1]' },
+            image('image-1'),
+            { type: 'text', text: ' please' },
+          ],
+        },
+      },
+    })]), theme, true, 8)
+
+    const output = transcript.render(100).join('\n')
+    expect(stripTerminalSequences(output))
+      .toContain('Compare [Image #2] with [Image #1] please')
+    expect(output).toContain(theme.imageReference('[Image #2]'))
+    expect(output).toContain(theme.imageReference('[Image #1]'))
   })
 
   it('renders the final assistant message instead of its superseded stream chunks', () => {
@@ -582,7 +617,8 @@ describe('TranscriptComponent', () => {
     expect(rendered.every(line => line.includes('\u001b[48;2;36;42;58m'))).toBe(true)
     expect(rendered.every(line => visibleWidth(line) === 80)).toBe(true)
     expect(rendered.every(line => line.startsWith('\u001b[48;2;36;42;58m'))).toBe(true)
-    expect(output).toContain('\u001b[97m› explain this code\u001b[39m')
+    expect(output).toContain('\u001b[97m› \u001b[39m')
+    expect(output).toContain('\u001b[97mexplain this code\u001b[39m')
     expect(output).not.toContain('You')
   })
 
@@ -596,7 +632,8 @@ describe('TranscriptComponent', () => {
     const transcript = new TranscriptComponent(pending, createTheme(true), true, 8)
 
     const output = transcript.render(80).join('\n')
-    expect(output).toContain('\u001b[97m› render before the network round trip\u001b[39m')
+    expect(output).toContain('\u001b[97m› \u001b[39m')
+    expect(output).toContain('\u001b[97mrender before the network round trip\u001b[39m')
     expect(output).not.toContain('Accepted')
     expect(output).not.toContain('Sending')
     expect(output).not.toContain('You')
@@ -605,7 +642,7 @@ describe('TranscriptComponent', () => {
   it('renders Vision loading directly after the optimistic image prompt', () => {
     const pending = state([], false, [{
       key: 1,
-      text: 'analyze this image',
+      text: 'analyze [Image #1] now',
       mode: 'queue',
       intent: 'working',
       activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: Date.now() - 1_500 },
@@ -613,9 +650,9 @@ describe('TranscriptComponent', () => {
     const transcript = new TranscriptComponent(pending, createTheme(false), true, 8)
 
     const output = transcript.render(80).join('\n')
-    expect(output).toContain('› analyze this image')
+    expect(output).toContain('analyze [Image #1] now')
     expect(output).toContain('Working · 1 tool · Vision')
-    expect(output.indexOf('analyze this image')).toBeLessThan(output.indexOf('Working · 1 tool · Vision'))
+    expect(output.indexOf('analyze [Image #1] now')).toBeLessThan(output.indexOf('Working · 1 tool · Vision'))
   })
 
   it('keeps Vision loading while the durable event takes ownership of the prompt', () => {
@@ -629,12 +666,12 @@ describe('TranscriptComponent', () => {
           id: 'message-user',
           role: 'user',
           source: { kind: 'user', rpcId: 'rpc-image' },
-          content: [{ type: 'text', text: 'analyze this image' }],
+          content: [{ type: 'text', text: 'analyze [Image #1] now' }],
         },
       },
     })], false, [{
       key: 1,
-      text: 'analyze this image',
+      text: 'analyze [Image #1] now',
       mode: 'queue',
       intent: 'working',
       rpcId: 'rpc-image' as never,
@@ -643,7 +680,7 @@ describe('TranscriptComponent', () => {
     }])
 
     const output = new TranscriptComponent(transitioning, createTheme(false), true, 8).render(80).join('\n')
-    expect(output.match(/analyze this image/g)).toHaveLength(1)
+    expect(output.match(/analyze \[Image #1\] now/g)).toHaveLength(1)
     expect(output).toContain('Working · 1 tool · Vision')
   })
 

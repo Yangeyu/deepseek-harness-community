@@ -82,7 +82,7 @@ describe('Prompt lifecycle Host projection', () => {
     expect(projectPromptNode(session([start, prompt]), prompt)).toEqual(expect.objectContaining({
       promptId: 'native-prompt',
       input: {
-        text: '[Image]',
+        text: '[Image #1]',
         attachments: [expect.objectContaining({ attachmentId: 'attachment-native' })],
       },
     }))
@@ -99,7 +99,7 @@ describe('Prompt lifecycle Host projection', () => {
         id: 'carrier',
         role: 'user',
         source: { kind: 'community-vision-submission', analysisId: 'analysis-1' },
-        content: [{ type: 'text', text: 'inspect image' }],
+        content: [{ type: 'text', text: 'inspect [Image #1] now' }],
       },
     })
     const prompt = event({
@@ -111,7 +111,7 @@ describe('Prompt lifecycle Host projection', () => {
         id: 'image-prompt',
         role: 'user',
         source: { kind: 'user', rpcId: 'rpc-1' },
-        content: [{ type: 'text', text: 'inspect image' }],
+        content: [{ type: 'text', text: 'inspect [Image #1] now' }],
       },
     })
     const evidence = event({
@@ -152,7 +152,7 @@ describe('Prompt lifecycle Host projection', () => {
       promptId: 'image-prompt',
       turn: 1,
       input: {
-        text: 'inspect image',
+        text: 'inspect [Image #1] now',
         attachments: [expect.objectContaining({ attachmentId: 'attachment-1' })],
       },
       position: 'turn-entry',
@@ -214,7 +214,7 @@ describe('Prompt lifecycle Host projection', () => {
     expect(projectPromptNode(current, evidence)).toEqual(expect.objectContaining({
       promptId: 'first-prompt',
       input: {
-        text: 'first',
+        text: 'first [Image #1]',
         attachments: [expect.objectContaining({ attachmentId: 'attachment-1' })],
       },
     }))

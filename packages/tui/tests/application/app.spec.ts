@@ -47,6 +47,16 @@ interface AppInternals {
   }
   editor: Editor
   attachmentDrafts: { snapshot: readonly AttachmentDraft[] }
+  attachmentCoordinator: {
+    submit(
+      sessionId: string,
+      selection: unknown,
+      text: string,
+      mode: 'queue' | 'steer',
+      limits: unknown,
+      send: unknown,
+    ): Promise<'native' | 'proxy'>
+  }
   composerEditor: { render(width: number): string[] }
   footer: { render(width: number): string[] }
   status: { render(width: number): string[] }
@@ -470,7 +480,7 @@ describe('TuiApplication input routing', () => {
     expect(pasteImage).toHaveBeenCalledOnce()
   })
 
-  it('coalesces concurrent clipboard events into one attachment draft', async () => {
+  it('anchors one coalesced clipboard image at the invocation cursor before loading completes', async () => {
     let resolveClipboard!: (draft: NewAttachmentDraft) => void
     const clipboardImage = vi.fn(() => new Promise<NewAttachmentDraft>((resolve) => {
       resolveClipboard = resolve
@@ -489,10 +499,13 @@ describe('TuiApplication input routing', () => {
       clipboardImage,
     })
     const internals = app as unknown as AppInternals
+    internals.editor.setText('beforeafter')
+    for (let index = 0; index < 5; index += 1) internals.editor.handleInput('\u001b[D')
 
     const first = internals.pasteImage()
     const second = internals.pasteImage()
     expect(clipboardImage).toHaveBeenCalledOnce()
+    expect(internals.editor.getExpandedText()).toBe('before [Image #1] after')
     resolveClipboard({
       name: 'clipboard.png',
       mediaType: 'image/png',
@@ -502,10 +515,40 @@ describe('TuiApplication input routing', () => {
     await Promise.all([first, second])
 
     expect(internals.attachmentDrafts.snapshot).toHaveLength(1)
+    expect(internals.attachmentDrafts.snapshot[0]?.placeholder).toBe('[Image #1]')
     expect(internals.composerEditor.render(80).join('\n')).toContain('[Image #1]')
   })
 
-  it('treats the leading image marker as one removable Composer attachment', async () => {
+  it('retains a Composer image created by the paste-image command', async () => {
+    const vision = {
+      config: {
+        mode: 'auto',
+        proxyProvider: 'proxy',
+        proxyModel: 'vision',
+        maxObservationChars: 12_000,
+        maxTokens: 2_048,
+      },
+    } as VisionGateway
+    const app = application(undefined, undefined, undefined, undefined, undefined, {
+      vision,
+      clipboardImage: async () => ({
+        name: 'clipboard.png',
+        mediaType: 'image/png',
+        data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
+        source: 'clipboard',
+      }),
+    })
+    const internals = app as unknown as AppInternals
+
+    await internals.submit('/paste-image')
+
+    expect(internals.editor.getExpandedText()).toBe('[Image #1] ')
+    expect(internals.attachmentDrafts.snapshot).toEqual([
+      expect.objectContaining({ placeholder: '[Image #1]', name: 'clipboard.png' }),
+    ])
+  })
+
+  it('treats an inline image reference as one editing unit', async () => {
     const vision = {
       config: {
         mode: 'auto',
@@ -527,9 +570,155 @@ describe('TuiApplication input routing', () => {
     const internals = app as unknown as AppInternals
     await internals.pasteImage()
 
-    expect(internals.handleGlobalInput('\u007F')).toEqual({ consume: true })
+    internals.editor.handleInput('\u007F')
+    expect(internals.editor.getExpandedText()).toBe('[Image #1]')
+    internals.editor.handleInput('\u001b[D')
+    expect(internals.editor.getCursor().col).toBe(0)
+    internals.editor.handleInput('\u001b[C')
+    expect(internals.editor.getCursor().col).toBe('[Image #1]'.length)
+    internals.editor.handleInput('\u007F')
+    expect(internals.editor.getExpandedText()).toBe('')
     expect(internals.attachmentDrafts.snapshot).toEqual([])
+
+    internals.editor.handleInput('\u001F')
+    expect(internals.editor.getExpandedText()).toBe('[Image #1]')
+    expect(internals.attachmentDrafts.snapshot).toHaveLength(1)
+
+    expect(internals.handleGlobalInput('\u001b\u007F')).toEqual({ consume: true })
+    expect(internals.attachmentDrafts.snapshot).toEqual([])
+    expect(internals.editor.getExpandedText()).toBe('')
     expect(internals.composerEditor.render(80).join('\n')).not.toContain('[Image #1]')
+
+    internals.editor.handleInput('\u001F')
+    expect(internals.editor.getExpandedText()).toBe('[Image #1]')
+    expect(internals.attachmentDrafts.snapshot).toHaveLength(1)
+
+    internals.editor.handleInput('\u0015')
+    expect(internals.editor.getExpandedText()).toBe('')
+    expect(internals.attachmentDrafts.snapshot).toEqual([])
+    internals.editor.handleInput('\u001F')
+    expect(internals.attachmentDrafts.snapshot).toHaveLength(1)
+  })
+
+  it('attaches images when the Editor submit callback delivers raw encoded references', async () => {
+    const vision = {
+      config: {
+        mode: 'auto',
+        proxyProvider: 'proxy',
+        proxyModel: 'vision',
+        maxObservationChars: 12_000,
+        maxTokens: 2_048,
+      },
+    } as VisionGateway
+    const app = application(undefined, undefined, undefined, undefined, undefined, {
+      vision,
+      clipboardImage: async () => ({
+        name: 'clipboard.png',
+        mediaType: 'image/png',
+        data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
+        source: 'clipboard',
+      }),
+    })
+    const internals = app as unknown as AppInternals
+    const base = internals.controller.current
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue({
+      ...base,
+      sessionId: 'session-attach' as never,
+      models: {
+        current: { provider: 'provider', model: 'model' },
+        routable: true,
+        groups: [],
+        failures: [],
+      },
+    })
+    const coordinatorSubmit = vi.fn<typeof internals.attachmentCoordinator.submit>(async () => 'native')
+    internals.attachmentCoordinator.submit = coordinatorSubmit
+    await internals.pasteImage()
+    internals.editor.handleInput('what is this')
+
+    // pi-tui submitValue() emits onChange('') before onSubmit with the raw stored lines,
+    // whose inline references keep the encoded U+2800 separator.
+    internals.editor.onChange?.('')
+    expect(internals.attachmentDrafts.snapshot).toEqual([])
+    internals.editor.onSubmit?.('[Image\u2800#1] what is this')
+
+    await vi.waitFor(() => {
+      expect(coordinatorSubmit).toHaveBeenCalledOnce()
+    })
+    expect(coordinatorSubmit).toHaveBeenCalledWith(
+      'session-attach',
+      { provider: 'provider', model: 'model' },
+      '[Image #1] what is this',
+      'queue',
+      undefined,
+      expect.anything(),
+    )
+    expect(internals.attachmentDrafts.snapshot).toEqual([
+      expect.objectContaining({ placeholder: '[Image #1]' }),
+    ])
+  })
+
+  it('removes session-scoped image tokens without dropping plain draft text on session switch', async () => {
+    const vision = {
+      config: {
+        mode: 'auto',
+        proxyProvider: 'proxy',
+        proxyModel: 'vision',
+        maxObservationChars: 12_000,
+        maxTokens: 2_048,
+      },
+    } as VisionGateway
+    const app = application(undefined, undefined, undefined, undefined, undefined, {
+      vision,
+      clipboardImage: async () => ({
+        name: 'clipboard.png',
+        mediaType: 'image/png',
+        data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
+        source: 'clipboard',
+      }),
+    })
+    const internals = app as unknown as AppInternals
+    app.render({ ...internals.controller.current, sessionId: 'first-session' as never })
+    await internals.pasteImage()
+    internals.editor.handleInput('keep this')
+
+    app.render({ ...internals.controller.current, sessionId: 'next-session' as never })
+
+    expect(internals.editor.getExpandedText()).toBe('keep this')
+    expect(internals.attachmentDrafts.snapshot).toEqual([])
+  })
+
+  it('discards an in-flight clipboard reservation when its session changes', async () => {
+    let resolveClipboard!: (draft: NewAttachmentDraft) => void
+    const vision = {
+      config: {
+        mode: 'auto',
+        proxyProvider: 'proxy',
+        proxyModel: 'vision',
+        maxObservationChars: 12_000,
+        maxTokens: 2_048,
+      },
+    } as VisionGateway
+    const app = application(undefined, undefined, undefined, undefined, undefined, {
+      vision,
+      clipboardImage: () => new Promise(resolve => { resolveClipboard = resolve }),
+    })
+    const internals = app as unknown as AppInternals
+    app.render({ ...internals.controller.current, sessionId: 'first-session' as never })
+
+    const paste = internals.pasteImage()
+    expect(internals.editor.getExpandedText()).toBe('[Image #1] ')
+    app.render({ ...internals.controller.current, sessionId: 'next-session' as never })
+    resolveClipboard({
+      name: 'clipboard.png',
+      mediaType: 'image/png',
+      data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
+      source: 'clipboard',
+    })
+    await paste
+
+    expect(internals.editor.getExpandedText()).toBe('')
+    expect(internals.attachmentDrafts.snapshot).toEqual([])
   })
 
   it('restores complete Prompt text and durable images after a successful Rewind', async () => {
@@ -558,7 +747,7 @@ describe('TuiApplication input routing', () => {
 
     expect(restore).toHaveBeenCalledOnce()
     expect(commit).toHaveBeenCalledWith(expect.anything(), 'code-and-conversation', 'forked')
-    expect(internals.editor.getExpandedText()).toBe('inspect image')
+    expect(internals.editor.getExpandedText()).toBe('inspect image [Image #1]')
     expect(internals.attachmentDrafts.snapshot).toEqual([expect.objectContaining({
       name: 'image.png',
       source: 'rewind',
@@ -834,7 +1023,7 @@ describe('TuiApplication input routing', () => {
     const internals = app as unknown as AppInternals
     await internals.pasteImage()
     const attachment = internals.attachmentDrafts.snapshot[0]
-    internals.editor.setText('inspect this')
+    internals.editor.handleInput('inspect this')
 
     expect(internals.handleGlobalInput('\u001b')).toEqual({ consume: true })
     expect(internals.editor.getExpandedText()).toBe('')
@@ -842,7 +1031,7 @@ describe('TuiApplication input routing', () => {
     expect(internals.composerEditor.render(80).join('\n')).not.toContain('[Image #1]')
 
     expect(internals.handleGlobalInput('\u001b[A')).toEqual({ consume: true })
-    expect(internals.editor.getExpandedText()).toBe('inspect this')
+    expect(internals.editor.getExpandedText()).toBe('[Image #1] inspect this')
     expect(internals.attachmentDrafts.snapshot).toEqual([attachment])
     expect(internals.composerEditor.render(80).join('\n')).toContain('[Image #1]')
 

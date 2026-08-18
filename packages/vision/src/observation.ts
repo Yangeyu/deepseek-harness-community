@@ -1,3 +1,6 @@
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+
 const OBSERVATION_PROMPT_VERSION = 1
 const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\x1B\[[0-?]*[ -/]*[@-~]`, 'gu')
 
@@ -10,14 +13,35 @@ export const VISION_SYSTEM_PROMPT = [
   'Do not propose commands, tool calls, file edits, or actions for another agent.',
 ].join('\n')
 
-export function visionUserPrompt(userText: string, imageCount: number): string {
+export function visionImageReference(image: object, index: number): string {
+  if ('reference' in image && typeof image.reference === 'string') return image.reference
+  return `[Image #${String(index + 1)}]`
+}
+
+export function visionUserPrompt(userText: string, references: readonly string[]): string {
   const request = userText.trim() === '' ? 'Describe the attached visual evidence.' : userText.trim()
   return [
     `User request: ${request}`,
-    `Attached images: ${String(imageCount)}`,
+    `Attached image references: ${references.join(', ')}`,
     '',
+    'Each attached image is immediately preceded by its exact reference label.',
+    'Use those labels when relating visual evidence to the surrounding user text.',
     'Return a concise summary, request-relevant details, visible text, and uncertainties.',
   ].join('\n')
+}
+
+export function visionInferenceContent(
+  userText: string,
+  images: readonly { readonly reference: string; readonly attachment: ImageAttachmentRef }[],
+): ContentBlock[] {
+  const references = images.map(image => image.reference)
+  return [
+    ...images.flatMap(image => [
+      { type: 'text' as const, text: `Image reference: ${image.reference}` },
+      { type: 'image' as const, attachment: image.attachment },
+    ]),
+    { type: 'text', text: visionUserPrompt(userText, references) },
+  ]
 }
 
 function escapeObservation(value: string): string {

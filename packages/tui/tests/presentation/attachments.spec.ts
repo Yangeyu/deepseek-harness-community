@@ -7,6 +7,7 @@ import { createTheme } from '../../src/presentation/theme.ts'
 function railDraft(index: number): AttachmentDraft {
   return {
     id: `image-${String(index)}`,
+    placeholder: `[Image #${String(index)}]`,
     name: `very-long-unicode-screen-name-${String(index)}-界面截图.png`,
     mediaType: 'image/png',
     data: new Uint8Array(2_048),

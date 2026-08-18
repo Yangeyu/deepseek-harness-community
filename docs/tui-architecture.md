@@ -47,6 +47,7 @@ src/
 ├── trajectory/    # trace records, hierarchy, timing, and interaction view
 ├── presentation/  # pi-tui components, dialogs, diffs, layout, and theme
 ├── rewind/        # pure contracts/domain, application transaction, and external adapters
+├── prompt-content.ts # validated inline text/image reference compiler and legacy reader
 ├── text.ts        # terminal-safety boundary shared across presentation modules
 └── index.ts       # stable public and Cordis plugin entry point
 ```
@@ -84,6 +85,15 @@ reducing the number of visible files.
 7. Stable semantic keys preserve selection across live replacement and history
    paging. UI row indexes are not identities.
 8. Image bytes become durable only through the Harness attachment service.
+   A stable inline `[Image #N]` reference is inserted at the Composer cursor and
+   edited as one atomic unit. Editor and Transcript presentation style that same
+   reference through one `imageReference` theme role; they never create a second
+   display-only marker. The Prompt compiler requires exactly one reference
+   per draft and is the only authority for image order; live submission never
+   appends missing references or pairs images by count. Native providers retain
+   compiled content-block order, while the Vision proxy places each binary image
+   immediately after the same explicit reference. Marker synthesis exists only
+   at named legacy replay and Rewind read boundaries.
    Native and proxy routes produce the same human Prompt lifecycle. Proxy
    observations are source-attributed children of that Prompt, never rewritten
    as human text. Native image blocks and proxy evidence enrich the same Prompt
@@ -188,7 +198,13 @@ reducing the number of visible files.
   when the active model is text-only.
 - `ComposerEditorFrame` is the presentation boundary around `pi-tui`'s Editor.
   It places autocomplete above the bottom-anchored input frame and keeps image
-  markers inside that frame, so changing candidate count cannot move the input.
+  references inside that frame, so changing candidate count cannot move the
+  input. The repository-owned `InlineReferenceEditor` adds image-reference
+  movement, deletion, and styling through the Editor's public API; application
+  key routing does not special-case marker internals or modify the dependency.
+  Its equal-width wrap representation stays private to the adapter; public text,
+  durable Session content, and provider requests retain canonical `[Image #n]`
+  references.
 - `ComposerAnchoredLayout` owns one discriminated active-surface contract.
   `readable` surfaces replace the editor with a bounded bottom frame for
   approvals, Rewind, and configuration; `workspace` surfaces replace the whole
@@ -197,6 +213,9 @@ reducing the number of visible files.
   geometry to decision-card reading width.
 - `VisionService` owns one attachment-validated proxy inference core for both
   composer admission and the workspace-contained `inspect_image` Agent tool.
+  Composer analysis requires a unique reference for every image and forwards
+  reference/image pairs in request order, so proxy output can retain the
+  surrounding text relationship.
   Tool inspection returns bounded untrusted text and never adds image blocks to
   a text-only main-model route.
 - `CommunityWebService` registers one stable policy provider into the official

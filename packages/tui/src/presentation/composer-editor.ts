@@ -1,19 +1,11 @@
 import {
   stripTerminalSequences,
-  truncateToWidth,
-  visibleWidth,
   type Component,
 } from '@earendil-works/pi-tui'
-import type { AttachmentDraft } from '../application/attachments/drafts.ts'
-import type { TuiTheme } from './theme.ts'
 
 interface EditorRender {
   autocomplete: string[]
   frame: string[]
-}
-
-function markerLabel(count: number): string {
-  return Array.from({ length: count }, (_, index) => `[Image #${String(index + 1)}]`).join(' ')
 }
 
 function isEditorBorder(line: string): boolean {
@@ -31,18 +23,9 @@ function splitEditorRender(lines: string[]): EditorRender {
   }
 }
 
-/** Keeps autocomplete above the bottom-anchored Editor and image markers inside its frame. */
+/** Keeps autocomplete above the bottom-anchored Editor. */
 export class ComposerEditorFrame implements Component {
-  private drafts: readonly AttachmentDraft[] = []
-
-  constructor(
-    private readonly editor: Component,
-    private readonly theme: TuiTheme,
-  ) {}
-
-  setDrafts(drafts: readonly AttachmentDraft[]): void {
-    this.drafts = drafts
-  }
+  constructor(private readonly editor: Component) {}
 
   handleInput(data: string): void {
     this.editor.handleInput?.(data)
@@ -53,28 +36,7 @@ export class ComposerEditorFrame implements Component {
   }
 
   render(width: number): string[] {
-    if (this.drafts.length === 0 || width < 8) {
-      const rendered = splitEditorRender(this.editor.render(width))
-      return [...rendered.autocomplete, ...rendered.frame]
-    }
-
-    const available = Math.min(Math.floor(width * 0.55), width - 4)
-    const token = truncateToWidth(markerLabel(this.drafts.length), Math.max(1, available), '…')
-    const prefix = this.theme.tool(token)
-    const prefixWidth = visibleWidth(prefix)
-    const emptyPrefix = ' '.repeat(prefixWidth)
-    const borderPrefix = this.theme.editor.borderColor('─'.repeat(prefixWidth))
-    const rendered = splitEditorRender(this.editor.render(Math.max(1, width - prefixWidth)))
-    const frame = rendered.frame.map((line, index) => {
-      if (index === 0 || (index === rendered.frame.length - 1 && isEditorBorder(line))) {
-        return `${borderPrefix}${line}`
-      }
-      return `${index === 1 ? prefix : emptyPrefix}${line}`
-    })
-
-    return [
-      ...rendered.autocomplete.map(line => `${emptyPrefix}${line}`),
-      ...frame,
-    ]
+    const rendered = splitEditorRender(this.editor.render(width))
+    return [...rendered.autocomplete, ...rendered.frame]
   }
 }

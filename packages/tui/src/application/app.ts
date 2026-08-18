@@ -1,5 +1,4 @@
 import {
-  Editor,
   Key,
   ProcessTerminal,
   Text,
@@ -100,6 +99,8 @@ import {
 import {
   AttachmentDraftStore,
   type AttachmentDraft,
+  type AttachmentReservation,
+  type NewAttachmentDraft,
 } from './attachments/drafts.ts'
 import {
   preparePromptDraft,
@@ -153,6 +154,12 @@ import {
   watchGitBranch,
   type GitBranchSource,
 } from './git-branch.ts'
+import {
+  imageMarkerInsertion,
+  removeImageMarker,
+} from '../prompt-content.ts'
+import { decodeEditorImageReferences } from '../presentation/image-references.ts'
+import { InlineReferenceEditor } from '../presentation/inline-reference-editor.ts'
 
 function isWorking(state: Readonly<TuiState>): boolean {
   return composerExecutionActivity(state) !== undefined
@@ -243,7 +250,7 @@ export class TuiApplication implements TuiControllerSink {
   private readonly header: Text
   private readonly status = new Text('', 0, 0)
   private readonly footer: ComposerFooter
-  private readonly editor: Editor
+  private readonly editor: InlineReferenceEditor
   private readonly transcript: TranscriptComponent
   private readonly attachmentRail: AttachmentRail
   private readonly composerEditor: ComposerEditorFrame
@@ -349,7 +356,7 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.attachmentRail = new AttachmentRail(
       this.theme,
-      index => { this.attachmentDrafts.removeAt(index) },
+      index => { this.removeAttachmentAt(index) },
       () => this.leaveAttachmentRail(),
     )
     this.vision = vision
@@ -363,8 +370,14 @@ export class TuiApplication implements TuiControllerSink {
     this.attachmentCoordinator = vision === undefined
       ? undefined
       : new AttachmentCoordinator(this.attachmentDrafts, vision)
-    this.editor = new Editor(this.tui, this.theme.editor, { paddingX: 1, autocompleteMaxVisible: 10 })
-    this.composerEditor = new ComposerEditorFrame(this.editor, this.theme)
+    this.editor = new InlineReferenceEditor(
+      this.tui,
+      this.theme.editor,
+      () => this.attachmentDrafts.placeholders,
+      this.theme.imageReference,
+      { paddingX: 1, autocompleteMaxVisible: 10 },
+    )
+    this.composerEditor = new ComposerEditorFrame(this.editor)
     this.commands = new TerminalCommandDirectory(
       this.localCommands(),
       commandSource,
@@ -399,14 +412,19 @@ export class TuiApplication implements TuiControllerSink {
     this.editor.setAutocompleteProvider(this.createAutocompleteProvider(config.cwd))
     this.autocompleteCwd = config.cwd
     this.editor.onChange = text => {
-      if (!this.composerInput.observeEditorText(text) || this.disposed) return
+      const attachmentsChanged = this.attachmentDrafts.reconcileText(text)
+      const recoveryChanged = this.composerInput.observeEditorText(text)
+      if ((!attachmentsChanged && !recoveryChanged) || this.disposed) return
       this.updateStatus(this.controller.current)
       this.tui.requestRender()
     }
     this.editor.onSubmit = text => {
+      // pi-tui's submitValue passes the raw Editor lines (U+2800-encoded references),
+      // so the durable text must be decoded here before history or submission.
+      const decoded = decodeEditorImageReferences(text, this.attachmentDrafts.placeholders)
       this.resetComposerInput()
-      this.editor.addToHistory(text)
-      void this.submit(text)
+      this.editor.addToHistory(decoded)
+      void this.submit(decoded)
     }
     this.layout = new ComposerAnchoredLayout(
       this.header,
@@ -432,7 +450,6 @@ export class TuiApplication implements TuiControllerSink {
         this.updateStatus(this.controller.current)
       }
       this.attachmentRail.setDrafts(drafts)
-      this.composerEditor.setDrafts(drafts)
       if (drafts.length === 0 && this.attachmentRailFocused) this.leaveAttachmentRail()
       this.tui.requestRender()
     })
@@ -465,8 +482,12 @@ export class TuiApplication implements TuiControllerSink {
     if (this.startup.plan) await this.commands.dispatchHost('/plan')
     await this.loadInitialImages()
     if (this.startup.prompt !== undefined) {
-      this.editor.addToHistory(this.startup.prompt)
-      await this.submit(this.startup.prompt)
+      const markers = this.editor.getExpandedText().trim()
+      const prompt = markers === '' ? this.startup.prompt : `${markers} ${this.startup.prompt}`
+      const hasAttachments = this.attachmentDrafts.snapshot.length > 0
+      this.editor.setText('')
+      if (!hasAttachments) this.editor.addToHistory(prompt)
+      await this.submit(prompt)
     }
   }
 
@@ -497,7 +518,7 @@ export class TuiApplication implements TuiControllerSink {
     }
     if (this.renderedSessionId !== undefined && this.renderedSessionId !== state.sessionId) {
       this.attachmentCoordinator?.cancel(false)
-      this.attachmentDrafts.clear()
+      this.clearComposerAttachments()
     }
     this.renderedSessionId = state.sessionId
     const commandsChanged = this.commands.setSession(state.sessionId)
@@ -685,14 +706,6 @@ export class TuiApplication implements TuiControllerSink {
       return { consume: true }
     }
     if (keyRelease) return undefined
-    const cursor = this.editor.getCursor()
-    if (this.attachmentDrafts.snapshot.length > 0
-      && matchesKey(data, Key.backspace)
-      && cursor.line === 0
-      && cursor.col === 0) {
-      this.attachmentDrafts.removeLast()
-      return { consume: true }
-    }
     if (this.editor.getExpandedText() === '' && matchesKey(data, Key.pageUp)) {
       if (this.layout.pageTranscript(-1)) {
         this.updateStatus(this.controller.current)
@@ -747,7 +760,7 @@ export class TuiApplication implements TuiControllerSink {
         this.tui.requestRender()
         return
       case 'attachments.remove-last':
-        this.attachmentDrafts.removeLast()
+        this.removeLatestAttachment()
         return
       case 'details.toggle':
         this.setDetailsExpanded(!this.showDetails)
@@ -825,11 +838,22 @@ export class TuiApplication implements TuiControllerSink {
   }
 
   private async submit(value: string, forcedMode?: 'queue' | 'steer'): Promise<void> {
-    const text = value.trim()
+    // Incoming text may still hold Editor-encoded references (submitValue bypasses the
+    // reference-decoding getters), and the Editor reset that precedes submission detaches
+    // every active draft. Decode first, then reconcile against the durable text, so the
+    // attachment branch re-activates exactly the drafts whose references survived.
+    const text = decodeEditorImageReferences(value, this.attachmentDrafts.placeholders).trim()
+    this.attachmentDrafts.reconcileText(text)
     if (text === '' && this.attachmentDrafts.snapshot.length === 0) return
     try {
       if (text.startsWith('/')) {
-        if (await this.handleCommand(text)) return
+        const submittedIds = new Set(this.attachmentDrafts.snapshot.map(draft => draft.id))
+        if (await this.handleCommand(text)) {
+          this.attachmentDrafts.replaceAll(
+            this.attachmentDrafts.snapshot.filter(draft => !submittedIds.has(draft.id)),
+          )
+          return
+        }
         let resolution = resolveLeadingSlash(text, this.slashCandidates())
         if (resolution.kind === 'unknown' && this.controller.current.sessionId !== undefined) {
           await this.skillCatalog.refresh(true)
@@ -844,7 +868,8 @@ export class TuiApplication implements TuiControllerSink {
       const mode = forcedMode ?? (isWorking(this.controller.current) ? 'steer' : 'queue')
       this.layout.followTranscript()
       if (this.attachmentDrafts.snapshot.length === 0) {
-        await this.controller.prompt(value, mode)
+        await this.controller.prompt(text, mode)
+        this.attachmentDrafts.discardDetached()
       } else {
         const coordinator = this.attachmentCoordinator
         const state = this.controller.current
@@ -856,7 +881,7 @@ export class TuiApplication implements TuiControllerSink {
         await coordinator.submit(
           String(state.sessionId),
           selection,
-          value,
+          text,
           mode,
           state.projections.imageLimits,
           (displayText, submitMode, prepareContent) => this.controller.promptWithPreparation(
@@ -867,7 +892,7 @@ export class TuiApplication implements TuiControllerSink {
         )
       }
     } catch (error: unknown) {
-      if (this.editor.getExpandedText() === '') this.editor.setText(value)
+      if (this.editor.getExpandedText() === '') this.editor.setText(text)
       this.controller.notice(error instanceof Error ? error.message : String(error))
     }
   }
@@ -916,7 +941,7 @@ export class TuiApplication implements TuiControllerSink {
         if (argument.trim() === '') throw new Error('Usage: /attach <path>')
         this.ensureVisionAvailable()
         if (this.imageSubmissionBusy) throw new Error('Vision analysis is already in progress.')
-        this.attachmentDrafts.add(await imageDraftFromPath(argument.trim(), this.controller.current.cwd))
+        this.insertImageDraft(await imageDraftFromPath(argument.trim(), this.controller.current.cwd))
       },
     }, {
       name: 'paste-image',
@@ -1009,7 +1034,7 @@ export class TuiApplication implements TuiControllerSink {
     const drafts = await Promise.all(this.startup.imagePaths.map(path => (
       imageDraftFromPath(path, this.controller.current.cwd)
     )))
-    for (const draft of drafts) this.attachmentDrafts.add(draft)
+    for (const draft of drafts) this.insertImageDraft(draft)
   }
 
   private leaveAttachmentRail(): void {
@@ -1024,11 +1049,70 @@ export class TuiApplication implements TuiControllerSink {
     this.ensureVisionAvailable()
     if (this.imageSubmissionBusy) throw new Error('Vision analysis is already in progress.')
     this.clipboardPastePending = true
+    const reservation = this.reserveImageMarker()
     try {
-      this.attachmentDrafts.add(await this.clipboardImage())
+      const draft = await this.clipboardImage()
+      if (!this.editor.getExpandedText().includes(reservation.placeholder)) {
+        this.attachmentDrafts.discard(reservation)
+        return
+      }
+      if (this.attachmentDrafts.complete(reservation, draft) === undefined) {
+        this.removeMarker(reservation.placeholder)
+      }
+    } catch (error: unknown) {
+      this.attachmentDrafts.discard(reservation)
+      this.removeMarker(reservation.placeholder)
+      throw error
     } finally {
       this.clipboardPastePending = false
     }
+  }
+
+  private reserveImageMarker(): AttachmentReservation {
+    const reservation = this.attachmentDrafts.reserve(this.editor.getExpandedText())
+    this.editor.insertTextAtCursor(imageMarkerInsertion(
+      this.editor.getLines(),
+      this.editor.getCursor(),
+      reservation.placeholder,
+    ))
+    return reservation
+  }
+
+  private insertImageDraft(input: NewAttachmentDraft): AttachmentDraft {
+    const reservation = this.reserveImageMarker()
+    const draft = this.attachmentDrafts.complete(reservation, input)
+    if (draft === undefined) throw new Error('Attachment marker was removed before the image loaded.')
+    return draft
+  }
+
+  private removeAttachmentAt(index: number): void {
+    const draft = this.attachmentDrafts.snapshot[index]
+    if (draft !== undefined) this.removeAttachment(draft)
+  }
+
+  private removeLatestAttachment(): void {
+    const draft = this.attachmentDrafts.snapshot.at(-1)
+    if (draft !== undefined) this.removeAttachment(draft)
+  }
+
+  private removeAttachment(draft: AttachmentDraft): void {
+    this.removeMarker(draft.placeholder)
+    this.attachmentDrafts.reconcileText(this.editor.getExpandedText())
+  }
+
+  private removeMarker(marker: string): void {
+    const current = this.editor.getExpandedText()
+    const next = removeImageMarker(current, marker)
+    if (next !== current) this.editor.setText(next)
+  }
+
+  private clearComposerAttachments(): void {
+    let text = this.editor.getExpandedText()
+    for (const placeholder of this.attachmentDrafts.placeholders) {
+      text = removeImageMarker(text, placeholder)
+    }
+    this.attachmentDrafts.clear()
+    if (text !== this.editor.getExpandedText()) this.editor.setText(text)
   }
 
   private refreshAutocomplete(cwd = this.controller.current.cwd, requestRender = true): void {

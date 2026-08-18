@@ -11,7 +11,8 @@ import { settingsNamespace, type SettingsScope } from '@deepseek-ai/dsh-settings
 import { VisionConfigSchema } from './config.ts'
 import {
   VISION_SYSTEM_PROMPT,
-  visionUserPrompt,
+  visionImageReference,
+  visionInferenceContent,
   wrapObservation,
   wrapToolObservation,
 } from './observation.ts'
@@ -51,6 +52,7 @@ export type {
   VisionInspectionRequest,
   VisionMode,
   VisionObservationBlock,
+  VisionReferencedImageInput,
   VisionRequest,
   VisionResultMetadata,
   VisionStatus,
@@ -181,6 +183,7 @@ export class VisionService extends Service {
 
   async analyze(request: VisionRequest, signal?: AbortSignal): Promise<VisionAnalysis> {
     this.assertImages(request.images)
+    this.assertReferences(request.images)
     if (this.ctx.agents.get(SessionId(request.sessionId)) === undefined) {
       throw new VisionError('SESSION_UNAVAILABLE', 'The active session is no longer available.')
     }
@@ -244,17 +247,24 @@ export class VisionService extends Service {
     }
     const startedAt = Date.now()
     signal?.throwIfAborted()
-    const saved = await this.ctx.attachments.saveImages(request.images)
+    const saved = await this.ctx.attachments.saveImages(request.images.map(image => ({
+      data: image.data,
+      mediaType: image.mediaType,
+      ...image.name === undefined ? {} : { name: image.name },
+    })))
+    if (saved.length !== request.images.length) {
+      throw new VisionError('ATTACHMENT_MISMATCH', 'Vision attachment storage did not preserve the submitted image set.')
+    }
     signal?.throwIfAborted()
     const info = await this.ctx.llm.resolveModelInfo(config.proxyProvider, config.proxyModel, signal)
     if (!info.inputModalities?.includes('image')) {
       throw new VisionError('PROXY_NOT_MULTIMODAL', `Vision proxy ${info.provider}/${info.id} does not declare image input support.`)
     }
     const assembler = new BlockAssembler()
-    const content: ContentBlock[] = [
-      { type: 'text', text: visionUserPrompt(request.userText, saved.length) },
-      ...saved.map(attachment => ({ type: 'image' as const, attachment })),
-    ]
+    const content = visionInferenceContent(request.userText, saved.map((attachment, index) => ({
+      attachment,
+      reference: visionImageReference(request.images[index]!, index),
+    })))
     for await (const chunk of this.ctx.llm.stream({
       provider: info.provider,
       model: info.id,
@@ -282,6 +292,20 @@ export class VisionService extends Service {
 
   private assertImages(images: readonly VisionImageInput[]): void {
     if (images.length === 0) throw new VisionError('NO_IMAGES', 'Vision analysis requires at least one image.')
+  }
+
+  private assertReferences(images: readonly VisionImageInput[]): void {
+    const references = new Set<string>()
+    for (const [index, image] of images.entries()) {
+      const reference = visionImageReference(image, index)
+      if (reference.trim() === '') {
+        throw new VisionError('INVALID_IMAGE_REFERENCE', 'Vision image references must not be empty.')
+      }
+      if (references.has(reference)) {
+        throw new VisionError('INVALID_IMAGE_REFERENCE', `Vision image reference is duplicated: ${reference}`)
+      }
+      references.add(reference)
+    }
   }
 
   private failureError(failure: LlmFailure): VisionError {

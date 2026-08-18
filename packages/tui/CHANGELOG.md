@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Preserve the visible conversation viewport when expanding or collapsing
+  transcript details.
+- Keep pasted and attached image references at the Composer cursor, render them
+  as one highlighted editing unit, and preserve their exact text/image ordering
+  through native, Bailian, proxy-Vision, Rewind, and session replay paths.
+
 ## 0.1.15 - 2026-08-18
 
 - Rename the public executable from `dsh-tui` to `dscode` without retaining a

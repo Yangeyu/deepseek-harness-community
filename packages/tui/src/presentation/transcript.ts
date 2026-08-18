@@ -29,6 +29,7 @@ import {
 } from './transcript-model.ts'
 import { sanitizeTerminalText } from '../text.ts'
 import type { TuiTheme } from './theme.ts'
+import { paintImageReferences } from './image-references.ts'
 import {
   executionStatus,
   type ExecutionStatus,
@@ -400,10 +401,11 @@ export class TranscriptComponent implements Component {
     const lines = [paintLine(' '.repeat(width))]
     let firstLine = true
     for (const sourceLine of sanitizeTerminalText(item.body).split('\n')) {
-      const wrapped = wrapTextWithAnsi(sourceLine, Math.max(1, width - 4))
+      const painted = paintImageReferences(sourceLine, this.theme.user, this.theme.imageReference)
+      const wrapped = wrapTextWithAnsi(painted, Math.max(1, width - 4))
       for (const wrappedLine of wrapped.length === 0 ? [''] : wrapped) {
         const marker = firstLine ? '› ' : '  '
-        lines.push(paintLine(` ${this.theme.user(`${marker}${wrappedLine}`)} `))
+        lines.push(paintLine(` ${this.theme.user(marker)}${wrappedLine} `))
         firstLine = false
       }
     }

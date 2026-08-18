@@ -174,24 +174,37 @@ describe('Bailian wire contract', () => {
     expect(requests[1]?.body).not.toHaveProperty('reasoning_effort')
   })
 
-  it('sends Qwen thinking fields and durable images as data URLs', async () => {
+  it('preserves interleaved Qwen image references and content order', async () => {
     const requests: CapturedRequest[] = []
-    const ref: ImageAttachmentRef = {
+    const firstRef: ImageAttachmentRef = {
       attachmentId: AttachmentId('image-1'),
       mediaType: 'image/png',
-      bytes: 4,
+      bytes: 1,
       width: 1,
       height: 1,
     }
+    const secondRef: ImageAttachmentRef = {
+      ...firstRef,
+      attachmentId: AttachmentId('image-2'),
+    }
     const attachments = {
-      readImage: async () => ({ ref, data: Uint8Array.from([1, 2, 3, 4]) }),
+      readImage: async (ref: ImageAttachmentRef) => ({
+        ref,
+        data: Uint8Array.from([String(ref.attachmentId) === 'image-1' ? 1 : 2]),
+      }),
     } as unknown as AttachmentStore
     const client = adapter(await endpoint(requests), { 'qwen3.7-plus': qwenModel() }, attachments)
     await consume(client.stream({
       provider: BAILIAN_PROVIDER_ID,
       model: 'qwen3.7-plus',
       messages: [createUserMessage({
-        content: [{ type: 'text', text: 'inspect' }, { type: 'image', attachment: ref }],
+        content: [
+          { type: 'text', text: 'before [Image #2]' },
+          { type: 'image', attachment: secondRef },
+          { type: 'text', text: ' between [Image #1]' },
+          { type: 'image', attachment: firstRef },
+          { type: 'text', text: ' after' },
+        ],
         source: { kind: 'user' },
       })],
       maxTokens: 2_048,
@@ -205,8 +218,11 @@ describe('Bailian wire contract', () => {
     expect(requests[0]?.body.messages).toEqual([{
       role: 'user',
       content: [
-        { type: 'text', text: 'inspect' },
-        { type: 'image_url', image_url: { url: 'data:image/png;base64,AQIDBA==' } },
+        { type: 'text', text: 'before [Image #2]' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,Ag==' } },
+        { type: 'text', text: ' between [Image #1]' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AQ==' } },
+        { type: 'text', text: ' after' },
       ],
     }])
   })

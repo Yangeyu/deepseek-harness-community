@@ -25,6 +25,11 @@ export interface VisionImageInput {
   name?: string
 }
 
+/** One image whose stable label is already embedded in the owning user request. */
+export interface VisionReferencedImageInput extends VisionImageInput {
+  reference: string
+}
+
 export type VisionUnavailableReason =
   | 'disabled'
   | 'main-model-unavailable'

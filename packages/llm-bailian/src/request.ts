@@ -9,6 +9,21 @@ function textOf(blocks: readonly ContentBlock[]): string {
   return blocks.filter(block => block.type === 'text').map(block => block.text).join('')
 }
 
+async function imagePart(
+  attachment: Extract<ContentBlock, { type: 'image' }>['attachment'],
+  attachments: AttachmentStore | undefined,
+  signal: AbortSignal,
+): Promise<WireContentPart> {
+  if (attachments === undefined) {
+    throw new LlmError('Bailian image input requires the durable attachment service', 'UNSUPPORTED_CONTENT')
+  }
+  const stored = await attachments.readImage(attachment, signal)
+  return {
+    type: 'image_url',
+    image_url: { url: `data:${stored.ref.mediaType};base64,${Buffer.from(stored.data).toString('base64')}` },
+  }
+}
+
 async function imageParts(
   blocks: readonly ContentBlock[],
   attachments: AttachmentStore | undefined,
@@ -16,16 +31,22 @@ async function imageParts(
 ): Promise<WireContentPart[]> {
   const images = blocks.filter(block => block.type === 'image')
   if (images.length === 0) return []
-  if (attachments === undefined) {
-    throw new LlmError('Bailian image input requires the durable attachment service', 'UNSUPPORTED_CONTENT')
-  }
-  return await Promise.all(images.map(async ({ attachment }) => {
-    const stored = await attachments.readImage(attachment, signal)
-    return {
-      type: 'image_url' as const,
-      image_url: { url: `data:${stored.ref.mediaType};base64,${Buffer.from(stored.data).toString('base64')}` },
+  return await Promise.all(images.map(({ attachment }) => imagePart(attachment, attachments, signal)))
+}
+
+async function orderedContentParts(
+  blocks: readonly ContentBlock[],
+  attachments: AttachmentStore | undefined,
+  signal: AbortSignal,
+): Promise<WireContentPart[]> {
+  const parts = await Promise.all(blocks.map(async (block): Promise<WireContentPart | undefined> => {
+    if (block.type === 'text') {
+      return block.text === '' ? undefined : { type: 'text', text: block.text }
     }
+    if (block.type !== 'image') return undefined
+    return imagePart(block.attachment, attachments, signal)
   }))
+  return parts.filter((part): part is WireContentPart => part !== undefined)
 }
 
 async function userContent(
@@ -33,13 +54,8 @@ async function userContent(
   attachments: AttachmentStore | undefined,
   signal: AbortSignal,
 ): Promise<string | WireContentPart[]> {
-  const text = textOf(blocks)
-  const images = await imageParts(blocks, attachments, signal)
-  if (images.length === 0) return text
-  return [
-    ...text.length === 0 ? [] : [{ type: 'text' as const, text }],
-    ...images,
-  ]
+  if (!blocks.some(block => block.type === 'image')) return textOf(blocks)
+  return orderedContentParts(blocks, attachments, signal)
 }
 
 function assistantMessage(message: Message): WireMessage {

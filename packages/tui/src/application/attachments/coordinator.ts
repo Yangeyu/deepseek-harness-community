@@ -5,6 +5,7 @@ import type {
   VisionAnalysis,
   VisionCapability,
   VisionConfig,
+  VisionReferencedImageInput,
   VisionRequest,
   VisionStatus,
 } from '@vascent/deepseek-harness-vision'
@@ -12,7 +13,12 @@ import type {
   PreparedPrompt,
   PromptPreparationContext,
 } from '../../runtime/controller.ts'
+import { compilePromptDocument } from '../../prompt-content.ts'
 import { AttachmentDraftStore } from './drafts.ts'
+
+export type ComposerVisionRequest = Omit<VisionRequest, 'images'> & {
+  readonly images: readonly VisionReferencedImageInput[]
+}
 
 export interface VisionGateway {
   readonly config: VisionConfig
@@ -21,7 +27,7 @@ export interface VisionGateway {
   capability(provider: string, model: string, signal?: AbortSignal): Promise<VisionCapability>
   status(signal?: AbortSignal): Promise<VisionStatus>
   setMode(mode: VisionConfig['mode']): Promise<void>
-  analyze(request: VisionRequest, signal?: AbortSignal): Promise<VisionAnalysis>
+  analyze(request: ComposerVisionRequest, signal?: AbortSignal): Promise<VisionAnalysis>
   admit(request: VisionAdmissionRequest): void | Promise<void>
   discard(analysisId: string): void
 }
@@ -66,9 +72,9 @@ export class AttachmentCoordinator {
     send: PreparedPromptSender,
   ): Promise<'native' | 'proxy'> {
     if (this.active !== undefined) throw new Error('Vision analysis is already in progress.')
-    const images = [...this.drafts.snapshot]
+    const prompt = compilePromptDocument(text, this.drafts.snapshot)
+    const images = prompt.images
     if (images.length === 0) throw new Error('No images are attached.')
-    const promptText = text.trim() === '' ? '[Image]' : text
     const ids = images.map(image => image.id)
     try {
       this.checkLimits(images, limits)
@@ -82,7 +88,7 @@ export class AttachmentCoordinator {
     let route: 'native' | 'proxy' | undefined
     let stagedAnalysisId: string | undefined
     try {
-      await send(promptText, mode, async (preparation) => {
+      await send(prompt.text, mode, async (preparation) => {
         this.drafts.clear()
         const capability = await this.vision.capability(selection.provider, selection.model, abort.signal)
         if (capability.strategy === 'disabled') throw new Error(capability.message)
@@ -90,15 +96,14 @@ export class AttachmentCoordinator {
           route = 'native'
           return {
             kind: 'content',
-            content: [
-              { type: 'text', text: promptText },
-              ...images.map(image => ({
-                type: 'image' as const,
-                mediaType: image.mediaType,
-                data: Buffer.from(image.data).toString('base64'),
-                name: image.name,
-              })),
-            ],
+            content: prompt.parts.map(part => part.type === 'text'
+              ? { type: 'text' as const, text: part.text }
+              : {
+                  type: 'image' as const,
+                  mediaType: part.image.mediaType,
+                  data: Buffer.from(part.image.data).toString('base64'),
+                  name: part.image.name,
+                }),
           }
         }
         route = 'proxy'
@@ -111,8 +116,9 @@ export class AttachmentCoordinator {
         const analysis = await this.vision.analyze({
           analysisId,
           sessionId,
-          userText: text,
+          userText: prompt.text,
           images: images.map(image => ({
+            reference: image.placeholder,
             data: image.data,
             mediaType: image.mediaType,
             name: image.name,
@@ -127,7 +133,7 @@ export class AttachmentCoordinator {
             await this.vision.admit({
               analysisId: analysis.analysisId,
               sessionId,
-              promptText,
+              promptText: prompt.text,
               mode,
               rpcId: String(rpcId),
               ...clientTimeZone === undefined ? {} : { clientTimeZone },

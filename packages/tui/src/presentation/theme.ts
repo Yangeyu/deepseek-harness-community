@@ -19,6 +19,7 @@ export interface TuiTheme {
   error: Paint
   focusRow: Paint
   hover: Paint
+  imageReference: Paint
   reasoning: Paint
   success: Paint
   surfaceBorder: Paint
@@ -67,6 +68,7 @@ export function createTheme(enabled: boolean): TuiTheme {
   const success = ansi(enabled, 32, 39)
   // Tool titles need more luminance than standard ANSI blue on dark terminals.
   const tool = ansiSequence(enabled, '38;2;125;211;252', '39')
+  const imageReference = tool
   const underline = ansi(enabled, 4, 24)
   const warning = ansi(enabled, 33, 39)
   const user = ansi(enabled, 97, 39)
@@ -90,6 +92,7 @@ export function createTheme(enabled: boolean): TuiTheme {
     error,
     focusRow,
     hover,
+    imageReference,
     reasoning,
     success,
     surfaceBorder: structure,

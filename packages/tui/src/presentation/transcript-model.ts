@@ -16,6 +16,7 @@ import {
   type LifecycleNode,
   type LifecycleSnapshot,
 } from '../runtime/lifecycle/index.ts'
+import { legacyPromptTextFromContent } from '../prompt-content.ts'
 import { displayUnknown, sanitizeTerminalLine, sanitizeTerminalText } from '../text.ts'
 
 export type TranscriptTone = 'accent' | 'dim' | 'error' | 'warning'
@@ -376,13 +377,10 @@ export function buildTranscriptItems(
         }
         const human = source.kind === 'user'
         if (!human && !showDetails) break
-        const imageCount = event.data.content.filter(block => block.type === 'image').length
-        const text = [rawText, imageCount === 0 ? '' : `${String(imageCount)} image${imageCount === 1 ? '' : 's'} attached`]
-          .filter(Boolean)
-          .join('\n\n')
-        if (text.trim() === '') break
         if (human) {
           const lifecycle = state.lifecycle.get(promptLifecycleKey(String(event.data.id)))
+          const text = legacyPromptTextFromContent(event.data.content)
+          if (text.trim() === '') break
           items.push({
             kind: 'prompt',
             key: `prompt:${String(event.data.id)}`,
@@ -390,6 +388,11 @@ export function buildTranscriptItems(
             ...lifecycle === undefined ? {} : { lifecycle },
           })
         } else {
+          const imageCount = event.data.content.filter(block => block.type === 'image').length
+          const text = [rawText, imageCount === 0 ? '' : `${String(imageCount)} image${imageCount === 1 ? '' : 's'} attached`]
+            .filter(Boolean)
+            .join('\n\n')
+          if (text.trim() === '') break
           items.push({
             kind: 'text',
             key: `context:${String(event.data.id)}`,
@@ -582,7 +585,7 @@ export function buildTranscriptItems(
   const visibleQueueRpcIds = new Set<string>()
   for (const [index, item] of state.queue.entries()) {
     if (item.placement === 'context') continue
-    const body = messageText(item.message.content, false)
+    const body = legacyPromptTextFromContent(item.message.content)
     if (body.trim() === '') continue
     const source = item.message.source
     if (source.kind === 'user' && 'rpcId' in source) visibleQueueRpcIds.add(String(source.rpcId))

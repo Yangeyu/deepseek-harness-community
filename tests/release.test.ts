@@ -102,3 +102,14 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
     assert.equal(workspace.publishConfig, undefined, `${file} must not declare registry access`)
   }
 })
+
+test('uses the official pi-tui package without dependency patches', async () => {
+  const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
+  const tui = JSON.parse(await readFile('packages/tui/package.json', 'utf8')) as PackageManifest
+  const workspace = parse(await readFile('pnpm-workspace.yaml', 'utf8')) as {
+    patchedDependencies?: Record<string, string>
+  }
+  assert.equal(root.dependencies?.['@earendil-works/pi-tui'], '^0.84.2')
+  assert.equal(tui.dependencies?.['@earendil-works/pi-tui'], '^0.84.2')
+  assert.equal(workspace.patchedDependencies, undefined)
+})

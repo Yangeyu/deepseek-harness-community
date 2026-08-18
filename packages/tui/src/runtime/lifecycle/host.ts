@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@vascent/deepseek-harness-vision'
+import { legacyPromptTextFromContent } from '../../prompt-content.ts'
 import type { PromptNode, PromptNodeSink } from './types.ts'
 
 type UserMessageEvent = Extract<SessionEvent, { type: 'user/message' }>
@@ -18,12 +19,9 @@ export function isAcceptedPromptEvent(event: SessionEvent): event is AcceptedPro
 }
 
 function promptText(event: UserMessageEvent, attachments: readonly ImageAttachmentRef[]): string {
-  const text = event.data.content
-    .filter(block => block.type === 'text')
-    .map(block => block.text)
-    .join('\n')
+  const text = legacyPromptTextFromContent(event.data.content, attachments.length)
   if (text.trim() !== '') return text
-  return attachments.length > 0 ? '[Image]' : '[Message]'
+  return '[Message]'
 }
 
 function promptEventFor(session: Session, event: SessionEvent): AcceptedPromptEvent | undefined {

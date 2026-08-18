@@ -5,6 +5,11 @@ import type {
 } from '@deepseek-ai/dsh-attachment'
 import type { RewindPromptInput } from '../../rewind/index.ts'
 import type { ComposerDraft } from '../composer-input.ts'
+import {
+  compilePromptDocument,
+  imageMarkers,
+  restoreLegacyImageMarkers,
+} from '../../prompt-content.ts'
 import type { AttachmentDraft } from './drafts.ts'
 
 export interface PromptAttachmentReader {
@@ -33,22 +38,28 @@ export async function preparePromptDraft(
   if (input.attachments.length === 0) return { text: input.text, attachments: [] }
   if (reader === undefined) throw new Error('Rewind cannot restore images because attachment storage is unavailable.')
   const stored = await Promise.all(input.attachments.map(attachment => reader.readImage(attachment)))
-  return {
-    text: input.text,
-    attachments: stored.map(({ ref, data }, index) => {
-      const expected = input.attachments[index]
-      if (expected === undefined || !sameRef(expected, ref)) {
-        throw new Error('A Rewind image no longer matches its durable attachment reference.')
-      }
-      return {
-        id: randomUUID(),
-        name: ref.name ?? fallbackName(ref, index),
-        mediaType: ref.mediaType,
-        data,
-        source: 'rewind',
-        width: ref.width,
-        height: ref.height,
-      }
-    }),
-  }
+  const text = restoreLegacyImageMarkers(input.text, stored.length)
+  const markers = [...new Set(imageMarkers(text))]
+  const attachments = stored.map(({ ref, data }, index): AttachmentDraft => {
+    const expected = input.attachments[index]
+    if (expected === undefined || !sameRef(expected, ref)) {
+      throw new Error('A Rewind image no longer matches its durable attachment reference.')
+    }
+    const placeholder = markers[index]
+    if (placeholder === undefined) {
+      throw new Error('A Rewind image has no durable inline reference.')
+    }
+    return {
+      id: randomUUID(),
+      placeholder,
+      name: ref.name ?? fallbackName(ref, index),
+      mediaType: ref.mediaType,
+      data,
+      source: 'rewind',
+      width: ref.width,
+      height: ref.height,
+    }
+  })
+  compilePromptDocument(text, attachments)
+  return { text, attachments }
 }
