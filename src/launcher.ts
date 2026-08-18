@@ -130,7 +130,7 @@ export async function ensureProfilePlugin(
     if (!Object.hasOwn(dependencies, packageName)) {
       throw new Error(`profile still references legacy bundle ${packageName} without an installed dependency`)
     }
-    report(`dsh-tui: removing legacy profile plugin ${packageName}\n`)
+    report(`dscode: removing legacy profile plugin ${packageName}\n`)
     const removeCode = await runPlugin(['remove', packageName])
     if (removeCode !== 0) return removeCode
   }
@@ -139,7 +139,7 @@ export async function ensureProfilePlugin(
   if (legacy.length > 0) throw new Error(`legacy profile plugin remained after migration: ${legacy.join(', ')}`)
   if (profileUsesPlugin(profileDirectory, pluginDirectory)) return 0
 
-  report('dsh-tui: configuring the profile for this installation\n')
+  report('dscode: configuring the profile for this installation\n')
   const addCode = await runPlugin(['add', pluginDirectory])
   if (addCode !== 0) return addCode
   if (!profileUsesPlugin(profileDirectory, pluginDirectory)) {
@@ -306,7 +306,7 @@ export async function main(args: readonly string[], options: LauncherOptions = {
       stderr.write(formatCliError(error))
       return 2
     }
-    stderr.write(`dsh-tui: ${error instanceof Error ? error.message : String(error)}\n`)
+    stderr.write(`dscode: ${error instanceof Error ? error.message : String(error)}\n`)
     return 1
   }
 }

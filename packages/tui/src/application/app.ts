@@ -231,7 +231,7 @@ function shellArgument(value: string): string {
 
 function resumeHint(sessionId: TuiState['sessionId']): string | undefined {
   if (sessionId === undefined) return undefined
-  return `\nResume this session with:\n  dsh-tui resume ${shellArgument(String(sessionId))}\n\n`
+  return `\nResume this session with:\n  dscode resume ${shellArgument(String(sessionId))}\n\n`
 }
 
 /** Main-screen pi-tui application for one in-process Harness API client. */

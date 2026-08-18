@@ -108,12 +108,12 @@ export function apply(ctx: Context, config: TuiConfig): void {
     return
   }
   if (invocation.kind !== 'interactive' && invocation.kind !== 'sessions') {
-    process.stderr.write(`dsh-tui: ${invocation.kind} is available only through the dsh-tui launcher\n`)
+    process.stderr.write(`dscode: ${invocation.kind} is available only through the dscode launcher\n`)
     exit(2)
     return
   }
   if (invocation.patches.length > 0) {
-    process.stderr.write('dsh-tui: --patch must be consumed by the launcher before TUI startup\n')
+    process.stderr.write('dscode: --patch must be consumed by the launcher before TUI startup\n')
     exit(2)
     return
   }

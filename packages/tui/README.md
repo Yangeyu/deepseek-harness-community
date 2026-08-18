@@ -85,7 +85,7 @@ workspace automatically:
 
 ```sh
 npm install --global @vascent/dsh-tui
-dsh-tui
+dscode
 ```
 
 The release pipeline builds verified `dist/` artifacts before packaging, so
@@ -123,16 +123,16 @@ pnpm run start
 ## Command-line options
 
 ```text
-dsh-tui [options] [prompt...]
-dsh-tui resume <session-id> [options] [prompt...]
-dsh-tui resume --last [options] [prompt...]
-dsh-tui sessions [list] [--json]
-dsh-tui exec [-C <path>] [prompt...]
-dsh-tui doctor [--json]
-dsh-tui completion <bash|zsh|fish|powershell>
-dsh-tui config [show|default]
-dsh-tui plugin <pnpm-args...>
-dsh-tui -v | -V | --version
+dscode [options] [prompt...]
+dscode resume <session-id> [options] [prompt...]
+dscode resume --last [options] [prompt...]
+dscode sessions [list] [--json]
+dscode exec [-C <path>] [prompt...]
+dscode doctor [--json]
+dscode completion <bash|zsh|fish|powershell>
+dscode config [show|default]
+dscode plugin <pnpm-args...>
+dscode -v | -V | --version
 ```
 
 Interactive options include `-C`/`--cwd`, repeatable `-i`/`--image`,
@@ -150,7 +150,7 @@ a positional prompt or piped stdin. `doctor` is read-only, while `config` and
 initializing the TUI profile.
 
 After a normal exit, the restored shell prints a copyable
-`dsh-tui resume <session-id>` command for the active session.
+`dscode resume <session-id>` command for the active session.
 
 ## Keyboard and input behavior
 
@@ -262,7 +262,7 @@ provider such as DeepSeek Official:
 
 ```sh
 export TAVILY_API_KEY='...'
-dsh-tui
+dscode
 ```
 
 `/config web` (or `/web`) selects the search policy and displays every registered
@@ -298,7 +298,7 @@ For the recommended Alibaba Cloud Bailian route:
 
 ```sh
 export DASHSCOPE_API_KEY='...'
-dsh-tui
+dscode
 ```
 
 The bundle already registers `bailian/qwen3.7-plus`; `/config vision` selects
@@ -398,7 +398,7 @@ the same retained Prompt input. Evidence carries the admitted Prompt identity,
 so delayed events cannot attach an image to a nearby user message.
 
 The active reversible-effect timeline survives TUI shutdown under
-`$DSH_HOME/rewind/v2`, so `dsh-tui --resume <session-id>` can Rewind attributed
+`$DSH_HOME/rewind/v2`, so `dscode --resume <session-id>` can Rewind attributed
 edits made before restart while Prompt visibility continues to come from the
 Session log. Storage is scoped to one canonical workspace lineage, uses
 private versioned manifests and content-addressed objects, and is bounded to 16

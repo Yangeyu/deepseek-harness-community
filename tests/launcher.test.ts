@@ -114,13 +114,13 @@ test('help, version, and usage errors resolve before profile setup or child exec
   }
 
   assert.equal(await main(['--help'], options), 0)
-  assert.match(stdout.read(), /Usage:\n  dsh-tui/)
+  assert.match(stdout.read(), /Usage:\n  dscode/)
   assert.match(stdout.read(), /-v, -V, --version/)
   const versionStdout = output()
   for (const flag of ['-v', '-V', '--version']) {
     assert.equal(await main([flag], { ...options, stdout: versionStdout.stream }), 0)
   }
-  assert.equal(versionStdout.read(), 'dsh-tui 0.1.9\n'.repeat(3))
+  assert.equal(versionStdout.read(), 'dscode 0.1.9\n'.repeat(3))
   assert.equal(await main(['--version', 'extra'], options), 2)
   assert.match(stderr.read(), /--version cannot be combined with other arguments/)
   assert.equal(setupCalls, 0)

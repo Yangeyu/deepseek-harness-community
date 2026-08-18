@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Rename the public executable from `dsh-tui` to `dscode` without retaining a
+  compatibility alias.
 - Keep failed Activity groups, Thoughts, tool details, and Diff cards compact by
   default while retaining explicit disclosure controls.
 - Separate tool identity, operation summary, and details: Activity rows show

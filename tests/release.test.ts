@@ -6,6 +6,7 @@ import { parse } from 'yaml'
 interface PackageManifest {
   name?: string
   private?: boolean
+  bin?: string | Record<string, string>
   dependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
   devDependencies?: Record<string, string>
@@ -78,6 +79,7 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
   assert.equal(root.name, '@vascent/dsh-tui')
   assert.notEqual(root.private, true)
   assert.equal(root.publishConfig?.access, 'public')
+  assert.deepEqual(root.bin, { dscode: 'bin/dscode.js' })
 
   const expectedExports = {
     '.': './packages/tui/dist/index.js',

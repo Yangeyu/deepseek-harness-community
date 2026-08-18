@@ -104,7 +104,7 @@ export async function requiredApiKey(
   throwIfAborted(provider, signal)
   if (value === undefined || value.trim() === '') {
     throw new WebError(
-      `${provider} has no API key for "${cleanMessage(reference)}"; configure it through the Harness credentials service or export it before launching dsh-tui`,
+      `${provider} has no API key for "${cleanMessage(reference)}"; configure it through the Harness credentials service or export it before launching dscode`,
       'WEB_PROVIDER_CREDENTIAL_MISSING',
     )
   }

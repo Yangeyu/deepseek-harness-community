@@ -1304,7 +1304,7 @@ describe('TuiApplication input routing', () => {
     await internals.requestExit(0)
 
     expect(dispose).toHaveBeenCalledOnce()
-    expect(write).toHaveBeenCalledWith('\nResume this session with:\n  dsh-tui resume session-123\n\n')
+    expect(write).toHaveBeenCalledWith('\nResume this session with:\n  dscode resume session-123\n\n')
     expect(exit).toHaveBeenCalledWith(0)
     expect(dispose.mock.invocationCallOrder[0]).toBeLessThan(write.mock.invocationCallOrder[0] ?? 0)
     expect(write.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0] ?? 0)

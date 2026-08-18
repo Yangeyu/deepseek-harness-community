@@ -161,7 +161,7 @@ function helpTopic(value: string): CliHelpTopic {
   const candidate = closest(value, HELP_TOPICS)
   throw new CliUsageError(
     `unknown help topic: ${value}`,
-    candidate === undefined ? undefined : `Did you mean "dsh-tui help ${candidate}"?`,
+    candidate === undefined ? undefined : `Did you mean "dscode help ${candidate}"?`,
   )
 }
 

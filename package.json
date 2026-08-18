@@ -19,7 +19,7 @@
   },
   "type": "module",
   "bin": {
-    "dsh-tui": "bin/dsh-tui.js"
+    "dscode": "bin/dscode.js"
   },
   "exports": {
     ".": {
@@ -50,7 +50,7 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "bin/dsh-tui.js",
+    "bin/dscode.js",
     "dist/launcher.js",
     "dist/launcher.js.map",
     "packages/tui/CHANGELOG.md",
@@ -79,12 +79,12 @@
     "typecheck": "tsc --noEmit && pnpm --filter './packages/*' run typecheck",
     "test": "vitest run tests/launcher.test.ts tests/release.test.ts && pnpm --filter './packages/*' run test",
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
-    "dev": "pnpm run build && node bin/dsh-tui-dev.js",
+    "dev": "pnpm run build && node bin/dscode-dev.js",
     "install:check": "node scripts/check-fresh-install.mjs",
     "pack:check": "npm pack --dry-run --ignore-scripts",
     "prepack": "pnpm run build",
     "release": "release-it",
-    "start": "node bin/dsh-tui.js"
+    "start": "node bin/dscode.js"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

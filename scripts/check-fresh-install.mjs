@@ -108,13 +108,13 @@ try {
     installDirectory,
     'node_modules',
     ...manifest.name.split('/'),
-    manifest.bin['dsh-tui'],
+    manifest.bin.dscode,
   )
   const { stdout } = await run(process.execPath, [binPath, '--version'], {
     cwd: installDirectory,
     capture: true,
   })
-  const expectedVersion = `dsh-tui ${manifest.version}`
+  const expectedVersion = `dscode ${manifest.version}`
   if (stdout.trim() !== expectedVersion) {
     throw new Error(`expected ${JSON.stringify(expectedVersion)}, received ${JSON.stringify(stdout.trim())}`)
   }

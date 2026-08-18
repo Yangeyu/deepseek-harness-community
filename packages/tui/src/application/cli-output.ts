@@ -5,10 +5,10 @@ import type {
 } from './cli.ts'
 
 const ROOT_HELP = `Usage:
-  dsh-tui [options] [prompt...]
-  dsh-tui resume <session-id> [options] [prompt...]
-  dsh-tui resume --last [options] [prompt...]
-  dsh-tui <command> [options]
+  dscode [options] [prompt...]
+  dscode resume <session-id> [options] [prompt...]
+  dscode resume --last [options] [prompt...]
+  dscode <command> [options]
 
 Commands:
   resume       Resume a session and optionally submit a prompt
@@ -32,21 +32,21 @@ Interactive options:
 
 Launcher options:
       --patch <path>           Apply a profile overlay (repeatable)
-  -v, -V, --version            Show the dsh-tui version
+  -v, -V, --version            Show the dscode version
   -h, --help                   Show help
 
 Examples:
-  dsh-tui "explain this repository"
-  dsh-tui resume --last "continue the unfinished task"
-  dsh-tui sessions --json
-  dsh-tui exec -C ./project "run the tests"
-  dsh-tui doctor
+  dscode "explain this repository"
+  dscode resume --last "continue the unfinished task"
+  dscode sessions --json
+  dscode exec -C ./project "run the tests"
+  dscode doctor
 `
 
 const TOPIC_HELP: Record<CliHelpTopic, string> = {
   resume: `Usage:
-  dsh-tui resume <session-id> [options] [prompt...]
-  dsh-tui resume --last [options] [prompt...]
+  dscode resume <session-id> [options] [prompt...]
+  dscode resume --last [options] [prompt...]
 
 Resume an exact persisted session or the latest non-blank root session. Interactive
 options such as --image, --model, --effort, --permission-mode, and
@@ -54,43 +54,43 @@ options such as --image, --model, --effort, --permission-mode, and
 and attachments are ready.
 `,
   sessions: `Usage:
-  dsh-tui sessions [list] [--json] [--patch <path>]
+  dscode sessions [list] [--json] [--patch <path>]
 
 List persisted sessions without entering raw terminal mode. The default output
 is tabular; --json emits stable machine-readable rows.
 `,
   exec: `Usage:
-  dsh-tui exec [-C <path>] [--patch <path>] [prompt...]
+  dscode exec [-C <path>] [--patch <path>] [prompt...]
 
 Run one task through the Harness headless profile, print the final assistant
 message, and exit. When prompt is omitted, non-interactive stdin is used.
 `,
   doctor: `Usage:
-  dsh-tui doctor [--json]
+  dscode doctor [--json]
 
 Check Node.js, packaged executables, workspace access, terminal/clipboard
 adapters, and TUI profile state. Doctor is read-only and never initializes or
 repairs the profile.
 `,
   completion: `Usage:
-  dsh-tui completion <bash|zsh|fish|powershell>
+  dscode completion <bash|zsh|fish|powershell>
 
 Print a shell completion script to stdout.
 `,
   config: `Usage:
-  dsh-tui config [show] [--patch <path>]
-  dsh-tui config default
+  dscode config [show] [--patch <path>]
+  dscode config default
 
 Print the effective TUI profile composition, or its bundle defaults without
 user layers. Profile overlays apply only to the effective view.
 `,
   plugin: `Usage:
-  dsh-tui plugin <pnpm-args...>
+  dscode plugin <pnpm-args...>
 
 Forward plugin management to pnpm in the TUI profile. Examples:
-  dsh-tui plugin list
-  dsh-tui plugin add <package>
-  dsh-tui plugin remove <package>
+  dscode plugin list
+  dscode plugin add <package>
+  dscode plugin remove <package>
 `,
 }
 
@@ -99,7 +99,7 @@ export function renderCliHelp(topic?: CliHelpTopic): string {
 }
 
 export function renderCliVersion(version: string): string {
-  return `dsh-tui ${version}\n`
+  return `dscode ${version}\n`
 }
 
 const COMPLETION_WORDS = [
@@ -137,26 +137,26 @@ const COMPLETION_WORDS = [
 export function renderCompletion(shell: CompletionShell): string {
   const words = COMPLETION_WORDS.join(' ')
   if (shell === 'bash') return [
-    '_dsh_tui() {',
+    '_dscode() {',
     '  local cur="${COMP_WORDS[COMP_CWORD]}"',
     `  COMPREPLY=($(compgen -W "${words}" -- "$cur"))`,
     '}',
-    'complete -F _dsh_tui dsh-tui',
+    'complete -F _dscode dscode',
     '',
   ].join('\n')
   if (shell === 'zsh') return [
-    '#compdef dsh-tui',
-    `_dsh_tui() { compadd -- ${words} }`,
-    'compdef _dsh_tui dsh-tui',
+    '#compdef dscode',
+    `_dscode() { compadd -- ${words} }`,
+    'compdef _dscode dscode',
     '',
   ].join('\n')
   if (shell === 'fish') return [
-    'complete -c dsh-tui -f',
-    ...COMPLETION_WORDS.map(word => `complete -c dsh-tui -a '${word}'`),
+    'complete -c dscode -f',
+    ...COMPLETION_WORDS.map(word => `complete -c dscode -a '${word}'`),
     '',
   ].join('\n')
   return [
-    'Register-ArgumentCompleter -Native -CommandName dsh-tui -ScriptBlock {',
+    'Register-ArgumentCompleter -Native -CommandName dscode -ScriptBlock {',
     '  param($wordToComplete)',
     `  '${COMPLETION_WORDS.join("','")}' -split ',' | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {`,
     '    [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_)',
@@ -169,9 +169,9 @@ export function renderCompletion(shell: CompletionShell): string {
 /** Stable usage-error text shared by the launcher and direct profile boot. */
 export function formatCliError(error: CliUsageError): string {
   return [
-    `dsh-tui: ${error.message}`,
+    `dscode: ${error.message}`,
     ...(error.suggestion === undefined ? [] : [error.suggestion]),
-    'Run "dsh-tui --help" for usage.',
+    'Run "dscode --help" for usage.',
     '',
   ].join('\n')
 }

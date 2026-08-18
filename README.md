@@ -26,28 +26,28 @@ npm install --global @vascent/dsh-tui
 Then start the TUI from any project directory:
 
 ```sh
-dsh-tui
+dscode
 ```
 
 The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DASHSCOPE_API_KEY` for the bundled Bailian route or `DEEPSEEK_API_KEY` for DeepSeek Official before beginning a model-backed session. `web_search` automatically uses Tavily when `TAVILY_API_KEY` is configured and otherwise uses DeepSeek Official; `web_extract` uses Tavily. `/config web` changes the persisted search policy and reports every provider without displaying credential values. For image understanding with a text-only route, the bundle uses `bailian/qwen3.7-plus`; `/config vision` selects its routing mode. `DSH_HOME` continues to override the Harness data directory.
 
 ## Command line
 
-`dsh-tui` parses the requested action before touching a Harness profile. Help,
+`dscode` parses the requested action before touching a Harness profile. Help,
 version output, completion generation, usage errors, and `doctor` therefore do
 not initialize or repair the `tui` profile.
 
 ```text
-dsh-tui [options] [prompt...]
-dsh-tui resume <session-id> [options] [prompt...]
-dsh-tui resume --last [options] [prompt...]
-dsh-tui sessions [list] [--json]
-dsh-tui exec [-C <path>] [prompt...]
-dsh-tui doctor [--json]
-dsh-tui completion <bash|zsh|fish|powershell>
-dsh-tui config [show|default]
-dsh-tui plugin <pnpm-args...>
-dsh-tui -v | -V | --version
+dscode [options] [prompt...]
+dscode resume <session-id> [options] [prompt...]
+dscode resume --last [options] [prompt...]
+dscode sessions [list] [--json]
+dscode exec [-C <path>] [prompt...]
+dscode doctor [--json]
+dscode completion <bash|zsh|fish|powershell>
+dscode config [show|default]
+dscode plugin <pnpm-args...>
+dscode -v | -V | --version
 ```
 
 Interactive startup supports `-C`/`--cwd`, repeatable `-i`/`--image`,
@@ -59,7 +59,7 @@ Interactive startup supports `-C`/`--cwd`, repeatable `-i`/`--image`,
 its final assistant message. It accepts a positional prompt or piped stdin and
 does not configure the TUI profile. `config` and `plugin` explicitly delegate
 their work to the underlying `dsh` profile manager.
-All three version aliases print the root package version as `dsh-tui <version>`.
+All three version aliases print the root package version as `dscode <version>`.
 
 ## Packages
 
@@ -99,7 +99,7 @@ pnpm dev
 
 `pnpm dev` builds the current Bailian, Memory, Vision, Web, and TUI sources, then launches the local
 bundle through an isolated `tui-dev` profile. It does not use the globally
-installed `dsh-tui` package or modify the regular `tui` profile. Run it from the
+installed `dscode` executable or modify the regular `tui` profile. Run it from the
 project you want the agent to edit; pass TUI arguments after `--`, for example
 `pnpm dev -- resume <session-id> --image screenshot.png`.
 
