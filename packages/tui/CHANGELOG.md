@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.1.15 - 2026-08-18
+
 - Rename the public executable from `dsh-tui` to `dscode` without retaining a
   compatibility alias.
 - Keep failed Activity groups, Thoughts, tool details, and Diff cards compact by
