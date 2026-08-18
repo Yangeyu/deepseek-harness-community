@@ -26,6 +26,7 @@ import {
 } from './submission.ts'
 import {
   buildLifecycleSnapshot,
+  LifecycleProjection,
   type LifecycleSnapshot,
   type RuntimeLifecycleActivity,
 } from './lifecycle/index.ts'
@@ -116,6 +117,7 @@ function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void
 
 /** Session and stream coordinator over the transport-neutral Harness API. */
 export class HarnessController {
+  private readonly lifecycleProjection = new LifecycleProjection(buildLifecycleSnapshot)
   private readonly abort = new AbortController()
   private state: TuiState
   private resyncTask: { generation: number; promise: Promise<void> } | undefined
@@ -678,7 +680,7 @@ export class HarnessController {
     const runtimeActivities = this.runtimeActivities(state.pendingSubmissions)
     return {
       ...state,
-      lifecycle: buildLifecycleSnapshot({
+      lifecycle: this.lifecycleProjection.project({
         sessionId: state.sessionId === undefined ? undefined : String(state.sessionId),
         generation: this.generation,
         entries: state.events,

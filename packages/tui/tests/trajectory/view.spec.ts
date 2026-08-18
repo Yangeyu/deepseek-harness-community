@@ -8,6 +8,33 @@ import { TrajectoryView } from '../../src/trajectory/view.ts'
 import { state, timedTraceEvents, toolEvents } from './fixtures.ts'
 
 describe('TrajectoryView', () => {
+  it('keeps its semantic record projection stable across inert stream deltas', () => {
+    const initial = state(toolEvents(true), { running: true })
+    const view = new TrajectoryView(
+      initial,
+      () => 8,
+      createTheme(false),
+      async () => false,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )
+    const internals = view as unknown as { records: readonly unknown[] }
+    const records = internals.records
+    const chunk = {
+      event: {
+        type: 'assistant/chunk',
+        seq: 6,
+        time: 1_800,
+        data: { turn: 1, step: 2, chunk: { type: 'text-delta', index: 0, text: 'live' } },
+      },
+    } as TuiState['events'][number]
+
+    view.setState({ ...initial, events: [...initial.events, chunk] })
+
+    expect(internals.records).toBe(records)
+  })
+
   it('supports Vim j/k navigation in the ledger and detail viewport', () => {
     const assistant = {
       event: {

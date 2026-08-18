@@ -10,6 +10,8 @@ import type {
   LifecycleSnapshot,
 } from './types.ts'
 
+export { LifecycleProjection } from './projection.ts'
+
 export { installPromptLifecycle, isAcceptedPromptEvent, projectPromptNode } from './host.ts'
 export {
   commandLifecycleKey,

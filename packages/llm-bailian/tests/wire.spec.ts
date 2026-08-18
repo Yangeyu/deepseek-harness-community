@@ -233,8 +233,8 @@ describe('Bailian wire contract', () => {
             },
           }],
         },
-        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: ':1}' } }] } }] },
-        { choices: [{ delta: { tool_calls: [{ index: 1, function: { arguments: '{}' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: '', function: { arguments: ':1}' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 1, id: '', function: { arguments: '{}' } }] } }] },
         {
           choices: [{ delta: {}, finish_reason: 'tool_calls' }],
           usage: { prompt_tokens: 8, completion_tokens: 4 },
@@ -249,6 +249,12 @@ describe('Bailian wire contract', () => {
       messages: [user('use tools')],
     }))
 
+    expect(chunks.filter(chunk => chunk.type === 'tool-call-delta').map(chunk => chunk.id)).toEqual([
+      'call-a',
+      'call-b',
+      'call-a',
+      'call-b',
+    ])
     expect(chunks.filter(chunk => chunk.type === 'block-end')).toEqual([
       {
         type: 'block-end',
@@ -266,6 +272,45 @@ describe('Bailian wire contract', () => {
       usage: { inputTokens: 8, outputTokens: 4 },
     })
     expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+  })
+
+  it('buffers tool arguments until a non-empty id arrives and rejects a permanently missing id', async () => {
+    const requests: CapturedRequest[] = []
+    const delayed = adapter(await endpoint(requests, response => {
+      writeSse(response, [
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: '', function: { name: 'read', arguments: '{"path"' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call-delayed', function: { arguments: ':"README.md"}' } }] } }] },
+        { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+        '[DONE]',
+      ])
+    }), { custom: deepseekModel() })
+
+    const chunks = await consume(delayed.stream({
+      provider: BAILIAN_PROVIDER_ID,
+      model: 'custom',
+      messages: [user('read')],
+    }))
+    expect(chunks.filter(chunk => chunk.type === 'tool-call-delta')).toEqual([{
+      type: 'tool-call-delta',
+      index: 0,
+      id: 'call-delayed',
+      name: 'read',
+      argumentsDelta: '{"path":"README.md"}',
+    }])
+
+    const missingRequests: CapturedRequest[] = []
+    const missing = adapter(await endpoint(missingRequests, response => {
+      writeSse(response, [
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: '', function: { name: 'read', arguments: '{}' } }] } }] },
+        { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+        '[DONE]',
+      ])
+    }), { custom: deepseekModel() })
+    await expect(consume(missing.stream({
+      provider: BAILIAN_PROVIDER_ID,
+      model: 'custom',
+      messages: [user('read')],
+    }))).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
   })
 
   it('retains HTTP retry and request metadata in provider failures', async () => {

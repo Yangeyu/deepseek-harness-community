@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DISABLE_MOUSE_TRACKING,
+  ENABLE_MOUSE_TRACKING,
   parseMouseReport,
   resolveMouseAction,
 } from '../../src/presentation/mouse.ts'
 
 describe('parseMouseReport', () => {
-  it('decodes hover, click, release, and wheel reports', () => {
+  it('subscribes to passive pointer motion for title hover feedback', () => {
+    expect(ENABLE_MOUSE_TRACKING).toContain('?1003h')
+    expect(ENABLE_MOUSE_TRACKING).not.toContain('?1002h')
+    expect(DISABLE_MOUSE_TRACKING).toContain('?1003l')
+  })
+
+  it('decodes motion, click, release, and wheel reports', () => {
     expect(parseMouseReport('\u001b[<35;20;5M')).toEqual({ button: 35, x: 19, y: 4, release: false })
     expect(parseMouseReport('\u001b[<0;1;1M')).toEqual({ button: 0, x: 0, y: 0, release: false })
     expect(parseMouseReport('\u001b[<0;1;1m')).toEqual({ button: 0, x: 0, y: 0, release: true })

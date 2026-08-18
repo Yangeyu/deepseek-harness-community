@@ -1,11 +1,13 @@
 import {
   Markdown,
+  stripTerminalSequences,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
   type Component,
 } from '@earendil-works/pi-tui'
 import type { TuiState } from '../runtime/controller.ts'
+import { appendedHistoryEntries } from '../runtime/event-window.ts'
 import type { DiffLineStarts } from './diff-location.ts'
 import {
   buildDiffDisplay,
@@ -14,9 +16,12 @@ import {
   type DiffDisplayLine,
 } from './diff.ts'
 import {
+  appendTranscriptChunks,
   buildTranscriptItems,
   type TranscriptActivityGroup,
   type TranscriptDiffItem,
+  type TranscriptItem,
+  type TranscriptPromptItem,
   type TranscriptTextItem,
   type TranscriptThinkingItem,
   type TranscriptTone,
@@ -44,10 +49,44 @@ interface BlockHit {
   lastLine: number
 }
 
+interface TextBlockCache {
+  width: number
+  label: string | undefined
+  tone: TranscriptTone | undefined
+  body: string | undefined
+  markdown: boolean | undefined
+  dim: boolean | undefined
+  lines: string[]
+}
+
+interface PromptBlockCache {
+  width: number
+  body: string
+  status: string | undefined
+  lines: string[]
+}
+
+interface DiffBlockCache {
+  width: number
+  title: string
+  diffs: TranscriptDiffItem['diffs']
+  starts: readonly (number | undefined)[]
+  status: ExecutionStatus
+  disclosure: boolean | undefined
+  collapsed: boolean
+  lines: string[]
+}
+
 const DIFF_CONTENT_INDENT = '  '
 const ACTIVITY_CHILD_INDENT = 3
 const DISCLOSURE_COLLAPSED = '›'
 const DISCLOSURE_EXPANDED = '⌄'
+const EMPTY_DIFF_STARTS: readonly (number | undefined)[] = []
+const LARGE_DIFF_LINES = 200
+
+function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index])
+}
 
 function padToWidth(value: string, width: number): string {
   const clipped = truncateToWidth(value, width, '…', true)
@@ -59,11 +98,19 @@ export class TranscriptComponent implements Component {
   private state: Readonly<TuiState>
   private showDetails = false
   private readonly disclosure = new ExecutionDisclosureState()
-  private readonly collapsedDiffs = new Set<string>()
+  private readonly diffDisclosure = new Map<string, boolean>()
+  private readonly renderedDiffCollapsed = new Map<string, boolean>()
   private readonly pausedThinking = new Set<string>()
   private readonly thinkingOffsets = new Map<string, number>()
   private readonly thinkingMaxOffsets = new Map<string, number>()
+  private items: TranscriptItem[] | undefined
+  private renderedDocument: { width: number; lines: string[] } | undefined
+  private readonly textBlocks = new Map<string, TextBlockCache>()
+  private readonly promptBlocks = new Map<string, PromptBlockCache>()
+  private readonly diffBlocks = new Map<string, DiffBlockCache>()
   private blockHits: BlockHit[] = []
+  private blockTitleHits = new Map<number, BlockHit>()
+  private blockHitsByKey = new Map<string, BlockHit>()
   private activityExecutionKeys = new Map<string, readonly string[]>()
   private hoveredBlockKey: string | undefined
   private diffLineStarts: DiffLineStarts = new Map()
@@ -79,41 +126,80 @@ export class TranscriptComponent implements Component {
   }
 
   setState(state: Readonly<TuiState>): void {
-    if (state.sessionId !== this.state.sessionId) {
+    const previous = this.state
+    const sessionChanged = state.sessionId !== previous.sessionId
+    const appended = sessionChanged
+      ? undefined
+      : appendedHistoryEntries(previous.events, state.events)
+    const incrementalItems = this.items === undefined
+      || appended === undefined
+      || !sameItems(previous.queue, state.queue)
+      || !sameItems(previous.pendingSubmissions, state.pendingSubmissions)
+      || state.notice !== previous.notice
+      || state.error !== previous.error
+      ? undefined
+      : appendTranscriptChunks(this.items, appended, state.lifecycle, this.showReasoning)
+    const contentChanged = sessionChanged
+      || state.events !== previous.events
+      || state.queue !== previous.queue
+      || state.pendingSubmissions !== previous.pendingSubmissions
+      || state.lifecycle !== previous.lifecycle
+      || state.notice !== previous.notice
+      || state.error !== previous.error
+    if (sessionChanged) {
       this.disclosure.clear()
-      this.collapsedDiffs.clear()
+      this.diffDisclosure.clear()
+      this.renderedDiffCollapsed.clear()
       this.pausedThinking.clear()
       this.thinkingOffsets.clear()
       this.thinkingMaxOffsets.clear()
       this.hoveredBlockKey = undefined
+      this.textBlocks.clear()
+      this.promptBlocks.clear()
+      this.diffBlocks.clear()
     }
     this.state = state
+    if (incrementalItems !== undefined && appended !== undefined && appended.length > 0) {
+      if (incrementalItems !== this.items) {
+        this.items = incrementalItems
+        this.invalidate()
+      }
+    } else if (contentChanged) {
+      this.invalidateContent()
+    }
   }
 
   setDetails(show: boolean): void {
+    if (show === this.showDetails) return
     this.showDetails = show
     this.disclosure.clearOverrides()
     this.pausedThinking.clear()
+    this.invalidateContent()
   }
 
   /** Supply asynchronously resolved absolute file-line starts for diff cards. */
   setDiffLineStarts(starts: DiffLineStarts): void {
+    if (starts === this.diffLineStarts) return
     this.diffLineStarts = starts
+    this.invalidate()
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.renderedDocument = undefined
+  }
 
   /** Apply one pointer action to the block rendered at a transcript-relative row. */
   handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean {
-    const hit = this.blockHits.find(candidate => line >= candidate.firstLine && line <= candidate.lastLine)
     if (action === 'move') {
-      const next = hit?.titleLine === line ? hit.key : undefined
+      const next = this.blockTitleHits.get(line)?.key
       if (next === this.hoveredBlockKey) return false
       this.hoveredBlockKey = next
+      this.invalidate()
       return true
     }
     if (action === 'click') {
-      if (hit === undefined || hit.titleLine !== line) return false
+      const hit = this.blockTitleHits.get(line)
+      if (hit === undefined) return false
       this.hoveredBlockKey = hit.key
       if (hit.kind === 'activity') {
         this.disclosure.toggleActivity(this.activityExecutionKeys.get(hit.key) ?? [], this.showDetails)
@@ -124,25 +210,32 @@ export class TranscriptComponent implements Component {
           this.thinkingOffsets.delete(hit.key)
           this.thinkingMaxOffsets.delete(hit.key)
         }
-      } else if (!this.collapsedDiffs.delete(hit.key)) {
-        this.collapsedDiffs.add(hit.key)
+      } else {
+        const collapsed = this.renderedDiffCollapsed.get(hit.key) ?? false
+        this.diffDisclosure.set(hit.key, !collapsed)
       }
+      this.invalidate()
       return true
     }
+    const hit = this.blockHitAt(line)
     if (hit?.kind !== 'thinking' || !this.isChildExpanded(hit.key)) return false
-    return this.scrollThinking(hit.key, action === 'wheel-up' ? -3 : 3)
+    return this.scrollThinking(hit.key, action === 'wheel-up' ? -1 : 1)
   }
 
   render(width: number): string[] {
     const safeWidth = Math.max(1, width)
+    if (this.renderedDocument?.width === safeWidth) return this.renderedDocument.lines
     const lines: string[] = []
-    const items = buildTranscriptItems(
-      this.state,
-      this.showReasoning,
-      this.showDetails,
-      this.maxToolOutputLines,
+    const items = this.items ??= buildTranscriptItems(
+      this.state, this.showReasoning, this.showDetails, this.maxToolOutputLines,
     )
+    const activeTextBlocks = new Set<string>()
+    const activePromptBlocks = new Set<string>()
+    const activeDiffBlocks = new Set<string>()
+    this.renderedDiffCollapsed.clear()
     this.blockHits = []
+    this.blockTitleHits = new Map()
+    this.blockHitsByKey = new Map()
     this.activityExecutionKeys = new Map()
     for (const item of items) {
       if (item.kind !== 'activity') continue
@@ -157,24 +250,50 @@ export class TranscriptComponent implements Component {
         continue
       }
       if (item.kind === 'diff') {
-        const contentWidth = this.contentWidth(safeWidth)
+        activeDiffBlocks.add(item.key)
         this.pushBlock(
           lines,
-          this.frameContent(this.renderDiff(item, contentWidth), safeWidth),
+          this.renderDiffBlock(item, safeWidth),
           item.key,
           'diff',
         )
         continue
       }
       if (item.kind === 'prompt') {
-        lines.push(...this.renderPromptBlock(item.body, item.promptStatus, safeWidth))
+        activePromptBlocks.add(item.key)
+        lines.push(...this.renderPromptBlock(item, safeWidth))
         continue
       }
-      lines.push(...this.frameContent(this.renderText(item, this.contentWidth(safeWidth)), safeWidth))
+      activeTextBlocks.add(item.key)
+      lines.push(...this.renderTextBlock(item, safeWidth))
     }
-    if (this.hoveredBlockKey !== undefined && !this.blockHits.some(hit => hit.key === this.hoveredBlockKey)) {
-      this.hoveredBlockKey = undefined
-    }
+    this.pruneBlockCache(this.textBlocks, activeTextBlocks)
+    this.pruneBlockCache(this.promptBlocks, activePromptBlocks)
+    this.pruneBlockCache(this.diffBlocks, activeDiffBlocks)
+    this.paintHoveredTitle(lines)
+    this.renderedDocument = { width: safeWidth, lines }
+    return lines
+  }
+
+  private renderTextBlock(item: TranscriptTextItem, width: number): string[] {
+    const cached = this.textBlocks.get(item.key)
+    if (cached !== undefined
+      && cached.width === width
+      && cached.label === item.label
+      && cached.tone === item.tone
+      && cached.body === item.body
+      && cached.markdown === item.markdown
+      && cached.dim === item.dim) return cached.lines
+    const lines = this.frameContent(this.renderText(item, this.contentWidth(width)), width)
+    this.textBlocks.set(item.key, {
+      width,
+      label: item.label,
+      tone: item.tone,
+      body: item.body,
+      markdown: item.markdown,
+      dim: item.dim,
+      lines,
+    })
     return lines
   }
 
@@ -259,7 +378,7 @@ export class TranscriptComponent implements Component {
       : status === 'running' || status === 'pending' || status === 'interrupted'
         ? this.theme.warning
         : this.theme.reasoning
-    return this.renderBlockTitle(`${marker} ${title}`, activity.key, width, paint)
+    return this.renderBlockTitle(`${marker} ${title}`, width, paint)
   }
 
   private indentActivityChild(lines: string[], last: boolean): string[] {
@@ -270,7 +389,12 @@ export class TranscriptComponent implements Component {
     return this.disclosure.activityExpanded(activity.items.map(item => item.key), this.showDetails)
   }
 
-  private renderPromptBlock(body: string, status: string | undefined, width: number): string[] {
+  private renderPromptBlock(item: TranscriptPromptItem, width: number): string[] {
+    const cached = this.promptBlocks.get(item.key)
+    if (cached !== undefined
+      && cached.width === width
+      && cached.body === item.body
+      && cached.status === item.promptStatus) return cached.lines
     const paintLine = (line: string): string => {
       const clipped = truncateToWidth(line, width, '…')
       const padding = ' '.repeat(Math.max(0, width - visibleWidth(clipped)))
@@ -278,7 +402,7 @@ export class TranscriptComponent implements Component {
     }
     const lines = [paintLine(' '.repeat(width))]
     let firstLine = true
-    for (const sourceLine of sanitizeTerminalText(body).split('\n')) {
+    for (const sourceLine of sanitizeTerminalText(item.body).split('\n')) {
       const wrapped = wrapTextWithAnsi(sourceLine, Math.max(1, width - 4))
       for (const wrappedLine of wrapped.length === 0 ? [''] : wrapped) {
         const marker = firstLine ? '› ' : '  '
@@ -286,8 +410,16 @@ export class TranscriptComponent implements Component {
         firstLine = false
       }
     }
-    if (status !== undefined) lines.push(paintLine(`   ${this.theme.dim(this.theme.user(status))} `))
+    if (item.promptStatus !== undefined) {
+      lines.push(paintLine(`   ${this.theme.dim(this.theme.user(item.promptStatus))} `))
+    }
     lines.push(paintLine(' '.repeat(width)))
+    this.promptBlocks.set(item.key, {
+      width,
+      body: item.body,
+      status: item.promptStatus,
+      lines,
+    })
     return lines
   }
 
@@ -309,7 +441,10 @@ export class TranscriptComponent implements Component {
   private pushBlock(lines: string[], rendered: string[], key: string, kind: BlockHit['kind']): void {
     const titleLine = lines.length
     lines.push(...rendered)
-    this.blockHits.push({ key, kind, titleLine, firstLine: titleLine, lastLine: lines.length - 1 })
+    const hit = { key, kind, titleLine, firstLine: titleLine, lastLine: lines.length - 1 }
+    this.blockHits.push(hit)
+    this.blockTitleHits.set(titleLine, hit)
+    this.blockHitsByKey.set(key, hit)
   }
 
   private renderThinking(
@@ -321,7 +456,7 @@ export class TranscriptComponent implements Component {
     const status = executionStatus(thinking.lifecycle)
     const label = executionLabel('thought', status)
     if (!expanded) {
-      return [this.renderExecutionTitle(marker, status, label, thinking.key, width, this.theme.reasoning)]
+      return [this.renderExecutionTitle(marker, status, label, width, this.theme.reasoning)]
     }
 
     const contentWidth = Math.max(1, width - 2)
@@ -341,7 +476,7 @@ export class TranscriptComponent implements Component {
     const visible = content.slice(offset, offset + this.thinkingMaxLines)
     const range = maxOffset === 0 ? '' : ` · ${offset + 1}-${Math.min(content.length, offset + this.thinkingMaxLines)}/${content.length}`
     return [
-      this.renderExecutionTitle(marker, status, `${label}${range}`, thinking.key, width, this.theme.reasoning),
+      this.renderExecutionTitle(marker, status, `${label}${range}`, width, this.theme.reasoning),
       ...visible.map(line => truncateToWidth(`${this.theme.reasoning('│')} ${line}`, width)),
     ]
   }
@@ -353,7 +488,6 @@ export class TranscriptComponent implements Component {
       marker,
       executionStatus(tool.lifecycle),
       tool.title,
-      tool.key,
       width,
       this.theme.tool,
     )
@@ -384,26 +518,72 @@ export class TranscriptComponent implements Component {
     return this.disclosure.expanded(key, this.showDetails)
   }
 
-  private renderDiff(diff: TranscriptDiffItem, width: number): string[] {
-    const model = buildDiffDisplay(diff.title, diff.diffs, this.diffLineStarts.get(diff.key) ?? [])
-    const collapsed = this.collapsedDiffs.has(diff.key)
+  private renderDiffBlock(diff: TranscriptDiffItem, width: number): string[] {
+    const contentWidth = this.contentWidth(width)
+    const starts = this.diffLineStarts.get(diff.key) ?? EMPTY_DIFF_STARTS
+    const disclosure = this.diffDisclosure.get(diff.key)
+    const status = executionStatus(diff.lifecycle)
+    const cached = this.diffBlocks.get(diff.key)
+    if (cached !== undefined
+      && cached.width === width
+      && cached.title === diff.title
+      && cached.diffs === diff.diffs
+      && cached.starts === starts
+      && cached.status === status
+      && cached.disclosure === disclosure) {
+      this.renderedDiffCollapsed.set(diff.key, cached.collapsed)
+      return cached.lines
+    }
+    const model = buildDiffDisplay(diff.title, diff.diffs, starts)
+    const collapsed = disclosure ?? model.lines.length > LARGE_DIFF_LINES
+    this.renderedDiffCollapsed.set(diff.key, collapsed)
     const title = this.renderDiffTitle(
       model.operation,
       model.target,
-      executionStatus(diff.lifecycle),
+      status,
       collapsed,
-      diff.key,
-      width,
+      contentWidth,
     )
-    if (collapsed) return [title]
+    const summary = this.renderDiffSummary(model, contentWidth)
+    const rendered = collapsed
+      ? [title, summary]
+      : this.renderDiffBody(model, title, summary, contentWidth)
+    const lines = this.frameContent(rendered, width)
+    this.diffBlocks.set(diff.key, {
+      width,
+      title: diff.title,
+      diffs: diff.diffs,
+      starts,
+      status,
+      disclosure,
+      collapsed,
+      lines,
+    })
+    return lines
+  }
+
+  private renderDiffBody(
+    model: ReturnType<typeof buildDiffDisplay>,
+    title: string,
+    summary: string,
+    width: number,
+  ): string[] {
     const numberWidth = Math.max(2, ...model.lines.map(line => String(line.number ?? '').length))
     const contentWidth = Math.max(1, width - DIFF_CONTENT_INDENT.length)
+    const syntaxHighlight = model.lines.length <= LARGE_DIFF_LINES
     return [
       title,
-      truncateToWidth(this.theme.reasoning(`${DIFF_CONTENT_INDENT}└ ${diffSummary(model.added, model.removed)}`), width),
-      ...model.lines.flatMap(line => this.renderDiffLine(line, contentWidth, numberWidth)
+      summary,
+      ...model.lines.flatMap(line => this.renderDiffLine(line, contentWidth, numberWidth, syntaxHighlight)
         .map(rendered => `${DIFF_CONTENT_INDENT}${rendered}`)),
     ]
+  }
+
+  private renderDiffSummary(model: ReturnType<typeof buildDiffDisplay>, width: number): string {
+    return truncateToWidth(
+      this.theme.reasoning(`${DIFF_CONTENT_INDENT}└ ${diffSummary(model.added, model.removed)}`),
+      width,
+    )
   }
 
   private renderDiffTitle(
@@ -411,15 +591,12 @@ export class TranscriptComponent implements Component {
     target: string,
     status: ExecutionStatus,
     collapsed: boolean,
-    key: string,
     width: number,
   ): string {
     const marker = `${collapsed ? DISCLOSURE_COLLAPSED : DISCLOSURE_EXPANDED} `
     const cleanOperation = sanitizeTerminalText(operation)
     const cleanTarget = sanitizeTerminalText(target)
     const visual = executionVisual(status, this.theme)
-    const plain = `${marker}${visual.glyph} ${cleanOperation}(${cleanTarget})`
-    if (this.hoveredBlockKey === key) return this.theme.hover(truncateToWidth(plain, width, '…'))
     return truncateToWidth([
       marker,
       this.renderExecutionGlyph(visual),
@@ -429,7 +606,12 @@ export class TranscriptComponent implements Component {
     ].join(''), width, '…')
   }
 
-  private renderDiffLine(line: DiffDisplayLine, width: number, numberWidth: number): string[] {
+  private renderDiffLine(
+    line: DiffDisplayLine,
+    width: number,
+    numberWidth: number,
+    syntaxHighlight: boolean,
+  ): string[] {
     switch (line.kind) {
       case 'file': return [truncateToWidth(this.theme.bold(sanitizeTerminalText(line.text)), width)]
       case 'gap': return [truncateToWidth(this.theme.dim('⋯'), width)]
@@ -446,7 +628,8 @@ export class TranscriptComponent implements Component {
         const gutterWidth = numberWidth + 3
         const firstPrefix = this.theme.error(`${String(line.number ?? '').padStart(numberWidth)} - `)
         const continuationPrefix = ' '.repeat(gutterWidth)
-        const code = highlightDiffText(sanitizeTerminalText(line.text), line.path, this.theme)
+        const clean = sanitizeTerminalText(line.text)
+        const code = syntaxHighlight ? highlightDiffText(clean, line.path, this.theme) : clean
         const wrapped = wrapTextWithAnsi(code, Math.max(1, width - gutterWidth))
         return (wrapped.length === 0 ? [''] : wrapped).map((part, index) => this.theme.diffRemoved(
           padToWidth(`${index === 0 ? firstPrefix : continuationPrefix}${part}`, width),
@@ -456,7 +639,8 @@ export class TranscriptComponent implements Component {
         const gutterWidth = numberWidth + 3
         const firstPrefix = this.theme.success(`${String(line.number ?? '').padStart(numberWidth)} + `)
         const continuationPrefix = ' '.repeat(gutterWidth)
-        const code = highlightDiffText(sanitizeTerminalText(line.text), line.path, this.theme)
+        const clean = sanitizeTerminalText(line.text)
+        const code = syntaxHighlight ? highlightDiffText(clean, line.path, this.theme) : clean
         const wrapped = wrapTextWithAnsi(code, Math.max(1, width - gutterWidth))
         return (wrapped.length === 0 ? [''] : wrapped).map((part, index) => this.theme.diffAdded(
           padToWidth(`${index === 0 ? firstPrefix : continuationPrefix}${part}`, width),
@@ -465,24 +649,19 @@ export class TranscriptComponent implements Component {
     }
   }
 
-  private renderBlockTitle(title: string, key: string, width: number, paint: (text: string) => string): string {
+  private renderBlockTitle(title: string, width: number, paint: (text: string) => string): string {
     const text = truncateToWidth(sanitizeTerminalText(title), width, '…')
-    return this.hoveredBlockKey === key
-      ? this.theme.hover(text)
-      : paint(text)
+    return paint(text)
   }
 
   private renderExecutionTitle(
     marker: string,
     status: ExecutionStatus,
     label: string,
-    key: string,
     width: number,
     labelPaint: (text: string) => string,
   ): string {
     const visual = executionVisual(status, this.theme)
-    const plain = `${marker} ${visual.glyph} ${label}`
-    if (this.hoveredBlockKey === key) return this.theme.hover(truncateToWidth(plain, width, '…'))
     return truncateToWidth(
       `${this.theme.dim(`${marker} `)}${this.renderExecutionGlyph(visual)} ${labelPaint(label)}`,
       width,
@@ -493,6 +672,36 @@ export class TranscriptComponent implements Component {
   private renderExecutionGlyph(visual: ExecutionVisual): string {
     const painted = visual.paint(visual.glyph)
     return visual.bold ? this.theme.bold(painted) : painted
+  }
+
+  private paintHoveredTitle(lines: string[]): void {
+    if (this.hoveredBlockKey === undefined) return
+    const hit = this.blockHitsByKey.get(this.hoveredBlockKey)
+    if (hit === undefined) {
+      this.hoveredBlockKey = undefined
+      return
+    }
+    const rendered = lines[hit.titleLine]
+    if (rendered === undefined) return
+    const plain = stripTerminalSequences(rendered)
+    const start = plain.search(/\S/u)
+    if (start < 0) return
+    const end = plain.trimEnd().length
+    lines[hit.titleLine] = `${plain.slice(0, start)}${this.theme.hover(plain.slice(start, end))}${plain.slice(end)}`
+  }
+
+  private blockHitAt(line: number): BlockHit | undefined {
+    let low = 0
+    let high = this.blockHits.length - 1
+    while (low <= high) {
+      const middle = (low + high) >>> 1
+      const hit = this.blockHits[middle]
+      if (hit === undefined) return undefined
+      if (line < hit.firstLine) high = middle - 1
+      else if (line > hit.lastLine) low = middle + 1
+      else return hit
+    }
+    return undefined
   }
 
   private resolveThinkingOffset(key: string, lines: number, limit: number, follow: boolean): { offset: number; maxOffset: number } {
@@ -511,6 +720,18 @@ export class TranscriptComponent implements Component {
     this.thinkingOffsets.set(key, next)
     if (next === maxOffset && delta > 0) this.pausedThinking.delete(key)
     else if (delta < 0) this.pausedThinking.add(key)
+    this.invalidate()
     return true
+  }
+
+  private invalidateContent(): void {
+    this.items = undefined
+    this.invalidate()
+  }
+
+  private pruneBlockCache<T>(cache: Map<string, T>, active: ReadonlySet<string>): void {
+    for (const key of cache.keys()) {
+      if (!active.has(key)) cache.delete(key)
+    }
   }
 }

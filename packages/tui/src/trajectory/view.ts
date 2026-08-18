@@ -17,6 +17,7 @@ import {
   type TrajectoryKind,
   type TrajectoryRecord,
 } from './records.ts'
+import { appendedHistoryEntries } from '../runtime/event-window.ts'
 import { executionVisual, formatExecutionDuration } from '../presentation/execution-style.ts'
 import { executionStatus } from '../runtime/lifecycle/index.ts'
 
@@ -199,6 +200,16 @@ export class TrajectoryView implements Component {
   /** Rebuild from the latest live event window while preserving the selected semantic record. */
   setState(state: Readonly<TuiState>): void {
     const sessionChanged = state.sessionId !== this.state.sessionId
+    const appended = sessionChanged
+      ? undefined
+      : appendedHistoryEntries(this.state.events, state.events)
+    if (!sessionChanged
+      && state.lifecycle === this.state.lifecycle
+      && appended !== undefined
+      && appended.every(entry => entry.event.type === 'assistant/chunk')) {
+      this.state = state
+      return
+    }
     const selectedKey = this.records[this.index]?.key
     this.state = state
     this.records = buildTrajectoryRecords(state.events, state.lifecycle)

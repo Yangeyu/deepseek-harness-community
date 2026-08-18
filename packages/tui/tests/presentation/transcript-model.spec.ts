@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { HistoryEntry, SessionSummary } from '@deepseek-ai/dsh-host-apiproxy'
 import type { TuiState } from '../../src/runtime/controller.ts'
 import {
+  appendTranscriptChunks,
   buildTranscriptItems,
   groupTranscriptActivity,
   type TranscriptDiffItem,
@@ -96,7 +97,7 @@ function lifecycle(
   }
 }
 
-const text: TranscriptTextItem = { kind: 'text', body: 'visible answer' }
+const text: TranscriptTextItem = { kind: 'text', key: 'answer', body: 'visible answer' }
 const diff: TranscriptDiffItem = {
   kind: 'diff',
   key: 'edit:diff',
@@ -175,6 +176,48 @@ describe('groupTranscriptActivity', () => {
 })
 
 describe('buildTranscriptItems', () => {
+  it('increments the streaming tail with full-rebuild parity', () => {
+    const first = entry({
+      event: {
+        type: 'assistant/chunk',
+        seq: 0,
+        time: 1,
+        data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'one' } },
+      },
+    })
+    const second = entry({
+      event: {
+        type: 'assistant/chunk',
+        seq: 1,
+        time: 2,
+        data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: ' two' } },
+      },
+    })
+    const answer = entry({
+      event: {
+        type: 'assistant/chunk',
+        seq: 2,
+        time: 3,
+        data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 1, text: 'answer' } },
+      },
+    })
+    const initialState = state([first], true)
+    const initial = buildTranscriptItems(initialState, true, false, 8)
+    const reasoningState = state([first, second], true)
+    const reasoning = appendTranscriptChunks(initial, [second], reasoningState.lifecycle, true)
+    expect(reasoning).toEqual(buildTranscriptItems(reasoningState, true, false, 8))
+
+    const answerState = state([first, second, answer], true)
+    const answered = appendTranscriptChunks(reasoning!, [answer], answerState.lifecycle, true)
+    expect(answered).toEqual(buildTranscriptItems(answerState, true, false, 8))
+
+    const hiddenInitial = buildTranscriptItems(initialState, false, false, 8)
+    const hiddenReasoning = appendTranscriptChunks(hiddenInitial, [second], reasoningState.lifecycle, false)
+    expect(hiddenReasoning).toEqual(buildTranscriptItems(reasoningState, false, false, 8))
+    const hiddenAnswer = appendTranscriptChunks(hiddenReasoning!, [answer], answerState.lifecycle, false)
+    expect(hiddenAnswer).toEqual(buildTranscriptItems(answerState, false, false, 8))
+  })
+
   it('completes streaming thinking when answer text starts in the same step', () => {
     const items = buildTranscriptItems(state([
       entry({
@@ -204,7 +247,7 @@ describe('buildTranscriptItems', () => {
           lifecycle: expect.any(Object),
         })],
       }),
-      { kind: 'text', body: 'streaming answer', markdown: true },
+      { kind: 'text', key: 'assistant:1:1:text', body: 'streaming answer', markdown: true },
     ])
     const activity = items[0]
     expect(activity?.kind === 'activity'

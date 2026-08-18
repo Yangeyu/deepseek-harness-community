@@ -392,6 +392,28 @@ describe('TuiApplication input routing', () => {
     expect(handlePointer).toHaveBeenCalledWith(0, 'click')
   })
 
+  it('renders hover only when the pointer enters or leaves a fold title', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    internals.layout.transcriptRowAt = vi.fn(() => 0)
+    const handlePointer = vi.fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+    internals.transcript.handlePointer = handlePointer
+    const requestRender = vi.mocked(internals.tui.requestRender)
+
+    internals.handleGlobalInput('\u001b[<35;1;1M')
+    internals.handleGlobalInput('\u001b[<35;2;1M')
+    internals.layout.transcriptRowAt = vi.fn(() => 4)
+    internals.handleGlobalInput('\u001b[<35;2;5M')
+
+    expect(handlePointer).toHaveBeenNthCalledWith(1, 0, 'move')
+    expect(handlePointer).toHaveBeenNthCalledWith(2, 0, 'move')
+    expect(handlePointer).toHaveBeenNthCalledWith(3, 4, 'move')
+    expect(requestRender).toHaveBeenCalledTimes(2)
+  })
+
   it('renders approval in the composer surface while keeping transcript wheel scrolling', () => {
     const app = application()
     const internals = app as unknown as AppInternals
@@ -412,7 +434,7 @@ describe('TuiApplication input routing', () => {
     expect(approval).toContain('╰─ ↑/↓ select · Enter confirm · Esc/Ctrl+C interrupt task ─')
 
     expect(internals.handleGlobalInput('\u001b[<64;8;9M')).toEqual({ consume: true })
-    expect(scrollTranscript).toHaveBeenCalledWith(-3)
+    expect(scrollTranscript).toHaveBeenCalledWith(-1)
     expect(internals.transcript.handlePointer).not.toHaveBeenCalledWith(expect.any(Number), 'wheel-up')
 
     internals.resolveInteraction(approvalResolution(prompt, 'cancelled'))

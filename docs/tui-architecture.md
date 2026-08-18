@@ -17,7 +17,7 @@ Harness Host
       │ transport-neutral ApiProxy plus narrow Command/Memory/Vision/Web ports
       ▼
 Terminal runtime
-  HarnessController · semantic keymap · submission coordinator · Slash/Skill catalogs · trajectory model
+  HarnessController · append-only event window · lifecycle projection · submission coordinator · catalogs
       │
       │ immutable-by-convention state and semantic records
       ▼
@@ -123,6 +123,12 @@ reducing the number of visible files.
     execution do not pass through interactive startup. Launcher overlays are
     consumed before app arguments, while the TUI receives one startup intent for
     session selection, controls, attachments, and the optional initial prompt.
+15. Append-only streaming and structural history replacement are different
+    runtime operations. Semantically inert chunks reuse the current lifecycle
+    and Trajectory projections; Transcript updates only its live tail and keeps
+    stable rendered blocks. Reconnect, paging, replacement, and lifecycle
+    boundaries fall back to the canonical full projection, so optimization does
+    not create a second source of truth.
 
 ## Transcript interaction contract
 
@@ -140,22 +146,28 @@ reducing the number of visible files.
   opens them.
 - Title rows are the only click targets. The pointer wheel scrolls an expanded
   bounded Thought first; every other target falls through to conversation
-  scrolling.
+  scrolling one rendered row at a time. Mouse tracking reports presses, drags,
+  releases, wheel input, and passive position. Passive movement invalidates the
+  presentation only when its fold-title target changes, preserving hover
+  feedback without rebuilding on movement within the same title.
 - Main-screen text selection owns rendered cell coordinates, grapheme-aware
   highlighting, and plain-text extraction. The application owns clipboard I/O.
   A primary press starts one gesture; dragging updates selection, while release
   either copies a non-empty range or dispatches the existing title click. Block
   actions therefore never run speculatively on button press.
 - Diff is intentionally specialized: returned file evidence never enters an
-  Activity group, remains top-level regardless of execution status, and opens
-  by default. Its compacted content renders inline in the conversation and
-  never owns a nested viewport.
+  Activity group and remains top-level regardless of execution status. Small
+  edits open by default; large edits start as a title and summary and expand on
+  demand. Content renders inline in the conversation and never owns a nested
+  viewport.
 
 ## Current components
 
 - `HarnessController` owns session switching, stream reconciliation, history
   paging, projection watermarks, pending submissions, and atomic publication of
-  one resolved lifecycle snapshot with every state update.
+  one resolved lifecycle snapshot with every state update. Its lifecycle
+  projection retains semantic identity across inert token deltas and delegates
+  structural changes to the canonical lifecycle builder.
 - `TerminalCommandDirectory` merges local interaction commands with the
   effective agent-scoped `ctx.commands` descriptors. Help and autocomplete read
   the same descriptor list, while a narrow application port executes resolved
@@ -218,6 +230,11 @@ reducing the number of visible files.
   each other's models.
   `TranscriptComponent` paints and interacts with those items, while
   `TrajectoryView` provides the diagnostic hierarchy. None owns persistence.
+  Stable item keys retain rendered Markdown, prompt, and Diff blocks across
+  viewport movement. Append-only assistant chunks update the live Transcript
+  tail; Trajectory keeps its semantic record index until a lifecycle boundary
+  or durable event changes it. Async Diff line lookups scan only new events and
+  publish one immutable result batch.
   Trajectory records keep a Tool's callable name separate from its operation
   title; one presentation projection then orders ledger identity, detail heading,
   and Summary consistently. One ledger-row painter owns focus for every record
@@ -291,10 +308,12 @@ architecture required to support that sequence.
 
 ### v0.1.8 implemented architecture
 
-- One private `runtime/lifecycle` module rebuilds the current event window into
-  immutable semantic nodes and generation-scoped Vision activity.
-- Controller updates reuse the existing lifecycle snapshot unless the event
-  window, Host running state, Session generation, or Vision overlay changes.
+- One private `runtime/lifecycle` module canonically projects the current event
+  window into immutable semantic nodes and generation-scoped Vision activity.
+- Controller updates reuse the existing lifecycle snapshot while append-only
+  stream chunks leave lifecycle semantics unchanged. Event replacement, Host
+  running state, Session generation, Vision activity, and semantic boundaries
+  use the canonical full projection.
 - Transcript, Trajectory, composer status, Diff, and Activity consume that one
   snapshot; copied statuses, consumer pairing Maps, and child-running fallbacks
   have been removed.

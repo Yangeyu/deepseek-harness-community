@@ -225,6 +225,46 @@ describe('TranscriptComponent', () => {
     expect(output).not.toContain('```')
   })
 
+  it('reuses the rendered document until transcript inputs or width change', () => {
+    const events = [entry({
+      event: {
+        type: 'assistant/message',
+        seq: 0,
+        time: 1,
+        surfaceOp: 'append',
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'm-cache',
+            role: 'assistant',
+            source: { kind: 'model', provider: 'p', model: 'm' },
+            content: [{ type: 'text', text: 'cached **markdown**' }],
+          },
+        },
+      },
+    })]
+    const snapshot = state(events)
+    const transcript = new TranscriptComponent(snapshot, createTheme(false), true, 8)
+
+    const first = transcript.render(80)
+    expect(transcript.render(80)).toBe(first)
+
+    transcript.setState({ ...snapshot, projections: { ...snapshot.projections } })
+    expect(transcript.render(80)).toBe(first)
+    expect(transcript.render(72)).not.toBe(first)
+
+    transcript.setState(state([...events, entry({
+      event: {
+        type: 'turn/end',
+        seq: 1,
+        time: 2,
+        data: { reason: { kind: 'max-tokens' } },
+      },
+    })]))
+    expect(transcript.render(80)).not.toBe(first)
+  })
+
   it('renders deep Markdown headings without exposing their source markers', () => {
     const transcript = new TranscriptComponent(state([
       entry({
@@ -285,18 +325,20 @@ describe('TranscriptComponent', () => {
     expect(collapsed).toContain('final answer')
 
     expect(transcript.handlePointer(0, 'move')).toBe(true)
-    const hovered = transcript.render(80).join('\n')
-    expect(hovered).toContain('\u001b[1m\u001b[36m› Worked · 1 thought\u001b[39m\u001b[22m')
-    expect(hovered).not.toContain('\u001b[7m')
+    const hovered = transcript.render(80)
+    expect(hovered.join('\n')).toContain('\u001b[1m\u001b[36m› Worked · 1 thought\u001b[39m\u001b[22m')
+    expect(transcript.handlePointer(0, 'move')).toBe(false)
+    expect(transcript.render(80)).toBe(hovered)
+    expect(transcript.handlePointer(2, 'move')).toBe(true)
+
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const activity = transcript.render(80).join('\n')
     expect(stripTerminalSequences(activity)).toContain('└─ › • Thought')
     expect(activity).not.toContain('thought 1')
 
-    expect(transcript.handlePointer(1, 'move')).toBe(true)
     expect(transcript.handlePointer(1, 'click')).toBe(true)
     const expanded = transcript.render(80).join('\n')
-    expect(expanded).toContain('⌄ • Thought')
+    expect(stripTerminalSequences(expanded)).toContain('⌄ • Thought')
     expect(expanded).toContain('thought 1')
     expect(expanded).toContain('\u001b[38;2;188;198;214m')
     expect(expanded).not.toContain('thought 8')
@@ -304,9 +346,9 @@ describe('TranscriptComponent', () => {
 
     expect(transcript.handlePointer(2, 'wheel-down')).toBe(true)
     const scrolled = transcript.render(80).join('\n')
+    expect(scrolled).toContain('thought 2')
     expect(scrolled).toContain('thought 4')
-    expect(scrolled).toContain('thought 6')
-    expect(scrolled).not.toContain('thought 8')
+    expect(scrolled).not.toContain('thought 5')
 
     expect(transcript.handlePointer(1, 'click')).toBe(true)
     expect(transcript.render(80).join('\n')).not.toContain('thought 5')
@@ -368,7 +410,7 @@ describe('TranscriptComponent', () => {
     expect(transcript.handlePointer(2, 'wheel-up')).toBe(true)
     transcript.setState(state([...events, reasoningChunk(5, '- stream 6\n')], true))
     const paused = transcript.render(80).join('\n')
-    expect(paused).toContain('stream 1')
+    expect(paused).toContain('stream 2')
     expect(paused).not.toContain('stream 6')
   })
 
@@ -720,7 +762,6 @@ describe('TranscriptComponent', () => {
     expect(collapsed).not.toContain('render details')
     expect(collapsed).not.toContain('3 matches')
 
-    expect(transcript.handlePointer(0, 'move')).toBe(true)
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const activityOutput = transcript.render(80).join('\n')
     const activity = stripTerminalSequences(activityOutput)
@@ -728,7 +769,6 @@ describe('TranscriptComponent', () => {
     expect(activityOutput).toContain('\u001b[1m\u001b[32m•\u001b[39m\u001b[22m')
     expect(activityOutput).toContain('\u001b[38;2;125;211;252mSearch project\u001b[39m')
 
-    expect(transcript.handlePointer(1, 'move')).toBe(true)
     expect(transcript.handlePointer(1, 'click')).toBe(true)
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(expanded).toContain('⌄ • Search project')
@@ -863,12 +903,60 @@ describe('TranscriptComponent', () => {
     expect(plainInitial).toContain('5   end()')
     expect(initial).toContain('\u001b[48;2;12;48;28m')
     expect(transcript.handlePointer(1, 'wheel-down')).toBe(false)
-    expect(transcript.handlePointer(0, 'move')).toBe(true)
-    expect(transcript.render(80).join('\n')).not.toContain('\u001b[7m')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› • Update(src/app.ts)')
     expect(collapsed).not.toContain('const mode')
+  })
+
+  it('keeps a large file edit responsive while preserving full on-demand evidence', () => {
+    const newText = Array.from({ length: 201 }, (_, index) => `export const value${index} = ${index}`).join('\n')
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'tool/call',
+          seq: 0,
+          time: 1,
+          data: { turn: 1, step: 1, callId: 'call-large-diff', name: 'write', arguments: '{}' },
+        },
+      }),
+      entry({
+        event: {
+          type: 'tool/result',
+          seq: 1,
+          time: 2,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'm-large-diff',
+              role: 'user',
+              source: { kind: 'tool', callId: 'call-large-diff' },
+              content: [{ type: 'tool-result', toolCallId: 'call-large-diff', content: [] }],
+            },
+          },
+        },
+        view: {
+          for: 'result',
+          view: {
+            card: 'diff',
+            title: 'Write src/generated.ts',
+            diffs: [{ path: 'src/generated.ts', oldText: null, newText }],
+          },
+        },
+      }),
+    ]), createTheme(true), true, 8)
+
+    const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(collapsed).toContain('› • Write(src/generated.ts)')
+    expect(collapsed).toContain('└ Added 201 lines')
+    expect(collapsed).not.toContain('value200')
+
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(expanded).toContain('⌄ • Write(src/generated.ts)')
+    expect(expanded).toContain('201 + export const value200 = 200')
   })
 
   it('keeps returned file evidence top-level when an edit reports failure', () => {

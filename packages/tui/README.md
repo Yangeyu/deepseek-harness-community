@@ -331,12 +331,16 @@ leaving stale live output. When answer text starts streaming, its preceding
 Thought settles immediately. Thought, tool, and Diff titles share `◦` running,
 `•` completed, `×` failed, and `!` interrupted status glyphs. File edits are
 hard Activity boundaries: returned Diff evidence remains a top-level
-conversation card regardless of execution status and opens by default.
+conversation card regardless of execution status; small edits open by default.
 `Ctrl+O` expands or collapses Activity, Thought, and tool details together.
 The pointer wheel scrolls expanded thinking inside its bounded viewport. File
 diffs render inline without a nested scroll window, so the wheel over them and
-ordinary output scrolls the conversation. Scrolling upward pauses automatic
-tail following, and PageDown or a downward wheel returns to live output. Drag
+ordinary output scrolls the conversation one rendered row at a time. Large
+file edits start as a compact title and change summary and expand when clicked;
+small edits remain open by default. Scrolling upward pauses automatic tail
+following, and PageDown or a downward wheel returns to live output. Passive
+pointer movement preserves fold-title hover feedback, but schedules a render
+only when the pointer enters, leaves, or changes the hovered title. Drag
 directly across rendered TUI text to select it; the selected
 cells are highlighted and copied to the system clipboard when the primary
 button is released. A primary-button gesture toggles a block only when it did
@@ -470,5 +474,9 @@ therefore add render behavior through Harness's existing presenter extension
 point without changing the terminal controller.
 
 Applied diff line numbers are resolved asynchronously against the workspace and
-cached outside the renderer. Missing, deleted, or ambiguous historical hunks
-still render correctly without inventing an absolute line number.
+cached outside the renderer. New event suffixes are scanned incrementally and
+all newly resolved cards publish as one immutable batch. Missing, deleted, or
+ambiguous historical hunks still render correctly without inventing an
+absolute line number. Transcript Markdown, prompts, and Diffs are cached by
+stable semantic key; append-only stream chunks update only the live tail while
+history replacement still uses the canonical full projection.

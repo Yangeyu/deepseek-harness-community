@@ -1,4 +1,4 @@
-/** Enable SGR mouse coordinates and pointer-motion reports for the presentation layer. */
+/** Enable SGR coordinates and passive motion reports for title hover feedback. */
 export const ENABLE_MOUSE_TRACKING = '\u001b[?1000h\u001b[?1003h\u001b[?1006h'
 
 /** Restore normal terminal-owned pointer behavior. */

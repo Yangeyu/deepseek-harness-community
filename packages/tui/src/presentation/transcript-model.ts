@@ -14,6 +14,7 @@ import {
   visionLifecycleKey,
   type LifecycleAggregate,
   type LifecycleNode,
+  type LifecycleSnapshot,
 } from '../runtime/lifecycle/index.ts'
 import { displayUnknown, sanitizeTerminalText } from '../text.ts'
 
@@ -21,6 +22,7 @@ export type TranscriptTone = 'accent' | 'dim' | 'error' | 'warning'
 
 export interface TranscriptTextItem {
   kind: 'text'
+  key: string
   label?: string
   tone?: TranscriptTone
   body?: string
@@ -30,9 +32,9 @@ export interface TranscriptTextItem {
 
 export interface TranscriptPromptItem {
   kind: 'prompt'
+  key: string
   body: string
   promptStatus?: string
-  key?: string
   lifecycle?: LifecycleNode
 }
 
@@ -208,6 +210,111 @@ export function groupTranscriptActivity(
   return grouped
 }
 
+function runtimeTail(item: TranscriptItem): boolean {
+  if (item.kind === 'prompt') return item.key.startsWith('queue:') || item.key.startsWith('pending:')
+  if (item.kind === 'text') return item.key.startsWith('session:')
+  return item.kind === 'activity' && item.items.some(child => child.lifecycle.durability === 'ephemeral')
+}
+
+function insertBeforeRuntimeTail(items: TranscriptItem[], item: TranscriptItem): TranscriptItem[] {
+  const index = items.findIndex(runtimeTail)
+  const next = [...items]
+  next.splice(index < 0 ? next.length : index, 0, item)
+  return next
+}
+
+function refreshThought(
+  items: TranscriptItem[],
+  key: string,
+  lifecycle: LifecycleSnapshot,
+  appendText?: string,
+): { items: TranscriptItem[]; found: boolean } {
+  const node = lifecycle.get(key)
+  if (node === undefined) return { items, found: false }
+  const index = items.findIndex(item => item.kind === 'activity' && item.items.some(child => child.key === key))
+  if (index < 0) return { items, found: false }
+  const activity = items[index]
+  if (activity?.kind !== 'activity') return { items, found: false }
+  const children = activity.items.map(child => child.key === key && child.kind === 'thinking'
+    ? { ...child, text: `${child.text}${appendText ?? ''}`, lifecycle: node }
+    : child)
+  const next = [...items]
+  next[index] = { ...activity, items: children, lifecycle: aggregateLifecycle(children.map(child => child.lifecycle)) }
+  return { items: next, found: true }
+}
+
+function appendThinking(
+  items: TranscriptItem[],
+  thinking: TranscriptThinkingItem,
+): TranscriptItem[] {
+  const tailIndex = items.findIndex(runtimeTail)
+  const insertion = tailIndex < 0 ? items.length : tailIndex
+  const previous = items[insertion - 1]
+  if (previous?.kind !== 'activity') {
+    return insertBeforeRuntimeTail(items, {
+      kind: 'activity',
+      key: `activity:${thinking.key}`,
+      items: [thinking],
+      lifecycle: aggregateLifecycle([thinking.lifecycle]),
+    })
+  }
+  const children = [...previous.items, thinking]
+  const next = [...items]
+  next[insertion - 1] = {
+    ...previous,
+    items: children,
+    lifecycle: aggregateLifecycle(children.map(child => child.lifecycle)),
+  }
+  return next
+}
+
+/** Increment the live transcript tail without replaying the durable event window. */
+export function appendTranscriptChunks(
+  current: TranscriptItem[],
+  entries: readonly HistoryEntry[],
+  lifecycle: LifecycleSnapshot,
+  showReasoning: boolean,
+): TranscriptItem[] | undefined {
+  if (!entries.every(entry => entry.event.type === 'assistant/chunk')) return undefined
+  let items = current
+  for (const entry of entries) {
+    if (entry.event.type !== 'assistant/chunk') return undefined
+    const event = entry.event
+    const chunk = event.data.chunk
+    const step = contentStepKey(event.data.turn, event.data.step)
+    const thoughtKey = String(thoughtLifecycleKey(event.data.turn, event.data.step))
+    if (chunk.type === 'reasoning-delta' && chunk.text !== '') {
+      if (!showReasoning) continue
+      const refreshed = refreshThought(items, thoughtKey, lifecycle, chunk.text)
+      if (refreshed.found) {
+        items = refreshed.items
+        continue
+      }
+      const node = lifecycle.get(thoughtKey)
+      if (node !== undefined) {
+        items = appendThinking(items, { kind: 'thinking', key: thoughtKey, text: chunk.text, lifecycle: node })
+      }
+      continue
+    }
+    if (chunk.type !== 'text-delta' || chunk.text === '') continue
+    items = refreshThought(items, thoughtKey, lifecycle).items
+    const textKey = `assistant:${step}:text`
+    const textIndex = items.findIndex(item => item.kind === 'text' && item.key === textKey)
+    if (textIndex < 0) {
+      items = insertBeforeRuntimeTail(items, {
+        kind: 'text', key: textKey, body: chunk.text, markdown: true,
+      })
+      continue
+    }
+    const text = items[textIndex]
+    if (text?.kind !== 'text') continue
+    const next = [...items]
+    next[textIndex] = { ...text, body: `${text.body ?? ''}${chunk.text}` }
+    items = next
+  }
+  return items
+}
+
 /** Rebuild the visible transcript projection from the current session state. */
 export function buildTranscriptItems(
   state: Readonly<TuiState>,
@@ -260,11 +367,19 @@ export function buildTranscriptItems(
           const lifecycle = state.lifecycle.get(promptLifecycleKey(String(event.data.id)))
           items.push({
             kind: 'prompt',
+            key: `prompt:${String(event.data.id)}`,
             body: text,
-            ...lifecycle === undefined ? {} : { key: String(lifecycle.key), lifecycle },
+            ...lifecycle === undefined ? {} : { lifecycle },
           })
         } else {
-          items.push({ kind: 'text', label: 'Context', tone: 'dim', body: text, dim: true })
+          items.push({
+            kind: 'text',
+            key: `context:${String(event.data.id)}`,
+            label: 'Context',
+            tone: 'dim',
+            body: text,
+            dim: true,
+          })
         }
         break
       }
@@ -305,14 +420,26 @@ export function buildTranscriptItems(
         partial.text += chunk.text
         if (partial.textIndex === undefined) {
           partial.textIndex = items.length
-          items.push({ kind: 'text' })
+          items.push({ kind: 'text', key: `assistant:${key}:text` })
         }
-        items[partial.textIndex] = { kind: 'text', body: partial.text, markdown: true }
+        items[partial.textIndex] = {
+          kind: 'text',
+          key: `assistant:${key}:text`,
+          body: partial.text,
+          markdown: true,
+        }
         break
       }
       case 'assistant/message': {
         if (event.surfaceOp !== 'append') {
-          items.push({ kind: 'text', label: 'Context', tone: 'dim', body: 'Earlier model context was compacted.', dim: true })
+          items.push({
+            kind: 'text',
+            key: `compaction:${String(event.seq)}`,
+            label: 'Context',
+            tone: 'dim',
+            body: 'Earlier model context was compacted.',
+            dim: true,
+          })
           break
         }
         const reasoning = reasoningText(event.data.message.content)
@@ -328,7 +455,14 @@ export function buildTranscriptItems(
           }
         }
         const text = messageText(event.data.message.content, false)
-        if (text.trim() !== '') items.push({ kind: 'text', body: text, markdown: true })
+        if (text.trim() !== '') {
+          items.push({
+            kind: 'text',
+            key: `assistant:${contentStepKey(event.data.turn, event.data.step)}:text`,
+            body: text,
+            markdown: true,
+          })
+        }
         break
       }
       case 'tool/call': {
@@ -374,6 +508,7 @@ export function buildTranscriptItems(
         const result = completed?.event.type === 'command/done' ? completed.event.data : undefined
         items.push({
           kind: 'text',
+          key: `command:${String(event.data.commandId)}`,
           label: lifecycle.state.phase !== 'settled'
             ? 'Command running'
             : lifecycle.state.outcome === 'failed' ? 'Command failed' : 'Command',
@@ -392,6 +527,7 @@ export function buildTranscriptItems(
         if (lifecycle?.state.phase === 'settled' && lifecycle.state.started === undefined) {
           items.push({
             kind: 'text',
+            key: `command:${String(event.data.commandId)}:done`,
             label: event.data.kind === 'error' ? 'Command failed' : 'Command',
             tone: event.data.kind === 'error' ? 'error' : 'accent',
             body: event.data.text ?? `${event.data.kind} command completion`,
@@ -401,10 +537,17 @@ export function buildTranscriptItems(
       }
       case 'turn/end':
         if (event.data.reason.kind === 'error') {
-          items.push({ kind: 'text', label: 'Error', tone: 'error', body: event.data.reason.error.message })
+          items.push({
+            kind: 'text',
+            key: `turn:${String(event.seq)}:error`,
+            label: 'Error',
+            tone: 'error',
+            body: event.data.reason.error.message,
+          })
         } else if (event.data.reason.kind === 'max-tokens') {
           items.push({
             kind: 'text',
+            key: `turn:${String(event.seq)}:max-tokens`,
             label: 'Notice',
             tone: 'warning',
             body: 'The response reached the model output limit. Send “continue” to proceed.',
@@ -418,7 +561,7 @@ export function buildTranscriptItems(
 
   const grouped = groupTranscriptActivity(items)
   const visibleQueueRpcIds = new Set<string>()
-  for (const item of state.queue) {
+  for (const [index, item] of state.queue.entries()) {
     if (item.placement === 'context') continue
     const body = messageText(item.message.content, false)
     if (body.trim() === '') continue
@@ -426,6 +569,7 @@ export function buildTranscriptItems(
     if (source.kind === 'user' && 'rpcId' in source) visibleQueueRpcIds.add(String(source.rpcId))
     grouped.push({
       kind: 'prompt',
+      key: `queue:${source.kind === 'user' && 'rpcId' in source ? String(source.rpcId) : String(index)}`,
       body,
       promptStatus: item.placement === 'steering' ? 'Steering next step…' : 'Queued',
     })
@@ -436,6 +580,7 @@ export function buildTranscriptItems(
     if (!promptVisible) {
       grouped.push({
         kind: 'prompt',
+        key: `pending:${String(submission.key)}`,
         body: submission.text,
         ...submission.intent === 'queueing'
           ? { promptStatus: 'Queueing…' }
@@ -457,7 +602,11 @@ export function buildTranscriptItems(
       }]))
     }
   }
-  if (state.notice !== undefined) grouped.push({ kind: 'text', label: 'Notice', tone: 'accent', body: state.notice })
-  if (state.error !== undefined) grouped.push({ kind: 'text', label: 'Error', tone: 'error', body: state.error })
+  if (state.notice !== undefined) {
+    grouped.push({ kind: 'text', key: 'session:notice', label: 'Notice', tone: 'accent', body: state.notice })
+  }
+  if (state.error !== undefined) {
+    grouped.push({ kind: 'text', key: 'session:error', label: 'Error', tone: 'error', body: state.error })
+  }
   return grouped
 }

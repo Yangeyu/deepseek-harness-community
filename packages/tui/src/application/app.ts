@@ -759,6 +759,19 @@ export class TuiApplication implements TuiControllerSink {
 
   private handleMouse(mouse: MouseAction): void {
     const blocked = this.composerModalActive || this.tui.hasOverlay()
+    if (mouse.kind === 'move') {
+      const line = blocked
+        ? -1
+        : this.layout.transcriptRowAt(
+            mouse.y,
+            this.tui.captureRenderState().previousViewportTop,
+          )
+      if (this.transcript.handlePointer(line, 'move')) {
+        this.updateStatus(this.controller.current)
+        this.tui.requestRender()
+      }
+      return
+    }
     const renderState = this.tui.captureRenderState()
     const transcriptLine = this.layout.transcriptRowAt(mouse.y, renderState.previousViewportTop)
     let changed = false
@@ -772,7 +785,7 @@ export class TuiApplication implements TuiControllerSink {
             mouse.direction < 0 ? 'wheel-up' : 'wheel-down',
           )
       changed = blockScrolled || changed
-      if (!blockScrolled) changed = this.layout.scrollTranscript(mouse.direction * 3) || changed
+      if (!blockScrolled) changed = this.layout.scrollTranscript(mouse.direction) || changed
     } else if (blocked) {
       changed = this.transcript.handlePointer(-1, 'move') || changed
       changed = this.tui.clearTextSelection() || changed

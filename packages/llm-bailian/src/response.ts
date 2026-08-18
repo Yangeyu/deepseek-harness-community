@@ -7,6 +7,7 @@ interface OpenBlock {
   index: number
   kind: 'text' | 'reasoning' | 'tool-call'
   text: string
+  emittedArguments: number
   callId?: string
   name?: string
 }
@@ -41,11 +42,16 @@ function closeBlock(block: OpenBlock): ContentBlock {
   switch (block.kind) {
     case 'text': return { type: 'text', text: block.text }
     case 'reasoning': return { type: 'reasoning', text: block.text }
-    case 'tool-call': return {
-      type: 'tool-call',
-      id: CallId(block.callId ?? ''),
-      name: block.name ?? '',
-      arguments: block.text,
+    case 'tool-call': {
+      if (block.callId === undefined) {
+        throw new LlmError('Bailian tool call completed without a non-empty id', 'MALFORMED_RESPONSE')
+      }
+      return {
+        type: 'tool-call',
+        id: CallId(block.callId),
+        name: block.name ?? '',
+        arguments: block.text,
+      }
     }
   }
 }
@@ -60,7 +66,7 @@ export async function* translateResponse(payloads: AsyncIterable<string>): Async
   let pendingUsage: TokenUsage | undefined
 
   function open(kind: OpenBlock['kind']): OpenBlock {
-    const block: OpenBlock = { index: nextIndex++, kind, text: '' }
+    const block: OpenBlock = { index: nextIndex++, kind, text: '', emittedArguments: 0 }
     order.push(block)
     return block
   }
@@ -120,16 +126,24 @@ export async function* translateResponse(payloads: AsyncIterable<string>): Async
           toolBlocks.set(call.index, block)
           yield { type: 'block-start', index: block.index, blockType: 'tool-call' }
         }
-        if (call.id !== undefined) block.callId = call.id
+        if (call.id !== undefined && call.id !== '') {
+          if (block.callId !== undefined && block.callId !== call.id) {
+            throw new LlmError('Bailian changed a tool call id while streaming', 'MALFORMED_RESPONSE')
+          }
+          block.callId = call.id
+        }
         if (call.function?.name !== undefined) block.name = call.function.name
         const fragment = call.function?.arguments ?? ''
         block.text += fragment
+        if (block.callId === undefined) continue
+        const argumentsDelta = block.text.slice(block.emittedArguments)
+        block.emittedArguments = block.text.length
         yield {
           type: 'tool-call-delta',
           index: block.index,
-          id: CallId(block.callId ?? ''),
+          id: CallId(block.callId),
           ...block.name === undefined ? {} : { name: block.name },
-          argumentsDelta: fragment,
+          argumentsDelta,
         }
       }
 

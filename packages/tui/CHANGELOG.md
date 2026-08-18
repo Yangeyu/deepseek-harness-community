@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.1.14 - 2026-08-18
+
+- Make conversation and bounded Thought wheels advance one rendered row, and
+  preserve fold-title hover while scheduling a render only when the hovered
+  title changes.
+- Keep long streaming tasks responsive with append-only lifecycle, Transcript,
+  and Trajectory projections plus stable rendered-block caches. Batch async Diff
+  line resolution, compact large file edits by default, and avoid expensive
+  syntax decoration when a large edit is explicitly expanded.
+- Prevent Bailian streaming from replacing a valid tool-call id with an empty
+  continuation value; buffer fragments until an id arrives and fail malformed
+  responses before they can enter durable Session history.
+
+## 0.1.13 - 2026-08-18
+
 - Align the DeepSeek Harness dependency graph on `0.1.0-rc.7` and gate
   releases with a strict clean-install check so peer-version drift cannot
   silently ship another uninstallable package.

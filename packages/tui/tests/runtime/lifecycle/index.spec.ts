@@ -9,6 +9,7 @@ import {
   executionStatus,
   lifecycleEndedAt,
   lifecycleStartedAt,
+  LifecycleProjection,
   promptLifecycleKey,
   stepLifecycleKey,
   thoughtLifecycleKey,
@@ -128,6 +129,39 @@ describe('execution lifecycle', () => {
     expect(thought === undefined ? undefined : executionStatus(thought)).toBe('completed')
     expect(thought === undefined ? undefined : lifecycleStartedAt(thought)).toBe(110)
     expect(thought === undefined ? undefined : lifecycleEndedAt(thought)).toBe(130)
+  })
+
+  it('reuses lifecycle semantics for inert stream deltas and rebuilds at boundaries', () => {
+    const projection = new LifecycleProjection(buildLifecycleSnapshot)
+    const history = entries([
+      { event: { type: 'step/start', seq: 0, time: 100, data: { turn: 1, step: 2 } } },
+      { event: { type: 'assistant/chunk', seq: 1, time: 110, data: { turn: 1, step: 2, chunk: { type: 'reasoning-delta', index: 0, text: 'one' } } } },
+    ])
+    const input = (current: HistoryEntry[]) => ({
+      sessionId: 'session-test', generation: 4, entries: current, sessionRunning: true,
+    })
+    const started = projection.project(input(history))
+    const continuedHistory = [...history, ...entries([
+      { event: { type: 'assistant/chunk', seq: 2, time: 120, data: { turn: 1, step: 2, chunk: { type: 'reasoning-delta', index: 0, text: 'two' } } } },
+    ])]
+    const continued = projection.project(input(continuedHistory))
+    expect(continued).toBe(started)
+
+    const answeredHistory = [...continuedHistory, ...entries([
+      { event: { type: 'assistant/chunk', seq: 3, time: 130, data: { turn: 1, step: 2, chunk: { type: 'text-delta', index: 1, text: 'answer' } } } },
+    ])]
+    const answered = projection.project(input(answeredHistory))
+    expect(answered).not.toBe(continued)
+    expect(executionStatus(answered.get(thoughtLifecycleKey(1, 2))!)).toBe('completed')
+
+    const completedHistory = [...answeredHistory, ...entries([
+      { event: { type: 'assistant/chunk', seq: 4, time: 140, data: { turn: 1, step: 2, chunk: { type: 'text-delta', index: 1, text: ' more' } } } },
+    ])]
+    const completed = projection.project(input(completedHistory))
+    expect(completed).toBe(answered)
+    const rebuilt = buildLifecycleSnapshot(input(completedHistory))
+    expect(completed.ordered()).toEqual(rebuilt.ordered())
+    expect(completed.diagnostics()).toEqual(rebuilt.diagnostics())
   })
 
   it('closes unmatched children from structural parents without hiding missing results', () => {
