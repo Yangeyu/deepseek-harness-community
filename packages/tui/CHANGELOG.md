@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.1.16 - 2026-08-18
+
 - Preserve the visible conversation viewport when expanding or collapsing
   transcript details.
 - Keep pasted and attached image references at the Composer cursor, render them
