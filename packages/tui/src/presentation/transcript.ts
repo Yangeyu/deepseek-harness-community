@@ -239,9 +239,7 @@ export class TranscriptComponent implements Component {
     this.activityExecutionKeys = new Map()
     for (const item of items) {
       if (item.kind !== 'activity') continue
-      const keys = item.items.map(child => child.key)
-      this.activityExecutionKeys.set(item.key, keys)
-      this.disclosure.observeActivity(keys, item.lifecycle.status)
+      this.activityExecutionKeys.set(item.key, item.items.map(child => child.key))
     }
     for (const [index, item] of items.entries()) {
       if (index > 0) lines.push('')
@@ -336,7 +334,6 @@ export class TranscriptComponent implements Component {
     const childWidth = Math.max(1, contentWidth - ACTIVITY_CHILD_INDENT)
     for (const [index, item] of activity.items.entries()) {
       const last = index === activity.items.length - 1
-      this.disclosure.observe(item.key, executionStatus(item.lifecycle))
       const rendered = item.kind === 'thinking'
         ? this.renderThinking(item, childWidth)
         : this.renderTool(item, childWidth)
@@ -371,7 +368,7 @@ export class TranscriptComponent implements Component {
       ? undefined
       : latest.kind === 'thinking'
         ? executionLabel('thought', executionStatus(latest.lifecycle))
-        : latest.title
+        : latest.toolName
     const title = [lead, ...counts, latestLabel].filter(value => value !== undefined).join(' · ')
     const paint = status === 'failed'
       ? this.theme.error
@@ -487,7 +484,7 @@ export class TranscriptComponent implements Component {
     const renderedTitle = this.renderExecutionTitle(
       marker,
       executionStatus(tool.lifecycle),
-      tool.title,
+      tool.operation,
       width,
       this.theme.tool,
     )
@@ -535,7 +532,7 @@ export class TranscriptComponent implements Component {
       return cached.lines
     }
     const model = buildDiffDisplay(diff.title, diff.diffs, starts)
-    const collapsed = disclosure ?? model.lines.length > LARGE_DIFF_LINES
+    const collapsed = disclosure ?? (status === 'failed' || model.lines.length > LARGE_DIFF_LINES)
     this.renderedDiffCollapsed.set(diff.key, collapsed)
     const title = this.renderDiffTitle(
       model.operation,

@@ -141,9 +141,12 @@ reducing the number of visible files.
   Explicit pointer choices override that default until the next global toggle.
   Activity-level choices are indexed by their semantic child keys, preserving
   them when older history changes the visible adjacency group.
-- Failed Activity and child nodes disclose once by default and remain manually
-  collapsible. Interrupted nodes are terminal but stay compact unless the user
-  opens them.
+- Tool presentation has three explicit levels: the Activity row uses callable
+  identity, the child row uses the tool-owned one-line operation label, and the
+  expanded child owns complete bounded Arguments and Result. Raw terminal
+  commands never become Activity or child titles.
+- Failed Activity, child, and Diff nodes stay compact unless the user opens
+  them. Interrupted Activity and child nodes follow the same rule.
 - Title rows are the only click targets. The pointer wheel scrolls an expanded
   bounded Thought first; every other target falls through to conversation
   scrolling one rendered row at a time. Mouse tracking reports presses, drags,
@@ -318,7 +321,7 @@ architecture required to support that sequence.
   snapshot; copied statuses, consumer pairing Maps, and child-running fallbacks
   have been removed.
 - One presentation policy owns execution glyphs, labels, aggregate precedence,
-  duration formatting, and automatic failure disclosure.
+  duration formatting, and disclosure overrides.
 - Reducer open-node indexes keep sequential long-history replay linear while
   missing parents, starts, results, and contradictory terminal facts remain
   inspectable through deduplicated, bounded diagnostics.

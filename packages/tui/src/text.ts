@@ -7,6 +7,11 @@ export function sanitizeTerminalText(value: string): string {
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu, '')
 }
 
+/** Remove terminal control bytes and collapse text onto one display row. */
+export function sanitizeTerminalLine(value: string): string {
+  return sanitizeTerminalText(value).replaceAll(/\s+/gu, ' ').trim()
+}
+
 /** Render an unknown value as bounded, terminal-safe text. */
 export function displayUnknown(value: unknown): string {
   if (typeof value === 'string') return sanitizeTerminalText(value)

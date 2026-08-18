@@ -68,7 +68,8 @@ function tool(
   return {
     kind: 'tool',
     key,
-    title: key,
+    toolName: key,
+    operation: key,
     lifecycle: lifecycle(key, 'tool', status, startedAt, endedAt),
   }
 }

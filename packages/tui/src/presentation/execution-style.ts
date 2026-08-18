@@ -68,80 +68,36 @@ export function activityLabel(activity: LifecycleAggregate): string {
   return duration === undefined ? 'Worked' : `Worked for ${formatExecutionDuration(duration)}`
 }
 
-interface DisclosureEntry {
-  manual?: boolean
-  autoDisclosed: boolean
-  previous?: ExecutionStatus
-}
-
-interface ActivityDisclosureEntry {
-  manual?: boolean
-  autoDisclosed: boolean
-}
-
 /** Interaction state keyed by semantic execution identity, never by render row. */
 export class ExecutionDisclosureState {
-  private readonly entries = new Map<string, DisclosureEntry>()
-  private readonly activityEntries = new Map<string, ActivityDisclosureEntry>()
-
-  observe(key: string, status: ExecutionStatus): void {
-    const current = this.entries.get(key) ?? { autoDisclosed: false }
-    if (status === 'failed' && current.previous !== 'failed' && current.manual === undefined) {
-      current.autoDisclosed = true
-    }
-    current.previous = status
-    this.entries.set(key, current)
-  }
+  private readonly entries = new Map<string, boolean>()
+  private readonly activityEntries = new Map<string, boolean>()
 
   expanded(key: string, globalDefault: boolean): boolean {
-    const current = this.entries.get(key)
-    return current?.manual ?? (globalDefault || current?.autoDisclosed === true)
+    return this.entries.get(key) ?? globalDefault
   }
 
   toggle(key: string, globalDefault: boolean): void {
-    const current = this.entries.get(key) ?? { autoDisclosed: false }
-    current.manual = !this.expanded(key, globalDefault)
-    this.entries.set(key, current)
-  }
-
-  /** Index presentation-only Activity state by its stable lifecycle children. */
-  observeActivity(keys: readonly string[], status: ExecutionStatus): void {
-    const current = keys.flatMap(key => {
-      const entry = this.activityEntries.get(key)
-      return entry === undefined ? [] : [entry]
-    })
-    const manuallyControlled = current.some(entry => entry.manual !== undefined)
-    const autoDisclosed = current.some(entry => entry.autoDisclosed)
-    for (const key of keys) {
-      const entry = this.activityEntries.get(key) ?? { autoDisclosed: false }
-      if (status === 'failed' && !manuallyControlled && !autoDisclosed) entry.autoDisclosed = true
-      this.activityEntries.set(key, entry)
-    }
+    this.entries.set(key, !this.expanded(key, globalDefault))
   }
 
   activityExpanded(keys: readonly string[], globalDefault: boolean): boolean {
-    const entries = keys.flatMap(key => {
+    const overrides = keys.flatMap(key => {
       const entry = this.activityEntries.get(key)
       return entry === undefined ? [] : [entry]
     })
-    const manual = entries.flatMap(entry => entry.manual === undefined ? [] : [entry.manual])
-    if (manual.includes(false)) return false
-    if (manual.includes(true)) return true
-    return globalDefault || entries.some(entry => entry.autoDisclosed)
+    if (overrides.includes(false)) return false
+    if (overrides.includes(true)) return true
+    return globalDefault
   }
 
   toggleActivity(keys: readonly string[], globalDefault: boolean): void {
     const next = !this.activityExpanded(keys, globalDefault)
-    for (const key of keys) {
-      const entry = this.activityEntries.get(key) ?? { autoDisclosed: false }
-      entry.manual = next
-      this.activityEntries.set(key, entry)
-    }
+    for (const key of keys) this.activityEntries.set(key, next)
   }
 
   clearOverrides(): void {
-    for (const current of this.entries.values()) delete current.manual
-    for (const current of this.activityEntries.values()) delete current.manual
+    this.clear()
   }
 
   clear(): void {

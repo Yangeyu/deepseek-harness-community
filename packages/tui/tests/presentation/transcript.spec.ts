@@ -444,7 +444,7 @@ describe('TranscriptComponent', () => {
     ]), createTheme(false), true, 8)
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(collapsed).toContain('› Interrupted after 250ms · 1 thought · 1 tool · Search project')
+    expect(collapsed).toContain('› Interrupted after 250ms · 1 thought · 1 tool · Search')
     expect(collapsed).not.toContain('Working')
     expect(collapsed).toContain('The response reached the model output limit.')
 
@@ -454,7 +454,7 @@ describe('TranscriptComponent', () => {
     expect(expanded).toContain('└─ › ! Search project')
   })
 
-  it('opens failed unfinished thinking and keeps the terminal error visible', () => {
+  it('keeps failed unfinished thinking collapsed while the terminal error remains visible', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
@@ -474,11 +474,21 @@ describe('TranscriptComponent', () => {
       }),
     ]), createTheme(false), true, 8)
 
-    const output = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(output).toContain('⌄ Failed after 300ms · 1 thought · Thought failed')
-    expect(output).toContain('└─ ⌄ × Thought failed')
-    expect(output).toContain('diagnostic reasoning')
-    expect(output).toContain('model disconnected')
+    const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(collapsed).toContain('› Failed after 300ms · 1 thought · Thought failed')
+    expect(collapsed).not.toContain('diagnostic reasoning')
+    expect(collapsed).toContain('model disconnected')
+
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    const activityExpanded = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(activityExpanded).toContain('⌄ Failed after 300ms · 1 thought · Thought failed')
+    expect(activityExpanded).toContain('└─ › × Thought failed')
+    expect(activityExpanded).not.toContain('diagnostic reasoning')
+
+    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    const thoughtExpanded = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(thoughtExpanded).toContain('└─ ⌄ × Thought failed')
+    expect(thoughtExpanded).toContain('diagnostic reasoning')
   })
 
   it('applies the global details toggle to both thinking and tools', () => {
@@ -604,8 +614,8 @@ describe('TranscriptComponent', () => {
 
     const output = transcript.render(80).join('\n')
     expect(output).toContain('› analyze this image')
-    expect(output).toContain('Vision · 1 image · Analyzing…')
-    expect(output.indexOf('analyze this image')).toBeLessThan(output.indexOf('Vision · 1 image'))
+    expect(output).toContain('Working · 1 tool · Vision')
+    expect(output.indexOf('analyze this image')).toBeLessThan(output.indexOf('Working · 1 tool · Vision'))
   })
 
   it('keeps Vision loading while the durable event takes ownership of the prompt', () => {
@@ -634,7 +644,7 @@ describe('TranscriptComponent', () => {
 
     const output = new TranscriptComponent(transitioning, createTheme(false), true, 8).render(80).join('\n')
     expect(output.match(/analyze this image/g)).toHaveLength(1)
-    expect(output).toContain('Vision · 1 image · Analyzing…')
+    expect(output).toContain('Working · 1 tool · Vision')
   })
 
   it('hands a local prompt to a visible queue row without hiding context placement', () => {
@@ -667,16 +677,25 @@ describe('TranscriptComponent', () => {
     expect(context).not.toContain('Accepted')
   })
 
-  it('uses tool-owned presentation intent and expands bounded result output', () => {
+  it('uses the tool-owned operation summary and expands bounded result output', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
           type: 'tool/call',
           seq: 0,
           time: 1,
-          data: { turn: 1, step: 1, callId: 'call-1', name: 'opaque-name', arguments: '{}' },
+          data: {
+            turn: 1,
+            step: 1,
+            callId: 'call-1',
+            name: 'opaque-name',
+            arguments: '{"command":"pnpm test","description":"Run tests"}',
+          },
         },
-        view: { for: 'call', view: { card: 'terminal', title: 'pnpm test', cwd: '/workspace' } },
+        view: {
+          for: 'call',
+          view: { card: 'terminal', title: 'pnpm test', description: 'Run tests', cwd: '/workspace' },
+        },
       }),
       entry({
         event: {
@@ -705,13 +724,72 @@ describe('TranscriptComponent', () => {
     transcript.setDetails(true)
 
     const output = transcript.render(80).join('\n')
-    expect(output).toContain('$ pnpm test')
+    expect(output).toContain('Opaque-name · Run tests')
+    expect(output).toContain('pnpm test')
     expect(output).toContain('passed')
     expect(output).toContain('[exit 0]')
-    expect(output).not.toContain('opaque-name')
   })
 
-  it('reveals a grouped tool title before its arguments and result', () => {
+  it.each([
+    {
+      surface: 'terminal',
+      callView: {
+        card: 'terminal' as const,
+        title: "python3 - <<'PYEOF'\nimport re\nPYEOF",
+        description: 'Inspect dispatch tests',
+        cwd: '/workspace',
+      },
+      operation: 'Bash · Inspect dispatch tests',
+    },
+    {
+      surface: 'generic raw-input',
+      callView: {
+        card: 'generic' as const,
+        title: "python3 - <<'PYEOF'\nimport re\nPYEOF",
+        kind: 'execute' as const,
+        rawInput: "python3 - <<'PYEOF'\nimport re\nPYEOF",
+      },
+      operation: 'Bash',
+    },
+  ])('keeps $surface scripts in details while Activity and tool rows stay semantic', ({ callView, operation }) => {
+    const script = callView.title
+    const transcript = new TranscriptComponent(state([
+      entry({
+        event: {
+          type: 'tool/call',
+          seq: 0,
+          time: 1,
+          data: {
+            turn: 1,
+            step: 1,
+            callId: 'call-script',
+            name: 'bash',
+            arguments: JSON.stringify({ command: script, description: 'Inspect dispatch tests' }),
+          },
+        },
+        view: { for: 'call', view: callView },
+      }),
+    ], true), createTheme(false), true, 8)
+
+    const collapsed = stripTerminalSequences(transcript.render(120).join('\n'))
+    expect(collapsed).toContain('› Working · 1 tool · Bash')
+    expect(collapsed).not.toContain('Inspect dispatch tests')
+    expect(collapsed).not.toContain('python3')
+
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    const activity = stripTerminalSequences(transcript.render(120).join('\n'))
+    expect(activity).toContain('⌄ Working · 1 tool · Bash')
+    expect(activity).toContain(`└─ › ◦ ${operation}`)
+    expect(activity).not.toContain('python3')
+
+    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    const details = stripTerminalSequences(transcript.render(120).join('\n'))
+    expect(details).toContain('Arguments')
+    expect(details).toContain("python3 - <<'PYEOF'")
+    expect(details).toContain('import re')
+  })
+
+  it('reveals a grouped tool operation before its arguments and result', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
@@ -782,7 +860,7 @@ describe('TranscriptComponent', () => {
     expect(transcript.render(32).every(line => visibleWidth(line) === 32)).toBe(true)
   })
 
-  it('opens failed activity and the failed tool by default without trapping it open', () => {
+  it('keeps failed activity and tool details collapsed until they are opened', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
@@ -794,10 +872,13 @@ describe('TranscriptComponent', () => {
             step: 1,
             callId: 'call-failed',
             name: 'bash',
-            arguments: '{"command":"pnpm test"}',
+            arguments: '{"command":"pnpm test","description":"Run tests"}',
           },
         },
-        view: { for: 'call', view: { card: 'terminal', title: 'pnpm test', cwd: '/workspace' } },
+        view: {
+          for: 'call',
+          view: { card: 'terminal', title: 'pnpm test', description: 'Run tests', cwd: '/workspace' },
+        },
       }),
       entry({
         event: {
@@ -826,16 +907,26 @@ describe('TranscriptComponent', () => {
       }),
     ]), createTheme(false), true, 8)
 
-    const failed = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(failed).toContain('⌄ Failed after 250ms · 1 tool')
-    expect(failed).toContain('└─ ⌄ × pnpm test')
-    expect(failed).toContain('1 test failed')
-    expect(failed).toContain('[exit 1]')
+    const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(collapsed).toContain('› Failed after 250ms · 1 tool · Bash')
+    expect(collapsed).not.toContain('Run tests')
+    expect(collapsed).not.toContain('pnpm test')
+    expect(collapsed).not.toContain('1 test failed')
+    expect(collapsed).not.toContain('[exit 1]')
 
     expect(transcript.handlePointer(0, 'click')).toBe(true)
-    const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(collapsed).toContain('› Failed after 250ms · 1 tool')
-    expect(collapsed).not.toContain('1 test failed')
+    const activity = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(activity).toContain('⌄ Failed after 250ms · 1 tool · Bash')
+    expect(activity).toContain('└─ › × Bash · Run tests')
+    expect(activity).not.toContain('pnpm test')
+    expect(activity).not.toContain('1 test failed')
+
+    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(expanded).toContain('└─ ⌄ × Bash · Run tests')
+    expect(expanded).toContain('pnpm test')
+    expect(expanded).toContain('1 test failed')
+    expect(expanded).toContain('[exit 1]')
   })
 
   it('shows complete applied file diffs inline and leaves wheel scrolling to the conversation', () => {
@@ -959,7 +1050,7 @@ describe('TranscriptComponent', () => {
     expect(expanded).toContain('201 + export const value200 = 200')
   })
 
-  it('keeps returned file evidence top-level when an edit reports failure', () => {
+  it('keeps failed file evidence top-level but collapsed until it is opened', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
@@ -1006,10 +1097,15 @@ describe('TranscriptComponent', () => {
       }),
     ]), createTheme(false), true, 8)
 
-    const output = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(output).toContain('⌄ × Update(src/app.ts)')
-    expect(output).toContain('partially applied')
-    expect(output).not.toContain('Failed after')
+    const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(collapsed).toContain('› × Update(src/app.ts)')
+    expect(collapsed).not.toContain('partially applied')
+    expect(collapsed).not.toContain('Failed after')
+
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
+    expect(expanded).toContain('⌄ × Update(src/app.ts)')
+    expect(expanded).toContain('partially applied')
   })
 
   it('wraps long changed lines without hiding their tail', () => {

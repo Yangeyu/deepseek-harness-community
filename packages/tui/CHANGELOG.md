@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Keep failed Activity groups, Thoughts, tool details, and Diff cards compact by
+  default while retaining explicit disclosure controls.
+- Separate tool identity, operation summary, and details: Activity rows show
+  only the latest tool name, child rows use tool-owned one-line descriptions,
+  and raw commands remain in Arguments.
+
 ## 0.1.14 - 2026-08-18
 
 - Make conversation and bounded Thought wheels advance one rendered row, and

@@ -16,7 +16,7 @@ import {
   type LifecycleNode,
   type LifecycleSnapshot,
 } from '../runtime/lifecycle/index.ts'
-import { displayUnknown, sanitizeTerminalText } from '../text.ts'
+import { displayUnknown, sanitizeTerminalLine, sanitizeTerminalText } from '../text.ts'
 
 export type TranscriptTone = 'accent' | 'dim' | 'error' | 'warning'
 
@@ -48,7 +48,8 @@ export interface TranscriptThinkingItem {
 export interface TranscriptToolItem {
   kind: 'tool'
   key: string
-  title: string
+  toolName: string
+  operation: string
   lifecycle: LifecycleNode
   arguments?: string
   result?: string
@@ -92,10 +93,30 @@ function reasoningText(content: readonly { type: string; text?: string }[]): str
     .join('\n')
 }
 
-function callTitle(name: string, view: ToolCallView | undefined): string {
-  if (view === undefined) return name
-  if (view.card === 'terminal') return `$ ${view.title}`
-  return view.title
+function toolName(value: string): string {
+  const name = sanitizeTerminalLine(value)
+  if (name === '') return 'Tool'
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}`
+}
+
+function toolOperation(
+  name: string,
+  callView: ToolCallView | undefined,
+  resultView: ToolResultView | undefined,
+): string {
+  const rawInput = callView?.card === 'generic' && typeof callView.rawInput === 'string'
+    ? sanitizeTerminalLine(callView.rawInput)
+    : undefined
+  const resultTitle = resultView?.card === 'terminal'
+    ? ''
+    : sanitizeTerminalLine(resultView?.title ?? '')
+  if (resultTitle !== '' && resultTitle !== rawInput) return resultTitle
+  if (callView?.card === 'terminal') {
+    const description = sanitizeTerminalLine(callView.description ?? '')
+    return description === '' ? name : `${name} · ${description}`
+  }
+  const callTitle = sanitizeTerminalLine(callView?.title ?? '')
+  return callTitle === '' || callTitle === rawInput ? name : callTitle
 }
 
 function boundedLines(value: string, limit: number): string {
@@ -125,10 +146,6 @@ function rawResultText(entry: HistoryEntry): string {
   const result = entry.event.data.message.content[0]
   if (result?.type !== 'tool-result') return ''
   return messageText(result.content, true)
-}
-
-function resultTitle(view: ToolResultView | undefined): string | undefined {
-  return view?.title
 }
 
 function resultBody(view: ToolResultView | undefined, fallback: string, limit: number): string {
@@ -349,7 +366,8 @@ export function buildTranscriptItems(
           items.push({
             kind: 'tool',
             key: String(lifecycle.key),
-            title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalText(source.model)}`,
+            toolName: 'Vision',
+            operation: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalLine(source.model)}`,
             lifecycle,
             arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${source.provider}/${source.model}`,
             result: rawText === '' ? 'Vision analysis completed.' : rawText,
@@ -474,7 +492,7 @@ export function buildTranscriptItems(
           : undefined
         const toolResult = result?.event.type === 'tool/result' ? result : undefined
         const resultView = toolResult?.view?.for === 'result' ? toolResult.view.view : undefined
-        const title = resultTitle(resultView) ?? callTitle(event.data.name, callView)
+        const name = toolName(event.data.name)
         const diffView = resultView?.card === 'diff'
           ? resultView
           : toolResult === undefined && callView?.card === 'diff' ? callView : undefined
@@ -482,7 +500,7 @@ export function buildTranscriptItems(
           items.push({
             kind: 'diff',
             key: `${String(event.data.callId)}:diff`,
-            title: sanitizeTerminalText(title),
+            title: sanitizeTerminalLine(resultView?.title ?? callView?.title ?? name),
             lifecycle,
             diffs: diffView.diffs,
           })
@@ -492,7 +510,8 @@ export function buildTranscriptItems(
         items.push({
           kind: 'tool',
           key: String(lifecycle.key),
-          title: sanitizeTerminalText(title),
+          toolName: name,
+          operation: toolOperation(name, callView, resultView),
           lifecycle,
           ...argumentsBody === undefined ? {} : { arguments: argumentsBody },
           ...toolResult === undefined ? {} : { result: resultBody(resultView, rawResultText(toolResult), maxToolOutputLines) },
@@ -596,7 +615,8 @@ export function buildTranscriptItems(
       grouped.push(...groupTranscriptActivity([{
         kind: 'tool',
         key: String(lifecycle.key),
-        title: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · Analyzing…`,
+        toolName: 'Vision',
+        operation: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · Analyzing…`,
         lifecycle,
         arguments: `${String(imageCount)} attached image${imageCount === 1 ? '' : 's'}`,
       }]))

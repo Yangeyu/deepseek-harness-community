@@ -1,7 +1,7 @@
 import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type {} from '@vascent/deepseek-harness-vision'
-import { displayUnknown, sanitizeTerminalText } from '../text.ts'
+import { displayUnknown, sanitizeTerminalLine } from '../text.ts'
 import {
   commandLifecycleKey,
   executionStatus,
@@ -133,7 +133,7 @@ function messageText(value: unknown): string {
 }
 
 function oneLine(value: string, maximum = 140): string {
-  const normalized = sanitizeTerminalText(value).replaceAll(/\s+/gu, ' ').trim()
+  const normalized = sanitizeTerminalLine(value)
   if (normalized.length <= maximum) return normalized
   return `${normalized.slice(0, Math.max(1, maximum - 1))}…`
 }

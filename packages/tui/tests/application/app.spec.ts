@@ -972,7 +972,7 @@ describe('TuiApplication input routing', () => {
     const status = internals.status.render(80).join('\n')
     expect(status).toContain('Vision · Analyzing 1 image (2s · esc to interrupt)')
     expect(status).not.toContain(' Working')
-    expect(internals.transcript.render(80).join('\n')).toContain('Vision · 1 image · Analyzing…')
+    expect(internals.transcript.render(80).join('\n')).toContain('Working · 1 tool · Vision')
     app.dispose()
   })
 

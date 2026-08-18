@@ -15,22 +15,8 @@ describe('execution presentation policy', () => {
 
   it('preserves manual Activity disclosure through child prepend and append', () => {
     const disclosure = new ExecutionDisclosureState()
-    disclosure.observeActivity(['tool:read'], 'running')
     disclosure.toggleActivity(['tool:read'], false)
 
-    disclosure.observeActivity(['thought:1:1', 'tool:read', 'tool:test'], 'running')
-
     expect(disclosure.activityExpanded(['thought:1:1', 'tool:read', 'tool:test'], false)).toBe(true)
-  })
-
-  it('automatically discloses a failure once without overriding manual collapse', () => {
-    const disclosure = new ExecutionDisclosureState()
-    disclosure.observeActivity(['tool:test'], 'failed')
-    expect(disclosure.activityExpanded(['tool:test'], false)).toBe(true)
-
-    disclosure.toggleActivity(['tool:test'], false)
-    disclosure.observeActivity(['tool:test'], 'failed')
-
-    expect(disclosure.activityExpanded(['tool:test'], false)).toBe(false)
   })
 })
