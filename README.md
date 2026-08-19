@@ -89,6 +89,40 @@ Functional milestones are tracked in
 `v0.1.8` lifecycle contract is specified in
 [`docs/tui-v0.1.8-design.md`](docs/tui-v0.1.8-design.md).
 
+## Agent guidance
+
+dscode's agent already knows who it is (the persona patch in
+`packages/tui/cordis.patch.yml`) and what environment it runs in (the
+Harness runtime-context snapshot). On top of that, the repository ships a
+documentation-driven guidance layer:
+
+- [`AGENTS.md`](AGENTS.md) at the repository root is a table of contents
+  plus core facts, not a knowledge dump. Every dscode session working in
+  this repository injects it automatically as its first-step instruction
+  baseline (`dsh-agent-instructions`); nothing to configure. For global
+  use across every project, copy it once:
+
+  ```sh
+  cp AGENTS.md ~/.dsh/AGENTS.md
+  ```
+
+  (It also ships inside the published npm package, so a global install
+  provides it as `<npm prefix>/AGENTS.md`.)
+
+- The details live as ordinary documentation and are loaded on demand with
+  the agent's own `read` tool, guided by the catalog at the top of
+  `AGENTS.md`:
+
+  | Document | Read when |
+  |---|---|
+  | [`docs/dscode-configuration.md`](docs/dscode-configuration.md) | Config viewing/editing, providers, vision routing, web search policy, API keys |
+  | [`docs/dscode-troubleshooting.md`](docs/dscode-troubleshooting.md) | Session errors, `dscode doctor` output, provider/key failures, upgrades |
+
+  Both ship inside the npm package under `docs/`, so a globally installed
+  copy is readable through `<npm prefix>/docs/` when the repository checkout
+  is not at hand. Documentation stays a single source of truth in `docs/`;
+  skills are reserved for procedural capabilities, not knowledge storage.
+
 ## Develop
 
 ```sh

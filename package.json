@@ -51,6 +51,7 @@
   },
   "files": [
     "bin/dscode.js",
+    "AGENTS.md",
     "dist/launcher.js",
     "dist/launcher.js.map",
     "packages/tui/CHANGELOG.md",
@@ -65,6 +66,8 @@
     "docs/tui-v0.1.7-design.md",
     "docs/tui-v0.1.8-design.md",
     "docs/tui-v0.1.9-design.md",
+    "docs/dscode-configuration.md",
+    "docs/dscode-troubleshooting.md",
     "README.md",
     "LICENSE"
   ],
