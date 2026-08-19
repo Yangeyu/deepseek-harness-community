@@ -17,6 +17,7 @@ const limits: ImageAttachmentLimits = {
   maxImagesPerMessage: 4,
   maxMessageImageBytes: 2_048,
   maxImagePixels: 1_000_000,
+  maxImageDimension: 2_000,
   mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
 }
 const inspection: VisionInspection = {

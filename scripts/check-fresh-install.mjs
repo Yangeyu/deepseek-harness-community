@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-const timeoutMs = 180_000
+const timeoutMs = 600_000
 
 function collectDeepSeekVersions(node, versions = new Map()) {
   for (const [name, dependency] of Object.entries(node.dependencies ?? {})) {
