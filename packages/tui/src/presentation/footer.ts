@@ -11,6 +11,7 @@ export interface ComposerFooterSnapshot {
   model: string
   cwd: string
   branch?: string
+  task: string
   stats: string
 }
 
@@ -33,18 +34,24 @@ function workspaceLabel(cwd: string, branch: string | undefined, width: number):
   return `${clip(directory, width - suffixWidth)}${suffix}`
 }
 
-/** Keep model, directory, and branch on one stable row, preserving workspace context when narrow. */
+/**
+ * Keep model, directory, and branch on one stable row with the durable task
+ * summary appended. When narrow, workspace context wins over the task
+ * summary, and the model identity is preserved for as long as any fits.
+ */
 export function footerIdentity(
   model: string,
   cwd: string,
   branch: string | undefined,
+  task: string,
   width: number,
 ): string {
   const safeWidth = Math.max(0, width)
   const safeModel = sanitizeTerminalText(model)
   const naturalWorkspace = workspaceLabel(cwd, branch, Number.MAX_SAFE_INTEGER)
+  const taskSuffix = task === '' ? '' : ` · ${sanitizeTerminalText(task)}`
   const separator = ' │ '
-  const natural = `${safeModel}${separator}${naturalWorkspace}`
+  const natural = `${safeModel}${separator}${naturalWorkspace}${taskSuffix}`
   if (visibleWidth(natural) <= safeWidth) return natural
   if (safeWidth < 16) return clip(natural, safeWidth)
 
@@ -58,14 +65,18 @@ export function footerIdentity(
   )
   const modelWidth = safeWidth - separatorWidth - workspaceWidth
   if (modelWidth < 8) return clip(natural, safeWidth)
-  return `${clip(safeModel, modelWidth)}${separator}${workspaceLabel(cwd, branch, workspaceWidth)}`
+  const identity = `${clip(safeModel, modelWidth)}${separator}${workspaceLabel(cwd, branch, workspaceWidth)}`
+  if (taskSuffix === '') return identity
+  const taskWidth = safeWidth - visibleWidth(identity)
+  return taskWidth <= 0 ? identity : `${identity}${clip(taskSuffix, taskWidth)}`
 }
 
-/** Fixed-height Composer footer with persistent model and workspace identity. */
+/** Fixed-height Composer footer with persistent model, workspace, and task identity. */
 export class ComposerFooter implements Component {
   private snapshot: ComposerFooterSnapshot = {
     model: 'model unavailable',
     cwd: '',
+    task: '',
     stats: '',
   }
 
@@ -84,6 +95,7 @@ export class ComposerFooter implements Component {
         this.snapshot.model,
         this.snapshot.cwd,
         this.snapshot.branch,
+        this.snapshot.task,
         safeWidth,
       ),
       ...(this.snapshot.stats === ''

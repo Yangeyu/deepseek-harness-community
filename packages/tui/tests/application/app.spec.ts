@@ -1136,8 +1136,43 @@ describe('TuiApplication input routing', () => {
     } as TuiState)
 
     expect(internals.status.render(80).join('\n')).toContain(
-      'Ready · workspace-write · Plan active · Tasks 0/1',
+      'Ready · workspace-write · Plan active',
     )
+    expect(internals.status.render(80).join('\n')).not.toContain('Tasks 0/1')
+  })
+
+  it('carries only the Goal and Tasks segments down to the footer identity row', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    app.render({
+      ...internals.controller.current,
+      connected: true,
+      projections: {
+        permissions: {
+          currentValue: 'workspace-write',
+          options: [{ value: 'workspace-write', name: 'Workspace write' }],
+        },
+        plan: { active: true, pending: false },
+        goal: {
+          goal: {
+            id: 'goal-1' as never,
+            revision: 1,
+            objective: 'Ship the TUI',
+            phase: 'active',
+            maxGoalRounds: 8,
+          },
+          roundsStarted: 2,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+        todos: [{ content: 'Implement', status: 'in_progress' }],
+      },
+    } as TuiState)
+
+    const footer = internals.footer.render(200).join('\n')
+    expect(footer).toContain('Goal active 2/8 · Tasks 0/1')
+    expect(footer).not.toContain('workspace-write')
+    expect(footer).not.toContain('Plan active')
   })
 
   it('opens /trajectory in the current TUI and returns to the composer on Escape', async () => {

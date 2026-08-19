@@ -63,6 +63,7 @@ import {
 } from '../runtime/commands.ts'
 import {
   configurationSnapshot,
+  goalTaskSummary,
   sessionControlSummary,
   taskSnapshot,
 } from '../runtime/session-controls.ts'
@@ -571,6 +572,7 @@ export class TuiApplication implements TuiControllerSink {
       ...this.gitBranchCwd === state.cwd && this.gitBranch !== undefined
         ? { branch: this.gitBranch }
         : {},
+      task: goalTaskSummary(state.projections),
       stats: composerStats(state.projections),
     })
   }
@@ -594,8 +596,8 @@ export class TuiApplication implements TuiControllerSink {
 
   private updateStatus(state: Readonly<TuiState>): void {
     const history = this.layout.followsTranscriptTail ? '' : ' · Viewing history · PageDown to follow'
-    const task = sessionControlSummary(state.projections)
-    const taskStatus = task === '' ? '' : ` · ${task}`
+    const policy = sessionControlSummary(state.projections)
+    const policyStatus = policy === '' ? '' : ` · ${policy}`
     const activity = composerExecutionActivity(state)
     if (activity !== undefined) {
       if (activity.key !== this.workingActivityKey) {
@@ -663,7 +665,7 @@ export class TuiApplication implements TuiControllerSink {
       return
     }
     this.status.setText(state.connected
-      ? `${this.theme.bold(this.theme.success('Ready'))}${this.theme.secondary(`${taskStatus}${history}`)}`
+      ? `${this.theme.bold(this.theme.success('Ready'))}${this.theme.secondary(`${policyStatus}${history}`)}`
       : this.theme.warning(`Connecting…${history}`))
   }
 

@@ -214,15 +214,21 @@ export function taskRows(snapshot: TaskSnapshot): readonly ControlRow<TaskRowKin
   }]
 }
 
-/** Compact status for the fixed composer row; unavailable capabilities disappear. */
+/** Authoritative policy summary for the fixed ready row; Goal and Tasks live on the footer identity row. */
 export function sessionControlSummary(projections: Partial<SessionProjectionMap>): string {
   const config = configurationSnapshot(undefined, projections, false)
-  const task = taskSnapshot(projections, false, 0)
   const parts: string[] = []
   if (config.permissions !== undefined) parts.push(config.permissions.currentValue)
   if (config.plan !== undefined && (config.plan.active || config.plan.pending)) {
     parts.push(config.plan.pending ? `Plan ${config.plan.active ? 'active' : 'off'} → pending` : 'Plan active')
   }
+  return parts.join(' · ')
+}
+
+/** Goal and task counters only, for the persistent footer identity row. */
+export function goalTaskSummary(projections: Partial<SessionProjectionMap>): string {
+  const task = taskSnapshot(projections, false, 0)
+  const parts: string[] = []
   if (task.goal !== undefined && task.goal !== null) {
     parts.push(`Goal ${task.goal.goal.phase} ${task.goal.roundsStarted}/${task.goal.goal.maxGoalRounds}`)
   }

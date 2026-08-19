@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   configurationRows,
   configurationSnapshot,
+  goalTaskSummary,
   sessionControlSummary,
   taskRows,
   taskSnapshot,
@@ -133,8 +134,10 @@ describe('session control selectors', () => {
     } as Partial<SessionProjectionMap>
 
     expect(sessionControlSummary(projections)).toBe(
-      'workspace-write · Plan active · Goal active 2/8 · Tasks 1/3',
+      'workspace-write · Plan active',
     )
+    expect(goalTaskSummary(projections)).toBe('Goal active 2/8 · Tasks 1/3')
+    expect(goalTaskSummary({})).toBe('')
     expect(taskRows(taskSnapshot(projections, true, 2))).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'todos', value: '1/3 completed · 1 in progress' }),
       expect.objectContaining({ kind: 'runtime', value: 'running · 2 queued' }),
