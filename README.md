@@ -147,14 +147,30 @@ regular `tui` profile.
 
 ## Release
 
+When moving to a new coordinated DeepSeek runtime train, update every manifest
+and the lockfile through the single version source:
+
+```sh
+pnpm run runtime:update -- 0.1.0-rc.9
+```
+
+Run the same build, test, archive, dependency-tree, and isolated global-install
+gate used by CI and publishing:
+
+```sh
+pnpm run release:check
+```
+
 Create a patch, minor, or major release from any authenticated development machine:
 
 ```sh
 pnpm release patch
 ```
 
-`release-it` verifies the branch and worktree, runs the complete checks, updates
-the root version, creates the release commit and `v*` tag, and pushes them.
-GitHub Actions then builds and packs the single `@vascent/dsh-tui` artifact,
-publishes it through Trusted Publishing (OIDC), and attaches it to one GitHub
-Release. Local npm credentials and repository `NPM_TOKEN` secrets are not used.
+`release-it` verifies the branch and worktree, runs `release:check`, updates the
+root version, creates the release commit and `v*` tag, and pushes them. GitHub
+Actions repeats that exact gate while retaining its verified tarball, publishes
+it through Trusted Publishing (OIDC), and attaches it to one GitHub Release.
+Node, pnpm, npm, and the DeepSeek runtime train each have one repository-owned
+version source. Local npm credentials and repository `NPM_TOKEN` secrets are not
+used.

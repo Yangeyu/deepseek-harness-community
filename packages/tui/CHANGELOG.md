@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## 0.1.17 - 2026-08-20
 
+- Replace the duplicated pack/install/release paths with one release gate that
+  verifies and publishes the same tarball, test the documented global install,
+  and keep the DeepSeek runtime train behind one synchronized version source.
+  Public dependencies now follow the built bundle and explicit peer-host
+  closure instead of promoting every workspace development pin, preventing npm
+  peer-resolution memory exhaustion during clean installs.
 - Keep following the conversation tail when expanding the disclosure block
   anchored at the transcript bottom, so the expanded rows stay visible instead
   of freezing the viewport below them.

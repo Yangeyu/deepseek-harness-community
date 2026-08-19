@@ -1,7 +1,7 @@
 {
   "$schema": "https://unpkg.com/release-it@21/schema/release-it.json",
   "hooks": {
-    "before:init": "pnpm run check && pnpm run install:check"
+    "before:init": "pnpm run release:check"
   },
   "git": {
     "requireBranch": "main",

@@ -1,34 +1,83 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { test } from 'vitest'
 import { parse } from 'yaml'
 
 interface PackageManifest {
   name?: string
   private?: boolean
+  dshRuntime?: { version?: string; peerHosts?: string[] }
   bin?: string | Record<string, string>
   dependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
   devDependencies?: Record<string, string>
+  packageManager?: string
+  scripts?: Record<string, string>
   files?: string[]
   publishConfig?: { access?: string }
   exports?: Record<string, string | { types?: string; default?: string }>
 }
 
+test('uses one pinned toolchain and one release gate everywhere', async () => {
+  const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
+  const releaseIt = JSON.parse(await readFile('.release-it.json', 'utf8')) as {
+    hooks?: { 'before:init'?: string }
+  }
+  const [nodeVersion, ciWorkflow, releaseWorkflow] = await Promise.all([
+    readFile('.node-version', 'utf8'),
+    readFile('.github/workflows/ci.yml', 'utf8'),
+    readFile('.github/workflows/release.yml', 'utf8'),
+  ])
+
+  assert.match(nodeVersion.trim(), /^\d+\.\d+\.\d+$/u)
+  assert.match(root.packageManager ?? '', /^pnpm@\d+\.\d+\.\d+$/u)
+  assert.match(root.devDependencies?.npm ?? '', /^\d+\.\d+\.\d+$/u)
+  assert.equal(root.scripts?.['release:check'], 'node scripts/release-gate.mjs')
+  assert.equal(root.scripts?.['install:check'], undefined)
+  assert.equal(root.scripts?.['pack:check'], undefined)
+  assert.equal(releaseIt.hooks?.['before:init'], 'pnpm run release:check')
+  for (const workflow of [ciWorkflow, releaseWorkflow]) {
+    assert.match(workflow, /node-version-file: \.node-version/u)
+    assert.match(workflow, /pnpm run release:check/u)
+    assert.doesNotMatch(workflow, /pnpm run (?:install|pack):check|npm pack/u)
+  }
+  assert.match(releaseWorkflow, /pnpm exec npm publish/u)
+  assert.doesNotMatch(releaseWorkflow, /^\s*npm (?:publish|view)\b/mu)
+})
+
 test('pins the public DeepSeek Harness dependency family to one release candidate', async () => {
   const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
+  const runtimeVersion = root.dshRuntime?.version
+  assert.match(runtimeVersion ?? '', /^\d+\.\d+\.\d+-rc\.\d+$/u)
   const dshDependencies = Object.entries(root.dependencies ?? {})
     .filter(([name]) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
 
   assert.ok(dshDependencies.length > 0, 'the distribution must declare its DeepSeek runtime')
   const versions = new Set(dshDependencies.map(([, version]) => version))
-  assert.equal(versions.size, 1, 'all direct DeepSeek packages must use one exact RC version')
-  assert.match([...versions][0] ?? '', /^\d+\.\d+\.\d+-rc\.\d+$/u)
+  assert.deepEqual(versions, new Set([runtimeVersion]))
+})
+
+test('publishes only the DeepSeek dependencies referenced by artifacts or required as peer hosts', async () => {
+  const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
+  const artifactFiles = (await readdir('packages/tui/dist', { recursive: true }))
+    .filter(path => path.endsWith('.js') || path.endsWith('.d.ts'))
+    .map(path => `packages/tui/dist/${path}`)
+  const artifactText = (await Promise.all([
+    readFile('dist/launcher.js', 'utf8'),
+    readFile('packages/tui/cordis.patch.yml', 'utf8'),
+    ...artifactFiles.map(path => readFile(path, 'utf8')),
+  ])).join('\n')
+  const referenced = new Set(artifactText.match(/@deepseek-ai\/dsh(?:-[a-z0-9-]+)?/gu) ?? [])
+  const expected = new Set([...referenced, ...(root.dshRuntime?.peerHosts ?? [])])
+  const declared = new Set(Object.keys(root.dependencies ?? {})
+    .filter(name => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')))
+
+  assert.deepEqual([...declared].sort(), [...expected].sort())
 })
 
 test('resolves the complete DeepSeek Harness lockfile graph to the public runtime version', async () => {
   const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
-  const runtimeVersion = root.dependencies?.['@deepseek-ai/dsh']
+  const runtimeVersion = root.dshRuntime?.version
   assert.match(runtimeVersion ?? '', /^\d+\.\d+\.\d+-rc\.\d+$/u)
 
   const lockfile = parse(await readFile('pnpm-lock.yaml', 'utf8')) as {
@@ -45,7 +94,7 @@ test('resolves the complete DeepSeek Harness lockfile graph to the public runtim
 
 test('keeps every plugin compatibility boundary aligned with the public DeepSeek runtime', async () => {
   const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
-  const runtimeVersion = root.dependencies?.['@deepseek-ai/dsh']
+  const runtimeVersion = root.dshRuntime?.version
   assert.match(runtimeVersion ?? '', /^\d+\.\d+\.\d+-rc\.\d+$/u)
   const expectedRange = `>=${runtimeVersion} <0.2.0`
 
@@ -107,9 +156,14 @@ test('uses the official pi-tui package without dependency patches', async () => 
   const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
   const tui = JSON.parse(await readFile('packages/tui/package.json', 'utf8')) as PackageManifest
   const workspace = parse(await readFile('pnpm-workspace.yaml', 'utf8')) as {
+    minimumReleaseAgeExclude?: string[]
     patchedDependencies?: Record<string, string>
   }
   assert.equal(root.dependencies?.['@earendil-works/pi-tui'], '^0.84.2')
   assert.equal(tui.dependencies?.['@earendil-works/pi-tui'], '^0.84.2')
+  assert.deepEqual(workspace.minimumReleaseAgeExclude, [
+    '@earendil-works/pi-tui@0.84.2',
+    '@deepseek-ai/*',
+  ])
   assert.equal(workspace.patchedDependencies, undefined)
 })

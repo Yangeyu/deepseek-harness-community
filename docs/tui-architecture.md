@@ -56,6 +56,26 @@ Tests mirror these directories. A module stays at the root when it is both
 small and cross-cutting; directories express ownership rather than merely
 reducing the number of visible files.
 
+## Distribution and release boundary
+
+The root `@vascent/dsh-tui` package is the only published artifact. Its
+DeepSeek dependencies are limited to external references in the built launcher
+and bundle, services named by `cordis.patch.yml`, and the explicit peer hosts
+needed to resolve the coordinated runtime graph. Workspace development
+dependencies never become public dependencies by default.
+
+`package.json#dshRuntime.version` is the single selected runtime train.
+`pnpm run runtime:update -- <version>` synchronizes exact dependencies, plugin
+peer ranges, and the lockfile. The release contract rejects manifest or
+lockfile drift and rejects public dependencies outside the built closure.
+
+`pnpm run release:check` is the only release acceptance entry point. Local
+release-it, CI, and tag publishing all use it to build and test once, pack one
+archive, inspect its file boundary, install that same archive into an isolated
+global npm prefix, validate the resolved runtime tree, and execute the installed
+`dscode --version`. The tag workflow publishes the already verified archive;
+it never repacks a different payload.
+
 ## Invariants
 
 1. The session event log is the durable source of truth. Reconnect and history
