@@ -133,7 +133,7 @@ import {
   resolveKeymapInput,
   type KeymapAction,
 } from '../input/keymap.ts'
-import { composerExecutionActivity } from '../presentation/composer-activity.ts'
+import { composerExecutionActivity, previousTurnDuration } from '../presentation/composer-activity.ts'
 import { formatExecutionDuration } from '../presentation/execution-style.ts'
 import {
   ComposerInputController,
@@ -664,8 +664,12 @@ export class TuiApplication implements TuiControllerSink {
       this.status.setText(this.theme.secondary(`Input cleared · ↑ to restore${history}`))
       return
     }
+    const previousTurn = previousTurnDuration(state)
+    const lastTurn = previousTurn === undefined
+      ? ''
+      : ` · last ${formatExecutionDuration(previousTurn)}`
     this.status.setText(state.connected
-      ? `${this.theme.bold(this.theme.success('Ready'))}${this.theme.secondary(`${policyStatus}${history}`)}`
+      ? `${this.theme.bold(this.theme.success('Ready'))}${this.theme.secondary(`${lastTurn}${policyStatus}${history}`)}`
       : this.theme.warning(`Connecting…${history}`))
   }
 

@@ -4,7 +4,7 @@ import {
   type Terminal,
 } from '@earendil-works/pi-tui'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry, IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   TuiApplication,
@@ -1139,6 +1139,27 @@ describe('TuiApplication input routing', () => {
       'Ready · workspace-write · Plan active',
     )
     expect(internals.status.render(80).join('\n')).not.toContain('Tasks 0/1')
+  })
+
+  it('shows the previous turn duration alongside the ready status', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    app.render({
+      ...internals.controller.current,
+      connected: true,
+      lifecycle: buildLifecycleSnapshot({
+        sessionId: undefined,
+        generation: 0,
+        entries: [
+          { event: { type: 'turn/start', seq: 0, time: 0, data: { turn: 1 } } },
+          { event: { type: 'turn/end', seq: 1, time: 9_400, data: { turn: 1, reason: { kind: 'completed' } } } },
+        ] as unknown as HistoryEntry[],
+        sessionRunning: false,
+      }),
+    } as TuiState)
+
+    expect(internals.status.render(80).join('\n')).toContain('Ready · last 9.4s')
+    app.dispose()
   })
 
   it('carries only the Goal and Tasks segments down to the footer identity row', () => {

@@ -1,6 +1,7 @@
 import type { TuiState } from '../runtime/controller.ts'
 import {
   aggregateLifecycle,
+  lifecycleEndedAt,
   lifecycleStartedAt,
   visionLifecycleKey,
   type LifecycleNode,
@@ -21,6 +22,28 @@ function rootKey(snapshot: LifecycleSnapshot, node: LifecycleNode): string {
     parentKey = snapshot.get(parentKey)?.parentKey
   }
   return String(key)
+}
+
+function turnSubtree(snapshot: LifecycleSnapshot, node: LifecycleNode): readonly LifecycleNode[] {
+  const nodes: LifecycleNode[] = [node]
+  for (const child of snapshot.childrenOf(node.key)) nodes.push(...turnSubtree(snapshot, child))
+  return nodes
+}
+
+/**
+ * The previous turn's cumulative elapsed duration, measured across the whole
+ * settled turn subtree so the ready status matches the trajectory's turn
+ * timing (the Codex-style "worked for" marker).
+ */
+export function previousTurnDuration(state: Readonly<TuiState>): number | undefined {
+  const snapshot = state.lifecycle
+  const turn = snapshot.ordered().findLast(node => node.kind === 'turn' && node.state.phase === 'settled')
+  if (turn === undefined) return undefined
+  const nodes = turnSubtree(snapshot, turn)
+  const starts = nodes.map(lifecycleStartedAt).filter((value): value is number => value !== undefined)
+  const ends = nodes.map(lifecycleEndedAt).filter((value): value is number => value !== undefined)
+  if (starts.length === 0 || ends.length === 0) return undefined
+  return Math.max(0, Math.max(...ends) - Math.min(...starts)) || undefined
 }
 
 /**

@@ -29,18 +29,26 @@ export function executionLabel(kind: LifecycleKind, status: ExecutionStatus): st
 
 export type ExecutionDurationDensity = 'inline' | 'detail' | 'compact' | 'elapsed'
 
-/** One execution-duration policy with density variants for each terminal surface. */
+/**
+ * One execution-duration policy with density variants for each terminal
+ * surface. Sub-minute values keep per-surface granularity (ticking integer
+ * seconds for `elapsed`, decimals elsewhere); every minute-scale value
+ * renders through one canonical spaced form (`1m 05s`) so the status bar,
+ * transcript labels, and trajectory views never diverge.
+ */
 export function formatExecutionDuration(
   milliseconds: number,
   density: ExecutionDurationDensity = 'inline',
 ): string {
   const duration = Math.max(0, milliseconds)
-  if (density === 'elapsed') return `${String(Math.floor(duration / 1_000))}s`
+  if (density === 'elapsed' && duration < 60_000) {
+    return `${String(Math.floor(duration / 1_000))}s`
+  }
   if (duration < 1_000) {
     const value = String(Math.round(duration))
     return density === 'detail' ? `${value} ms` : `${value}ms`
   }
-  if (duration < 60_000 || density === 'inline') {
+  if (duration < 60_000) {
     const decimals = density === 'detail'
       ? duration < 10_000 ? 2 : 1
       : duration < 10_000 ? 1 : 0
@@ -49,9 +57,7 @@ export function formatExecutionDuration(
   }
   const minutes = Math.floor(duration / 60_000)
   const seconds = Math.floor(duration % 60_000 / 1_000)
-  return density === 'detail'
-    ? `${String(minutes)}m ${String(seconds)}s`
-    : `${String(minutes)}m${String(seconds).padStart(2, '0')}s`
+  return `${String(minutes)}m ${String(seconds).padStart(2, '0')}s`
 }
 
 export function activityLabel(activity: LifecycleAggregate): string {

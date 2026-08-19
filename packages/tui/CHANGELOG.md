@@ -14,6 +14,11 @@ All notable changes to this project are documented in this file.
   official read tools, keeping authorization in the unified sandbox/approval
   stack and leaving the Vision package a pure capability (byte cap and media
   types only).
+- Annotate the ready status with the previous turn's cumulative duration in
+  the Codex-style "worked-for" marker, and unify every minute-scale duration
+  across the status bar, transcript labels, and trajectory views into one
+  spaced minutes/seconds form (`1m 05s`) instead of raw seconds or the tight
+  `1m05s` rendering.
 
 ## 0.1.16 - 2026-08-18
 
