@@ -6,8 +6,11 @@ observations into supported user-message events. Proxy media stays in the
 standard durable inbox carrier used by authenticated attachment lookup and
 session export; image blocks never enter a text-only model request.
 
-The service also registers `inspect_image`, a workspace-contained Agent tool
-for PNG, JPEG, WebP, and GIF files. Composer admission and tool inspection share
+The service also registers `inspect_image`, an Agent tool for PNG, JPEG,
+WebP, and GIF files. It is a pure read capability: paths resolve through the
+filesystem backend's read seam like the official `read` tool family, with no
+tool-local workspace boundary, and the tool enforces only capability limits
+(byte cap and media types). Composer admission and tool inspection share
 one proxy inference path and the same attachment validation limits; only their
 observation context differs. Tool results are bounded, text-only, and explicitly
 untrusted, so text-only main-model routes never receive an image block.

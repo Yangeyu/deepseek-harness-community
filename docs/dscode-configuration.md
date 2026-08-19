@@ -26,7 +26,7 @@ dscode（DeepSeek Harness Community 终端）配置的单一事实源。本文�
 ### `vision:` — 图片路由
 - `mode`：`auto`（按线路能力自动决定直读/代理）、`proxy`（强制经文本代理链路分析）、`disabled`（关闭）。
 - `proxyProvider` / `proxyModel`：代理线路与模型（常用 `dashscope-vision` / `qwen3.7-plus`）。
-- 语义：`read_image` 仅原生图文线路可用；文本模型会话应使用 `inspect_image`（按 `mode` 走代理）。
+- 语义：`read_image` 仅原生图文线路可用；文本模型会话应使用 `inspect_image`（按 `mode` 走代理）。`inspect_image` 的路径解析与官方 `read` 工具族共用 filesystem backend 的读 seam，不设 workspace 边界；工具只保留能力级上限（5 MiB 字节、PNG/JPEG/WebP/GIF 媒体类型）。
 
 ### `community-web:` — 搜索与网页提取
 - `searchProvider`：`auto`（有 `TAVILY_API_KEY` 走 Tavily，否则回落 DeepSeek Official）、`community-tavily`（强制 Tavily，无 key 时 readiness 失败）、`deepseek-official`（强制官方）。

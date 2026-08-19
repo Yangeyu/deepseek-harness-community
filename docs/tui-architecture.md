@@ -220,7 +220,9 @@ reducing the number of visible files.
   restoration, and focus lifecycle stay shared without coupling workspace
   geometry to decision-card reading width.
 - `VisionService` owns one attachment-validated proxy inference core for both
-  composer admission and the workspace-contained `inspect_image` Agent tool.
+  composer admission and the `inspect_image` Agent tool, which resolves image
+  paths through the filesystem read seam without a tool-local workspace
+  boundary.
   Composer analysis requires a unique reference for every image and forwards
   reference/image pairs in request order, so proxy output can retain the
   surrounding text relationship.

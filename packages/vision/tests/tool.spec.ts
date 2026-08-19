@@ -11,7 +11,6 @@ import type { VisionInspection } from '../src/types.ts'
 
 const png = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
 const version = 'version-1' as FsVersion
-const workspace = { targetKey: 'workspace', displayPath: '/workspace' } as FsTarget
 const target = { targetKey: 'image', displayPath: '/workspace/screen.png' } as FsTarget
 const limits: ImageAttachmentLimits = {
   maxImageBytes: 1_024,
@@ -62,13 +61,11 @@ function runContext(options: { cwd?: string | undefined; nested?: boolean } = {}
 }
 
 function fixture(overrides: {
-  contained?: boolean
   fileType?: 'file' | 'directory' | 'other'
   bytes?: Uint8Array
   size?: number
 } = {}) {
-  const resolve = vi.fn(async (path: string) => path === '.' ? workspace : target)
-  const contains = vi.fn(() => overrides.contained ?? true)
+  const resolve = vi.fn(async () => target)
   const stat = vi.fn(async () => ({
     version,
     type: overrides.fileType ?? 'file',
@@ -78,16 +75,16 @@ function fixture(overrides: {
   const inspect = vi.fn(async () => inspection)
   const observe = vi.fn()
   const tool = createInspectImageTool({
-    fs: { resolve, contains, stat, readBytes } as unknown as InspectImageToolOptions['fs'],
+    fs: { resolve, stat, readBytes } as unknown as InspectImageToolOptions['fs'],
     imageLimits: limits,
     inspect,
     observe,
   })
-  return { tool, resolve, contains, stat, readBytes, inspect, observe }
+  return { tool, resolve, stat, readBytes, inspect, observe }
 }
 
 describe('inspect_image', () => {
-  it('reads one contained image and returns text-only proxy evidence', async () => {
+  it('reads an image and returns text-only proxy evidence', async () => {
     const current = fixture()
     const { exec, deferContext } = runContext({ nested: true })
 
@@ -98,7 +95,6 @@ describe('inspect_image', () => {
 
     expect(current.tool.name).toBe(INSPECT_IMAGE_TOOL_NAME)
     expect(current.tool.description).toContain('@-referenced image paths')
-    expect(current.resolve).toHaveBeenCalledWith('.', { cwd: '/workspace', signal: exec.signal })
     expect(current.resolve).toHaveBeenCalledWith('screen.png', { cwd: '/workspace', signal: exec.signal })
     expect(current.readBytes).toHaveBeenCalledWith(target, exec.signal, 1_024)
     expect(current.inspect).toHaveBeenCalledWith({
@@ -125,15 +121,14 @@ describe('inspect_image', () => {
     })
   })
 
-  it('rejects a path that resolves outside the active workspace before reading it', async () => {
-    const current = fixture({ contained: false })
+  it('resolves any readable path through the filesystem backend without a containment check', async () => {
+    const current = fixture()
     const { exec } = runContext()
 
     await expect(current.tool.execute({ file_path: '../secret.png' }, exec))
-      .rejects.toThrow('outside the active workspace')
-    expect(current.stat).not.toHaveBeenCalled()
-    expect(current.readBytes).not.toHaveBeenCalled()
-    expect(current.inspect).not.toHaveBeenCalled()
+      .resolves.toMatchObject({ path: '/workspace/screen.png' })
+    expect(current.resolve).toHaveBeenCalledWith('../secret.png', { cwd: '/workspace', signal: exec.signal })
+    expect(current.inspect).toHaveBeenCalledOnce()
   })
 
   it('rejects non-files and unsupported bytes before invoking the proxy', async () => {

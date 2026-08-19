@@ -9,6 +9,11 @@ All notable changes to this project are documented in this file.
   of freezing the viewport below them.
 - Scroll the split trajectory detail panel with Shift+J/K while j/k keep
   stepping the ledger selection.
+- Remove the tool-local workspace boundary from the Vision `inspect_image`
+  tool: image paths now resolve through the same filesystem backend as the
+  official read tools, keeping authorization in the unified sandbox/approval
+  stack and leaving the Vision package a pure capability (byte cap and media
+  types only).
 
 ## 0.1.16 - 2026-08-18
 

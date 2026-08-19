@@ -9,7 +9,7 @@ import type { VisionInspection, VisionInspectionRequest } from './types.ts'
 export const INSPECT_IMAGE_TOOL_NAME = 'inspect_image'
 const PLUGIN_NAME = 'community-vision'
 
-type VisionFileSystem = Pick<FileSystem, 'resolve' | 'contains' | 'stat' | 'readBytes'>
+type VisionFileSystem = Pick<FileSystem, 'resolve' | 'stat' | 'readBytes'>
 
 export interface InspectImageToolOptions {
   fs: VisionFileSystem
@@ -62,12 +62,12 @@ function quotedPath(path: string): string {
 export function createInspectImageTool(options: InspectImageToolOptions): ToolDefinition {
   return defineTool({
     name: INSPECT_IMAGE_TOOL_NAME,
-    description: 'Inspect a PNG/JPEG/WebP/GIF workspace image through the configured Vision proxy and return text-only visual evidence. Use this for @-referenced image paths when the active model cannot use read_image; prefer read_image when the active model natively accepts images.',
+    description: 'Inspect a PNG/JPEG/WebP/GIF image through the configured Vision proxy and return text-only visual evidence. Use this for @-referenced image paths when the active model cannot use read_image; prefer read_image when the active model natively accepts images.',
     parameters: {
       file_path: {
         type: 'string',
         required: true,
-        description: 'Image path relative to the active workspace, without the leading @ reference marker. The resolved file must remain inside that workspace.',
+        description: 'Image path relative to the active workspace, without the leading @ reference marker. Resolution follows the filesystem backend: any readable image path is accepted.',
       },
       question: {
         type: 'string',
@@ -112,14 +112,8 @@ export function createInspectImageTool(options: InspectImageToolOptions): ToolDe
       const cwd = exec.agent?.session.header.cwd
       if (cwd === undefined) throw new Error('inspect_image requires an agent working directory')
 
-      const [workspace, target] = await Promise.all([
-        options.fs.resolve('.', { cwd, signal: exec.signal }),
-        options.fs.resolve(requestedPath, { cwd, signal: exec.signal }),
-      ])
+      const target = await options.fs.resolve(requestedPath, { cwd, signal: exec.signal })
       exec.signal.throwIfAborted()
-      if (!options.fs.contains(workspace, target)) {
-        throw new Error(`cannot inspect ${quotedPath(requestedPath)}: the resolved image is outside the active workspace`)
-      }
       const info = await options.fs.stat(target, exec.signal)
       if (info === undefined) throw new Error(`cannot inspect ${quotedPath(requestedPath)}: the image does not exist`)
       if (info.type !== 'file') throw new Error(`cannot inspect ${quotedPath(requestedPath)}: the path is not a regular file`)
