@@ -260,6 +260,8 @@ export class TrajectoryView implements Component {
       }
       if (matchesKey(data, Key.up) || data === 'k') this.scrollDetail(-1)
       if (matchesKey(data, Key.down) || data === 'j') this.scrollDetail(1)
+      if (data === 'K' || matchesKey(data, Key.shift('k'))) this.scrollDetail(-1)
+      if (data === 'J' || matchesKey(data, Key.shift('j'))) this.scrollDetail(1)
       if (matchesKey(data, Key.pageUp)) this.scrollDetail(-this.detailPageRows)
       if (matchesKey(data, Key.pageDown)) this.scrollDetail(this.detailPageRows)
       return
@@ -287,6 +289,14 @@ export class TrajectoryView implements Component {
     }
     if (matchesKey(data, Key.down) || data === 'j') {
       this.move(1)
+      return
+    }
+    if (this.splitLayout && (data === 'K' || matchesKey(data, Key.shift('k')))) {
+      this.scrollDetail(-1)
+      return
+    }
+    if (this.splitLayout && (data === 'J' || matchesKey(data, Key.shift('j')))) {
+      this.scrollDetail(1)
       return
     }
     if (matchesKey(data, Key.pageUp)) {
@@ -372,7 +382,7 @@ export class TrajectoryView implements Component {
     const header = this.renderOverviewHeader(width, metrics, bottleneck)
     const footerText = this.mode === 'detail'
       ? 'Detail focus · j/k scroll · Tab/←/→ section · Esc events'
-      : 'Ledger focus · j/k select · h/l fold · Enter/Tab inspect · Esc chat'
+      : 'Ledger focus · j/k select · J/K scroll detail · h/l fold · Enter/Tab inspect · Esc chat'
     const footer = [truncateToWidth(this.theme.dim(footerText), width)]
     const available = Math.max(0, height - header.length - footer.length)
     const innerWidth = Math.max(1, width - 3)

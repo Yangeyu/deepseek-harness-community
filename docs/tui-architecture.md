@@ -274,6 +274,8 @@ reducing the number of visible files.
   and Summary consistently. One ledger-row painter owns focus for every record
   kind, and the shared focus theme preserves its background across nested ANSI
   styles and truncation resets.
+- In the split Trajectory surface, Shift+J/K scroll the overflowing detail
+  panel while j/k keep stepping the ledger selection.
 - `rewind/contracts` is independent of Cordis, Memory, Node, and pi-tui.
   The injected `RewindConversationHistory` rebuilds Prompt checkpoints from the
   active Session log. `rewind/domain` owns only the bounded reversible-effect

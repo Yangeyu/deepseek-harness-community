@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file.
 - Keep following the conversation tail when expanding the disclosure block
   anchored at the transcript bottom, so the expanded rows stay visible instead
   of freezing the viewport below them.
+- Scroll the split trajectory detail panel with Shift+J/K while j/k keep
+  stepping the ledger selection.
 
 ## 0.1.16 - 2026-08-18
 

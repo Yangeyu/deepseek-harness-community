@@ -81,6 +81,74 @@ describe('TrajectoryView', () => {
     expect(view.render(100).join('\n')).toContain('Trajectory · Assistant response')
   })
 
+  it('scrolls the split detail panel with Shift+J/K while j/k keep selecting records', () => {
+    const user = (seq: number, id: string, text: string): TuiState['events'][number] => ({
+      event: {
+        type: 'user/message',
+        seq,
+        time: seq * 1_000,
+        surfaceOp: 'append',
+        data: {
+          id,
+          role: 'user',
+          source: { kind: 'user' },
+          content: [{ type: 'text', text }],
+        },
+      },
+    } as TuiState['events'][number])
+    const longText = Array.from({ length: 40 }, (_, index) => `detail line ${String(index + 1)}`).join('\n')
+    const view = new TrajectoryView(
+      state([user(0, 'message-a', 'First short input'), user(1, 'message-b', longText), user(2, 'message-c', 'Last short input')]),
+      () => 24,
+      createTheme(false),
+      async () => false,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )
+    const internals = view as unknown as { index: number; detailOffset: number; detailMaxOffset: number }
+
+    view.render(120)
+    expect(internals.index).toBe(2)
+
+    view.handleInput('k')
+    view.render(120)
+    expect(internals.index).toBe(1)
+    expect(internals.detailMaxOffset).toBeGreaterThan(0)
+    expect(internals.detailOffset).toBe(0)
+
+    view.handleInput('K')
+    view.render(120)
+    expect(internals.index).toBe(1)
+    expect(internals.detailOffset).toBe(0)
+
+    view.handleInput('J')
+    view.render(120)
+    expect(internals.index).toBe(1)
+    expect(internals.detailOffset).toBe(1)
+
+    view.handleInput('K')
+    view.render(120)
+    expect(internals.index).toBe(1)
+    expect(internals.detailOffset).toBe(0)
+
+    view.handleInput('j')
+    view.render(120)
+    expect(internals.index).toBe(2)
+    expect(internals.detailOffset).toBe(0)
+
+    view.handleInput('k')
+    view.render(120)
+    expect(internals.index).toBe(1)
+    view.handleInput('\r')
+    view.handleInput('J')
+    view.render(120)
+    expect(internals.detailOffset).toBe(1)
+    view.handleInput('K')
+    view.render(120)
+    expect(internals.detailOffset).toBe(0)
+  })
+
   it('navigates from the ledger through payload and result details, then back to chat', () => {
     const close = vi.fn()
     const view = new TrajectoryView(
