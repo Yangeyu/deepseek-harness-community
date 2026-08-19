@@ -19,6 +19,10 @@ All notable changes to this project are documented in this file.
   across the status bar, transcript labels, and trajectory views into one
   spaced minutes/seconds form (`1m 05s`) instead of raw seconds or the tight
   `1m05s` rendering.
+- Keep the session id as the resume row's label, show the working directory
+  second, and append the durable `title` projection third, while subagent
+  sessions stay out of the resume surface and the `dscode sessions` table
+  gains a TITLE column.
 
 ## 0.1.16 - 2026-08-18
 

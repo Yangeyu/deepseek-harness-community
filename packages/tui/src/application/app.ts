@@ -11,7 +11,6 @@ import {
 import type {
   IApiClient,
   ModelSelection,
-  SessionSummary,
 } from '@deepseek-ai/dsh-host-apiproxy'
 import type {
   MemoryActivity,
@@ -19,6 +18,7 @@ import type {
   MemorySessionPolicy,
 } from '@vascent/deepseek-harness-memory'
 import type { ResolvedConfig } from './config.ts'
+import { sessionChoices } from './session-list.ts'
 import {
   HarnessController,
   type ApprovalPrompt,
@@ -221,10 +221,6 @@ export interface TuiApplicationDependencies {
   workspacePaths?: WorkspacePathSource
   gitBranch?: GitBranchSource
   terminal?: Terminal
-}
-
-function sessionDescription(session: SessionSummary): string {
-  return session.cwd ?? String(session.sessionId)
 }
 
 function questionTitle(question: QuestionPrompt['questions'][number]): string {
@@ -1796,14 +1792,9 @@ export class TuiApplication implements TuiControllerSink {
   private async openSessionSelector(): Promise<void> {
     if (this.tui.hasOverlay() || this.composerModalActive) return
     const sessions = await this.controller.sessions()
-    const current = this.controller.current.sessionId
-    const items = sessions
-      .filter(session => session.sessionId !== current)
-      .map(session => ({
-        value: String(session.sessionId),
-        label: String(session.sessionId),
-        description: sessionDescription(session),
-      }))
+    const items = sessionChoices(sessions, this.controller.current.sessionId === undefined
+      ? undefined
+      : String(this.controller.current.sessionId))
     if (items.length === 0) {
       this.controller.notice('No other sessions are available.')
       return
