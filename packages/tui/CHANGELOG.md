@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Keep following the conversation tail when expanding the disclosure block
+  anchored at the transcript bottom, so the expanded rows stay visible instead
+  of freezing the viewport below them.
+
 ## 0.1.16 - 2026-08-18
 
 - Preserve the visible conversation viewport when expanding or collapsing

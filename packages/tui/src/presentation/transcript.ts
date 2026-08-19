@@ -105,6 +105,7 @@ export class TranscriptComponent implements Component {
   private readonly thinkingOffsets = new Map<string, number>()
   private readonly thinkingMaxOffsets = new Map<string, number>()
   private items: TranscriptItem[] | undefined
+  private renderedLineCount = 0
   private renderedDocument: { width: number; lines: string[] } | undefined
   private readonly textBlocks = new Map<string, TextBlockCache>()
   private readonly promptBlocks = new Map<string, PromptBlockCache>()
@@ -223,6 +224,12 @@ export class TranscriptComponent implements Component {
     return this.scrollThinking(hit.key, action === 'wheel-up' ? -1 : 1)
   }
 
+  /** Whether the disclosure title at a transcript row belongs to the block reaching the transcript end. */
+  isTrailingBlock(line: number): boolean {
+    const hit = this.blockTitleHits.get(line)
+    return hit !== undefined && hit.lastLine === this.renderedLineCount - 1
+  }
+
   render(width: number): string[] {
     const safeWidth = Math.max(1, width)
     if (this.renderedDocument?.width === safeWidth) return this.renderedDocument.lines
@@ -271,6 +278,7 @@ export class TranscriptComponent implements Component {
     this.pruneBlockCache(this.diffBlocks, activeDiffBlocks)
     this.paintHoveredTitle(lines)
     this.renderedDocument = { width: safeWidth, lines }
+    this.renderedLineCount = lines.length
     return lines
   }
 

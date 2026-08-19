@@ -172,6 +172,9 @@ reducing the number of visible files.
   before the transcript changes height. This transfers viewport ownership from
   automatic tail following to the user without coupling Layout to Activity,
   Thought, tool, or Diff keys. Explicit follow actions resume tail ownership.
+  A disclosure block that reaches the transcript end keeps tail ownership
+  instead: freezing a viewport with no rendered rows below the block would
+  leave the newly expanded content hidden below the bottom edge.
 - Main-screen text selection owns rendered cell coordinates, grapheme-aware
   highlighting, and plain-text extraction. The application owns clipboard I/O.
   A primary press starts one gesture; dragging updates selection, while release

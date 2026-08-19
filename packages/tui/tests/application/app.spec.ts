@@ -63,6 +63,7 @@ interface AppInternals {
   transcript: {
     render(width: number): string[]
     handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean
+    isTrailingBlock(line: number): boolean
   }
   layout: {
     render(width: number): string[]
@@ -414,6 +415,7 @@ describe('TuiApplication input routing', () => {
     internals.layout.transcriptRowAt = vi.fn(() => 0)
     const handlePointer = vi.fn(() => true)
     internals.transcript.handlePointer = handlePointer
+    internals.transcript.isTrailingBlock = vi.fn(() => false)
     internals.layout.preserveTranscriptViewport = vi.fn()
     internals.tui.beginTextSelection = vi.fn(() => true)
     internals.tui.finishTextSelection = vi.fn(() => ({ kind: 'click' as const, changed: false }))
@@ -425,6 +427,24 @@ describe('TuiApplication input routing', () => {
     internals.handleGlobalInput('\u001b[<0;1;1m')
     expect(handlePointer).toHaveBeenCalledWith(0, 'click')
     expect(internals.layout.preserveTranscriptViewport).toHaveBeenCalledOnce()
+  })
+
+  it('keeps tail following when the clicked disclosure block reaches the transcript end', () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    internals.layout.transcriptRowAt = vi.fn(() => 0)
+    const handlePointer = vi.fn(() => true)
+    internals.transcript.handlePointer = handlePointer
+    internals.transcript.isTrailingBlock = vi.fn(() => true)
+    internals.layout.preserveTranscriptViewport = vi.fn()
+    internals.tui.beginTextSelection = vi.fn(() => true)
+    internals.tui.finishTextSelection = vi.fn(() => ({ kind: 'click' as const, changed: false }))
+
+    internals.handleGlobalInput('\u001b[<0;1;1m')
+
+    expect(handlePointer).toHaveBeenCalledWith(0, 'click')
+    expect(internals.transcript.isTrailingBlock).toHaveBeenCalledWith(0)
+    expect(internals.layout.preserveTranscriptViewport).not.toHaveBeenCalled()
   })
 
   it('renders hover only when the pointer enters or leaves a fold title', () => {

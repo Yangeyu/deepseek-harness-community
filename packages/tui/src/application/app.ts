@@ -816,7 +816,9 @@ export class TuiApplication implements TuiControllerSink {
           })
         } else if (result.kind === 'click') {
           const disclosureChanged = this.transcript.handlePointer(transcriptLine, 'click')
-          if (disclosureChanged) this.layout.preserveTranscriptViewport()
+          if (disclosureChanged && !this.transcript.isTrailingBlock(transcriptLine)) {
+            this.layout.preserveTranscriptViewport()
+          }
           changed = disclosureChanged || changed
         }
       }

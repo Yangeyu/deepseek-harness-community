@@ -422,6 +422,46 @@ describe('TranscriptComponent', () => {
     expect(expanded).toContain('└─ › ◦ Read project')
   })
 
+  it('reports whether a disclosure block reaches the transcript end', () => {
+    const tool = entry({
+      event: {
+        type: 'tool/call',
+        seq: 0,
+        time: 1_000,
+        data: { turn: 1, step: 1, callId: 'call-only', name: 'read', arguments: '{}' },
+      },
+      view: { for: 'call', view: { card: 'generic', title: 'Read project' } },
+    })
+    const transcript = new TranscriptComponent(state([tool], true), createTheme(false), true, 8)
+    transcript.render(80)
+
+    expect(transcript.isTrailingBlock(0)).toBe(true)
+    expect(transcript.isTrailingBlock(1)).toBe(false)
+    // Disclosure clicks invalidate the render cache but keep the last block geometry.
+    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.isTrailingBlock(0)).toBe(true)
+
+    transcript.setState(state([
+      tool,
+      entry({
+        event: {
+          type: 'user/message',
+          seq: 1,
+          time: 2_000,
+          surfaceOp: 'append',
+          data: {
+            id: 'message-after',
+            role: 'user',
+            source: { kind: 'user' },
+            content: [{ type: 'text', text: 'What next?' }],
+          },
+        },
+      }),
+    ], true))
+    transcript.render(80)
+    expect(transcript.isTrailingBlock(0)).toBe(false)
+  })
+
   it('follows streaming thinking until the user scrolls upward', () => {
     const reasoningChunk = (seq: number, text: string): HistoryEntry => entry({
       event: {
