@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 0.1.17 - 2026-08-20
 
 - Keep following the conversation tail when expanding the disclosure block
   anchored at the transcript bottom, so the expanded rows stay visible instead
