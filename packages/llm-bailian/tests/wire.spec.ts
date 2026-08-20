@@ -2,7 +2,7 @@ import { createServer, type IncomingHttpHeaders, type Server, type ServerRespons
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AttachmentId, type AttachmentStore, type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { createUserMessage, ReasoningEffortId, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { CallId, createAssistantMessage, createToolResultMessage, createUserMessage, ReasoningEffortId, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
   BailianAdapter,
   BAILIAN_PROVIDER_ID,
@@ -431,43 +431,37 @@ describe('Bailian wire contract', () => {
 
     // Simulate an assistant message with 3 tool calls followed by their results
     const messages = [
-      {
-        role: 'assistant' as const,
+      createAssistantMessage({
         content: [
-          { type: 'tool-call' as const, id: 'call-1', name: 'read_image', arguments: '{"file":"img1.png"}' },
-          { type: 'tool-call' as const, id: 'call-2', name: 'read_image', arguments: '{"file":"img2.png"}' },
-          { type: 'tool-call' as const, id: 'call-3', name: 'read_image', arguments: '{"file":"img3.png"}' },
+          { type: 'tool-call' as const, id: CallId('call-1'), name: 'read_image', arguments: '{"file":"img1.png"}' },
+          { type: 'tool-call' as const, id: CallId('call-2'), name: 'read_image', arguments: '{"file":"img2.png"}' },
+          { type: 'tool-call' as const, id: CallId('call-3'), name: 'read_image', arguments: '{"file":"img3.png"}' },
         ],
-        source: { kind: 'model' as const, provider: 'test', model: 'test' },
-      },
-      createUserMessage({
+        source: { provider: 'test', model: 'test' },
+      }),
+      createToolResultMessage({
+        callId: CallId('call-1'),
         content: [
-          {
-            type: 'tool-result' as const,
-            toolCallId: 'call-1',
-            content: [
-              { type: 'text' as const, text: 'Image 1 data' },
-              { type: 'image' as const, attachment: imageRef1 },
-            ],
-          },
-          {
-            type: 'tool-result' as const,
-            toolCallId: 'call-2',
-            content: [
-              { type: 'text' as const, text: 'Image 2 data' },
-              { type: 'image' as const, attachment: imageRef2 },
-            ],
-          },
-          {
-            type: 'tool-result' as const,
-            toolCallId: 'call-3',
-            content: [
-              { type: 'text' as const, text: 'Image 3 data' },
-              { type: 'image' as const, attachment: imageRef3 },
-            ],
-          },
+          { type: 'text' as const, text: 'Image 1 data' },
+          { type: 'image' as const, attachment: imageRef1 },
         ],
-        source: { kind: 'tool' as const, callId: 'call-1' },
+        isError: false,
+      }),
+      createToolResultMessage({
+        callId: CallId('call-2'),
+        content: [
+          { type: 'text' as const, text: 'Image 2 data' },
+          { type: 'image' as const, attachment: imageRef2 },
+        ],
+        isError: false,
+      }),
+      createToolResultMessage({
+        callId: CallId('call-3'),
+        content: [
+          { type: 'text' as const, text: 'Image 3 data' },
+          { type: 'image' as const, attachment: imageRef3 },
+        ],
+        isError: false,
       }),
     ]
 

@@ -126,18 +126,70 @@ export async function serializeMessages(
 ): Promise<WireMessage[]> {
   const wire: WireMessage[] = []
   if (options.system !== undefined) wire.push({ role: 'system', content: options.system })
+  
+  // Collect consecutive tool result messages to serialize them together
+  let pendingToolResults: Message[] = []
+  
+  const flushToolResults = async () => {
+    if (pendingToolResults.length === 0) return
+    
+    // First, emit all tool messages
+    for (const message of pendingToolResults) {
+      for (const result of message.content.filter(block => block.type === 'tool-result')) {
+        const resultText = textOf(result.content)
+        const hasImages = contentHasImage(result.content)
+        wire.push({
+          role: 'tool',
+          tool_call_id: result.toolCallId,
+          content: resultText.length > 0
+            ? resultText
+            : hasImages ? 'Image result attached in the following user message.' : '',
+        })
+      }
+    }
+    
+    // Then, emit all user messages with images
+    for (const message of pendingToolResults) {
+      for (const result of message.content.filter(block => block.type === 'tool-result')) {
+        const hasImages = contentHasImage(result.content)
+        if (hasImages) {
+          const parts = await imageParts(result.content, attachments, signal)
+          wire.push({
+            role: 'user',
+            content: [{ type: 'text', text: `Images returned by tool ${result.toolCallId}:` }, ...parts],
+          })
+        }
+      }
+    }
+    
+    pendingToolResults = []
+  }
+  
   for (const message of options.messages) {
     if (message.role === 'assistant') {
+      await flushToolResults()
       wire.push(assistantMessage(message))
     } else if (message.role === 'system') {
+      await flushToolResults()
       if (contentHasImage(message.content)) {
         throw new LlmError('Bailian system messages do not support image blocks', 'UNSUPPORTED_CONTENT')
       }
       wire.push({ role: 'system', content: textOf(message.content) })
     } else {
-      wire.push(...await serializeUserMessage(message, attachments, signal))
+      // Check if this is a tool result message
+      const hasToolResults = message.content.some(block => block.type === 'tool-result')
+      if (hasToolResults) {
+        pendingToolResults.push(message)
+      } else {
+        await flushToolResults()
+        wire.push(...await serializeUserMessage(message, attachments, signal))
+      }
     }
   }
+  
+  // Flush any remaining tool results
+  await flushToolResults()
+  
   return wire
 }
 
