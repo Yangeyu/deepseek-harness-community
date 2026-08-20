@@ -623,12 +623,16 @@ export class TuiApplication implements TuiControllerSink {
         : activity === undefined && this.hostCommandActive
           ? `Running ${this.hostCommandLine ?? 'command'}`
           : 'Working'
-      const interruptHint = this.interruptingActivityKey === this.interruptionTargetKey(state)
-        ? 'Ctrl+C again to exit'
-        : 'esc to interrupt'
+      const interruptTarget = this.interruptionTargetKey(state)
+      const interruptHint = interruptTarget === undefined
+        ? ''
+        : this.interruptingActivityKey === interruptTarget
+          ? 'Ctrl+C again to exit'
+          : 'esc to interrupt'
+      const hint = interruptHint === '' ? '' : ` · ${interruptHint}`
       this.status.setText([
         this.theme.accent(glyph),
-        this.theme.secondary(` ${label} (${elapsed} · ${interruptHint}${history})`),
+        this.theme.secondary(` ${label} (${elapsed}${hint}${history})`),
       ].join(''))
       return
     }

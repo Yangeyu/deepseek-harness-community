@@ -8,7 +8,7 @@ export interface ExecutionVisual {
 }
 
 /** Shared loading-animation frames, reused by the status bar and the transcript's running rows. */
-export const SPINNER_FRAMES = ['·', '✢', '✳', '✦']
+const SPINNER_FRAMES = ['·', '✢', '✳', '✦']
 
 /** The spinner glyph for an animation frame counter. */
 export function spinnerFrameGlyph(frame: number): string {

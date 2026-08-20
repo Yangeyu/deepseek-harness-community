@@ -1146,7 +1146,7 @@ describe('TuiApplication input routing', () => {
 
     const pending = internals.submit('/compact')
     await vi.waitFor(() => {
-      expect(stripTerminalSequences(internals.status.render(80).join('\n'))).toContain('Running /compact (0s ·')
+      expect(stripTerminalSequences(internals.status.render(80).join('\n'))).toContain('Running /compact (0s)')
     })
     vi.advanceTimersByTime(160)
     expect(stripTerminalSequences(internals.status.render(80).join('\n'))).toContain('✢ Running /compact')
