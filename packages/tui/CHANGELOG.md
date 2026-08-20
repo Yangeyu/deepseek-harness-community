@@ -2,6 +2,39 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.19 - 2026-08-21
+
+- Reuse the status-bar loading animation inside the conversation body: running
+  Activity, Thought, and tool rows rotate through the same `· ✢ ✳ ✦` frames on
+  the same 160ms tick instead of rendering a static bullet, so in-progress work
+  stays visibly animated while the transcript streams.
+- Animate the status bar while Host-backed slash commands execute. `/compact`
+  and the other Host commands used to wait out the whole host round trip with
+  no local working state, so nothing moved between submission and the first
+  command event; the status row now enters the spinner wait the moment the
+  command is dispatched and reports `Running /<command>` with a live elapsed
+  time until it settles.
+- Show an interrupt hint only when an interrupt target actually exists, so
+  commands that cannot be interrupted no longer claim an interrupting key.
+- Let the maintenance Memory agent reconcile before recording: it reads the
+  relevant scope first, skips facts that are already remembered, and on a
+  correction or contradiction forgets the outdated entry before writing the
+  new one, so every remembered fact keeps exactly one current wording instead
+  of accumulating conflicting bullets.
+- Annotate rewind forks in the resume surfaces: branch rows carry
+  `forked from`, continued parents list their `continued in` children, and the
+  `dscode sessions` ORIGIN column reports `fork` for branched histories, so a
+  rewound lineage can no longer be confused with its pre-rewind parent.
+- Clear the composer draft on the first Ctrl+C before interrupting a running
+  session, with the draft restorable via Up, while ESC keeps interrupting.
+- Seed commented example configs (`settings.yaml.example` and
+  `cordis.patch.yml.example`) into the dscode home on first run with a
+  one-time notice, so fresh installs have a guided starting point for editing
+  settings.yaml and patch layers.
+- Raise the image attachment per-side cap from the 2000px default to 4096px
+  through the attachment-local bundle patch, so clipboard images wider than
+  2000 pixels are admitted again.
+
 ## 0.1.18 - 2026-08-20
 
 - Serialize the Bailian request tool-result sequence at message level so that
