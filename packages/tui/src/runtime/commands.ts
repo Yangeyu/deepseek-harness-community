@@ -105,6 +105,12 @@ export class TerminalCommandDirectory {
     return this.resolutionNames.includes(name.toLowerCase())
   }
 
+  /** Whether a resolution name executes through the Host source rather than a local handler. */
+  isHostCommand(name: string): boolean {
+    const normalized = name.toLowerCase()
+    return !this.localByName.has(normalized) && this.host.some(candidate => candidate.name === normalized)
+  }
+
   /** Refresh the agent-scoped Host view when the active session changes. */
   setSession(sessionId: SessionId | undefined): boolean {
     if (sessionId === this.sessionId) return false

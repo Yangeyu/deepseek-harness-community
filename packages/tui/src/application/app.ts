@@ -267,6 +267,9 @@ export class TuiApplication implements TuiControllerSink {
   private spinnerFrame = 0
   private workingStartedAt: number | undefined
   private workingActivityKey: string | undefined
+  private hostCommandActive = false
+  private hostCommandLine: string | undefined
+  private hostCommandStartedAt: number | undefined
   private showDetails = false
   private readonly composerInput = new ComposerInputController<AttachmentDraft>()
   private rewindArmTimer: ReturnType<typeof setTimeout> | undefined
@@ -595,8 +598,8 @@ export class TuiApplication implements TuiControllerSink {
     const policy = sessionControlSummary(state.projections)
     const policyStatus = policy === '' ? '' : ` · ${policy}`
     const activity = composerExecutionActivity(state)
-    if (activity !== undefined) {
-      if (activity.key !== this.workingActivityKey) {
+    if (activity !== undefined || this.hostCommandActive) {
+      if (activity !== undefined && activity.key !== this.workingActivityKey) {
         const hostHandoff = this.workingActivityKey?.startsWith('submission:') === true
           && activity.key.startsWith('session:')
         this.workingActivityKey = activity.key
@@ -613,11 +616,13 @@ export class TuiApplication implements TuiControllerSink {
         }, 160)
       }
       const glyph = spinnerFrameGlyph(this.spinnerFrame)
-      const startedAt = activity.startedAt ?? this.workingStartedAt ?? Date.now()
+      const startedAt = activity?.startedAt ?? this.hostCommandStartedAt ?? this.workingStartedAt ?? Date.now()
       const elapsed = formatExecutionDuration(Date.now() - startedAt, 'elapsed')
-      const label = activity.kind === 'vision'
+      const label = activity?.kind === 'vision'
         ? `Vision · Analyzing ${String(activity.imageCount)} image${activity.imageCount === 1 ? '' : 's'}`
-        : 'Working'
+        : activity === undefined && this.hostCommandActive
+          ? `Running ${this.hostCommandLine ?? 'command'}`
+          : 'Working'
       const interruptHint = this.interruptingActivityKey === this.interruptionTargetKey(state)
         ? 'Ctrl+C again to exit'
         : 'esc to interrupt'
@@ -901,7 +906,28 @@ export class TuiApplication implements TuiControllerSink {
   }
 
   private async handleCommand(text: string): Promise<boolean> {
-    return this.commands.dispatch(text)
+    const name = text.replace(/^\//u, '').trim().split(/\s+/u)[0] ?? ''
+    const optimistic = this.commands.isHostCommand(name)
+    if (optimistic) {
+      this.hostCommandActive = true
+      this.hostCommandLine = `/${name.toLowerCase()}`
+      this.hostCommandStartedAt = Date.now()
+      this.updateStatus(this.controller.current)
+      this.tui.requestRender()
+    }
+    try {
+      return await this.commands.dispatch(text)
+    } finally {
+      if (optimistic) {
+        this.hostCommandActive = false
+        this.hostCommandLine = undefined
+        this.hostCommandStartedAt = undefined
+        if (!this.disposed) {
+          this.updateStatus(this.controller.current)
+          this.tui.requestRender()
+        }
+      }
+    }
   }
 
   private localCommands(): TerminalCommandDefinition[] {

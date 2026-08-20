@@ -15,7 +15,7 @@ import {
 import type { RewindAction, RewindPlan, RewindPort } from '../../src/rewind/index.ts'
 import { resolveConfig } from '../../src/application/config.ts'
 import type { TuiState } from '../../src/runtime/controller.ts'
-import type { HostCommandSource } from '../../src/runtime/commands.ts'
+import type { HostCommandSource, HostCommandResult } from '../../src/runtime/commands.ts'
 import {
   memoryKeymapGateway,
   type KeymapSettingsGateway,
@@ -1120,6 +1120,56 @@ describe('TuiApplication input routing', () => {
     expect(plain()).toContain('› ✳ Working · 1 tool · Read')
     vi.advanceTimersByTime(160)
     expect(plain()).toContain('› ✦ Working · 1 tool · Read')
+  })
+
+  it('spins the status bar while a Host command like /compact executes', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    let resolveExecute: ((result: HostCommandResult) => void) | undefined
+    const source: HostCommandSource = {
+      list: sessionId => sessionId === undefined ? [] : [{
+        name: 'compact',
+        description: 'Compact the conversation',
+      }],
+      execute: () => new Promise(resolve => { resolveExecute = resolve }),
+      subscribe: () => () => {},
+    }
+    const app = application(undefined, undefined, undefined, source)
+    const internals = app as unknown as AppInternals
+    const state = {
+      ...internals.controller.current,
+      sessionId: 'session-command' as TuiState['sessionId'],
+      connected: true,
+    } satisfies TuiState
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue(state)
+    app.render(state)
+
+    const pending = internals.submit('/compact')
+    await vi.waitFor(() => {
+      expect(stripTerminalSequences(internals.status.render(80).join('\n'))).toContain('Running /compact (0s ·')
+    })
+    vi.advanceTimersByTime(160)
+    expect(stripTerminalSequences(internals.status.render(80).join('\n'))).toContain('✢ Running /compact')
+    vi.advanceTimersByTime(160)
+    expect(stripTerminalSequences(internals.status.render(80).join('\n'))).toContain('✳ Running /compact')
+
+    resolveExecute?.({ kind: 'success' })
+    await pending
+    expect(stripTerminalSequences(internals.status.render(80).join('\n'))).toContain('Ready')
+  })
+
+  it('keeps local commands out of the Host command working wait', async () => {
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const state = { ...internals.controller.current, connected: true } satisfies TuiState
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue(state)
+    vi.spyOn(internals.controller, 'notice').mockImplementation(() => {})
+    app.render(state)
+
+    await internals.submit('/help')
+    const status = stripTerminalSequences(internals.status.render(80).join('\n'))
+    expect(status).toContain('Ready')
+    expect(status).not.toContain('Running')
   })
 
   it('restarts fallback elapsed time for each optimistic activity', () => {
