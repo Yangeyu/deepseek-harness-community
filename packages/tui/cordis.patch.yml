@@ -2,6 +2,18 @@
 # The base bundle is installed automatically for a new profile. This patch
 # selects community capability providers and adds the TUI-specific host plane.
 
+# The official attachment backend (`@deepseek-ai/dsh-attachment-local`)
+# admits images with a 2000px per-side default, which rejects ordinary
+# clipboard screenshots (e.g. 2554x1732) at the composer before they ever
+# reach the Vision proxy. Raise the admission cap; a patch replaces the
+# targeted row's whole config, so restate the required dshHome alongside.
+- id: attachment-local
+  name: '@deepseek-ai/dsh-attachment-local'
+  config:
+    # yaml-language-server-disable Unresolved tag
+    dshHome: !!js dshHomePath()
+    maxImageDimension: 4096
+
 - id: system-prompt
   config:
     persona: >-
