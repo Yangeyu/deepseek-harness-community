@@ -1083,6 +1083,45 @@ describe('TuiApplication input routing', () => {
     expect(internals.transcript.render(80).join('\n')).not.toContain('Working')
   })
 
+  it('advances the transcript spinner on the shared working tick', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const app = application()
+    const internals = app as unknown as AppInternals
+    const toolCall = {
+      event: {
+        type: 'tool/call',
+        seq: 0,
+        time: 1,
+        data: { turn: 1, step: 1, callId: 'call-spin', name: 'read', arguments: '{}' },
+      },
+      view: { for: 'call', view: { card: 'generic', title: 'Read project' } },
+    } as HistoryEntry
+    const running = {
+      ...internals.controller.current,
+      connected: true,
+      running: true,
+      events: [toolCall],
+      lifecycle: buildLifecycleSnapshot({
+        sessionId: 'session-spin' as TuiState['sessionId'],
+        generation: 1,
+        entries: [toolCall],
+        sessionRunning: true,
+      }),
+    } satisfies TuiState
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue(running)
+    app.render(running)
+    const plain = (): string => stripTerminalSequences(internals.transcript.render(80).join('\n'))
+
+    expect(plain()).toContain('› · Working · 1 tool · Read')
+    vi.advanceTimersByTime(160)
+    expect(plain()).toContain('› ✢ Working · 1 tool · Read')
+    vi.advanceTimersByTime(160)
+    expect(plain()).toContain('› ✳ Working · 1 tool · Read')
+    vi.advanceTimersByTime(160)
+    expect(plain()).toContain('› ✦ Working · 1 tool · Read')
+  })
+
   it('restarts fallback elapsed time for each optimistic activity', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)

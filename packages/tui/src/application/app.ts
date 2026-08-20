@@ -134,7 +134,7 @@ import {
   type KeymapAction,
 } from '../input/keymap.ts'
 import { composerExecutionActivity, previousTurnDuration } from '../presentation/composer-activity.ts'
-import { formatExecutionDuration } from '../presentation/execution-style.ts'
+import { formatExecutionDuration, spinnerFrameGlyph } from '../presentation/execution-style.ts'
 import {
   ComposerInputController,
   REWIND_ESCAPE_WINDOW_MS,
@@ -608,11 +608,11 @@ export class TuiApplication implements TuiControllerSink {
         this.spinner = setInterval(() => {
           this.spinnerFrame += 1
           this.updateStatus(this.controller.current)
+          this.transcript.advanceAnimation()
           this.tui.requestRender()
         }, 160)
       }
-      const frames = ['·', '✢', '✳', '✦']
-      const glyph = frames[this.spinnerFrame % frames.length] ?? '·'
+      const glyph = spinnerFrameGlyph(this.spinnerFrame)
       const startedAt = activity.startedAt ?? this.workingStartedAt ?? Date.now()
       const elapsed = formatExecutionDuration(Date.now() - startedAt, 'elapsed')
       const label = activity.kind === 'vision'
@@ -634,11 +634,11 @@ export class TuiApplication implements TuiControllerSink {
         this.spinner = setInterval(() => {
           this.spinnerFrame += 1
           this.updateStatus(this.controller.current)
+          this.transcript.advanceAnimation()
           this.tui.requestRender()
         }, 160)
       }
-      const frames = ['·', '✢', '✳', '✦']
-      const glyph = frames[this.spinnerFrame % frames.length] ?? '·'
+      const glyph = spinnerFrameGlyph(this.spinnerFrame)
       this.status.setText(this.theme.accent(`${glyph} Learning project memory…${history}`))
       return
     }

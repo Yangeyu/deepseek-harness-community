@@ -39,6 +39,7 @@ import {
   executionLabel,
   executionVisual,
   ExecutionDisclosureState,
+  spinnerFrameGlyph,
   type ExecutionVisual,
 } from './execution-style.ts'
 
@@ -116,6 +117,7 @@ export class TranscriptComponent implements Component {
   private activityExecutionKeys = new Map<string, readonly string[]>()
   private hoveredBlockKey: string | undefined
   private diffLineStarts: DiffLineStarts = new Map()
+  private animationFrame = 0
 
   constructor(
     state: Readonly<TuiState>,
@@ -184,6 +186,17 @@ export class TranscriptComponent implements Component {
     if (starts === this.diffLineStarts) return
     this.diffLineStarts = starts
     this.invalidate()
+  }
+
+  /**
+   * Advance the shared loading-animation frame for the running activity and
+   * execution rows. Drives the same spinner frames as the status bar; a no-op
+   * while no lifecycle node is active, so idle frames never rebuild.
+   */
+  advanceAnimation(): void {
+    if (this.state.lifecycle.active().length === 0) return
+    this.animationFrame += 1
+    this.invalidateContent()
   }
 
   invalidate(): void {
@@ -384,7 +397,10 @@ export class TranscriptComponent implements Component {
       : status === 'running' || status === 'pending' || status === 'interrupted'
         ? this.theme.warning
         : this.theme.reasoning
-    return this.renderBlockTitle(`${marker} ${title}`, width, paint)
+    const animationLead = status === 'running' || status === 'pending'
+      ? `${spinnerFrameGlyph(this.animationFrame)} `
+      : ''
+    return this.renderBlockTitle(`${marker} ${animationLead}${title}`, width, paint)
   }
 
   private indentActivityChild(lines: string[], last: boolean): string[] {
@@ -669,8 +685,10 @@ export class TranscriptComponent implements Component {
     labelPaint: (text: string) => string,
   ): string {
     const visual = executionVisual(status, this.theme)
+    const animated = status === 'running' || status === 'pending'
+    const glyph = animated ? spinnerFrameGlyph(this.animationFrame) : visual.glyph
     return truncateToWidth(
-      `${this.theme.dim(`${marker} `)}${this.renderExecutionGlyph(visual)} ${labelPaint(label)}`,
+      `${this.theme.dim(`${marker} `)}${this.renderExecutionGlyph({ ...visual, glyph })} ${labelPaint(label)}`,
       width,
       '…',
     )

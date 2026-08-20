@@ -7,6 +7,14 @@ export interface ExecutionVisual {
   readonly bold: boolean
 }
 
+/** Shared loading-animation frames, reused by the status bar and the transcript's running rows. */
+export const SPINNER_FRAMES = ['·', '✢', '✳', '✦']
+
+/** The spinner glyph for an animation frame counter. */
+export function spinnerFrameGlyph(frame: number): string {
+  return SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? '·'
+}
+
 export function executionVisual(status: ExecutionStatus, theme: TuiTheme): ExecutionVisual {
   switch (status) {
     case 'pending': return { glyph: '◦', paint: theme.warning, bold: false }
