@@ -1,0 +1,86 @@
+# ==============================================================================
+# dscode patch 层示例（本文件是参考模板，不会被加载）
+#
+# 安装 dscode 后首次运行时，本文件与 settings.yaml.example 会一起被放到
+# 配置根目录（默认 ~/.dsh，可用环境变量 DSH_HOME 移动）里做用户引导。
+# 真正生效的是同目录的 cordis.patch.yml —— 本文件可以随便改、随便删。
+# ==============================================================================
+#
+# ── 分层与优先级（从低到高）────────────────────────────────────────────
+# 1. bundle 层：@deepseek-ai/dsh-base 与 @vascent/deepseek-harness-tui 自带的默认行
+# 2. profile 层：profiles/<name>/cordis.patch.yml（只影响该 profile）
+# 3. 家级层：本目录的 cordis.patch.yml（影响所有 profile，机器级偏好放这里）
+# 4. 一次性覆盖：dscode --patch <file>（临时叠加，级别最高者后写）
+#
+# ── 怎么用 ──────────────────────────────────────────────────────────────
+# 把需要的条目（去掉行首 "# "）复制进同目录 cordis.patch.yml，重启 dscode
+# 生效。条目按 id 定位某一行服务，config 会【整体替换】该行配置，缺失的键
+# 回落到该服务的内置默认值。
+#
+# ── 什么时候才用 patch 层 ──────────────────────────────────────────────
+# settings.yaml 能配的（模型、vision、web、键位、权限）一律优先用
+# settings.yaml —— 热更新、不重启。patch 层留给 settings 不覆盖的深水区，
+# 例如下面的图片准入上限。
+
+# ────────────────────────────────────────────────────────────────────────
+# 图片准入上限（attachment-local 服务）
+# ────────────────────────────────────────────────────────────────────────
+# 官方存储默认限制单边最长 2000px，2554px 宽的常见截图贴进去会报错：
+#   Image exceeds the configured per-side pixel limit.
+# 解开下面几条即可放宽（本社区的 TUI 已默认给到 4096，这里仅供示例）：
+# - id: attachment-local
+#   name: '@deepseek-ai/dsh-attachment-local'
+#   config:
+#     dshHome: !!js dshHomePath()          # config 整体替换，必填键必须重述
+#     maxImageDimension: 8192              # 单边最长像素（官方默认 2000）
+#     maxImagePixels: 40000000             # 单图解码总像素（默认 4e7）
+#     maxImageBytes: 3670016               # 单图编码字节（默认 3.5 MiB）
+#     maxImagesPerMessage: 20              # 每条消息最多图片数
+#     maxMessageImageBytes: 104857600      # 单条消息图片合计字节（默认 100 MiB）
+#
+# 注意：图片会随会话历史长久保存，上限放宽后每条后续请求都会携带大图，
+# 过大的尺寸可能触发模型路由的图片限制；按需取用，不必追高。
+
+# ────────────────────────────────────────────────────────────────────────
+# 终端外观与行为（terminal 服务）
+# ────────────────────────────────────────────────────────────────────────
+# - id: terminal
+#   config:
+#     historyMessages: 200                 # 会话列表保留的历史消息数
+#     rewindHistory: 20                    # Rewind 可选历史点数量
+#     showReasoning: true                  # 展示推理过程
+#     thinkingMaxLines: 8                  # 思考块折叠行数
+#     color: true                          # 彩色输出
+#     keymap: standard                     # standard | legacy
+
+# ────────────────────────────────────────────────────────────────────────
+# Vision 线路（与 settings.yaml 的 vision 段同构；patch 层会覆盖补丁默认）
+# ────────────────────────────────────────────────────────────────────────
+# - id: vision
+#   config:
+#     mode: proxy                          # auto | proxy | disabled
+#     proxyProvider: bailian
+#     proxyModel: qwen3.7-plus
+
+# ────────────────────────────────────────────────────────────────────────
+# 首类 Bailian 模型表（与 settings.yaml 的 llm-bailian 段同构）
+# ────────────────────────────────────────────────────────────────────────
+# - id: llm-bailian
+#   config:
+#     baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+#     models:
+#       deepseek-v4-pro-0813:
+#         contextWindow: 1000000
+#         maxOutputTokens: 393216
+#         maxTokensField: max_tokens
+#         input: [text]
+#         reasoning:
+#           defaultEffort: high
+#           efforts:
+#             off: { enableThinking: false }
+#             low: { enableThinking: true, reasoningEffort: low }
+#             high: { enableThinking: true, reasoningEffort: high }
+#             max: { enableThinking: true, reasoningEffort: max }
+
+# 模板本身是空补丁列表；把上面的条目复制进 cordis.patch.yml 即成为生效配置。
+[]

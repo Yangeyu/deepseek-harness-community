@@ -1,0 +1,151 @@
+# ==============================================================================
+# dscode settings.yaml 示例与逐段说明（本文件只是参考模板，不会被加载）
+#
+# 安装 dscode 后首次运行时，本文件与 cordis.patch.yml.example 会一起被放到
+# 配置根目录（默认 ~/.dsh，可用环境变量 DSH_HOME 移动）里做用户引导。
+# 真正生效的是同目录的 settings.yaml —— 本文件可以随便改、随便删，不影响程序。
+# ==============================================================================
+#
+# ── 怎么用（三步）──────────────────────────────────────────────────────
+# 1. 在下面找到想改的段；每一行都带了解释和可选值。
+# 2. 把需要的行（去掉行首 "# "）复制到 settings.yaml 的对应段。
+# 3. 保存即生效：settings.yaml 热更新，无需重启 dscode。
+# 缺省的键不用写 —— 不出现的键使用内置默认值（见本文件注释）。
+#
+# ── 查看方式 ───────────────────────────────────────────────────────────
+# * 生效配置：dscode config show（全部）| 终端里 /config [段]（可视化）
+# * 内置默认：dscode config default
+# * 权威文档：<安装目录>/docs/dscode-configuration.md（schema 与枚举细节）
+#
+# ── 凭证纪律（重要）───────────────────────────────────────────────────
+# 任何 apiKeyEnv / tavilyApiKeyEnv 只写【环境变量名】引用，不写密钥本体。
+# 密钥放在 shell 环境变量或 ~/.dsh/.credentials.yaml 里，永不写入任何 yaml。
+
+# ────────────────────────────────────────────────────────────────────────
+# 1) agent-default-model　会话默认模型（/model 或 -m 可覆盖单个会话）
+# ────────────────────────────────────────────────────────────────────────
+#   provider：必须是一个已挂载的 provider id
+#             （bailian = 首类 Bailian；llm-pi-ai.providers.<id> = 聚合 provider）
+#   model：必须是该 provider 已注册的模型 id（llm-bailian.models 的键等）
+#   reasoningEffort：该模型登记的努力档位，常见 off | low | high | max
+#                    （deepseek-v4-pro-0813 支持 off/low/high/max；qwen3.7-plus 支持 off/high）
+# 会话创建时读取；修改后新建会话生效。
+# agent-default-model:
+#   provider: bailian
+#   model: deepseek-v4-pro-0813
+#   reasoningEffort: high
+
+# ────────────────────────────────────────────────────────────────────────
+# 2) llm-bailian　首类 Bailian（阿里云百炼）provider
+# ────────────────────────────────────────────────────────────────────────
+#   baseURL：OpenAI 兼容端点
+#   models：键 = 模型 id（即 agent-default-model.model 的取值域），
+#           值含 contextWindow / maxOutputTokens / maxTokensField / input / reasoning。
+#   凭证：DASHSCOPE_API_KEY（settings 里不写密钥，只引用环境变量名）。
+# llm-bailian:
+#   baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+#   models:
+#     deepseek-v4-pro-0813:
+#       contextWindow: 1000000
+#       maxOutputTokens: 393216
+#       maxTokensField: max_tokens          # 该模型请求体使用的 token 上限字段名
+#       input: [text]                        # 输入模态：text | image
+#       reasoning:
+#         defaultEffort: high
+#         efforts:
+#           off: { enableThinking: false }
+#           low: { enableThinking: true, reasoningEffort: low }
+#           high: { enableThinking: true, reasoningEffort: high }
+#           max: { enableThinking: true, reasoningEffort: max }
+#     qwen3.7-plus:
+#       contextWindow: 1000000
+#       maxOutputTokens: 131072
+#       maxTokensField: max_completion_tokens
+#       input: [text, image]                 # 图文模型：Vision 代理线路用它
+#       reasoning:
+#         defaultEffort: high
+#         efforts:
+#           off: { enableThinking: false }
+#           high: { enableThinking: true }
+
+# ────────────────────────────────────────────────────────────────────────
+# 3) llm-pi-ai　聚合多 provider（挂载式注册）
+# ────────────────────────────────────────────────────────────────────────
+#   没有这个段时聚合 provider 不注册任何模型（不是开关，是"挂载"）。
+#   providers.<id>：每项一个 provider 配置；常用 id：dashscope-vision（Vision 代理线路）。
+#   api 枚举：openai-completions | openai-responses | anthropic-messages
+#   models：数组，每项 id + contextWindow + maxTokens + input 等（缺省键回落默认值）。
+# llm-pi-ai:
+#   providers:
+#     dashscope-vision:
+#       apiKeyEnv: DASHSCOPE_API_KEY         # 凭证：引用环境变量名，不写密钥
+#       displayName: DashScope Vision
+#       api: openai-completions
+#       baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+#       models:
+#         - id: qwen3.7-plus
+#           contextWindow: 1000000
+#           maxTokens: 131072
+#           input: [text, image]
+
+# ────────────────────────────────────────────────────────────────────────
+# 4) vision　图片路由（终端内 /vision 可视化）
+# ────────────────────────────────────────────────────────────────────────
+#   mode：auto（按线路能力自动选直读/代理）| proxy（强制走文本代理分析）| disabled（关闭）
+#   proxyProvider / proxyModel：代理线路与模型（bailian 或 llm-pi-ai.providers.*）
+#   语义：read_image 仅原生图文线路可用；纯文本模型请用 inspect_image（按 mode 走代理）。
+# vision:
+#   mode: auto
+#   proxyProvider: bailian
+#   proxyModel: qwen3.7-plus
+#   # 高级项（默认值见下，一般不写）：
+#   # maxObservationChars: 12000   # 单次图像分析返回文本上限
+#   # maxTokens: 2048              # 代理推理输出 token 上限
+
+# ────────────────────────────────────────────────────────────────────────
+# 5) community-web　搜索与网页提取（终端内 /web 可视化）
+# ────────────────────────────────────────────────────────────────────────
+#   searchProvider：auto（有 TAVILY_API_KEY 走 Tavily，否则回落 DeepSeek Official）
+#                    | community-tavily（强制 Tavily；没 key 时 readiness 报错）
+#                    | deepseek-official
+#   extractProvider：网页提取 provider（默认 community-tavily）
+# community-web:
+#   searchProvider: auto
+#   extractProvider: community-tavily
+#   tavilyApiKeyEnv: TAVILY_API_KEY       # 凭证引用名
+#   tavilySearchDepth: basic              # basic | advanced | fast | ultra-fast
+#   tavilyExtractDepth: basic             # basic | advanced
+#   tavilyTimeoutSeconds: 30              # 1–60
+#   extractMaxOutputChars: 60000
+
+# ────────────────────────────────────────────────────────────────────────
+# 6) community-tui　终端键位
+# ────────────────────────────────────────────────────────────────────────
+# community-tui:
+#   keymap: standard                      # standard | legacy
+
+# ────────────────────────────────────────────────────────────────────────
+# 7) permission　权限预设（终端内 /config permission 可视化）
+# ────────────────────────────────────────────────────────────────────────
+#   defaultPreset：read-only | workspace-write | danger-full-access
+#   与 sandbox 和审批策略联动：danger-full-access = 审批条永不询问；
+#   收紧为 workspace-write 后，文件写入会被沙箱约束并按策略审批。
+# permission:
+#   defaultPreset: workspace-write
+
+# ────────────────────────────────────────────────────────────────────────
+# 8) ui-* 段（主题、会话队列、引导状态等 UI 偏好）
+# ────────────────────────────────────────────────────────────────────────
+# 例如 ui-theme / ui-conversation / ui-onboarding 等，只影响界面偏好，
+# 与 agent 能力无关；确有需要时再调整（细节见 docs/dscode-configuration.md）。
+
+# ────────────────────────────────────────────────────────────────────────
+# 附：常用环境变量（不写在 settings.yaml 里）
+# ────────────────────────────────────────────────────────────────────────
+#   DASHSCOPE_API_KEY  Bailian 与 Vision 代理线路（dashscope-vision）凭证
+#   DEEPSEEK_API_KEY   DeepSeek Official 与官方 web 搜索凭证
+#   TAVILY_API_KEY     Tavily 搜索/提取凭证（community-web 的 auto 选择依据）
+#   DSH_HOME           Harness 数据根（默认 ~/.dsh），所有路径随之移动
+#   DSH_TUI_PROFILE    覆盖 profile 名（[A-Za-z0-9._-]），隔离实验用
+#   DSH_TOOLS_MODE     工具目录呈现模式（native/code）
+#   DSH_PERMISSION_MODE 启动权限模式（read-only/workspace-write/danger-full-access）

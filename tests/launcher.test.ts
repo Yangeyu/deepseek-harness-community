@@ -10,6 +10,7 @@ import {
   profileUsesPlugin,
   resolveDshHome,
   resolveTuiProfile,
+  seedConfigExamples,
 } from '../src/launcher.ts'
 
 test('resolveDshHome uses a non-empty override', () => {
@@ -99,15 +100,44 @@ function output() {
   }
 }
 
+test('seedConfigExamples seeds both guides once, keeps them, and tolerates absence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-tui-seed-'))
+  const examples = join(root, 'examples')
+  await mkdir(examples)
+  await writeFile(join(examples, 'settings.yaml.example'), '# settings guide\n')
+  await writeFile(join(examples, 'cordis.patch.yml.example'), '# patch guide\n')
+
+  const home = join(root, 'home')
+  assert.equal(seedConfigExamples(home, examples), 2)
+  assert.equal(await readFile(join(home, 'settings.yaml.example'), 'utf8'), '# settings guide\n')
+  assert.equal(await readFile(join(home, 'cordis.patch.yml.example'), 'utf8'), '# patch guide\n')
+
+  // Never overwrites user-edited guides; partially seeded homes only receive the missing file.
+  await writeFile(join(home, 'settings.yaml.example'), '# edited\n')
+  assert.equal(seedConfigExamples(home, examples), 0)
+  assert.equal(await readFile(join(home, 'settings.yaml.example'), 'utf8'), '# edited\n')
+
+  const partial = join(root, 'partial')
+  await mkdir(partial, { recursive: true })
+  await writeFile(join(partial, 'cordis.patch.yml.example'), '# kept\n')
+  assert.equal(seedConfigExamples(partial, examples), 1)
+  assert.equal(await readFile(join(partial, 'cordis.patch.yml.example'), 'utf8'), '# kept\n')
+
+  // A missing examples directory (old installations) seeds nothing and never throws.
+  assert.equal(seedConfigExamples(join(root, 'other-home'), join(root, 'missing-examples')), 0)
+})
+
 test('help, version, and usage errors resolve before profile setup or child execution', async () => {
   const stdout = output()
   const stderr = output()
   let setupCalls = 0
+  let seedCalls = 0
   let runCalls = 0
   const options = {
     stdout: stdout.stream,
     stderr: stderr.stream,
     ensureProfile: async () => { setupCalls += 1; return 0 },
+    seedExamples: async () => { seedCalls += 1; return 0 },
     runNode: async () => { runCalls += 1; return 0 },
     resolveDshBin: () => '/unused/dsh',
     packageVersion: '0.1.9',
@@ -124,12 +154,14 @@ test('help, version, and usage errors resolve before profile setup or child exec
   assert.equal(await main(['--version', 'extra'], options), 2)
   assert.match(stderr.read(), /--version cannot be combined with other arguments/)
   assert.equal(setupCalls, 0)
+  assert.equal(seedCalls, 0)
   assert.equal(runCalls, 0)
 })
 
 test('interactive commands configure the TUI profile and forward canonical app arguments', async () => {
   const calls: Array<{ args: readonly string[]; cwd: string }> = []
   let setupCalls = 0
+  let seedCalls = 0
   const code = await main([
     '--patch', 'team.yml',
     'resume', '--last',
@@ -139,6 +171,7 @@ test('interactive commands configure the TUI profile and forward canonical app a
   ], {
     cwd: '/workspace',
     ensureProfile: async () => { setupCalls += 1; return 0 },
+    seedExamples: async () => { seedCalls += 1; return 0 },
     resolveDshBin: () => '/runtime/dsh.js',
     runNode: async (_script, args, _env, cwd) => {
       calls.push({ args, cwd })
@@ -148,6 +181,7 @@ test('interactive commands configure the TUI profile and forward canonical app a
 
   assert.equal(code, 7)
   assert.equal(setupCalls, 1)
+  assert.equal(seedCalls, 1)
   assert.deepEqual(calls, [{
     args: [
       '--profile', 'tui',
@@ -164,9 +198,11 @@ test('interactive commands configure the TUI profile and forward canonical app a
 test('exec uses the headless profile and never configures the TUI profile', async () => {
   const calls: Array<{ args: readonly string[]; env: NodeJS.ProcessEnv; cwd: string }> = []
   let setupCalls = 0
+  let seedCalls = 0
   const code = await main(['exec', '-C', './project', '--patch', 'ci.yml', 'run', 'tests'], {
     cwd: '/workspace',
     ensureProfile: async () => { setupCalls += 1; return 0 },
+    seedExamples: async () => { seedCalls += 1; return 0 },
     resolveDshBin: () => '/runtime/dsh.js',
     runNode: async (_script, args, env, cwd) => {
       calls.push({ args, env, cwd })
@@ -176,6 +212,7 @@ test('exec uses the headless profile and never configures the TUI profile', asyn
 
   assert.equal(code, 0)
   assert.equal(setupCalls, 0)
+  assert.equal(seedCalls, 0)
   assert.deepEqual(calls[0]?.args, ['--profile', 'headless', '--patch', 'ci.yml', 'run tests'])
   assert.equal(calls[0]?.cwd, '/workspace/project')
   assert.equal(calls[0]?.env.DSH_CWD, '/workspace/project')
@@ -202,8 +239,10 @@ test('exec reads a non-interactive prompt from stdin and rejects an empty TTY in
 test('config and plugin actions delegate only after the TUI profile is ready', async () => {
   const calls: Array<readonly string[]> = []
   let setupCalls = 0
+  let seedCalls = 0
   const options = {
     ensureProfile: async () => { setupCalls += 1; return 0 },
+    seedExamples: async () => { seedCalls += 1; return 0 },
     resolveDshBin: () => '/runtime/dsh.js',
     runNode: async (_script: string, args: readonly string[]) => { calls.push(args); return 0 },
   }
@@ -211,21 +250,47 @@ test('config and plugin actions delegate only after the TUI profile is ready', a
   assert.equal(await main(['config', 'show', '--patch', 'team.yml'], options), 0)
   assert.equal(await main(['plugin', 'list'], options), 0)
   assert.equal(setupCalls, 2)
+  assert.equal(seedCalls, 2)
   assert.deepEqual(calls, [
     ['--profile', 'tui', '--patch', 'team.yml', '--dump-config'],
     ['plugin', '--profile', 'tui', 'list'],
   ])
 })
 
+test('the first seed prints a one-time onboarding notice once', async () => {
+  const first = output()
+  let launches = 0
+  const options = {
+    ensureProfile: async () => 0,
+    resolveDshBin: () => '/runtime/dsh.js',
+    runNode: async () => { launches += 1; return 0 },
+    seedExamples: async () => 1,
+  }
+  assert.equal(await main(['sessions'], { ...options, stderr: first.stream }), 0)
+  assert.equal(launches, 1)
+  assert.match(first.read(), /reference config guides/)
+  assert.match(first.read(), /settings\.yaml\.example/)
+
+  const quiet = output()
+  assert.equal(await main(['sessions'], {
+    ...options,
+    stderr: quiet.stream,
+    seedExamples: async () => 0,
+  }), 0)
+  assert.doesNotMatch(quiet.read(), /reference config guides/)
+})
+
 test('doctor reports profile state without initializing it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-tui-doctor-'))
   const stdout = output()
   let setupCalls = 0
+  let seedCalls = 0
   const code = await main(['doctor', '--json'], {
     cwd: process.cwd(),
     env: { ...process.env, DSH_HOME: root },
     stdout: stdout.stream,
     ensureProfile: async () => { setupCalls += 1; return 0 },
+    seedExamples: async () => { seedCalls += 1; return 0 },
     resolveDshBin: () => join(process.cwd(), 'package.json'),
     resolveRgBin: async () => process.execPath,
     platform: 'linux',
@@ -236,4 +301,5 @@ test('doctor reports profile state without initializing it', async () => {
   assert.equal(report.ok, true)
   assert.equal(report.checks.find((check: { id: string }) => check.id === 'profile')?.status, 'warn')
   assert.equal(setupCalls, 0)
+  assert.equal(seedCalls, 0)
 })

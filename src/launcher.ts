@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,6 +19,9 @@ const DEFAULT_PROFILE = 'tui'
 const HEADLESS_PROFILE = 'headless'
 const TUI_PACKAGE = '@vascent/deepseek-harness-tui'
 const LEGACY_TUI_PACKAGES = ['@yangeyu/deepseek-harness-tui']
+const SETTINGS_EXAMPLE_FILENAME = 'settings.yaml.example'
+const PATCH_EXAMPLE_FILENAME = 'cordis.patch.yml.example'
+const EXAMPLE_FILENAMES = [SETTINGS_EXAMPLE_FILENAME, PATCH_EXAMPLE_FILENAME]
 const require = createRequire(import.meta.url)
 
 interface ProfileManifest {
@@ -32,6 +35,33 @@ interface ProfileManifest {
 
 type RunPlugin = (args: readonly string[]) => Promise<number>
 type WriteText = (text: string) => unknown
+
+/**
+ * Seed the commented example configuration guides into the Harness home the
+ * first time they are missing there. These are guidance-only reference files
+ * (`settings.yaml.example` teaches the settings document; `cordis.patch.yml.example`
+ * teaches the patch layers) and are never loaded, so existing files are never
+ * overwritten and users may edit or delete them freely.
+ * @param home - the resolved Harness home (`DSH_HOME` or `~/.dsh`).
+ * @param examplesDirectory - the installation directory shipping the example files.
+ * @returns the number of guide files written (0 when everything already exists or no source).
+ */
+export function seedConfigExamples(home: string, examplesDirectory: string): number {
+  let seeded = 0
+  for (const filename of EXAMPLE_FILENAMES) {
+    const source = join(examplesDirectory, filename)
+    const target = join(home, filename)
+    if (!existsSync(source) || existsSync(target)) continue
+    try {
+      mkdirSync(home, { recursive: true })
+      copyFileSync(source, target)
+      seeded += 1
+    } catch {
+      // Best-effort onboarding: a read-only home or missing examples must never block the TUI.
+    }
+  }
+  return seeded
+}
 
 export type NodeRunner = (
   script: string,
@@ -50,6 +80,7 @@ export interface LauncherOptions {
   readStdin?: () => Promise<string>
   runNode?: NodeRunner
   ensureProfile?: () => Promise<number>
+  seedExamples?: (home: string) => number | Promise<number>
   resolveDshBin?: () => string
   resolveRgBin?: () => Promise<string>
   nodeVersion?: string
@@ -214,7 +245,8 @@ export async function main(args: readonly string[], options: LauncherOptions = {
     const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
     const pluginDirectory = join(repositoryRoot, 'packages', 'tui')
     const profile = resolveTuiProfile(env)
-    const profileDirectory = join(resolveDshHome(env), 'profiles', profile)
+    const home = resolveDshHome(env)
+    const profileDirectory = join(home, 'profiles', profile)
     const childEnv = {
       ...env,
       PATH: `${join(repositoryRoot, 'node_modules', '.bin')}${delimiter}${env.PATH ?? ''}`,
@@ -280,6 +312,17 @@ export async function main(args: readonly string[], options: LauncherOptions = {
 
     const setupCode = await ensureProfile()
     if (setupCode !== 0) return setupCode
+
+    const seedExampleGuides = options.seedExamples ?? ((h: string) => seedConfigExamples(h, join(repositoryRoot, 'examples')))
+    const seededGuides = await seedExampleGuides(home)
+    if (seededGuides > 0) {
+      stderr.write(
+        'dscode: first run — wrote reference config guides into your home:\n'
+        + `dscode:   ${join(home, SETTINGS_EXAMPLE_FILENAME)} (how to edit settings.yaml; hot-reloaded)\n`
+        + `dscode:   ${join(home, PATCH_EXAMPLE_FILENAME)} (profile/patch-layer overrides)\n`
+        + 'dscode: These guides are inert examples; edit settings.yaml to apply changes.\n',
+      )
+    }
 
     if (invocation.kind === 'config') {
       return await launchDsh([

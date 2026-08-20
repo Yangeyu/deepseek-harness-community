@@ -5,6 +5,7 @@ dscode（DeepSeek Harness Community 终端）配置的单一事实源。本文�
 ## 0. 读现场配置（所有操作的第一步）
 
 - 路径：`$DSH_HOME/settings.yaml`（默认 `~/.dsh/settings.yaml`），热更新——编辑后无需重启进程。
+- **安装引导**：dscode 首次运行会把两份带注释的参考模板放到配置根目录（只写一次、不覆盖、不生效）：`$DSH_HOME/settings.yaml.example`（本文件全部段落的示例与修改指引）与 `$DSH_HOME/cordis.patch.yml.example`（patch 层示例）。改配置时照抄对应段落到 `settings.yaml` 即可。
 - 可视化界面对应 `settings.yaml` 各段：`/config [model|reasoning|permission|plan|vision|web|keybindings|interface]`、`/vision`、`/web`。
 - 程序化查看：`dscode config show`（launcher 转发 profile 的 dumped 配置）、`dscode config default`（默认值）。
 - 凭证规则：settings 文件只存**环境变量名引用**（值形如 `tavilyApiKeyEnv: TAVILY_API_KEY`）；密钥本体在环境变量或 `~/.dsh/.credentials.yaml`。任何情况下不得把密钥值写回 settings.yaml 或其它文件。

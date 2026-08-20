@@ -54,6 +54,8 @@
     "AGENTS.md",
     "dist/launcher.js",
     "dist/launcher.js.map",
+    "examples/settings.yaml.example",
+    "examples/cordis.patch.yml.example",
     "packages/tui/CHANGELOG.md",
     "packages/tui/cordis.patch.yml",
     "packages/tui/dist",
