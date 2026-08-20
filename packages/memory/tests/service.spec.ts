@@ -100,9 +100,23 @@ describe('ProjectMemoryService quiet learning', () => {
       agent: { followup, whenIdle: vi.fn(async () => {}) },
       dispose: vi.fn(async () => {}),
     }
+    const { ctx, cwd, service } = await memoryService({
+      config: { generateMemories: true, idleDelayMs: 0 },
+      agents: {
+        get: vi.fn(() => agent),
+        withInitiator: vi.fn((_initiator: unknown, run: () => unknown) => run()),
+        create: vi.fn(async () => handle),
+      } as unknown,
+    })
+    const turnEnd = {
+      type: 'turn/end',
+      seq: 2,
+      time: 3,
+      data: { turn: 1, reason: { kind: 'completed' } },
+    }
     const session = {
       id: SessionId('memory-quiet-learning'),
-      header: { cwd: '/workspace', origin: undefined },
+      header: { cwd },
       events: [
         { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
         { type: 'user/message', seq: 1, time: 2, data: {
@@ -111,7 +125,7 @@ describe('ProjectMemoryService quiet learning', () => {
           source: { kind: 'user' },
           content: [{ type: 'text', text: '记住：以后提交前必须先跑 lint。' }],
         } },
-        { type: 'turn/end', seq: 2, time: 3, data: { turn: 1, reason: { kind: 'completed' } } },
+        turnEnd,
       ],
     } as unknown as Session
     const agent = {
@@ -124,17 +138,8 @@ describe('ProjectMemoryService quiet learning', () => {
         await run(new AbortController().signal)
       }),
     } as unknown as Agent
-    const { ctx, cwd, service } = await memoryService({
-      config: { generateMemories: true, idleDelayMs: 0 },
-      agents: {
-        get: vi.fn(() => agent),
-        withInitiator: vi.fn((_initiator: unknown, run: () => unknown) => run()),
-        create: vi.fn(async () => handle),
-      } as unknown,
-    })
-    session.header.cwd = cwd
 
-    await ctx.parallel('session/event', session, session.events[2])
+    await ctx.parallel('session/event', session, turnEnd as Session['events'][number])
     await service.settle(String(session.id))
 
     expect(followup).toHaveBeenCalledTimes(1)
