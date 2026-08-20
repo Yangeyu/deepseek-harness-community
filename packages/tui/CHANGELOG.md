@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.18 - 2026-08-20
+
+- Serialize the Bailian request tool-result sequence at message level so that
+  multiple tool results, including ones carrying images, are emitted in the
+  exact order they occurred instead of being regrouped or reordered by the
+  wire-format builder.
+
 ## 0.1.17 - 2026-08-20
 
 - Replace the duplicated pack/install/release paths with one release gate that
