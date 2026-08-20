@@ -1735,6 +1735,10 @@ export class TuiApplication implements TuiControllerSink {
     }
   }
 
+  private isComposerDraftEmpty(): boolean {
+    return this.editor.getExpandedText() === '' && this.attachmentDrafts.snapshot.length === 0
+  }
+
   private applyComposerInputAction(action: ComposerInputAction<AttachmentDraft>): boolean {
     switch (action.type) {
       case 'pass':
@@ -2026,6 +2030,10 @@ export class TuiApplication implements TuiControllerSink {
   }
 
   private cancelOrExit(): void {
+    if (this.activeInteraction === undefined && !this.isComposerDraftEmpty()) {
+      this.applyComposerInputAction(this.composerInput.clearDraft(this.composerDraft()))
+      return
+    }
     const target = this.interruptionTargetKey()
     if (target !== undefined) {
       if (this.interruptingActivityKey !== target) {

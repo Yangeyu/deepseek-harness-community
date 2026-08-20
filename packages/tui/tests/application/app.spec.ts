@@ -257,6 +257,34 @@ describe('TuiApplication input routing', () => {
     await vi.waitFor(() => { expect(exit).toHaveBeenCalledWith(0) })
   })
 
+  it('Ctrl+C clears a draft while working instead of interrupting', () => {
+    const exit = vi.fn()
+    const app = application(undefined, undefined, { exit })
+    const internals = app as unknown as AppInternals
+    const cancel = vi.fn(async () => {})
+    internals.controller.cancel = cancel
+    const idleState = internals.controller.current
+    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue({
+      ...idleState,
+      running: true,
+      lifecycle: buildLifecycleSnapshot({
+        sessionId: undefined,
+        generation: 1,
+        entries: [],
+        sessionRunning: true,
+      }),
+    })
+    internals.editor.setText('queued thought')
+
+    expect(internals.handleGlobalInput('\u0003')).toEqual({ consume: true })
+    expect(internals.editor.getExpandedText()).toBe('')
+    expect(cancel).not.toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
+
+    expect(internals.handleGlobalInput('\u0003')).toEqual({ consume: true })
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
   it('exits on repeated Ctrl+C when an interrupted runtime never becomes idle', async () => {
     const exit = vi.fn()
     const write = vi.fn(() => true)
