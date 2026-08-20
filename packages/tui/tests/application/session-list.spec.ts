@@ -96,4 +96,69 @@ describe('resume session choices', () => {
       description: 'untitled-session',
     }])
   })
+
+  it('annotates rewind lineage on both the fork and its abandoned parent', () => {
+    const parent: SessionSummary = {
+      sessionId: 'parent-session' as SessionSummary['sessionId'],
+      updatedAt: 1,
+      running: false,
+      blank: false,
+      cwd: '/workspace/app',
+      projections: { asOfSeq: 5, values: { title: 'Ship the auth flow' } },
+    }
+    const fork: SessionSummary = {
+      sessionId: 'fork-session' as SessionSummary['sessionId'],
+      parentSessionId: 'parent-session' as SessionSummary['sessionId'],
+      updatedAt: 2,
+      running: false,
+      blank: false,
+      cwd: '/workspace/app',
+      projections: { asOfSeq: 3, values: { title: 'Ship the auth flow' } },
+    }
+    expect(sessionChoices([parent, fork], undefined)).toEqual([
+      {
+        value: 'parent-session',
+        label: 'parent-session',
+        description: '/workspace/app · Ship the auth flow · continued in fork-session',
+      },
+      {
+        value: 'fork-session',
+        label: 'fork-session',
+        description: '/workspace/app · Ship the auth flow · forked from parent-session',
+      },
+    ])
+  })
+
+  it('joins every non-subagent branch on the parent and never counts subagent children', () => {
+    const parent: SessionSummary = {
+      sessionId: 'parent-session' as SessionSummary['sessionId'],
+      updatedAt: 1,
+      running: false,
+      blank: false,
+      cwd: '/workspace/app',
+    }
+    const branches: SessionSummary[] = ['fork-a', 'fork-b'].map((id, index) => ({
+      sessionId: id as SessionSummary['sessionId'],
+      parentSessionId: 'parent-session' as SessionSummary['sessionId'],
+      updatedAt: 2 + index,
+      running: false,
+      blank: false,
+    }))
+    expect(sessionChoices([parent, ...branches, sessions[1]!], undefined)
+      .find(choice => choice.value === 'parent-session')?.description)
+      .toBe('/workspace/app · continued in fork-a, fork-b')
+  })
+
+  it('labels fork lineage in the sessions table origin column', () => {
+    const fork: SessionSummary = {
+      sessionId: 'fork-session' as SessionSummary['sessionId'],
+      parentSessionId: 'origin-session' as SessionSummary['sessionId'],
+      updatedAt: 2,
+      running: false,
+      blank: false,
+      cwd: '/workspace/app',
+    }
+    expect(formatSessionList([fork], false)).toContain('fork')
+    expect(formatSessionList([fork], false)).not.toContain('fork of')
+  })
 })
