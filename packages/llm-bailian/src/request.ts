@@ -91,7 +91,9 @@ async function serializeUserMessage(
   if (direct.length > 0) {
     wire.push({ role: 'user', content: await userContent(direct, attachments, signal) })
   }
-  for (const result of message.content.filter(block => block.type === 'tool-result')) {
+  // First, emit all tool messages (required to be consecutive after assistant message with tool_calls)
+  const toolResults = message.content.filter(block => block.type === 'tool-result')
+  for (const result of toolResults) {
     const resultText = textOf(result.content)
     const hasImages = contentHasImage(result.content)
     wire.push({
@@ -101,11 +103,15 @@ async function serializeUserMessage(
         ? resultText
         : hasImages ? 'Image result attached in the following user message.' : '',
     })
+  }
+  // Then, emit all user messages with images (after all tool messages)
+  for (const result of toolResults) {
+    const hasImages = contentHasImage(result.content)
     if (hasImages) {
       const parts = await imageParts(result.content, attachments, signal)
       wire.push({
         role: 'user',
-        content: [{ type: 'text', text: 'Images returned by the tool:' }, ...parts],
+        content: [{ type: 'text', text: `Images returned by tool ${result.toolCallId}:` }, ...parts],
       })
     }
   }

@@ -397,4 +397,111 @@ describe('Bailian wire contract', () => {
       messages: [user('timeout')],
     }))).rejects.toMatchObject({ code: 'TIMEOUT' })
   })
+
+  it('serializes multiple tool results with images in correct order', async () => {
+    const requests: CapturedRequest[] = []
+    const imageRef1: ImageAttachmentRef = {
+      attachmentId: AttachmentId('image-1'),
+      mediaType: 'image/png',
+      bytes: 1,
+      width: 100,
+      height: 100,
+    }
+    const imageRef2: ImageAttachmentRef = {
+      attachmentId: AttachmentId('image-2'),
+      mediaType: 'image/png',
+      bytes: 2,
+      width: 200,
+      height: 200,
+    }
+    const imageRef3: ImageAttachmentRef = {
+      attachmentId: AttachmentId('image-3'),
+      mediaType: 'image/png',
+      bytes: 3,
+      width: 300,
+      height: 300,
+    }
+    const attachments = {
+      readImage: async (ref: ImageAttachmentRef) => ({
+        ref,
+        data: Uint8Array.from([Number(String(ref.attachmentId).split('-')[1])]),
+      }),
+    } as unknown as AttachmentStore
+    const client = adapter(await endpoint(requests), { 'qwen3.7-plus': qwenModel() }, attachments)
+
+    // Simulate an assistant message with 3 tool calls followed by their results
+    const messages = [
+      {
+        role: 'assistant' as const,
+        content: [
+          { type: 'tool-call' as const, id: 'call-1', name: 'read_image', arguments: '{"file":"img1.png"}' },
+          { type: 'tool-call' as const, id: 'call-2', name: 'read_image', arguments: '{"file":"img2.png"}' },
+          { type: 'tool-call' as const, id: 'call-3', name: 'read_image', arguments: '{"file":"img3.png"}' },
+        ],
+        source: { kind: 'model' as const, provider: 'test', model: 'test' },
+      },
+      createUserMessage({
+        content: [
+          {
+            type: 'tool-result' as const,
+            toolCallId: 'call-1',
+            content: [
+              { type: 'text' as const, text: 'Image 1 data' },
+              { type: 'image' as const, attachment: imageRef1 },
+            ],
+          },
+          {
+            type: 'tool-result' as const,
+            toolCallId: 'call-2',
+            content: [
+              { type: 'text' as const, text: 'Image 2 data' },
+              { type: 'image' as const, attachment: imageRef2 },
+            ],
+          },
+          {
+            type: 'tool-result' as const,
+            toolCallId: 'call-3',
+            content: [
+              { type: 'text' as const, text: 'Image 3 data' },
+              { type: 'image' as const, attachment: imageRef3 },
+            ],
+          },
+        ],
+        source: { kind: 'tool' as const, callId: 'call-1' },
+      }),
+    ]
+
+    await consume(client.stream({
+      provider: BAILIAN_PROVIDER_ID,
+      model: 'qwen3.7-plus',
+      messages,
+    }))
+
+    // Verify that all tool messages come before any user messages with images
+    const sentMessages = requests[0]?.body.messages as Array<Record<string, unknown>>
+    expect(sentMessages).toBeDefined()
+    
+    // Find indices of tool and user messages
+    const toolIndices: number[] = []
+    const userWithImageIndices: number[] = []
+    
+    sentMessages.forEach((msg, idx) => {
+      if (msg.role === 'tool') {
+        toolIndices.push(idx)
+      } else if (msg.role === 'user' && Array.isArray(msg.content) && 
+                 (msg.content as Array<Record<string, unknown>>).some(part => part.type === 'image_url')) {
+        userWithImageIndices.push(idx)
+      }
+    })
+
+    // All tool messages should come before any user messages with images
+    expect(toolIndices.length).toBe(3)
+    expect(userWithImageIndices.length).toBe(3)
+    expect(Math.max(...toolIndices)).toBeLessThan(Math.min(...userWithImageIndices))
+
+    // Verify tool_call_ids are correct
+    expect(sentMessages[1]).toMatchObject({ role: 'tool', tool_call_id: 'call-1' })
+    expect(sentMessages[2]).toMatchObject({ role: 'tool', tool_call_id: 'call-2' })
+    expect(sentMessages[3]).toMatchObject({ role: 'tool', tool_call_id: 'call-3' })
+  })
 })
