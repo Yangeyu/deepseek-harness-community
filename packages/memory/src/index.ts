@@ -274,7 +274,10 @@ function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
 function extractionPrompt(candidate: LearningCandidate): UserMessage {
   const text = [
     'Review the supplied conversation turn for durable memory.',
-    'Call memory_write only for a stable user preference, correction, project constraint, recurring workflow rule, or explicit remember request that will help in future conversations.',
+    'Reconcile before recording. Call memory_read for the relevant scope first, then:',
+    '- If the fact is already remembered or equivalent, finish without writing.',
+    '- If the new fact corrects, contradicts, or supersedes an existing entry, call memory_forget for the outdated summary and then memory_write the corrected fact, so each fact keeps exactly one current wording.',
+    'Otherwise call memory_write only for a stable user preference, correction, project constraint, recurring workflow rule, or explicit remember request that will help in future conversations.',
     'Use project scope unless the user explicitly states that the preference applies globally. Choose a topic only when it adds useful detail. Do not save transient task requests, guesses, credentials, secrets, or information already present in memory. If nothing qualifies, finish without calling a tool.',
     'Do not reply to the original user; this is a quiet maintenance session.',
     '',
@@ -669,7 +672,7 @@ export class ProjectMemoryService extends Service {
         childCtx.systemPrompt.section({
           name: PERSONA_SECTION,
           order: PERSONA_ORDER,
-          text: 'You are a quiet memory maintenance agent. Extract only durable, user-supported memory and use the provided memory tools. Do not perform project work or answer the original user.',
+          text: 'You are a quiet memory maintenance agent. Extract only durable, user-supported memory and use the provided memory tools. Reconcile new facts with the existing memory before recording: prefer updating or replacing entries over duplicating or contradicting them. Do not perform project work or answer the original user.',
         })
       },
     }))
