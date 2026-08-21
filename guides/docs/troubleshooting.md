@@ -12,7 +12,7 @@ dscode（DeepSeek Harness Community 终端）环境与运行故障的诊断参�
    - `ripgrep`：搜索二进制
    - `profile`：profile 是否指向本安装（见下节）
    - `terminal` / `workspace` / `clipboard`：运行环境基本能力
-3. **配置**：read `settings.yaml` 相关段（schema 与语义见 `docs/dscode-configuration.md`）。
+3. **配置**：read `settings.yaml` 相关段（schema 与语义见 `guides/docs/configuration.md`）。
 
 ## 1. 症状 → 排查
 

@@ -111,17 +111,17 @@ documentation-driven guidance layer:
 
 - The details live as ordinary documentation and are loaded on demand with
   the agent's own `read` tool, guided by the catalog at the top of
-  `AGENTS.md`:
+  `guides/AGENTS.md`:
 
   | Document | Read when |
   |---|---|
-  | [`docs/dscode-configuration.md`](docs/dscode-configuration.md) | Config viewing/editing, providers, vision routing, web search policy, API keys |
-  | [`docs/dscode-troubleshooting.md`](docs/dscode-troubleshooting.md) | Session errors, `dscode doctor` output, provider/key failures, upgrades |
+  | [`guides/docs/configuration.md`](guides/docs/configuration.md) | Config viewing/editing, providers, vision routing, web search policy, API keys |
+  | [`guides/docs/troubleshooting.md`](guides/docs/troubleshooting.md) | Session errors, `dscode doctor` output, provider/key failures, upgrades |
 
-  Both ship inside the npm package under `docs/`, so a globally installed
-  copy is readable through `<npm prefix>/docs/` when the repository checkout
-  is not at hand. Documentation stays a single source of truth in `docs/`;
-  skills are reserved for procedural capabilities, not knowledge storage.
+  Both ship inside the npm package under `guides/docs/`, and should be deployed
+  to `~/.dsh/docs/` for agent access. Project-specific documentation (architecture,
+  design, roadmap) stays in `docs/` and is not distributed with the package.
+  Skills are reserved for procedural capabilities, not knowledge storage.
 
 ## Develop
 
