@@ -288,11 +288,13 @@ receives only a bounded, source-attributed, untrusted observation. Missing
 capability, validation, or provider success retains both the text
 and drafts instead of silently sending an image-less prompt.
 
-The same proxy is available to the Agent as `inspect_image`. It reads only a
-regular PNG, JPEG, WebP, or GIF whose resolved identity remains inside the
-active workspace, enforces the attachment byte and media limits, and returns
-text-only untrusted evidence. This makes `@image-path` references and image
-paths discovered in files usable even when the active model is text-only.
+The same proxy is available to the Agent as `inspect_image`. An explicit `file`
+source reads a user-provided or workspace path through the Host filesystem seam;
+an explicit `attachment` source reads the complete durable `attachment_ref`
+emitted by a Vision observation. Neither source falls back to or guesses the
+other. Both are normalized to one verified attachment reference before the
+shared Vision pipeline returns text-only untrusted evidence. This makes image
+evidence usable even when the active model is text-only.
 
 For the recommended Alibaba Cloud Bailian route:
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ImageAttachmentLimits, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { FsTarget, FsVersion } from '@deepseek-ai/dsh-fs'
+import type { ImageAttachmentLimits, ImageAttachmentRef, StoredImageAttachment } from '@deepseek-ai/dsh-attachment'
+import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs'
 import type { JsonValue, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
   createInspectImageTool,
@@ -10,8 +10,17 @@ import {
 import type { VisionInspection } from '../src/types.ts'
 
 const png = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-const version = 'version-1' as FsVersion
-const target = { targetKey: 'image', displayPath: '/workspace/screen.png' } as FsTarget
+const storedAttachment: StoredImageAttachment = {
+  data: png,
+  ref: {
+    attachmentId: 'sha256:image' as ImageAttachmentRef['attachmentId'],
+    mediaType: 'image/png',
+    bytes: png.byteLength,
+    width: 320,
+    height: 180,
+    name: 'screen.png',
+  },
+}
 const limits: ImageAttachmentLimits = {
   maxImageBytes: 1_024,
   maxImagesPerMessage: 4,
@@ -20,6 +29,16 @@ const limits: ImageAttachmentLimits = {
   maxImageDimension: 2_000,
   mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
 }
+const filePath = '/Users/yinfinity/Downloads/rendered/slide-12.png'
+const fileTarget = {
+  targetKey: filePath as FsTarget['targetKey'],
+  displayPath: filePath,
+} satisfies FsTarget
+const fileInfo = {
+  version: 'file-v1' as FsInfo['version'],
+  type: 'file',
+  size: png.byteLength,
+} satisfies FsInfo
 const inspection: VisionInspection = {
   provider: 'bailian',
   model: 'qwen-vision',
@@ -37,7 +56,7 @@ const inspection: VisionInspection = {
   finishReason: 'stop',
 }
 
-function runContext(options: { cwd?: string | undefined; nested?: boolean } = {}): {
+function runContext(options: { nested?: boolean } = {}): {
   exec: ToolRunContext
   deferContext: ReturnType<typeof vi.fn>
 } {
@@ -50,9 +69,7 @@ function runContext(options: { cwd?: string | undefined; nested?: boolean } = {}
       arguments: {},
       signal: new AbortController().signal,
       token: Symbol('tool'),
-      agent: options.cwd === undefined && 'cwd' in options
-        ? undefined
-        : { session: { header: { cwd: options.cwd ?? '/workspace' } } },
+      agent: { session: { header: { cwd: '/workspace' } } },
       ...options.nested === true ? { parent: Symbol('parent') } : {},
       deferContext,
       concludeTurn: vi.fn(),
@@ -61,60 +78,54 @@ function runContext(options: { cwd?: string | undefined; nested?: boolean } = {}
   }
 }
 
-function fixture(overrides: {
-  fileType?: 'file' | 'directory' | 'other'
-  bytes?: Uint8Array
-  size?: number
-} = {}) {
-  const resolve = vi.fn(async () => target)
-  const stat = vi.fn(async () => ({
-    version,
-    type: overrides.fileType ?? 'file',
-    size: overrides.size ?? (overrides.bytes ?? png).byteLength,
-  }))
-  const readBytes = vi.fn(async () => overrides.bytes ?? png)
-  const inspect = vi.fn(async () => inspection)
+function fixture() {
+  const resolve = vi.fn(async () => fileTarget)
+  const stat = vi.fn(async () => fileInfo)
+  const readBytes = vi.fn(async () => png)
+  const readImage = vi.fn(async () => storedAttachment)
+  const saveImage = vi.fn(async () => storedAttachment.ref)
+  const validateImage = vi.fn(async () => undefined)
   const observe = vi.fn()
+  const inspect = vi.fn(async () => inspection)
   const tool = createInspectImageTool({
-    fs: { resolve, stat, readBytes } as unknown as InspectImageToolOptions['fs'],
-    imageLimits: limits,
-    inspect,
+    attachments: { imageLimits: limits, readImage, saveImage, validateImage },
+    fs: { resolve, stat, readBytes },
     observe,
-  })
-  return { tool, resolve, stat, readBytes, inspect, observe }
+    inspect,
+  } as InspectImageToolOptions)
+  return { tool, resolve, stat, readBytes, readImage, saveImage, validateImage, observe, inspect }
 }
 
 describe('inspect_image', () => {
-  it('reads an image and returns text-only proxy evidence', async () => {
+  it('reads an attachment and returns text-only proxy evidence', async () => {
     const current = fixture()
     const { exec, deferContext } = runContext({ nested: true })
 
     const value = await current.tool.execute({
-      file_path: 'screen.png',
+      source: { kind: 'attachment', attachment_ref: storedAttachment.ref },
       question: 'Which control failed?',
     }, exec)
 
     expect(current.tool.name).toBe(INSPECT_IMAGE_TOOL_NAME)
-    expect(current.tool.description).toContain('@-referenced image paths')
-    expect(current.resolve).toHaveBeenCalledWith('screen.png', { cwd: '/workspace', signal: exec.signal })
-    expect(current.readBytes).toHaveBeenCalledWith(target, exec.signal, 1_024)
-    expect(current.inspect).toHaveBeenCalledWith({
-      userText: 'Which control failed?',
-      images: [{ data: png, mediaType: 'image/png', name: 'screen.png' }],
-    }, exec.signal)
-    expect(current.observe).toHaveBeenCalledWith(target, version, exec)
+    expect(current.readImage).toHaveBeenCalledWith(storedAttachment.ref, exec.signal)
+    expect(current.validateImage).toHaveBeenCalledWith({
+      data: png,
+      mediaType: 'image/png',
+      name: 'screen.png',
+    })
+    expect(current.saveImage).not.toHaveBeenCalled()
+    expect(current.inspect).toHaveBeenCalledWith(storedAttachment.ref, 'Which control failed?', exec.signal)
     expect(value).toMatchObject({
-      path: '/workspace/screen.png',
+      attachment_ref: storedAttachment.ref,
       provider: 'bailian',
       model: 'qwen-vision',
-      image: { mediaType: 'image/png', width: 320, height: 180 },
       observation: expect.stringContaining('trust="untrusted"'),
     })
 
     const rendered = current.tool.output.render({}, value as JsonValue)
     expect(rendered).toHaveLength(1)
-    expect(rendered[0]).toMatchObject({ type: 'text', text: expect.stringContaining('/workspace/screen.png') })
-    expect(rendered).not.toContainEqual(expect.objectContaining({ type: 'image' }))
+    expect(rendered[0]).toMatchObject({ type: 'text', text: expect.stringContaining('sha256:image') })
+    expect(rendered[0]).toHaveProperty('type', 'text')
     expect(deferContext).toHaveBeenCalledOnce()
     expect(deferContext.mock.calls[0]?.[0]).toMatchObject({
       source: { kind: 'plugin', plugin: 'community-vision' },
@@ -122,34 +133,35 @@ describe('inspect_image', () => {
     })
   })
 
-  it('resolves any readable path through the filesystem backend without a containment check', async () => {
+  it('inspects a user-provided absolute file path through the filesystem seam', async () => {
     const current = fixture()
     const { exec } = runContext()
 
-    await expect(current.tool.execute({ file_path: '../secret.png' }, exec))
-      .resolves.toMatchObject({ path: '/workspace/screen.png' })
-    expect(current.resolve).toHaveBeenCalledWith('../secret.png', { cwd: '/workspace', signal: exec.signal })
-    expect(current.inspect).toHaveBeenCalledOnce()
+    const value = await current.tool.execute({
+      source: { kind: 'file', path: filePath },
+      question: 'What is shown on this slide?',
+    }, exec)
+
+    expect(current.resolve).toHaveBeenCalledWith(filePath, { cwd: '/workspace', signal: exec.signal })
+    expect(current.stat).toHaveBeenCalledWith(fileTarget, exec.signal)
+    expect(current.observe).toHaveBeenCalledWith(fileTarget, { kind: 'present', version: fileInfo.version }, exec)
+    expect(current.readBytes).toHaveBeenCalledWith(fileTarget, exec.signal, 1_024)
+    expect(current.saveImage).toHaveBeenCalledWith({ data: png, mediaType: 'image/png' })
+    expect(current.readImage).not.toHaveBeenCalled()
+    expect(current.validateImage).not.toHaveBeenCalled()
+    expect(current.inspect).toHaveBeenCalledWith(storedAttachment.ref, 'What is shown on this slide?', exec.signal)
+    expect(value).toMatchObject({ attachment_ref: storedAttachment.ref })
   })
 
-  it('rejects non-files and unsupported bytes before invoking the proxy', async () => {
-    const directory = fixture({ fileType: 'directory' })
-    await expect(directory.tool.execute({ file_path: 'screens' }, runContext().exec))
-      .rejects.toThrow('not a regular file')
-    expect(directory.readBytes).not.toHaveBeenCalled()
-
-    const malformed = fixture({ bytes: new Uint8Array([1, 2, 3]) })
-    await expect(malformed.tool.execute({ file_path: 'fake.png' }, runContext().exec))
-      .rejects.toThrow('supported image formats are PNG, JPEG, GIF, and WebP')
-    expect(malformed.inspect).not.toHaveBeenCalled()
-  })
-
-  it('requires an Agent-owned working directory', async () => {
+  it('rejects an empty attachment identity before reading storage', async () => {
     const current = fixture()
-    const { exec } = runContext({ cwd: undefined })
-
-    await expect(current.tool.execute({ file_path: 'screen.png' }, exec))
-      .rejects.toThrow('requires an agent working directory')
-    expect(current.resolve).not.toHaveBeenCalled()
+    await expect(current.tool.execute({
+      source: {
+        kind: 'attachment',
+        attachment_ref: { ...storedAttachment.ref, attachmentId: '   ' },
+      },
+    }, runContext().exec)).rejects.toThrow('attachment_ref.attachmentId must be a non-empty string')
+    expect(current.readImage).not.toHaveBeenCalled()
+    expect(current.validateImage).not.toHaveBeenCalled()
   })
 })

@@ -6,14 +6,16 @@ observations into supported user-message events. Proxy media stays in the
 standard durable inbox carrier used by authenticated attachment lookup and
 session export; image blocks never enter a text-only model request.
 
-The service also registers `inspect_image`, an Agent tool for PNG, JPEG,
-WebP, and GIF files. It is a pure read capability: paths resolve through the
-filesystem backend's read seam like the official `read` tool family, with no
-tool-local workspace boundary, and the tool enforces only capability limits
-(byte cap and media types). Composer admission and tool inspection share
-one proxy inference path and the same attachment validation limits; only their
-observation context differs. Tool results are bounded, text-only, and explicitly
-untrusted, so text-only main-model routes never receive an image block.
+The service also registers `inspect_image`, an Agent tool for PNG, JPEG, WebP,
+and GIF images. Its explicit `source` union supports both local file paths and
+complete durable `attachment_ref` objects. File sources resolve through the Host
+filesystem seam and are validated and persisted once; attachment sources resolve
+through the Host attachment store and are verified without republishing. There
+is no path-to-attachment fallback and opaque attachment identifiers are never
+manufactured by the Agent. Both sources feed the same reference-only proxy
+inference path; only their admission boundary differs. Tool results are
+bounded, text-only, and explicitly untrusted, so text-only main-model routes
+never receive an image block.
 
 Consumers import the API from `@vascent/dsh-tui/vision`. The workspace is not
 published independently and contains no terminal presentation code.

@@ -240,9 +240,14 @@ it never repacks a different payload.
   restoration, and focus lifecycle stay shared without coupling workspace
   geometry to decision-card reading width.
 - `VisionService` owns one attachment-validated proxy inference core for both
-  composer admission and the `inspect_image` Agent tool, which resolves image
-  paths through the filesystem read seam without a tool-local workspace
-  boundary.
+  composer admission and the `inspect_image` Agent tool. The tool has one
+  discriminated `source` contract: `file` resolves a user-provided or workspace
+  path through the Host filesystem seam, while `attachment` resolves the exact
+  durable reference emitted by a proxy observation. These are explicit
+  provenance domains, never fallback interpretations of one string. File bytes
+  are validated and persisted once; existing attachments are read-verified and
+  validated without republishing. Both then enter one reference-only proxy
+  inference core.
   Composer analysis requires a unique reference for every image and forwards
   reference/image pairs in request order, so proxy output can retain the
   surrounding text relationship.

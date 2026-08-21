@@ -55,9 +55,6 @@ execution core.
 - Keep real command authoring plugin-owned; reusable prompt workflows are
   authored as Skills.
 
-Detailed decisions and acceptance criteria are in
-[`tui-v0.1.6-design.md`](tui-v0.1.6-design.md).
-
 ### v0.1.7 — Visual Input and Vision Proxy
 
 - Align composer semantics with established terminal-agent interaction:
@@ -78,9 +75,6 @@ Detailed decisions and acceptance criteria are in
 - Configure Vision under `/config`, fail closed on missing capability or
   credentials, and keep secrets and originating local paths out of events.
 
-Detailed decisions and acceptance criteria are in
-[`tui-v0.1.7-design.md`](tui-v0.1.7-design.md).
-
 ### v0.1.8 — Unified Execution Lifecycle
 
 - Replace independent Transcript and Trajectory event pairing with one typed,
@@ -100,9 +94,6 @@ Detailed decisions and acceptance criteria are in
   comments, and implementation-coupled tests; do not ship a dual-read bridge.
 - Borrow Cordis's contract, ownership, scope, and cleanup principles without
   introducing a lifecycle plugin API, service, or second persistence format.
-
-Detailed decisions, transition rules, migration slices, and acceptance criteria
-are in [`tui-v0.1.8-design.md`](tui-v0.1.8-design.md).
 
 ### v0.1.9 — Source-Attributed Rewind
 
@@ -130,9 +121,6 @@ are in [`tui-v0.1.8-design.md`](tui-v0.1.8-design.md).
   before confirmation.
 - Remove whole-worktree inference, tool-name parsing, duplicated checkpoint
   state, compatibility bridges, and TUI-owned Git restore code after cutover.
-
-Detailed ownership, mutation contracts, restore states, and transaction rules
-are in [`tui-v0.1.9-design.md`](tui-v0.1.9-design.md).
 
 ### v0.1.10 — Session Center
 

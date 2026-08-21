@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { Context, Service } from '@deepseek-ai/cordis'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import {
   BlockAssembler,
   createUserMessage,
@@ -28,7 +29,6 @@ import type {
   VisionEvidenceSource,
   VisionImageInput,
   VisionInspection,
-  VisionInspectionRequest,
   VisionObservationBlock,
   VisionRequest,
   VisionResultMetadata,
@@ -49,7 +49,6 @@ export type {
   VisionEvidenceSource,
   VisionImageInput,
   VisionInspection,
-  VisionInspectionRequest,
   VisionMode,
   VisionObservationBlock,
   VisionReferencedImageInput,
@@ -115,12 +114,10 @@ export class VisionService extends Service {
     this.settings = ctx.settings.register(VISION_NAMESPACE, VisionConfigSchema, { base: config, applies: 'live' })
     this.observations = new VisionObservationStage(ctx)
     ctx.tools.register(createInspectImageTool({
+      attachments: ctx.attachments,
       fs: ctx.fs,
-      imageLimits: ctx.attachments.imageLimits,
-      inspect: (request, signal) => this.inspect(request, signal),
-      observe: (target, version, exec) => {
-        ctx.emit('fs/observed', target, { kind: 'present', version }, exec)
-      },
+      observe: (target, observation, actor) => ctx.emit('fs/observed', target, observation, actor),
+      inspect: (attachment, userText, signal) => this.inspectAttachment(attachment, userText, signal),
     }))
   }
 
@@ -188,12 +185,38 @@ export class VisionService extends Service {
       throw new VisionError('SESSION_UNAVAILABLE', 'The active session is no longer available.')
     }
     const config = this.config
-    const { rawObservation, ...inference } = await this.runInference(request, config, signal)
+    const route = await this.resolveProxyRoute(config, signal)
+    const startedAt = Date.now()
+    signal?.throwIfAborted()
+    const saved = await this.ctx.attachments.saveImages(request.images.map(image => ({
+      data: image.data,
+      mediaType: image.mediaType,
+      ...image.name === undefined ? {} : { name: image.name },
+    })))
+    if (saved.length !== request.images.length) {
+      throw new VisionError('ATTACHMENT_MISMATCH', 'Vision attachment storage did not preserve the submitted image set.')
+    }
+    signal?.throwIfAborted()
+    const { rawObservation, ...inference } = await this.runInference(
+      request.userText,
+      saved.map((attachment, index) => ({
+        attachment,
+        reference: visionImageReference(request.images[index]!, index),
+      })),
+      route,
+      config,
+      startedAt,
+      signal,
+    )
     const wrapped = wrapObservation(
       rawObservation,
       inference.provider,
       inference.model,
       config.maxObservationChars,
+      inference.attachments.map((attachment, index) => ({
+        attachment,
+        reference: visionImageReference(request.images[index]!, index),
+      })),
     )
     const truncated = inference.truncated || wrapped.truncated
     const source: VisionEvidenceMetadata = {
@@ -214,11 +237,22 @@ export class VisionService extends Service {
     }
   }
 
-  /** Inspect images without creating a user Prompt or requiring a multimodal main model. */
-  async inspect(request: VisionInspectionRequest, signal?: AbortSignal): Promise<VisionInspection> {
-    this.assertImages(request.images)
+  /** Inspect one verified attachment without creating another durable object or user Prompt. */
+  private async inspectAttachment(
+    attachment: ImageAttachmentRef,
+    userText: string,
+    signal?: AbortSignal,
+  ): Promise<VisionInspection> {
     const config = this.config
-    const { rawObservation, ...inference } = await this.runInference(request, config, signal)
+    const route = await this.resolveProxyRoute(config, signal)
+    const { rawObservation, ...inference } = await this.runInference(
+      userText,
+      [{ reference: '[Image #1]', attachment }],
+      route,
+      config,
+      Date.now(),
+      signal,
+    )
     const wrapped = wrapToolObservation(
       rawObservation,
       inference.provider,
@@ -232,42 +266,36 @@ export class VisionService extends Service {
     }
   }
 
-  private async runInference(
-    request: VisionInspectionRequest,
+  private async resolveProxyRoute(
     config: VisionConfig,
     signal?: AbortSignal,
-  ): Promise<VisionInference> {
+  ): Promise<{ provider: string; model: string }> {
     if (config.mode === 'disabled') throw new VisionError('VISION_DISABLED', 'Vision is disabled. Open /config vision to enable it.')
-    const status = await this.resolveStatus(config, signal)
-    if (!status.proxyRegistered) {
+    const info = await this.ctx.llm.resolveModelInfo(config.proxyProvider, config.proxyModel, signal)
+      .catch(() => undefined)
+    signal?.throwIfAborted()
+    if (info === undefined) {
       throw new VisionError('PROXY_UNAVAILABLE', `Vision proxy ${config.proxyProvider}/${config.proxyModel} is unavailable.`)
     }
-    if (!status.proxySupportsImages) {
-      throw new VisionError('PROXY_NOT_MULTIMODAL', `Vision proxy ${config.proxyProvider}/${config.proxyModel} does not declare image input support.`)
-    }
-    const startedAt = Date.now()
-    signal?.throwIfAborted()
-    const saved = await this.ctx.attachments.saveImages(request.images.map(image => ({
-      data: image.data,
-      mediaType: image.mediaType,
-      ...image.name === undefined ? {} : { name: image.name },
-    })))
-    if (saved.length !== request.images.length) {
-      throw new VisionError('ATTACHMENT_MISMATCH', 'Vision attachment storage did not preserve the submitted image set.')
-    }
-    signal?.throwIfAborted()
-    const info = await this.ctx.llm.resolveModelInfo(config.proxyProvider, config.proxyModel, signal)
     if (!info.inputModalities?.includes('image')) {
       throw new VisionError('PROXY_NOT_MULTIMODAL', `Vision proxy ${info.provider}/${info.id} does not declare image input support.`)
     }
+    return { provider: info.provider, model: info.id }
+  }
+
+  private async runInference(
+    userText: string,
+    images: readonly { reference: string; attachment: ImageAttachmentRef }[],
+    route: { provider: string; model: string },
+    config: VisionConfig,
+    startedAt: number,
+    signal?: AbortSignal,
+  ): Promise<VisionInference> {
     const assembler = new BlockAssembler()
-    const content = visionInferenceContent(request.userText, saved.map((attachment, index) => ({
-      attachment,
-      reference: visionImageReference(request.images[index]!, index),
-    })))
+    const content = visionInferenceContent(userText, images)
     for await (const chunk of this.ctx.llm.stream({
-      provider: info.provider,
-      model: info.id,
+      provider: route.provider,
+      model: route.model,
       system: VISION_SYSTEM_PROMPT,
       messages: [createUserMessage({ content, source: { kind: 'plugin', plugin: PLUGIN_NAME } })],
       maxTokens: config.maxTokens,
@@ -279,10 +307,10 @@ export class VisionService extends Service {
     if (raw === '') throw new VisionError('EMPTY_OBSERVATION', 'The Vision model returned no readable observation.')
     const durationMs = Date.now() - startedAt
     return {
-      provider: info.provider,
-      model: info.id,
+      provider: route.provider,
+      model: route.model,
       rawObservation: raw,
-      attachments: saved,
+      attachments: images.map(image => image.attachment),
       durationMs,
       finishReason: finish.kind,
       truncated: finish.kind === 'max-tokens',

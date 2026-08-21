@@ -48,12 +48,6 @@ export interface VisionRequest {
   images: readonly VisionImageInput[]
 }
 
-/** One provider-neutral request shared by composer admission and Agent inspection. */
-export interface VisionInspectionRequest {
-  userText: string
-  images: readonly VisionImageInput[]
-}
-
 /** Provider facts shared by direct inspection, admission carriers, and durable evidence. */
 export interface VisionResultMetadata {
   provider: string

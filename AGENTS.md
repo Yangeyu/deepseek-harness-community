@@ -8,9 +8,9 @@
 
 | 文档 | 何时读它 |
 |---|---|
-| `docs/tui-architecture.md` | 架构、所有权边界、设计惯例问题 |
+| `docs/tui-architecture.md` | 架构、所有权边界、设计惯例、已落地版本的实现契约 |
 | `docs/tui-product-roadmap.md` | 里程碑与规划现状 |
-| `docs/tui-v0.1.x-design.md` | 目标版本的生命周期/协议设计细节 |
+| `docs/tui-v0.1.x-design.md`（仅目标版本设计期存在） | 在途版本的生命周期/协议设计细节；版本落地后并入 architecture 并删除，历史只留 git |
 
 细节一律以 `docs/` 下的文档为单一事实源——需要时用 read 工具按需加载，不要凭记忆回答细节问题。
 

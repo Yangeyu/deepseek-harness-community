@@ -85,9 +85,10 @@ public APIs without creating separate package versions or release pipelines.
 The long-term ownership boundaries and staged design are documented in
 [`docs/tui-architecture.md`](docs/tui-architecture.md).
 Functional milestones are tracked in
-[`docs/tui-product-roadmap.md`](docs/tui-product-roadmap.md). The implemented
-`v0.1.8` lifecycle contract is specified in
-[`docs/tui-v0.1.8-design.md`](docs/tui-v0.1.8-design.md).
+[`docs/tui-product-roadmap.md`](docs/tui-product-roadmap.md). Implemented
+per-version contracts live in the architecture document; a standalone
+`docs/tui-v0.1.x-design.md` exists only while its target version is being
+designed and is removed once the version lands.
 
 ## Agent guidance
 
