@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.21 - 2026-08-21
+
+- Remove the spinner animation from transcript rows entirely: activity groups
+  and individual execution items (tools, thinking) always render static glyphs
+  regardless of disclosure state, so the loading animation now only appears in
+  the status bar above the input box where it belongs.
+
 ## 0.1.20 - 2026-08-21
 
 - Hide the spinner animation on collapsed activity rows in the transcript. The
