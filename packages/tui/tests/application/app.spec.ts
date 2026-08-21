@@ -1083,7 +1083,7 @@ describe('TuiApplication input routing', () => {
     expect(internals.transcript.render(80).join('\n')).not.toContain('Working')
   })
 
-  it('advances the transcript spinner on the shared working tick', () => {
+  it('keeps transcript rows stable while the shared working tick advances', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
     const app = application()
@@ -1113,7 +1113,7 @@ describe('TuiApplication input routing', () => {
     app.render(running)
     const plain = (): string => stripTerminalSequences(internals.transcript.render(80).join('\n'))
 
-    // Collapsed activity title should not show spinner animation
+    // Transcript rows should never show spinner animation
     expect(plain()).toContain('› Working · 1 tool · Read')
     vi.advanceTimersByTime(160)
     expect(plain()).toContain('› Working · 1 tool · Read')

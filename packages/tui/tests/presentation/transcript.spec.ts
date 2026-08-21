@@ -403,7 +403,7 @@ describe('TranscriptComponent', () => {
 
     transcript.render(80)
     expect(transcript.handlePointer(0, 'click')).toBe(true)
-    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › · Read project')
+    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › ◦ Read project')
 
     transcript.setState(state([
       entry({
@@ -417,12 +417,12 @@ describe('TranscriptComponent', () => {
       tool,
     ], true))
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(expanded).toContain('⌄ · Working · 1 thought · 1 tool')
-    expect(expanded).toContain('├─ › · Thinking…')
-    expect(expanded).toContain('└─ › · Read project')
+    expect(expanded).toContain('⌄ Working · 1 thought · 1 tool')
+    expect(expanded).toContain('├─ › ◦ Thinking…')
+    expect(expanded).toContain('└─ › ◦ Read project')
   })
 
-  it('rotates the shared spinner glyph on running activity and execution rows', () => {
+  it('renders running activity and execution rows with static glyphs', () => {
     const tool = entry({
       event: {
         type: 'tool/call',
@@ -438,18 +438,10 @@ describe('TranscriptComponent', () => {
 
     expect(plain()).toContain('› Working · 1 tool · Read')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
-    expect(plain()).toContain('└─ › · Read project')
-
-    transcript.advanceAnimation()
-    expect(plain()).toContain('⌄ ✢ Working · 1 tool · Read')
-    expect(plain()).toContain('└─ › ✢ Read project')
-
-    transcript.advanceAnimation()
-    expect(plain()).toContain('⌄ ✳ Working · 1 tool · Read')
-    expect(plain()).toContain('└─ › ✳ Read project')
+    expect(plain()).toContain('└─ › ◦ Read project')
   })
 
-  it('keeps settled rows at static glyphs while only running rows spin', () => {
+  it('keeps settled rows at static glyphs with no spinner animation', () => {
     const tool = entry({
       event: {
         type: 'tool/call',
@@ -540,7 +532,7 @@ describe('TranscriptComponent', () => {
 
     expect(transcript.render(80).join('\n')).toContain('› Working · 1 thought · Thinking…')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
-    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › · Thinking…')
+    expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › ◦ Thinking…')
     expect(transcript.handlePointer(1, 'click')).toBe(true)
     const following = transcript.render(80).join('\n')
     expect(following).toContain('stream 5')
@@ -919,8 +911,8 @@ describe('TranscriptComponent', () => {
 
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const activity = stripTerminalSequences(transcript.render(120).join('\n'))
-    expect(activity).toContain('⌄ · Working · 1 tool · Bash')
-    expect(activity).toContain(`└─ › · ${operation}`)
+    expect(activity).toContain('⌄ Working · 1 tool · Bash')
+    expect(activity).toContain(`└─ › ◦ ${operation}`)
     expect(activity).not.toContain('python3')
 
     expect(transcript.handlePointer(1, 'click')).toBe(true)

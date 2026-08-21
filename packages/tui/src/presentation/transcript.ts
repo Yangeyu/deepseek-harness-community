@@ -39,7 +39,6 @@ import {
   executionLabel,
   executionVisual,
   ExecutionDisclosureState,
-  spinnerFrameGlyph,
   type ExecutionVisual,
 } from './execution-style.ts'
 
@@ -397,10 +396,7 @@ export class TranscriptComponent implements Component {
       : status === 'running' || status === 'pending' || status === 'interrupted'
         ? this.theme.warning
         : this.theme.reasoning
-    const animationLead = expanded && (status === 'running' || status === 'pending')
-      ? `${spinnerFrameGlyph(this.animationFrame)} `
-      : ''
-    return this.renderBlockTitle(`${marker} ${animationLead}${title}`, width, paint)
+    return this.renderBlockTitle(`${marker} ${title}`, width, paint)
   }
 
   private indentActivityChild(lines: string[], last: boolean): string[] {
@@ -685,8 +681,7 @@ export class TranscriptComponent implements Component {
     labelPaint: (text: string) => string,
   ): string {
     const visual = executionVisual(status, this.theme)
-    const animated = status === 'running' || status === 'pending'
-    const glyph = animated ? spinnerFrameGlyph(this.animationFrame) : visual.glyph
+    const glyph = visual.glyph
     return truncateToWidth(
       `${this.theme.dim(`${marker} `)}${this.renderExecutionGlyph({ ...visual, glyph })} ${labelPaint(label)}`,
       width,
