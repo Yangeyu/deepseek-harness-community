@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.20 - 2026-08-21
+
+- Hide the spinner animation on collapsed activity rows in the transcript. The
+  loading spinner now only appears when an activity is expanded, so the
+  collapsed summary bar stays clean while work is in progress.
+
 ## 0.1.19 - 2026-08-21
 
 - Reuse the status-bar loading animation inside the conversation body: running
