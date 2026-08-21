@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.22 - 2026-08-21
+
+- Enforce explicit file-path and durable-attachment source contracts for
+  `inspect_image`, and carry exact attachment references through Vision
+  evidence so follow-up inspection remains source-attributed.
+- Archive versioned design documents after their implemented contracts have
+  been consolidated into the canonical TUI architecture documentation.
+
 ## 0.1.21 - 2026-08-21
 
 - Remove the spinner animation from transcript rows entirely: activity groups
