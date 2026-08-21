@@ -397,7 +397,7 @@ export class TranscriptComponent implements Component {
       : status === 'running' || status === 'pending' || status === 'interrupted'
         ? this.theme.warning
         : this.theme.reasoning
-    const animationLead = status === 'running' || status === 'pending'
+    const animationLead = expanded && (status === 'running' || status === 'pending')
       ? `${spinnerFrameGlyph(this.animationFrame)} `
       : ''
     return this.renderBlockTitle(`${marker} ${animationLead}${title}`, width, paint)

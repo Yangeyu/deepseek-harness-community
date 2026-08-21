@@ -1113,13 +1113,12 @@ describe('TuiApplication input routing', () => {
     app.render(running)
     const plain = (): string => stripTerminalSequences(internals.transcript.render(80).join('\n'))
 
-    expect(plain()).toContain('› · Working · 1 tool · Read')
+    // Collapsed activity title should not show spinner animation
+    expect(plain()).toContain('› Working · 1 tool · Read')
     vi.advanceTimersByTime(160)
-    expect(plain()).toContain('› ✢ Working · 1 tool · Read')
+    expect(plain()).toContain('› Working · 1 tool · Read')
     vi.advanceTimersByTime(160)
-    expect(plain()).toContain('› ✳ Working · 1 tool · Read')
-    vi.advanceTimersByTime(160)
-    expect(plain()).toContain('› ✦ Working · 1 tool · Read')
+    expect(plain()).toContain('› Working · 1 tool · Read')
   })
 
   it('spins the status bar while a Host command like /compact executes', async () => {

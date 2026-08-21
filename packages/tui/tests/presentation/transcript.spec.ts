@@ -436,7 +436,7 @@ describe('TranscriptComponent', () => {
     transcript.render(80)
     const plain = (): string => stripTerminalSequences(transcript.render(80).join('\n'))
 
-    expect(plain()).toContain('› · Working · 1 tool · Read')
+    expect(plain()).toContain('› Working · 1 tool · Read')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     expect(plain()).toContain('└─ › · Read project')
 
@@ -538,7 +538,7 @@ describe('TranscriptComponent', () => {
     const events = Array.from({ length: 5 }, (_, index) => reasoningChunk(index, `- stream ${index + 1}\n`))
     const transcript = new TranscriptComponent(state(events, true), createTheme(false), true, 8, 3)
 
-    expect(transcript.render(80).join('\n')).toContain('› · Working · 1 thought · Thinking…')
+    expect(transcript.render(80).join('\n')).toContain('› Working · 1 thought · Thinking…')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › · Thinking…')
     expect(transcript.handlePointer(1, 'click')).toBe(true)
@@ -913,7 +913,7 @@ describe('TranscriptComponent', () => {
     ], true), createTheme(false), true, 8)
 
     const collapsed = stripTerminalSequences(transcript.render(120).join('\n'))
-    expect(collapsed).toContain('› · Working · 1 tool · Bash')
+    expect(collapsed).toContain('› Working · 1 tool · Bash')
     expect(collapsed).not.toContain('Inspect dispatch tests')
     expect(collapsed).not.toContain('python3')
 
