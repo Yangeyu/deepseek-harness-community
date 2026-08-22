@@ -57,8 +57,6 @@ export async function preparePromptDraft(
       mediaType: ref.mediaType,
       data,
       source: 'rewind',
-      width: ref.width,
-      height: ref.height,
     }
   })
   compilePromptDocument(text, attachments)

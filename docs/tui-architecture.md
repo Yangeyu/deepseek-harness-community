@@ -11,7 +11,7 @@ Harness Host
   session log · projections · LLM · attachments · commands · tools · persistence
       │
       ├── Bailian provider (endpoint · credentials · common request policy · model capabilities)
-      ├── Vision service (routing · proxy analysis · staged evidence)
+      ├── Vision fallback (route policy · proxy analysis · evidence admission)
       ├── Web service (official registry · community provider adapters)
       │
       │ transport-neutral ApiProxy plus narrow Command/Memory/Vision/Web ports
@@ -161,6 +161,16 @@ by that gate; it never repacks a different payload.
    as human text. Native image blocks and proxy evidence enrich the same Prompt
    with immutable attachment references, and a missing Vision capability never
    silently drops an attachment.
+   The TUI resolves one immutable image route per submission. An image-capable
+   `auto` route is handed directly to Host admission; a text-only or forced
+   proxy route carries its resolved provider, model, token limit, and evidence
+   limit through storage, inference, and admission without another settings or
+   model-catalog lookup. Local drafts retain only source bytes, a declared media
+   type, and the inline reference; byte validation, dimensions, normalization,
+   and provider projection remain official Attachment/Host responsibilities.
+   Model selection does not load and scan historical events to preflight image
+   compatibility; the official Host request boundary is authoritative when a
+   selected model cannot consume image-bearing history.
 9. Raw terminal sequences resolve to semantic actions before application
    behavior runs. One fixed binding table owns those gestures and context owns
    their availability: idle editor input is never consumed by a running-turn
@@ -276,20 +286,28 @@ by that gate; it never repacks a different payload.
   viewport and receive every available content column. Framing, replacement,
   restoration, and focus lifecycle stay shared without coupling workspace
   geometry to decision-card reading width.
-- `VisionService` owns one attachment-validated proxy inference core for both
-  composer admission and the `inspect_image` Agent tool. The tool has one
-  discriminated `source` contract: `file` resolves a user-provided or workspace
-  path through the Host filesystem seam, while `attachment` resolves the exact
-  durable reference emitted by a proxy observation. These are explicit
-  provenance domains, never fallback interpretations of one string. File bytes
-  are validated and persisted once; existing attachments are read-verified by
-  the official Attachment service without republishing. Both then enter one
-  reference-only proxy inference core.
-  Composer analysis requires a unique reference for every image and forwards
-  reference/image pairs in request order, so proxy output can retain the
-  surrounding text relationship.
-  Tool inspection returns bounded untrusted text and never adds image blocks to
-  a text-only main-model route.
+- `VisionService` owns only image-route policy, proxy fallback inference, and
+  bounded source-attributed evidence. It does not decode images, derive
+  dimensions, normalize bytes, persist media, or serialize native-provider
+  requests; the official Host, Attachment service, and provider adapters own
+  those stages. Composer analysis requires one unique inline reference per
+  image and consumes the already-resolved proxy route, so no downstream step
+  re-reads live settings or model metadata.
+- `inspect_image` has one stable global schema, matching the official
+  `read_image` registration pattern. Execution resolves the current route
+  before parsing or reading its source: native `auto` routes reject with
+  guidance to use the inline image or `read_image`, while text-only `auto` and
+  explicit `proxy` routes may continue. Its discriminated `file` and
+  `attachment` sources are explicit provenance domains. A narrow resolver uses
+  the official filesystem and Attachment services; file extensions only
+  declare media type, and Attachment storage remains authoritative for byte
+  validation and normalization. Both sources then enter the same
+  reference-only proxy inference core and return text-only untrusted evidence.
+- `VisionEvidenceAdmissionAdapter` is a stateless compatibility seam for the
+  current Agent API: it converts one complete proxy carrier into the exact
+  human Prompt plus a source-attributed evidence message during `pre-step`.
+  There is no process-local staging Map, expiry, or discard protocol. Delete
+  this adapter when upstream admission can atomically accept multiple messages.
 - `BailianAdapter` binds resolved model metadata and request dispatch through
   `prepareCall`, so a live settings change cannot combine one generation's
   capabilities with another generation's endpoint or credential reference.
@@ -392,9 +410,13 @@ competing with this canonical contract.
   the Vision workspace.
 - Use explicit model modality metadata for native routing. Text-only or unknown
   routes use the configured proxy or reject without submitting partial input.
+  Resolve that decision once per submission; official Host admission and
+  provider adapters remain the only native image pipeline.
 - Preserve two durable messages in proxy mode: the exact human-authored user
   message first, followed by a source-attributed Vision evidence message with
-  route, attachment, timing, and completion metadata.
+  route, attachment, timing, and completion metadata. A stateless `pre-step`
+  adapter bridges the current single-message admission API without staging
+  analysis in process memory.
 - Extend Transcript and Trajectory from that supported `user/message` source
   instead of inventing an out-of-repository session event or retaining a
   second UI-owned result store.

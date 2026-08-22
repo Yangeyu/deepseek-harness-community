@@ -45,8 +45,7 @@ export class AttachmentRail implements Component {
       const state = draft.error === undefined ? '' : this.theme.warning(' · failed')
       const name = [...sanitizeTerminalText(draft.name)]
       const shortName = name.length <= 24 ? name.join('') : `${name.slice(0, 11).join('')}…${name.slice(-12).join('')}`
-      const dimensions = draft.width === undefined || draft.height === undefined ? '' : ` · ${String(draft.width)}×${String(draft.height)}`
-      const card = `${this.theme.imageReference(draft.placeholder)} ${shortName} ${this.theme.dim(`${sizeLabel(draft.data.byteLength)}${dimensions}`)}${state}`
+      const card = `${this.theme.imageReference(draft.placeholder)} ${shortName} ${this.theme.dim(sizeLabel(draft.data.byteLength))}${state}`
       return index === this.index ? this.theme.bold(card) : card
     })
     const overflow = this.drafts.length > visible.length

@@ -661,7 +661,6 @@ describe('TuiApplication input routing', () => {
       { provider: 'provider', model: 'model' },
       '[Image #1] what is this',
       'queue',
-      undefined,
       expect.anything(),
     )
     expect(internals.attachmentDrafts.snapshot).toEqual([

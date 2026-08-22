@@ -10,7 +10,7 @@ deepseek-harness-community/
 ├── src/launcher.ts   # typed profile setup and launcher implementation
 ├── packages/llm-bailian/ # first-class Bailian provider and model policy
 ├── packages/memory/  # Markdown-backed project memory plugin
-├── packages/vision/  # image routing, proxy analysis, and staged evidence
+├── packages/vision/  # image route policy, proxy analysis, and evidence admission
 ├── packages/web/     # selectable Web search policy and page-reading providers
 └── packages/tui/     # terminal UI bundle
 ```

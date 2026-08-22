@@ -35,7 +35,13 @@ describe('chooseVisionRoute', () => {
       config,
       model('deepseek', 'chat', ['text']),
       model('bailian', 'qwen3.7-plus', ['text', 'image']),
-    )).toEqual({ strategy: 'proxy', provider: 'bailian', model: 'qwen3.7-plus' })
+    )).toEqual({
+      strategy: 'proxy',
+      provider: 'bailian',
+      model: 'qwen3.7-plus',
+      maxObservationChars: 12_000,
+      maxTokens: 2_048,
+    })
   })
 
   it('always uses the proxy in proxy mode', () => {
@@ -43,7 +49,13 @@ describe('chooseVisionRoute', () => {
       { ...config, mode: 'proxy' },
       model('native', 'multimodal', ['text', 'image']),
       model('proxy', 'vision', ['text', 'image']),
-    )).toEqual({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
+    )).toEqual({
+      strategy: 'proxy',
+      provider: 'proxy',
+      model: 'vision',
+      maxObservationChars: 12_000,
+      maxTokens: 2_048,
+    })
   })
 
   it('returns an actionable disabled state when the proxy is unavailable', () => {

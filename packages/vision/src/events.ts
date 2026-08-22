@@ -7,27 +7,15 @@ import {
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
 import type {
-  VisionEvidenceMetadata,
   VisionEvidenceSource,
   VisionAdmissionRequest,
   VisionSubmissionSource,
 } from './types.ts'
 
-// Keep completed analyses available until atomic admission while bounding
-// process-local work abandoned by cancellation or a session change.
-const STAGE_TTL_MS = 24 * 60 * 60 * 1_000
-
-interface StagedObservation {
-  sessionId: string
-  observation: string
-  expiresAt: number
-  source: VisionEvidenceMetadata
-}
-
 function evidenceSource(
   source: VisionSubmissionSource,
   promptId: MessageId,
-  attachments = source.attachments,
+  attachments: VisionSubmissionSource['attachments'],
 ): VisionEvidenceSource {
   return {
     kind: 'community-vision',
@@ -78,15 +66,12 @@ function admittedMessages(message: UserMessage & { source: VisionSubmissionSourc
   return [user, evidence]
 }
 
-/** Two-phase bridge from process-local analysis to durable media and text-only model input. */
-export class VisionObservationStage {
-  private readonly staged = new Map<string, StagedObservation>()
-
+/** Narrow bridge until Agent admission can atomically accept multiple user messages. */
+export class VisionEvidenceAdmissionAdapter {
   constructor(ctx: Context) {
     ctx.on('agent/pre-step', async ({ agent }, next): Promise<PreStepDecision> => {
       const decision = await next()
       if (decision.kind === 'reject') return decision
-      this.expire()
       const messages: UserMessage[] = []
       for (const message of decision.messages) {
         if (!isSubmission(message)) {
@@ -102,48 +87,29 @@ export class VisionObservationStage {
     })
   }
 
-  set(analysisId: string, observation: Omit<StagedObservation, 'expiresAt'>): void {
-    this.staged.set(analysisId, { ...observation, expiresAt: Date.now() + STAGE_TTL_MS })
-  }
-
   submission(request: VisionAdmissionRequest): UserMessage {
-    this.expire()
-    const staged = this.staged.get(request.analysisId)
-    if (staged === undefined || staged.sessionId !== request.sessionId) {
-      throw new Error('Vision analysis is no longer available for this session.')
-    }
+    const analysis = request.analysis
     const source: VisionSubmissionSource = {
       kind: 'community-vision-submission',
-      sessionId: request.sessionId,
+      sessionId: analysis.sessionId,
       rpcId: request.rpcId,
-      analysisId: staged.source.analysisId,
-      provider: staged.source.provider,
-      model: staged.source.model,
-      attachments: staged.source.attachments,
-      durationMs: staged.source.durationMs,
-      finishReason: staged.source.finishReason,
-      truncated: staged.source.truncated,
+      analysisId: analysis.analysisId,
+      provider: analysis.provider,
+      model: analysis.model,
+      attachments: analysis.attachments,
+      durationMs: analysis.durationMs,
+      finishReason: analysis.finishReason,
+      truncated: analysis.truncated,
       ...request.clientTimeZone === undefined ? {} : { clientTimeZone: request.clientTimeZone },
-      ...staged.source.usage === undefined ? {} : { usage: staged.source.usage },
+      ...analysis.usage === undefined ? {} : { usage: analysis.usage },
     }
     return createUserMessage({
       source,
       content: [
         { type: 'text', text: request.promptText },
-        { type: 'community-vision-observation', text: staged.observation },
-        ...staged.source.attachments.map(attachment => ({ type: 'image' as const, attachment })),
+        { type: 'community-vision-observation', text: analysis.observation },
+        ...analysis.attachments.map(attachment => ({ type: 'image' as const, attachment })),
       ],
     })
-  }
-
-  discard(analysisId: string): void {
-    this.staged.delete(analysisId)
-  }
-
-  private expire(): void {
-    const now = Date.now()
-    for (const [id, staged] of this.staged) {
-      if (staged.expiresAt <= now) this.staged.delete(id)
-    }
   }
 }

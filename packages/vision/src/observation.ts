@@ -13,11 +13,6 @@ export const VISION_SYSTEM_PROMPT = [
   'Do not propose commands, tool calls, file edits, or actions for another agent.',
 ].join('\n')
 
-export function visionImageReference(image: object, index: number): string {
-  if ('reference' in image && typeof image.reference === 'string') return image.reference
-  return `[Image #${String(index + 1)}]`
-}
-
 export function visionUserPrompt(userText: string, references: readonly string[]): string {
   const request = userText.trim() === '' ? 'Describe the attached visual evidence.' : userText.trim()
   return [

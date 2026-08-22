@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 0.1.23 - 2026-08-22
 
 - Upgrade the coordinated DeepSeek Harness runtime to `0.1.1-rc.2` and replace
   distributed version declarations plus the custom updater with one native pnpm
@@ -12,6 +12,10 @@ All notable changes to this project are documented in this file.
   obsolete community attachment-limit override now owned by the official backend.
 - Keep React out of the TUI's direct and development dependencies; only constrain
   the ReactDOM version already pulled by the official CLI's Web dependency graph.
+- Converge image handling on the official Host and Attachment pipeline: remove
+  duplicate local image parsing, limit checks, staged evidence state, and model
+  switch guards; resolve one native-or-proxy route per submission and keep
+  `inspect_image` as the text-model proxy fallback.
 
 ## 0.1.22 - 2026-08-21
 

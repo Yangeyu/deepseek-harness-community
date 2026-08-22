@@ -32,8 +32,6 @@ describe('Rewind Prompt attachment restoration', () => {
       mediaType: 'image/png',
       data,
       source: 'rewind',
-      width: 1,
-      height: 1,
     })])
   })
 

@@ -34,7 +34,7 @@
 - **环境变量**：凭证 `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` / `TAVILY_API_KEY`；隔离 `DSH_HOME`、`DSH_TUI_PROFILE`、`DSH_TOOLS_MODE`、`DSH_PERMISSION_MODE`。
 - **斜杠命令**：`/status` `/task` `/trajectory` `/config [section]` `/vision` `/web` `/skills` `/memories` `/rewind` `/model` `/help`。
 - **CLI**：`dscode doctor [--json]`、`dscode sessions`/`resume`、`dscode exec [-C <path>]`、`dscode config show|default`、`dscode plugin <pnpm 参数>`、`--patch <file>`。
-- **社区能力**：首类 Bailian（文本 `deepseek-v4-pro-0813` / 图像 `qwen3.7-plus`）；文本模型通过 `inspect_image` 走 Vision 代理；`web_search` 策略按 `community-web.searchProvider`（auto 语义：有 Tavily key 走 Tavily，否则 DeepSeek Official）；`web_extract` 走 `extractProvider`；Markdown 记忆自动注入 `<memory-context>`。
+- **社区能力**：首类 Bailian（文本 `deepseek-v4-pro-0813` / 图像 `qwen3.7-plus`）；文本模型或强制代理模式通过 `inspect_image` 走 Vision 代理，原生图文模型直接使用官方图片链路；`web_search` 策略按 `community-web.searchProvider`（auto 语义：有 Tavily key 走 Tavily，否则 DeepSeek Official）；`web_extract` 走 `extractProvider`；Markdown 记忆自动注入 `<memory-context>`。
 
 ## 部署
 

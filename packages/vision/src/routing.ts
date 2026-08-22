@@ -1,11 +1,11 @@
 import type { LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm'
-import type { VisionCapability, VisionConfig } from './types.ts'
+import type { ResolvedImageRoute, VisionConfig } from './types.ts'
 
 export function chooseVisionRoute(
   config: VisionConfig,
   main: LlmResolvedModelInfo | undefined,
   proxy: LlmResolvedModelInfo | undefined,
-): VisionCapability {
+): ResolvedImageRoute {
   if (config.mode === 'disabled') {
     return { strategy: 'disabled', reason: 'disabled', message: 'Vision is disabled. Open /config Vision to enable it.' }
   }
@@ -26,5 +26,11 @@ export function chooseVisionRoute(
       message: `Vision proxy ${config.proxyProvider}/${config.proxyModel} does not declare image input support.`,
     }
   }
-  return { strategy: 'proxy', provider: proxy.provider, model: proxy.id }
+  return {
+    strategy: 'proxy',
+    provider: proxy.provider,
+    model: proxy.id,
+    maxObservationChars: config.maxObservationChars,
+    maxTokens: config.maxTokens,
+  }
 }

@@ -5,8 +5,8 @@ import type {
 import type { MessageId, TokenUsage } from '@deepseek-ai/dsh-llm'
 
 export interface VisionObservationBlock {
-  type: 'community-vision-observation'
-  text: string
+  readonly type: 'community-vision-observation'
+  readonly text: string
 }
 
 export type VisionMode = 'auto' | 'proxy' | 'disabled'
@@ -20,80 +20,88 @@ export interface VisionConfig {
 }
 
 export interface VisionImageInput {
-  data: Uint8Array
-  mediaType: ImageMediaType
-  name?: string
-}
-
-/** One image whose stable label is already embedded in the owning user request. */
-export interface VisionReferencedImageInput extends VisionImageInput {
-  reference: string
+  /** Stable label already embedded exactly once in the owning user request. */
+  readonly reference: string
+  readonly data: Uint8Array
+  readonly mediaType: ImageMediaType
+  readonly name?: string
 }
 
 export type VisionUnavailableReason =
   | 'disabled'
-  | 'main-model-unavailable'
   | 'proxy-unavailable'
   | 'proxy-does-not-support-images'
 
-export type VisionCapability =
-  | { strategy: 'native'; provider: string; model: string }
-  | { strategy: 'proxy'; provider: string; model: string }
-  | { strategy: 'disabled'; reason: VisionUnavailableReason; message: string }
+export type ResolvedImageRoute =
+  | { readonly strategy: 'native'; readonly provider: string; readonly model: string }
+  | {
+      readonly strategy: 'proxy'
+      readonly provider: string
+      readonly model: string
+      readonly maxObservationChars: number
+      readonly maxTokens: number
+    }
+  | {
+      readonly strategy: 'disabled'
+      readonly reason: VisionUnavailableReason
+      readonly message: string
+    }
+
+export type ResolvedProxyImageRoute = Extract<ResolvedImageRoute, { strategy: 'proxy' }>
 
 export interface VisionRequest {
-  analysisId: string
-  sessionId: string
-  userText: string
-  images: readonly VisionImageInput[]
+  readonly analysisId: string
+  readonly sessionId: string
+  readonly userText: string
+  readonly images: readonly VisionImageInput[]
 }
 
 /** Provider facts shared by direct inspection, admission carriers, and durable evidence. */
 export interface VisionResultMetadata {
-  provider: string
-  model: string
-  attachments: readonly ImageAttachmentRef[]
-  durationMs: number
-  truncated: boolean
-  finishReason: string
-  usage?: TokenUsage
+  readonly provider: string
+  readonly model: string
+  readonly attachments: readonly ImageAttachmentRef[]
+  readonly durationMs: number
+  readonly truncated: boolean
+  readonly finishReason: string
+  readonly usage?: TokenUsage
 }
 
 export interface VisionInspection extends VisionResultMetadata {
-  observation: string
+  readonly observation: string
 }
 
 /** Durable evidence adds an identity to the common provider result. */
 export interface VisionEvidenceMetadata extends VisionResultMetadata {
-  analysisId: string
+  readonly analysisId: string
 }
 
 export interface VisionAnalysis extends VisionEvidenceMetadata {
-  observation: string
+  readonly sessionId: string
+  readonly observation: string
 }
 
 export interface VisionAdmissionRequest {
-  analysisId: string
-  sessionId: string
-  promptText: string
-  mode: 'queue' | 'steer'
-  rpcId: string
-  clientTimeZone?: string
+  readonly analysis: VisionAnalysis
+  readonly promptText: string
+  readonly mode: 'queue' | 'steer'
+  readonly rpcId: string
+  readonly clientTimeZone?: string
 }
 
 /** Structured provenance persisted inside the supported `user/message` event. */
 export interface VisionEvidenceSource extends VisionEvidenceMetadata {
-  kind: 'community-vision'
+  readonly kind: 'community-vision'
   /** Stable identity of the admitted human Prompt that owns this evidence. */
-  promptId: MessageId
+  readonly promptId: MessageId
 }
 
-/** Durable, pre-admission carrier that keeps proxy media recoverable but model-invisible. */
+/** Complete pre-admission carrier that keeps proxy media model-invisible. */
 export interface VisionSubmissionSource extends VisionEvidenceMetadata {
-  kind: 'community-vision-submission'
-  sessionId: string
-  rpcId: string
-  clientTimeZone?: string
+  readonly kind: 'community-vision-submission'
+  readonly sessionId: string
+  readonly rpcId: string
+  readonly clientTimeZone?: string
 }
 
 export interface VisionStatus {

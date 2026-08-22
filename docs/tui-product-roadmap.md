@@ -65,8 +65,9 @@ execution core.
   new-session, and resumed-session image intake.
 - Add explicit image drafts from files and the system clipboard with a compact,
   keyboard-first attachment rail above the composer.
-- Introduce a public, TUI-independent Vision workspace that routes explicit
-  image-capable models natively and text-only models through a configured proxy.
+- Introduce a public, TUI-independent Vision workspace that resolves one image
+  route per submission: image-capable models continue through official Host
+  admission, while text-only models use a configured proxy.
 - Use a first-class Bailian adapter for DashScope request/SSE semantics and
   recommend `qwen3.7-plus` as the first proxy route while DeepSeek remains the
   primary coding model.

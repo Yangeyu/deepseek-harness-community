@@ -88,23 +88,11 @@ describe('Prompt lifecycle Host projection', () => {
     }))
   })
 
-  it('enriches one proxy-image Prompt while ignoring its transport carrier', async () => {
+  it('enriches one proxy-image Prompt from its source-attributed evidence', async () => {
     const start = event({ type: 'turn/start', seq: 0, time: 100, data: { turn: 1 } })
-    const carrier = event({
-      type: 'user/message',
-      seq: 1,
-      time: 110,
-      surfaceOp: 'append',
-      data: {
-        id: 'carrier',
-        role: 'user',
-        source: { kind: 'community-vision-submission', analysisId: 'analysis-1' },
-        content: [{ type: 'text', text: 'inspect [Image #1] now' }],
-      },
-    })
     const prompt = event({
       type: 'user/message',
-      seq: 2,
+      seq: 1,
       time: 120,
       surfaceOp: 'append',
       data: {
@@ -116,7 +104,7 @@ describe('Prompt lifecycle Host projection', () => {
     })
     const evidence = event({
       type: 'user/message',
-      seq: 3,
+      seq: 2,
       time: 180,
       surfaceOp: 'append',
       data: {
@@ -138,12 +126,11 @@ describe('Prompt lifecycle Host projection', () => {
         content: [{ type: 'text', text: 'objects in image' }],
       },
     })
-    const current = session([start, carrier, prompt, evidence])
+    const current = session([start, prompt, evidence])
     const upsertPrompt = vi.fn()
     const ctx = new Context()
     installPromptLifecycle(ctx, { upsertPrompt })
 
-    ctx.emit('session/event', current, carrier)
     ctx.emit('session/event', current, prompt)
     ctx.emit('session/event', current, evidence)
 

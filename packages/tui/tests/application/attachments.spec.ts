@@ -4,21 +4,19 @@ import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
 import type { PromptContentPart, RpcId } from '@deepseek-ai/dsh-host-apiproxy'
 import type {
-  VisionCapability,
+  ResolvedImageRoute,
+  ResolvedProxyImageRoute,
   VisionConfig,
+  VisionRequest,
   VisionStatus,
 } from '@vascent/deepseek-harness-vision'
 import { AttachmentDraftStore } from '../../src/application/attachments/drafts.ts'
 import {
   AttachmentCoordinator,
-  type ComposerVisionRequest,
   type PreparedPromptSender,
   type VisionGateway,
 } from '../../src/application/attachments/coordinator.ts'
-import {
-  detectImageMediaType,
-  imageDraftFromPath,
-} from '../../src/application/attachments/files.ts'
+import { imageDraftFromPath } from '../../src/application/attachments/files.ts'
 import { imageDraftFromClipboard } from '../../src/application/attachments/clipboard.ts'
 
 const config: VisionConfig = {
@@ -28,13 +26,26 @@ const config: VisionConfig = {
   maxObservationChars: 12_000,
   maxTokens: 2_048,
 }
+const nativeRoute = {
+  strategy: 'native', provider: 'native', model: 'vision',
+} satisfies ResolvedImageRoute
+const proxyRoute = {
+  strategy: 'proxy',
+  provider: 'proxy',
+  model: 'vision',
+  maxObservationChars: config.maxObservationChars,
+  maxTokens: config.maxTokens,
+} satisfies ResolvedProxyImageRoute
 
-function gateway(route: VisionCapability): VisionGateway & {
+function gateway(route: ResolvedImageRoute): VisionGateway & {
   analyze: ReturnType<typeof vi.fn>
   admit: ReturnType<typeof vi.fn>
+  resolveImageRoute: ReturnType<typeof vi.fn>
+  status: ReturnType<typeof vi.fn>
 } {
-  const analyze = vi.fn(async (request: ComposerVisionRequest) => ({
+  const analyze = vi.fn(async (_route: ResolvedProxyImageRoute, request: VisionRequest) => ({
     analysisId: request.analysisId,
+    sessionId: request.sessionId,
     provider: 'proxy',
     model: 'vision',
     observation: 'visible evidence',
@@ -46,8 +57,7 @@ function gateway(route: VisionCapability): VisionGateway & {
   return {
     config,
     newAnalysisId: () => 'analysis-id',
-    supportsNativeImages: vi.fn(async () => route.strategy === 'native'),
-    capability: vi.fn(async () => route),
+    resolveImageRoute: vi.fn(async () => route),
     status: vi.fn(async (): Promise<VisionStatus> => ({
       config,
       proxyRegistered: true,
@@ -56,7 +66,6 @@ function gateway(route: VisionCapability): VisionGateway & {
     setMode: vi.fn(async () => {}),
     analyze,
     admit: vi.fn(async () => {}),
-    discard: vi.fn(),
   }
 }
 
@@ -109,16 +118,14 @@ describe('AttachmentCoordinator', () => {
       content => { submittedContent = content },
       activity => { activities.push(activity) },
     )
-    const coordinator = new AttachmentCoordinator(store, gateway({
-      strategy: 'native', provider: 'native', model: 'vision',
-    }))
+    const vision = gateway(nativeRoute)
+    const coordinator = new AttachmentCoordinator(store, vision)
 
     await expect(coordinator.submit(
       'session',
       { provider: 'native', model: 'vision' },
       `inspect this ${image.placeholder}`,
       'queue',
-      undefined,
       send,
     )).resolves.toBe('native')
 
@@ -127,6 +134,8 @@ describe('AttachmentCoordinator', () => {
       expect.objectContaining({ type: 'image', mediaType: 'image/png', name: 'screen.png' }),
     ])
     expect(activities).toEqual([])
+    expect(vision.resolveImageRoute).toHaveBeenCalledOnce()
+    expect(vision.analyze).not.toHaveBeenCalled()
     expect(store.snapshot).toHaveLength(0)
   })
 
@@ -142,14 +151,11 @@ describe('AttachmentCoordinator', () => {
       submittedContent = prepared.content
     })
 
-    await new AttachmentCoordinator(store, gateway({
-      strategy: 'native', provider: 'native', model: 'vision',
-    })).submit(
+    await new AttachmentCoordinator(store, gateway(nativeRoute)).submit(
       'session',
       { provider: 'native', model: 'vision' },
       image.placeholder,
       'queue',
-      undefined,
       send,
     )
 
@@ -166,14 +172,11 @@ describe('AttachmentCoordinator', () => {
     const second = addPng(store, 'second.png')
     let submittedContent: PromptContentPart[] = []
 
-    await new AttachmentCoordinator(store, gateway({
-      strategy: 'native', provider: 'native', model: 'vision',
-    })).submit(
+    await new AttachmentCoordinator(store, gateway(nativeRoute)).submit(
       'session',
       { provider: 'native', model: 'vision' },
       `before ${second.placeholder} between ${first.placeholder} after`,
       'queue',
-      undefined,
       preparedSender(content => { submittedContent = content }),
     )
 
@@ -190,18 +193,17 @@ describe('AttachmentCoordinator', () => {
     const store = new AttachmentDraftStore()
     const first = addPng(store, 'first.png')
     const second = addPng(store, 'second.png')
-    const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
+    const vision = gateway(proxyRoute)
 
     await new AttachmentCoordinator(store, vision).submit(
       'session',
       { provider: 'deepseek', model: 'chat' },
       `before ${second.placeholder} between ${first.placeholder} after`,
       'queue',
-      undefined,
       preparedSender(),
     )
 
-    const request = vision.analyze.mock.calls[0]?.[0] as ComposerVisionRequest
+    const request = vision.analyze.mock.calls[0]?.[1] as VisionRequest
     expect(request.userText).toBe('before [Image #2] between [Image #1] after')
     expect(request.images.map(image => ({ reference: image.reference, name: image.name }))).toEqual([
       { reference: '[Image #2]', name: 'second.png' },
@@ -214,14 +216,11 @@ describe('AttachmentCoordinator', () => {
     addPng(store)
     const send = preparedSender()
 
-    await expect(new AttachmentCoordinator(store, gateway({
-      strategy: 'native', provider: 'native', model: 'vision',
-    })).submit(
+    await expect(new AttachmentCoordinator(store, gateway(nativeRoute)).submit(
       'session',
       { provider: 'native', model: 'vision' },
       'inspect this',
       'queue',
-      undefined,
       send,
     )).rejects.toThrow('Attached image is missing its inline reference: [Image #1]')
     expect(send).not.toHaveBeenCalled()
@@ -230,7 +229,7 @@ describe('AttachmentCoordinator', () => {
   it('commits proxy evidence through the durable Vision admission path', async () => {
     const store = new AttachmentDraftStore()
     const image = addPng(store)
-    const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
+    const vision = gateway(proxyRoute)
     const activities: Array<{ kind: 'vision'; analysisId: string; imageCount: number }> = []
     const send = preparedSender(
       undefined,
@@ -242,34 +241,40 @@ describe('AttachmentCoordinator', () => {
       { provider: 'deepseek', model: 'chat' },
       `inspect this ${image.placeholder}`,
       'queue',
-      undefined,
       send,
     )
 
-    expect(vision.analyze).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'session',
-      userText: 'inspect this [Image #1]',
-      images: [expect.objectContaining({ reference: '[Image #1]' })],
-    }), expect.any(AbortSignal))
+    expect(vision.analyze).toHaveBeenCalledWith(
+      proxyRoute,
+      expect.objectContaining({
+        sessionId: 'session',
+        userText: 'inspect this [Image #1]',
+        images: [expect.objectContaining({ reference: '[Image #1]' })],
+      }),
+      expect.any(AbortSignal),
+    )
+    expect(vision.analyze.mock.calls[0]?.[0]).toBe(proxyRoute)
     expect(vision.admit).toHaveBeenCalledWith({
-      analysisId: 'analysis-id',
-      sessionId: 'session',
+      analysis: expect.objectContaining({ analysisId: 'analysis-id', sessionId: 'session' }),
       promptText: 'inspect this [Image #1]',
       mode: 'queue',
       rpcId: 'rpc-test',
     })
+    expect(vision.status).not.toHaveBeenCalled()
+    expect(vision.resolveImageRoute).toHaveBeenCalledOnce()
     expect(activities).toEqual([{ kind: 'vision', analysisId: 'analysis-id', imageCount: 1 }])
   })
 
   it('transfers images out of the Composer while proxy analysis is still running', async () => {
     const store = new AttachmentDraftStore()
     const image = addPng(store)
-    const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
+    const vision = gateway(proxyRoute)
     let releaseAnalysis!: () => void
-    vision.analyze.mockImplementation(async (request: ComposerVisionRequest) => {
+    vision.analyze.mockImplementation(async (_route: ResolvedProxyImageRoute, request: VisionRequest) => {
       await new Promise<void>(resolve => { releaseAnalysis = resolve })
       return {
         analysisId: request.analysisId,
+        sessionId: request.sessionId,
         provider: 'proxy',
         model: 'vision',
         observation: 'visible evidence',
@@ -286,7 +291,6 @@ describe('AttachmentCoordinator', () => {
       { provider: 'deepseek', model: 'chat' },
       `inspect this ${image.placeholder}`,
       'queue',
-      undefined,
       preparedSender(),
     )
 
@@ -301,7 +305,7 @@ describe('AttachmentCoordinator', () => {
   it('restores drafts when durable proxy admission fails after analysis', async () => {
     const store = new AttachmentDraftStore()
     const image = addPng(store)
-    const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
+    const vision = gateway(proxyRoute)
     vision.admit.mockRejectedValueOnce(new Error('Session changed before admission.'))
 
     await expect(new AttachmentCoordinator(store, vision).submit(
@@ -309,11 +313,9 @@ describe('AttachmentCoordinator', () => {
       { provider: 'deepseek', model: 'chat' },
       `inspect this ${image.placeholder}`,
       'queue',
-      undefined,
       preparedSender(),
     )).rejects.toThrow('Session changed before admission.')
 
-    expect(vision.discard).toHaveBeenCalledWith('analysis-id')
     expect(store.snapshot).toHaveLength(1)
     expect(store.snapshot[0]?.error).toBe('Session changed before admission.')
   })
@@ -321,7 +323,7 @@ describe('AttachmentCoordinator', () => {
   it('does not restore drafts after durable proxy admission has committed', async () => {
     const store = new AttachmentDraftStore()
     const image = addPng(store)
-    const vision = gateway({ strategy: 'proxy', provider: 'proxy', model: 'vision' })
+    const vision = gateway(proxyRoute)
     const send = vi.fn<PreparedPromptSender>(async (_text, _mode, prepareContent) => {
       const prepared = await prepareContent({ setActivity: () => {} })
       if (prepared.kind !== 'admission') throw new Error('expected Vision admission')
@@ -334,12 +336,10 @@ describe('AttachmentCoordinator', () => {
       { provider: 'deepseek', model: 'chat' },
       `inspect this ${image.placeholder}`,
       'queue',
-      undefined,
       send,
     )).rejects.toThrow('presentation failed after admission')
 
     expect(vision.admit).toHaveBeenCalledOnce()
-    expect(vision.discard).not.toHaveBeenCalled()
     expect(store.snapshot).toEqual([])
   })
 
@@ -355,7 +355,6 @@ describe('AttachmentCoordinator', () => {
       { provider: 'deepseek', model: 'chat' },
       `inspect this ${image.placeholder}`,
       'queue',
-      undefined,
       preparedSender(),
     )).rejects.toThrow('Configure Vision first.')
     expect(store.snapshot[0]?.error).toBe('Configure Vision first.')
@@ -363,13 +362,7 @@ describe('AttachmentCoordinator', () => {
 })
 
 describe('image intake', () => {
-  it('detects supported formats from magic bytes', () => {
-    expect(detectImageMediaType(Uint8Array.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))).toBe('image/png')
-    expect(detectImageMediaType(Uint8Array.from([0xFF, 0xD8, 0xFF]))).toBe('image/jpeg')
-    expect(detectImageMediaType(new TextEncoder().encode('not an image'))).toBeUndefined()
-  })
-
-  it('loads explicit relative paths into validated in-memory drafts', async () => {
+  it('loads explicit relative image paths as local drafts for Host admission', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'dsh-tui-image-'))
     try {
       await writeFile(join(cwd, 'screen.png'), Uint8Array.from([

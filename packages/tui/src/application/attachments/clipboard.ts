@@ -3,7 +3,6 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { detectImageMediaType, imageDimensions } from './files.ts'
 import type { NewAttachmentDraft } from './drafts.ts'
 
 const execFile = promisify(execFileCallback)
@@ -38,11 +37,8 @@ export async function imageDraftFromClipboard(
   try {
     await command(file)
     const data = await readFile(file)
-    const mediaType = detectImageMediaType(data)
-    if (mediaType === undefined) throw new Error('The clipboard does not contain a supported image.')
-    return { name: 'clipboard.png', mediaType, data, source: 'clipboard', ...imageDimensions(data, mediaType) }
+    return { name: 'clipboard.png', mediaType: 'image/png', data, source: 'clipboard' }
   } catch (error: unknown) {
-    if (error instanceof Error && error.message.includes('supported image')) throw error
     throw new Error('The clipboard does not contain a readable image.', { cause: error })
   } finally {
     await rm(directory, { recursive: true, force: true })

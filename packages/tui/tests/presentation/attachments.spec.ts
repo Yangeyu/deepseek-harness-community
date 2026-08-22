@@ -12,8 +12,6 @@ function railDraft(index: number): AttachmentDraft {
     mediaType: 'image/png',
     data: new Uint8Array(2_048),
     source: 'file',
-    width: 1_280,
-    height: 720,
   }
 }
 

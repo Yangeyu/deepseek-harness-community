@@ -15,8 +15,6 @@ export interface AttachmentDraft {
   mediaType: ImageMediaType
   data: Uint8Array
   source: AttachmentSource
-  width?: number
-  height?: number
   error?: string | undefined
 }
 

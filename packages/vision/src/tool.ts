@@ -1,34 +1,28 @@
-import { AttachmentId, type AttachmentStore, type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { FileSystem, FsObservation, FsTarget } from '@deepseek-ai/dsh-fs'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
-import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { detectImageMediaType } from './image.ts'
-import type { VisionInspection } from './types.ts'
+import { defineTool, type ToolDefinition, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import {
+  materializeInspectionSource,
+  type AttachmentRefValue,
+  type InspectionSourceOptions,
+} from './source.ts'
+import type {
+  ResolvedImageRoute,
+  ResolvedProxyImageRoute,
+  VisionInspection,
+} from './types.ts'
 
 export const INSPECT_IMAGE_TOOL_NAME = 'inspect_image'
 const PLUGIN_NAME = 'community-vision'
 
-type VisionAttachmentStore = Pick<AttachmentStore, 'imageLimits' | 'readImage' | 'saveImage'>
-type VisionFileSystem = Pick<FileSystem, 'readBytes' | 'resolve' | 'stat'>
-
-export interface InspectImageToolOptions {
-  attachments: VisionAttachmentStore
-  fs: VisionFileSystem
-  observe(target: FsTarget, observation: FsObservation, actor: object | undefined): void
-  inspect(attachment: ImageAttachmentRef, userText: string, signal?: AbortSignal): Promise<VisionInspection>
-}
-
-interface AttachmentRefValue {
-  attachmentId: string
-  mediaType: ImageAttachmentRef['mediaType']
-  bytes: number
-  width: number
-  height: number
-  name?: string
-  originalDimensions?: {
-    width: number
-    height: number
-  }
+export interface InspectImageToolOptions extends InspectionSourceOptions {
+  resolveRoute(exec: ToolRunContext): Promise<ResolvedImageRoute>
+  inspect(
+    attachment: ImageAttachmentRef,
+    userText: string,
+    route: ResolvedProxyImageRoute,
+    signal?: AbortSignal,
+  ): Promise<VisionInspection>
 }
 
 interface InspectImageOutput {
@@ -113,30 +107,11 @@ const IMAGE_SOURCE_SCHEMA = {
   ],
 } as const
 
-function imageAttachmentRef(value: AttachmentRefValue): ImageAttachmentRef {
-  if (value.attachmentId.trim() === '') {
-    throw new Error('attachment_ref.attachmentId must be a non-empty string')
-  }
-  return {
-    attachmentId: AttachmentId(value.attachmentId),
-    mediaType: value.mediaType,
-    bytes: value.bytes,
-    width: value.width,
-    height: value.height,
-    ...value.name === undefined ? {} : { name: value.name },
-    ...value.originalDimensions === undefined ? {} : { originalDimensions: value.originalDimensions },
-  }
-}
-
-function quotedPath(path: string): string {
-  return JSON.stringify(path)
-}
-
 /** Build the proxy-backed image tool independently from terminal composition. */
 export function createInspectImageTool(options: InspectImageToolOptions): ToolDefinition {
   return defineTool({
     name: INSPECT_IMAGE_TOOL_NAME,
-    description: 'Inspect a PNG/JPEG/WebP/GIF through the configured Vision proxy and return text-only visual evidence. Use this instead of read_image when the active model cannot consume images directly. For a user-provided or workspace path, use source.kind "file" directly. For an image from a Vision observation, use source.kind "attachment" with its exact attachment_ref. Never manufacture an attachment ID from a path or hash.',
+    description: 'Inspect a PNG/JPEG/WebP/GIF through the configured Vision proxy and return text-only visual evidence. This is a fallback for a text-only current model or an explicitly forced proxy route. Never call it for an image already included in the current prompt: that image is already visible to an image-capable model. For a user-provided or workspace path, use source.kind "file". For an image from prior Vision evidence, use source.kind "attachment" with its exact attachment_ref. Never manufacture an attachment ID from a path or hash.',
     parameters: {
       source: {
         ...IMAGE_SOURCE_SCHEMA,
@@ -165,43 +140,16 @@ export function createInspectImageTool(options: InspectImageToolOptions): ToolDe
       render: (_args, value) => inspectionContent(value),
     },
     async execute(args, exec) {
-      let attachment: ImageAttachmentRef
-      if (args.source.kind === 'file') {
-        const cwd = exec.agent?.session.header.cwd
-        if (cwd === undefined) throw new Error('inspect_image requires an agent working directory for file sources')
-        const target = await options.fs.resolve(args.source.path, { cwd, signal: exec.signal })
-        const info = await options.fs.stat(target, exec.signal)
-        if (info === undefined) {
-          options.observe(target, { kind: 'absent' }, exec)
-          throw new Error(`cannot inspect ${quotedPath(target.displayPath)}: file does not exist`)
-        }
-        options.observe(target, { kind: 'present', version: info.version }, exec)
-        if (info.type !== 'file') {
-          throw new Error(`cannot inspect ${quotedPath(target.displayPath)}: path is not a regular file`)
-        }
-        const byteCap = Math.min(
-          options.attachments.imageLimits.maxImageBytes,
-          options.attachments.imageLimits.maxMessageImageBytes,
-        )
-        if (info.size !== undefined && info.size > byteCap) {
-          throw new Error(`cannot inspect ${quotedPath(target.displayPath)}: image exceeds the ${String(byteCap)} byte limit`)
-        }
-        const data = await options.fs.readBytes(target, exec.signal, byteCap)
-        exec.signal.throwIfAborted()
-        const mediaType = detectImageMediaType(data)
-        if (mediaType === undefined) {
-          throw new Error(`cannot inspect ${quotedPath(target.displayPath)}: file is not a supported PNG, JPEG, WebP, or GIF image`)
-        }
-        attachment = await options.attachments.saveImage({ data, mediaType })
-      }
-      else {
-        const requestedRef = imageAttachmentRef(args.source.attachment_ref)
-        const stored = await options.attachments.readImage(requestedRef, exec.signal)
-        exec.signal.throwIfAborted()
-        attachment = stored.ref
-      }
+      const route = await options.resolveRoute(exec)
       exec.signal.throwIfAborted()
-      const result = await options.inspect(attachment, args.question?.trim() ?? '', exec.signal)
+      if (route.strategy === 'disabled') throw new Error(route.message)
+      if (route.strategy === 'native') {
+        throw new Error(
+          `inspect_image is unavailable because ${route.provider}/${route.model} accepts image input; use the inline image directly or read_image for a file`,
+        )
+      }
+      const attachment = await materializeInspectionSource(args.source, exec, options)
+      const result = await options.inspect(attachment, args.question?.trim() ?? '', route, exec.signal)
       const value: InspectImageOutput = {
         attachment_ref: attachment,
         provider: result.provider,

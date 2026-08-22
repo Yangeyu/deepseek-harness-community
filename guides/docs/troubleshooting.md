@@ -33,8 +33,9 @@ dscode（DeepSeek Harness Community 终端）环境与运行故障的诊断参�
 
 ### 图片理解不可用
 - `vision.mode: disabled` → 打开为 `auto`/`proxy`。
-- `proxy` 模式下 `proxyProvider` 凭证缺失（`dashscope-vision` 走 `DASHSCOPE_API_KEY`）。
-- `read_image` 仅原生图文线路可用；文本线路应使用 `inspect_image`（按 `vision.mode` 路由）。
+- `proxy` 模式下 `proxyProvider` 凭证缺失（默认 `bailian` 走 `DASHSCOPE_API_KEY`）。
+- 粘贴或附加在当前 Prompt 中的图片无需模型再次调用工具；原生图文线路直接由官方链路解析。
+- `read_image` 用于原生图文线路读取文件；`inspect_image` 仅用于文本线路或显式 `vision.mode: proxy`。原生 `auto` 线路调用 `inspect_image` 会在读取文件或附件前明确拒绝。
 
 ### skill 不出现
 - 目录（优先级序）：项目 `.dsh/skills`、项目 `.agents/skills`、`~/.dsh/skills`、`~/.agents/skills`。

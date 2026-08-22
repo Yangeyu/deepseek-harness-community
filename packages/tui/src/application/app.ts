@@ -876,7 +876,6 @@ export class TuiApplication implements TuiControllerSink {
           selection,
           text,
           mode,
-          state.projections.imageLimits,
           (displayText, submitMode, prepareContent) => this.controller.promptWithPreparation(
             displayText,
             submitMode,
@@ -1857,16 +1856,6 @@ export class TuiApplication implements TuiControllerSink {
 
   private async selectModel(selection: ModelSelection): Promise<void> {
     if (this.imageSubmissionBusy) throw new Error('Wait for Vision analysis to finish before changing models.')
-    while (this.controller.current.historyHasMore) {
-      if (!await this.controller.loadEarlierHistory()) break
-    }
-    const containsImages = this.controller.current.events.some(entry => entry.event.type === 'user/message'
-      && entry.event.data.source.kind === 'user'
-      && entry.event.data.content.some(block => block.type === 'image'))
-    if (containsImages && this.vision !== undefined
-      && !await this.vision.supportsNativeImages(selection.provider, selection.model)) {
-      throw new Error('This session already contains native image messages. Select a multimodal model or start a new session before switching to a text-only model.')
-    }
     await this.controller.selectModel(selection)
   }
 

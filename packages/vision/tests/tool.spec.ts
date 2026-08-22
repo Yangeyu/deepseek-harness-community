@@ -7,7 +7,11 @@ import {
   INSPECT_IMAGE_TOOL_NAME,
   type InspectImageToolOptions,
 } from '../src/tool.ts'
-import type { VisionInspection } from '../src/types.ts'
+import type {
+  ResolvedImageRoute,
+  ResolvedProxyImageRoute,
+  VisionInspection,
+} from '../src/types.ts'
 
 const png = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
 const storedAttachment: StoredImageAttachment = {
@@ -57,6 +61,13 @@ const inspection: VisionInspection = {
   truncated: false,
   finishReason: 'stop',
 }
+const proxyRoute = {
+  strategy: 'proxy',
+  provider: 'bailian',
+  model: 'qwen-vision',
+  maxObservationChars: 12_000,
+  maxTokens: 2_048,
+} satisfies ResolvedImageRoute
 
 function runContext(options: { nested?: boolean } = {}): {
   exec: ToolRunContext
@@ -80,21 +91,28 @@ function runContext(options: { nested?: boolean } = {}): {
   }
 }
 
-function fixture() {
+function fixture(route: ResolvedImageRoute = proxyRoute) {
   const resolve = vi.fn(async () => fileTarget)
   const stat = vi.fn(async () => fileInfo)
   const readBytes = vi.fn(async () => png)
   const readImage = vi.fn(async () => storedAttachment)
   const saveImage = vi.fn(async () => storedAttachment.ref)
   const observe = vi.fn()
-  const inspect = vi.fn(async () => inspection)
+  const resolveRoute = vi.fn(async () => route)
+  const inspect = vi.fn(async (
+    _attachment: ImageAttachmentRef,
+    _question: string,
+    _route: ResolvedProxyImageRoute,
+    _signal?: AbortSignal,
+  ) => inspection)
   const tool = createInspectImageTool({
     attachments: { imageLimits: limits, readImage, saveImage },
     fs: { resolve, stat, readBytes },
     observe,
+    resolveRoute,
     inspect,
   } as InspectImageToolOptions)
-  return { tool, resolve, stat, readBytes, readImage, saveImage, observe, inspect }
+  return { tool, resolve, stat, readBytes, readImage, saveImage, observe, resolveRoute, inspect }
 }
 
 describe('inspect_image', () => {
@@ -110,7 +128,8 @@ describe('inspect_image', () => {
     expect(current.tool.name).toBe(INSPECT_IMAGE_TOOL_NAME)
     expect(current.readImage).toHaveBeenCalledWith(storedAttachment.ref, exec.signal)
     expect(current.saveImage).not.toHaveBeenCalled()
-    expect(current.inspect).toHaveBeenCalledWith(storedAttachment.ref, 'Which control failed?', exec.signal)
+    expect(current.inspect).toHaveBeenCalledWith(storedAttachment.ref, 'Which control failed?', proxyRoute, exec.signal)
+    expect(current.inspect.mock.calls[0]?.[2]).toBe(proxyRoute)
     expect(value).toMatchObject({
       attachment_ref: storedAttachment.ref,
       provider: 'bailian',
@@ -142,10 +161,24 @@ describe('inspect_image', () => {
     expect(current.stat).toHaveBeenCalledWith(fileTarget, exec.signal)
     expect(current.observe).toHaveBeenCalledWith(fileTarget, { kind: 'present', version: fileInfo.version }, exec)
     expect(current.readBytes).toHaveBeenCalledWith(fileTarget, exec.signal, 1_024)
-    expect(current.saveImage).toHaveBeenCalledWith({ data: png, mediaType: 'image/png' })
+    expect(current.saveImage).toHaveBeenCalledWith({ data: png, mediaType: 'image/png', name: 'slide-12.png' })
     expect(current.readImage).not.toHaveBeenCalled()
-    expect(current.inspect).toHaveBeenCalledWith(storedAttachment.ref, 'What is shown on this slide?', exec.signal)
+    expect(current.inspect).toHaveBeenCalledWith(storedAttachment.ref, 'What is shown on this slide?', proxyRoute, exec.signal)
     expect(value).toMatchObject({ attachment_ref: storedAttachment.ref })
+  })
+
+  it('rejects a native route before resolving or reading the requested source', async () => {
+    const current = fixture({ strategy: 'native', provider: 'deepseek-official', model: 'vision' })
+
+    await expect(current.tool.execute({
+      source: { kind: 'file', path: filePath },
+    }, runContext().exec)).rejects.toThrow('accepts image input')
+
+    expect(current.resolveRoute).toHaveBeenCalledOnce()
+    expect(current.resolve).not.toHaveBeenCalled()
+    expect(current.readImage).not.toHaveBeenCalled()
+    expect(current.saveImage).not.toHaveBeenCalled()
+    expect(current.inspect).not.toHaveBeenCalled()
   })
 
   it('rejects an empty attachment identity before reading storage', async () => {

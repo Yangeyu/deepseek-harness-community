@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { VisionObservationStage } from '../src/events.ts'
+import { VisionEvidenceAdmissionAdapter } from '../src/events.ts'
+import type { VisionAnalysis } from '../src/types.ts'
 
 const ANALYSIS_ID = '00000000-0000-4000-8000-000000000001'
 const attachment = {
@@ -15,16 +16,16 @@ const attachment = {
 } as ImageAttachmentRef
 
 function fixture(): {
-  stage: VisionObservationStage
+  adapter: VisionEvidenceAdmissionAdapter
   invoke: (sessionId: string, decision: PreStepDecision) => Promise<PreStepDecision>
 } {
   let handler: ((event: { agent: { id: string } }, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>) | undefined
   const context = {
     on: (_name: string, value: typeof handler) => { handler = value },
   } as unknown as Context
-  const stage = new VisionObservationStage(context)
+  const adapter = new VisionEvidenceAdmissionAdapter(context)
   return {
-    stage,
+    adapter,
     invoke: async (sessionId, decision) => {
       if (handler === undefined) throw new Error('pre-step handler was not registered')
       return handler({ agent: { id: sessionId } }, async () => decision)
@@ -32,29 +33,25 @@ function fixture(): {
   }
 }
 
-function stageAnalysis(stage: VisionObservationStage, sessionId = 'session-1'): void {
-  stage.set(ANALYSIS_ID, {
+function analysis(sessionId = 'session-1'): VisionAnalysis {
+  return {
+    analysisId: ANALYSIS_ID,
     sessionId,
     observation: '<vision-observation>evidence</vision-observation>',
-    source: {
-      analysisId: ANALYSIS_ID,
-      provider: 'proxy',
-      model: 'vision',
-      attachments: [attachment],
-      durationMs: 500,
-      finishReason: 'stop',
-      truncated: false,
-    },
-  })
+    provider: 'proxy',
+    model: 'vision',
+    attachments: [attachment],
+    durationMs: 500,
+    finishReason: 'stop',
+    truncated: false,
+  }
 }
 
-describe('VisionObservationStage', () => {
-  it('persists standard image blocks before admitting text-only messages', async () => {
-    const { stage, invoke } = fixture()
-    stageAnalysis(stage)
-    const submission = stage.submission({
-      analysisId: ANALYSIS_ID,
-      sessionId: 'session-1',
+describe('VisionEvidenceAdmissionAdapter', () => {
+  it('carries verified image blocks into source-attributed text-only admission', async () => {
+    const { adapter, invoke } = fixture()
+    const submission = adapter.submission({
+      analysis: analysis(),
       promptText: 'What failed?',
       mode: 'queue',
       rpcId: 'rpc-1',
@@ -96,12 +93,10 @@ describe('VisionObservationStage', () => {
     expect(result.messages.flatMap(message => message.content)).not.toContainEqual(expect.objectContaining({ type: 'image' }))
   })
 
-  it('can admit a durable submission after process-local staging is gone', async () => {
+  it('admits a complete carrier without process-local analysis state', async () => {
     const first = fixture()
-    stageAnalysis(first.stage)
-    const durable = first.stage.submission({
-      analysisId: ANALYSIS_ID,
-      sessionId: 'session-1',
+    const durable = first.adapter.submission({
+      analysis: analysis(),
       promptText: 'Resume safely',
       mode: 'queue',
       rpcId: 'rpc-resume',
@@ -120,11 +115,9 @@ describe('VisionObservationStage', () => {
   })
 
   it('rejects a durable submission attached to another session', async () => {
-    const { stage, invoke } = fixture()
-    stageAnalysis(stage)
-    const submission = stage.submission({
-      analysisId: ANALYSIS_ID,
-      sessionId: 'session-1',
+    const { adapter, invoke } = fixture()
+    const submission = adapter.submission({
+      analysis: analysis(),
       promptText: 'question',
       mode: 'queue',
       rpcId: 'rpc-1',

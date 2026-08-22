@@ -1,29 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import {
-  visionImageReference,
   visionInferenceContent,
   visionUserPrompt,
   wrapObservation,
   wrapToolObservation,
 } from '../src/observation.ts'
-import type { VisionRequest } from '../src/types.ts'
-
-const unlabeledRequest: VisionRequest = {
-  analysisId: 'analysis-1',
-  sessionId: 'session-1',
-  userText: 'describe this image',
-  images: [{
-    data: Uint8Array.from([0x89, 0x50, 0x4E, 0x47]),
-    mediaType: 'image/png',
-  }],
-}
 
 describe('visionUserPrompt', () => {
-  it('assigns ordinal references to unlabeled images', () => {
-    expect(visionImageReference(unlabeledRequest.images[0]!, 0)).toBe('[Image #1]')
-  })
-
   it('keeps exact image references bound to the user request', () => {
     const prompt = visionUserPrompt(
       'Compare [Image #2] with [Image #1].',
