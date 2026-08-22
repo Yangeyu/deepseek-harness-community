@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+- Upgrade the coordinated DeepSeek Harness runtime to `0.1.1-rc.2` and replace
+  distributed version declarations plus the custom updater with one native pnpm
+  Catalog value used by every private workspace component.
+- Follow the new prepared-call and request-image contracts in Bailian, preserve
+  normalized-image source dimensions through Vision and Rewind, and remove the
+  obsolete community attachment-limit override now owned by the official backend.
+- Keep React out of the TUI's direct and development dependencies; only constrain
+  the ReactDOM version already pulled by the official CLI's Web dependency graph.
+
 ## 0.1.22 - 2026-08-21
 
 - Enforce explicit file-path and durable-attachment source contracts for

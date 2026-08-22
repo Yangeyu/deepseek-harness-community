@@ -1,6 +1,54 @@
 packages:
   - packages/*
 
+# DeepSeek publishes one coordinated runtime train. Upgrade it by changing the
+# anchored value once, then run `pnpm install`; every workspace manifest uses
+# `catalog:dsh`, and `pnpm pack` writes the concrete version into the artifact.
+catalogs:
+  dsh:
+    '@deepseek-ai/dsh': &dsh-runtime-version 0.1.1-rc.2
+    '@deepseek-ai/dsh-agent': *dsh-runtime-version
+    '@deepseek-ai/dsh-anonymous-user-id': *dsh-runtime-version
+    '@deepseek-ai/dsh-attachment': *dsh-runtime-version
+    '@deepseek-ai/dsh-attachment-local': *dsh-runtime-version
+    '@deepseek-ai/dsh-authorization': *dsh-runtime-version
+    '@deepseek-ai/dsh-base': *dsh-runtime-version
+    '@deepseek-ai/dsh-bash-local': *dsh-runtime-version
+    '@deepseek-ai/dsh-code-runtime-worker-thread': *dsh-runtime-version
+    '@deepseek-ai/dsh-commands': *dsh-runtime-version
+    '@deepseek-ai/dsh-cordis-host-runner': *dsh-runtime-version
+    '@deepseek-ai/dsh-credentials': *dsh-runtime-version
+    '@deepseek-ai/dsh-fs': *dsh-runtime-version
+    '@deepseek-ai/dsh-goal': *dsh-runtime-version
+    '@deepseek-ai/dsh-home-paths': *dsh-runtime-version
+    '@deepseek-ai/dsh-host-apiproxy': *dsh-runtime-version
+    '@deepseek-ai/dsh-host-directory-picker-browse': *dsh-runtime-version
+    '@deepseek-ai/dsh-launch-environment': *dsh-runtime-version
+    '@deepseek-ai/dsh-llm': *dsh-runtime-version
+    '@deepseek-ai/dsh-permission-presets': *dsh-runtime-version
+    '@deepseek-ai/dsh-plan-mode': *dsh-runtime-version
+    '@deepseek-ai/dsh-session': *dsh-runtime-version
+    '@deepseek-ai/dsh-session-projection': *dsh-runtime-version
+    '@deepseek-ai/dsh-session-projection-cache': *dsh-runtime-version
+    '@deepseek-ai/dsh-session-stats': *dsh-runtime-version
+    '@deepseek-ai/dsh-session-telemetry': *dsh-runtime-version
+    '@deepseek-ai/dsh-session-title': *dsh-runtime-version
+    '@deepseek-ai/dsh-session-title-llm': *dsh-runtime-version
+    '@deepseek-ai/dsh-settings': *dsh-runtime-version
+    '@deepseek-ai/dsh-settings-file': *dsh-runtime-version
+    '@deepseek-ai/dsh-storage': *dsh-runtime-version
+    '@deepseek-ai/dsh-storage-domain': *dsh-runtime-version
+    '@deepseek-ai/dsh-storage-json': *dsh-runtime-version
+    '@deepseek-ai/dsh-subagent-in-process-driver': *dsh-runtime-version
+    '@deepseek-ai/dsh-system-prompt': *dsh-runtime-version
+    '@deepseek-ai/dsh-timeout': *dsh-runtime-version
+    '@deepseek-ai/dsh-token-meter': *dsh-runtime-version
+    '@deepseek-ai/dsh-tool-todo': *dsh-runtime-version
+    '@deepseek-ai/dsh-tools': *dsh-runtime-version
+    '@deepseek-ai/dsh-web': *dsh-runtime-version
+    '@deepseek-ai/dsh-web-search-deepseek': *dsh-runtime-version
+    '@deepseek-ai/dsh-workspace': *dsh-runtime-version
+
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': false
@@ -12,9 +60,16 @@ linkWorkspacePackages: true
 
 strictPeerDependencies: true
 
-# DeepSeek publishes one coordinated RC train. The lockfile and release
-# contract enforce the selected exact version; this scope exception only lets
-# an intentional runtime update resolve before the general maturity window.
+# @deepseek-ai/dsh is the official CLI executable and currently brings its Web
+# bundle into the same dependency graph. pnpm otherwise pairs React 18 with the
+# newest ReactDOM 19 while auto-installing that bundle's peers. Keep this
+# transitive compatibility policy out of the TUI's public dependencies.
+overrides:
+  react-dom: 18.3.1
+
+# DeepSeek publishes one coordinated train. The catalog selects its exact
+# version; this scope exception lets an intentional upgrade resolve before the
+# general maturity window.
 minimumReleaseAgeExclude:
   - '@earendil-works/pi-tui@0.84.2'
   - '@deepseek-ai/*'

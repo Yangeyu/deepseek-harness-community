@@ -148,14 +148,19 @@ regular `tui` profile.
 
 ## Release
 
-When moving to a new coordinated DeepSeek runtime train, update every manifest
-and the lockfile through the single version source:
+The coordinated DeepSeek runtime version lives once in the named `dsh` catalog
+inside `pnpm-workspace.yaml`. Change the anchored value and let pnpm update the
+lockfile normally:
 
 ```sh
-pnpm run runtime:update -- 0.1.0-rc.9
+pnpm install
 ```
 
-Run the same build, test, archive, dependency-tree, and isolated global-install
+Every workspace manifest refers to `catalog:dsh`, so an upgrade never requires
+distributing the same version across package files. `pnpm pack` replaces the
+catalog protocol with the concrete version in the published root manifest.
+
+Run the same build, test, archive, and isolated global-install
 gate used by CI and publishing:
 
 ```sh

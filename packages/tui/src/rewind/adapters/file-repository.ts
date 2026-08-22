@@ -127,6 +127,19 @@ function attachmentRef(value: unknown): ImageAttachmentRef {
   const height = integer(item.height, 'prompt attachment.height')
   if (bytes < 1 || width < 1 || height < 1) throw new Error('prompt attachment dimensions are invalid')
   const name = item.name === undefined ? undefined : string(item.name, 'prompt attachment.name')
+  const original = item.originalDimensions === undefined
+    ? undefined
+    : record(item.originalDimensions, 'prompt attachment.originalDimensions')
+  const originalDimensions = original === undefined
+    ? undefined
+    : {
+        width: integer(original.width, 'prompt attachment.originalDimensions.width'),
+        height: integer(original.height, 'prompt attachment.originalDimensions.height'),
+      }
+  if (originalDimensions !== undefined
+    && (originalDimensions.width < 1 || originalDimensions.height < 1)) {
+    throw new Error('prompt attachment original dimensions are invalid')
+  }
   return {
     attachmentId: string(item.attachmentId, 'prompt attachment.attachmentId') as ImageAttachmentRef['attachmentId'],
     mediaType,
@@ -134,6 +147,7 @@ function attachmentRef(value: unknown): ImageAttachmentRef {
     width,
     height,
     ...name === undefined ? {} : { name },
+    ...originalDimensions === undefined ? {} : { originalDimensions },
   }
 }
 

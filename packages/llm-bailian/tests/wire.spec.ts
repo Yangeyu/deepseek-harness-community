@@ -1,11 +1,18 @@
 import { createServer, type IncomingHttpHeaders, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AttachmentId, type AttachmentStore, type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import {
+  AttachmentId,
+  type AttachmentStore,
+  type ImageAttachmentRef,
+  type ImageRequestPolicy,
+} from '@deepseek-ai/dsh-attachment'
 import { CallId, createAssistantMessage, createToolResultMessage, createUserMessage, ReasoningEffortId, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
   BailianAdapter,
   BAILIAN_PROVIDER_ID,
+  DEFAULT_REQUEST_IMAGE_MAX_BYTES,
+  DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET,
   resolveBailianConfig,
   type BailianModelConfig,
 } from '../src/index.ts'
@@ -125,6 +132,30 @@ function user(text: string) {
   return createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } })
 }
 
+function attachmentStore(
+  data: (ref: ImageAttachmentRef) => Uint8Array,
+  observed?: (policy: ImageRequestPolicy) => void,
+): AttachmentStore {
+  return {
+    readImageRequest: async (ref: ImageAttachmentRef, policy: ImageRequestPolicy) => {
+      observed?.(policy)
+      const bytes = data(ref)
+      return {
+        variantId: `variant:${String(ref.attachmentId)}`,
+        attachment: ref,
+        data: bytes,
+        mediaType: ref.mediaType,
+        bytes: bytes.byteLength,
+        width: ref.width,
+        height: ref.height,
+        depth: 'uchar',
+        space: 'srgb',
+        hasAlpha: false,
+      }
+    },
+  } as unknown as AttachmentStore
+}
+
 describe('Bailian wire contract', () => {
   it('sends explicit DeepSeek reasoning and max_tokens policy', async () => {
     const requests: CapturedRequest[] = []
@@ -174,6 +205,38 @@ describe('Bailian wire contract', () => {
     expect(requests[1]?.body).not.toHaveProperty('reasoning_effort')
   })
 
+  it('keeps prepared metadata, endpoint, and credential context in one configuration generation', async () => {
+    const firstRequests: CapturedRequest[] = []
+    const secondRequests: CapturedRequest[] = []
+    const firstURL = await endpoint(firstRequests)
+    const secondURL = await endpoint(secondRequests)
+    let current = resolveBailianConfig({
+      baseURL: firstURL,
+      models: { custom: { ...deepseekModel(), name: 'First generation' } },
+    })
+    const credentialSnapshots: string[] = []
+    const client = new BailianAdapter({
+      options: () => current,
+      resolveApiKey: async (snapshot) => {
+        credentialSnapshots.push(snapshot.baseURL)
+        return 'test-key'
+      },
+    })
+    const prepared = await client.prepareCall(BAILIAN_PROVIDER_ID, 'custom')
+    current = resolveBailianConfig({
+      baseURL: secondURL,
+      models: { custom: { ...deepseekModel(), name: 'Second generation' } },
+    })
+
+    expect(prepared.model.name).toBe('First generation')
+    await consume(prepared.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('prepared')] }))
+    await consume(client.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('current')] }))
+
+    expect(firstRequests).toHaveLength(1)
+    expect(secondRequests).toHaveLength(1)
+    expect(credentialSnapshots).toEqual([firstURL, secondURL])
+  })
+
   it('preserves interleaved Qwen image references and content order', async () => {
     const requests: CapturedRequest[] = []
     const firstRef: ImageAttachmentRef = {
@@ -187,12 +250,11 @@ describe('Bailian wire contract', () => {
       ...firstRef,
       attachmentId: AttachmentId('image-2'),
     }
-    const attachments = {
-      readImage: async (ref: ImageAttachmentRef) => ({
-        ref,
-        data: Uint8Array.from([String(ref.attachmentId) === 'image-1' ? 1 : 2]),
-      }),
-    } as unknown as AttachmentStore
+    const policies: ImageRequestPolicy[] = []
+    const attachments = attachmentStore(
+      ref => Uint8Array.from([String(ref.attachmentId) === 'image-1' ? 1 : 2]),
+      policy => policies.push(policy),
+    )
     const client = adapter(await endpoint(requests), { 'qwen3.7-plus': qwenModel() }, attachments)
     await consume(client.stream({
       provider: BAILIAN_PROVIDER_ID,
@@ -225,6 +287,10 @@ describe('Bailian wire contract', () => {
         { type: 'text', text: ' after' },
       ],
     }])
+    expect(policies).toEqual([
+      { maxPixels: DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET, maxBytes: DEFAULT_REQUEST_IMAGE_MAX_BYTES },
+      { maxPixels: DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET, maxBytes: DEFAULT_REQUEST_IMAGE_MAX_BYTES },
+    ])
   })
 
   it('does not send a token field when no request default exists', async () => {
@@ -421,15 +487,11 @@ describe('Bailian wire contract', () => {
       width: 300,
       height: 300,
     }
-    const attachments = {
-      readImage: async (ref: ImageAttachmentRef) => ({
-        ref,
-        data: Uint8Array.from([Number(String(ref.attachmentId).split('-')[1])]),
-      }),
-    } as unknown as AttachmentStore
+    const attachments = attachmentStore(
+      ref => Uint8Array.from([Number(String(ref.attachmentId).split('-')[1])]),
+    )
     const client = adapter(await endpoint(requests), { 'qwen3.7-plus': qwenModel() }, attachments)
 
-    // Simulate an assistant message with 3 tool calls followed by their results
     const messages = [
       createAssistantMessage({
         content: [
@@ -471,29 +533,25 @@ describe('Bailian wire contract', () => {
       messages,
     }))
 
-    // Verify that all tool messages come before any user messages with images
     const sentMessages = requests[0]?.body.messages as Array<Record<string, unknown>>
     expect(sentMessages).toBeDefined()
-    
-    // Find indices of tool and user messages
+
     const toolIndices: number[] = []
     const userWithImageIndices: number[] = []
-    
+
     sentMessages.forEach((msg, idx) => {
       if (msg.role === 'tool') {
         toolIndices.push(idx)
-      } else if (msg.role === 'user' && Array.isArray(msg.content) && 
-                 (msg.content as Array<Record<string, unknown>>).some(part => part.type === 'image_url')) {
+      } else if (msg.role === 'user' && Array.isArray(msg.content)
+        && (msg.content as Array<Record<string, unknown>>).some(part => part.type === 'image_url')) {
         userWithImageIndices.push(idx)
       }
     })
 
-    // All tool messages should come before any user messages with images
     expect(toolIndices.length).toBe(3)
     expect(userWithImageIndices.length).toBe(3)
     expect(Math.max(...toolIndices)).toBeLessThan(Math.min(...userWithImageIndices))
 
-    // Verify tool_call_ids are correct
     expect(sentMessages[1]).toMatchObject({ role: 'tool', tool_call_id: 'call-1' })
     expect(sentMessages[2]).toMatchObject({ role: 'tool', tool_call_id: 'call-2' })
     expect(sentMessages[3]).toMatchObject({ role: 'tool', tool_call_id: 'call-3' })

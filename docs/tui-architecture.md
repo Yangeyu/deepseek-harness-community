@@ -60,21 +60,33 @@ reducing the number of visible files.
 
 The root `@vascent/dsh-tui` package is the only published artifact. Its
 DeepSeek dependencies are limited to external references in the built launcher
-and bundle, services named by `cordis.patch.yml`, and the explicit peer hosts
-needed to resolve the coordinated runtime graph. Workspace development
+and bundle, services named by `cordis.patch.yml`, and host packages required by
+the coordinated runtime graph. Workspace development
 dependencies never become public dependencies by default.
 
-`package.json#dshRuntime.version` is the single selected runtime train.
-`pnpm run runtime:update -- <version>` synchronizes exact dependencies, plugin
-peer ranges, and the lockfile. The release contract rejects manifest or
-lockfile drift and rejects public dependencies outside the built closure.
+`pnpm-workspace.yaml#catalogs.dsh` is the single selected runtime train. One
+anchored scalar supplies every DSH catalog entry, and all workspace manifests
+refer to `catalog:dsh`; changing that scalar followed by ordinary
+`pnpm install` is the complete upgrade mechanism. The component workspaces are
+private parts of one distribution, so they intentionally bind to the same
+exact runtime rather than maintaining separately published compatibility
+ranges. `pnpm pack` resolves the catalog protocol in the public root manifest.
+Official base services that resolve from the profile root remain explicit host
+dependencies even when the community patch does not configure them.
+
+The root package depends on the official `@deepseek-ai/dsh` executable; that
+upstream CLI currently includes its Web bundle and therefore its React peer
+graph. React is not a TUI dependency. The workspace pins only the transitive
+ReactDOM compatibility choice needed by pnpm's auto-peer resolution, while the
+public dependency boundary remains limited to the single distribution's
+runtime closure.
 
 `pnpm run release:check` is the only release acceptance entry point. Local
 release-it, CI, and tag publishing all use it to build and test once, pack one
 archive, inspect its file boundary, install that same archive into an isolated
-global npm prefix, validate the resolved runtime tree, and execute the installed
-`dscode --version`. The tag workflow publishes the already verified archive;
-it never repacks a different payload.
+global npm prefix, and execute the installed `dscode --version`. The tag
+workflow publishes the already verified archive; it never repacks a different
+payload.
 
 ## Invariants
 
@@ -105,6 +117,11 @@ it never repacks a different payload.
 7. Stable semantic keys preserve selection across live replacement and history
    paging. UI row indexes are not identities.
 8. Image bytes become durable only through the Harness attachment service.
+   The official backend owns source admission and provider-independent
+   normalization; the community bundle does not replace that row. Provider
+   adapters request a deterministic model-specific image version through
+   `readImageRequest`, and durable references preserve optional pre-normalized
+   dimensions across Vision evidence and Rewind persistence.
    A stable inline `[Image #N]` reference is inserted at the Composer cursor and
    edited as one atomic unit. Editor and Transcript presentation style that same
    reference through one `imageReference` theme role; they never create a second
@@ -253,6 +270,12 @@ it never repacks a different payload.
   surrounding text relationship.
   Tool inspection returns bounded untrusted text and never adds image blocks to
   a text-only main-model route.
+- `BailianAdapter` binds resolved model metadata and request dispatch through
+  `prepareCall`, so a live settings change cannot combine one generation's
+  capabilities with another generation's endpoint or credential reference.
+  Image-capable routes own a pixel/byte request policy and consume deterministic
+  attachment request versions rather than replaying stored normalized bytes
+  directly.
 - `CommunityWebService` registers one stable policy provider into the official
   `ctx.web` search seam. A capability-local registry owns provider execution,
   display metadata, priority, and secret-free readiness; both `auto` routing
@@ -317,9 +340,9 @@ it never repacks a different payload.
 ## Planned evolution
 
 Product sequencing lives in [`tui-product-roadmap.md`](tui-product-roadmap.md).
-The current milestone is specified in
-[`tui-v0.1.9-design.md`](tui-v0.1.9-design.md); this section records only the
-architecture required to support that sequence.
+This section records the implemented architecture that supports that sequence;
+completed version-specific design documents remain in Git history rather than
+competing with this canonical contract.
 
 ### v0.1.6 implemented architecture
 

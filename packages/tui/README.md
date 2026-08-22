@@ -467,11 +467,11 @@ Cordis bundle entry
         └─ presentation/ (config/task/skill surfaces, transcript, diffs, and dialogs)
 ```
 
-The detailed ownership rules and staged design are recorded in
+The detailed ownership rules and implemented contracts are recorded in
 [`docs/tui-architecture.md`](../../docs/tui-architecture.md).
-The product sequence and implemented `v0.1.8` lifecycle contracts are recorded in
-[`docs/tui-product-roadmap.md`](../../docs/tui-product-roadmap.md) and
-[`docs/tui-v0.1.8-design.md`](../../docs/tui-v0.1.8-design.md).
+The product sequence is recorded in
+[`docs/tui-product-roadmap.md`](../../docs/tui-product-roadmap.md); completed
+version-specific design documents remain available through Git history only.
 
 The TUI consumes tool-provided presentation intent (`generic`, `terminal`,
 `diff`, and related cards) rather than branching on tool names. New tools can

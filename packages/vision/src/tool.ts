@@ -25,6 +25,10 @@ interface AttachmentRefValue {
   width: number
   height: number
   name?: string
+  originalDimensions?: {
+    width: number
+    height: number
+  }
 }
 
 interface InspectImageOutput {
@@ -73,6 +77,14 @@ const ATTACHMENT_REF_SCHEMA = {
     width: { type: 'integer', required: true },
     height: { type: 'integer', required: true },
     name: { type: 'string' },
+    originalDimensions: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        width: { type: 'integer', required: true },
+        height: { type: 'integer', required: true },
+      },
+    },
   },
 } as const
 
@@ -112,6 +124,7 @@ function imageAttachmentRef(value: AttachmentRefValue): ImageAttachmentRef {
     width: value.width,
     height: value.height,
     ...value.name === undefined ? {} : { name: value.name },
+    ...value.originalDimensions === undefined ? {} : { originalDimensions: value.originalDimensions },
   }
 }
 

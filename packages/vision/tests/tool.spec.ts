@@ -19,6 +19,7 @@ const storedAttachment: StoredImageAttachment = {
     width: 320,
     height: 180,
     name: 'screen.png',
+    originalDimensions: { width: 2_560, height: 1_440 },
   },
 }
 const limits: ImageAttachmentLimits = {
@@ -49,6 +50,7 @@ const inspection: VisionInspection = {
     width: 320,
     height: 180,
     name: 'screen.png',
+    originalDimensions: { width: 2_560, height: 1_440 },
   }],
   observation: '<vision-observation trust="untrusted">visible UI</vision-observation>',
   durationMs: 42,

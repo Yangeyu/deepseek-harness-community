@@ -96,6 +96,7 @@ function serializeAttachmentRef(attachment: ImageAttachmentRef): string {
     width: attachment.width,
     height: attachment.height,
     ...attachment.name === undefined ? {} : { name: attachment.name },
+    ...attachment.originalDimensions === undefined ? {} : { originalDimensions: attachment.originalDimensions },
   })
   if (serialized === undefined) throw new Error('attachment reference is not serializable')
   return escapeObservation(serialized)

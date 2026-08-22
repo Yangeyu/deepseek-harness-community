@@ -62,6 +62,8 @@
 #       maxOutputTokens: 131072
 #       maxTokensField: max_completion_tokens
 #       input: [text, image]                 # 图文模型：Vision 代理线路用它
+#       imagePixelBudget: 4194304             # 可选：请求版本最大总像素（默认 2048²）
+#       imageMaxBytes: 4194304                # 可选：请求版本编码上限（默认 4 MiB）
 #       reasoning:
 #         defaultEffort: high
 #         efforts:

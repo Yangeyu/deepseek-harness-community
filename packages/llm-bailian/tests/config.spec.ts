@@ -97,6 +97,14 @@ describe('Bailian config', () => {
         },
       },
     })).toThrow('defaultEffort "high" is not configured')
+    expect(() => resolveBailianConfig({
+      models: {
+        broken: {
+          ...deepseekModel(),
+          imageMaxBytes: 4_194_304,
+        },
+      },
+    })).toThrow('text-only model "broken" cannot declare image request limits')
   })
 
   it('fails exact resolution for an unconfigured model', async () => {

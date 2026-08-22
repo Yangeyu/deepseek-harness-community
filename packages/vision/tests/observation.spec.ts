@@ -88,6 +88,7 @@ describe('wrapObservation', () => {
       width: 1_574,
       height: 438,
       name: 'clipboard.png',
+      originalDimensions: { width: 3_148, height: 876 },
     } satisfies ImageAttachmentRef
 
     const result = wrapObservation('visible', 'proxy', 'vision', 100, [

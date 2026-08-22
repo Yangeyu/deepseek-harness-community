@@ -20,26 +20,22 @@
 # ── 什么时候才用 patch 层 ──────────────────────────────────────────────
 # settings.yaml 能配的（模型、vision、web、键位、权限）一律优先用
 # settings.yaml —— 热更新、不重启。patch 层留给 settings 不覆盖的深水区，
-# 例如下面的图片准入上限。
+# 例如按机器资源主动收紧附件准入上限。
 
 # ────────────────────────────────────────────────────────────────────────
-# 图片准入上限（attachment-local 服务）
+# 附件资源上限（attachment-local 服务）
 # ────────────────────────────────────────────────────────────────────────
-# 官方存储默认限制单边最长 2000px，2554px 宽的常见截图贴进去会报错：
-#   Image exceeds the configured per-side pixel limit.
-# 解开下面几条即可放宽（本社区的 TUI 已默认给到 4096，这里仅供示例）：
+# 官方默认会准入至单边 8192px / 6400 万像素 / 20 MiB，再归一化为最长边
+# 2048px、至多 4 MiB；社区 TUI 不再覆盖这套策略。资源受限机器如需主动
+# 收紧，可复制下面的配置：
 # - id: attachment-local
 #   name: '@deepseek-ai/dsh-attachment-local'
 #   config:
-#     dshHome: !!js dshHomePath()          # config 整体替换，必填键必须重述
-#     maxImageDimension: 8192              # 单边最长像素（官方默认 2000）
-#     maxImagePixels: 40000000             # 单图解码总像素（默认 4e7）
-#     maxImageBytes: 3670016               # 单图编码字节（默认 3.5 MiB）
-#     maxImagesPerMessage: 20              # 每条消息最多图片数
-#     maxMessageImageBytes: 104857600      # 单条消息图片合计字节（默认 100 MiB）
-#
-# 注意：图片会随会话历史长久保存，上限放宽后每条后续请求都会携带大图，
-# 过大的尺寸可能触发模型路由的图片限制；按需取用，不必追高。
+#     maxImageDimension: 4096
+#     maxImagePixels: 16000000
+#     maxImageBytes: 10485760
+#     normalizedImageMaxDimension: 1600
+#     normalizedImageMaxBytes: 3145728
 
 # ────────────────────────────────────────────────────────────────────────
 # 终端外观与行为（terminal 服务）

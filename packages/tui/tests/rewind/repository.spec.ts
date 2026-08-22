@@ -96,6 +96,7 @@ describe('FileRewindRepository', () => {
         width: 1,
         height: 1,
         name: 'image.png',
+        originalDimensions: { width: 2, height: 2 },
       }],
     })
 

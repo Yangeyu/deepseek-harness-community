@@ -26,7 +26,7 @@
 - `pnpm test`：运行测试
 - `pnpm typecheck`：类型检查
 - `pnpm dev`：开发模式（使用 tui-dev profile）
-- `pnpm check`：完整检查（runtime:check + build + lint + typecheck + test）
+- `pnpm check`：完整检查（build + lint + typecheck + test）
 
 ## 工程规范与约束
 

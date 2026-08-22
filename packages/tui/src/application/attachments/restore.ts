@@ -28,6 +28,8 @@ function sameRef(left: ImageAttachmentRef, right: ImageAttachmentRef): boolean {
     && left.width === right.width
     && left.height === right.height
     && left.name === right.name
+    && left.originalDimensions?.width === right.originalDimensions?.width
+    && left.originalDimensions?.height === right.originalDimensions?.height
 }
 
 /** Verify durable Prompt attachments before any workspace or conversation mutation. */

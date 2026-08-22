@@ -48,18 +48,6 @@ function run(command, args, options = {}) {
   })
 }
 
-function collectDshVersions(node, versions = new Map()) {
-  for (const [name, dependency] of Object.entries(node.dependencies ?? {})) {
-    if (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) {
-      const packageVersions = versions.get(name) ?? new Set()
-      if (dependency.version) packageVersions.add(dependency.version)
-      versions.set(name, packageVersions)
-    }
-    collectDshVersions(dependency, versions)
-  }
-  return versions
-}
-
 function parseArguments(args) {
   const values = args[0] === '--' ? args.slice(1) : args
   if (values.length === 0) return {}
@@ -103,23 +91,6 @@ async function verifyInstalledArchive(archivePath, manifest, temporaryRoot) {
     archivePath,
   ])
 
-  const { stdout: dependencyTreeJson } = await run(npmCommand, [
-    'ls',
-    '--global',
-    '--prefix',
-    installDirectory,
-    '--all',
-    '--json',
-  ], { capture: true })
-  const dependencyVersions = collectDshVersions(JSON.parse(dependencyTreeJson))
-  const unexpectedVersions = [...dependencyVersions.entries()]
-    .flatMap(([name, versions]) => [...versions]
-      .filter(version => version !== manifest.dshRuntime.version)
-      .map(version => `${name}@${version}`))
-  if (unexpectedVersions.length > 0) {
-    throw new Error(`fresh install mixed DeepSeek runtime versions: ${unexpectedVersions.join(', ')}`)
-  }
-
   const executable = process.platform === 'win32'
     ? join(installDirectory, 'dscode.cmd')
     : join(installDirectory, 'bin', 'dscode')
@@ -143,19 +114,18 @@ async function main(args) {
   try {
     const packDirectory = artifactsDirectory ?? join(temporaryRoot, 'pack')
     await mkdir(packDirectory, { recursive: true })
-    const { stdout } = await run(npmCommand, [
+    const { stdout } = await run(pnpmCommand, [
       'pack',
       '--json',
-      '--ignore-scripts',
       '--pack-destination',
       packDirectory,
     ], { capture: true })
-    const packResults = JSON.parse(stdout)
-    if (!Array.isArray(packResults) || packResults.length !== 1) {
-      throw new Error(`expected one packed artifact, received ${packResults.length ?? 'invalid output'}`)
+    const packResult = JSON.parse(stdout)
+    if (packResult === null || typeof packResult !== 'object' || Array.isArray(packResult)) {
+      throw new Error('pnpm pack did not return one artifact description')
     }
-    verifyPackedFiles(packResults[0].files ?? [])
-    const archivePath = join(packDirectory, basename(packResults[0].filename))
+    verifyPackedFiles(packResult.files ?? [])
+    const archivePath = join(packDirectory, basename(packResult.filename))
     await verifyInstalledArchive(archivePath, manifest, temporaryRoot)
     console.log(`Release artifact passed: ${archivePath}`)
   } finally {

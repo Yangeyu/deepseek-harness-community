@@ -5,6 +5,7 @@ import type {
   LlmModelInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
+  PreparedAdapterCall,
   ResolvedRetryPolicy,
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
@@ -68,8 +69,23 @@ export class BailianAdapter extends LlmAdapter {
     return resolvedModelInfo(provider, this.model(config, provider, model))
   }
 
-  override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+  override prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
+    signal?.throwIfAborted()
     const config = this.config.options()
+    return Promise.resolve({
+      model: resolvedModelInfo(provider, this.model(config, provider, model)),
+      stream: options => this.streamWithConfig(options, config),
+    })
+  }
+
+  override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    return this.streamWithConfig(options, this.config.options())
+  }
+
+  private async * streamWithConfig(
+    options: GenerateOptions,
+    config: ResolvedBailianConfig,
+  ): AsyncIterable<StreamChunk> {
     const model = this.model(config, options.provider, options.model)
     const apiKey = await this.config.resolveApiKey(config)
     const consumer = new AbortController()

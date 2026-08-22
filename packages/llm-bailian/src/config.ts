@@ -1,4 +1,5 @@
 import z from '@deepseek-ai/schemastery'
+import type { ImageRequestPolicy } from '@deepseek-ai/dsh-attachment'
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import {
   resolveRetryPolicy,
@@ -13,6 +14,8 @@ export const BAILIAN_DISPLAY_NAME = 'Alibaba Cloud Bailian'
 export const DEFAULT_BAILIAN_API_KEY_ENV = 'DASHSCOPE_API_KEY'
 export const DEFAULT_BAILIAN_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
 export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000
+export const DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET = 2048 * 2048
+export const DEFAULT_REQUEST_IMAGE_MAX_BYTES = 4 * 1024 * 1024
 
 export const BAILIAN_REASONING_EFFORT_IDS = [
   'off',
@@ -48,6 +51,8 @@ export interface BailianModelConfig {
   defaultMaxTokens?: number
   maxTokensField: BailianMaxTokensField
   input: BailianInputModality[]
+  imagePixelBudget?: number
+  imageMaxBytes?: number
   reasoning?: false | BailianReasoningConfig
 }
 
@@ -83,6 +88,8 @@ const ModelConfigSchema = z.object({
   defaultMaxTokens: z.number().step(1).min(1),
   maxTokensField: z.union(['max_tokens', 'max_completion_tokens'] as const),
   input: z.array(z.union(['text', 'image'] as const)),
+  imagePixelBudget: z.number().step(1).min(1),
+  imageMaxBytes: z.number().step(1).min(1),
   reasoning: z.union([z.const(false), ReasoningSchema]),
 })
 
@@ -117,6 +124,7 @@ export interface ResolvedBailianModel {
   readonly defaultMaxTokens?: number
   readonly maxTokensField: BailianMaxTokensField
   readonly input: readonly BailianInputModality[]
+  readonly imageRequestPolicy?: Readonly<ImageRequestPolicy>
   readonly reasoning: false | ResolvedBailianReasoningPolicy
 }
 
@@ -246,6 +254,20 @@ function resolveModels(models: Readonly<Record<string, BailianModelConfig>> | un
     if (entry.maxTokensField !== 'max_tokens' && entry.maxTokensField !== 'max_completion_tokens') {
       throw new Error(`llm-bailian: model "${id}" maxTokensField is invalid`)
     }
+    const input = Object.freeze(resolveInput(entry.input, id))
+    if (!input.includes('image') && (entry.imagePixelBudget !== undefined || entry.imageMaxBytes !== undefined)) {
+      throw new Error(`llm-bailian: text-only model "${id}" cannot declare image request limits`)
+    }
+    const imageRequestPolicy = input.includes('image')
+      ? Object.freeze({
+          maxPixels: entry.imagePixelBudget === undefined
+            ? DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET
+            : positiveInteger(entry.imagePixelBudget, `model "${id}" imagePixelBudget`),
+          maxBytes: entry.imageMaxBytes === undefined
+            ? DEFAULT_REQUEST_IMAGE_MAX_BYTES
+            : positiveInteger(entry.imageMaxBytes, `model "${id}" imageMaxBytes`),
+        })
+      : undefined
     const description = entry.description?.trim()
     resolved.set(id, Object.freeze({
       id,
@@ -255,7 +277,8 @@ function resolveModels(models: Readonly<Record<string, BailianModelConfig>> | un
       maxOutputTokens,
       ...defaultMaxTokens === undefined ? {} : { defaultMaxTokens },
       maxTokensField: entry.maxTokensField,
-      input: Object.freeze(resolveInput(entry.input, id)),
+      input,
+      ...imageRequestPolicy === undefined ? {} : { imageRequestPolicy },
       reasoning: resolveReasoning(entry.reasoning, id),
     }))
   }
