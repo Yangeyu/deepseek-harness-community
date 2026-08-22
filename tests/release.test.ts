@@ -17,10 +17,10 @@ interface PackageManifest {
   dsh?: { bundle?: { patch?: string } }
 }
 
-test('uses one pinned toolchain and one release gate everywhere', async () => {
+test('uses one pinned toolchain with separate CI and artifact acceptance', async () => {
   const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
   const releaseIt = JSON.parse(await readFile('.release-it.json', 'utf8')) as {
-    hooks?: { 'before:init'?: string }
+    hooks?: { 'before:git:release'?: string }
   }
   const [nodeVersion, ciWorkflow, releaseWorkflow] = await Promise.all([
     readFile('.node-version', 'utf8'),
@@ -32,16 +32,13 @@ test('uses one pinned toolchain and one release gate everywhere', async () => {
   assert.match(root.packageManager ?? '', /^pnpm@\d+\.\d+\.\d+$/u)
   assert.match(root.devDependencies?.npm ?? '', /^\d+\.\d+\.\d+$/u)
   assert.equal(root.scripts?.['release:check'], 'node scripts/release-gate.mjs')
-  assert.equal(root.scripts?.['install:check'], undefined)
-  assert.equal(root.scripts?.['pack:check'], undefined)
-  assert.equal(releaseIt.hooks?.['before:init'], 'pnpm run release:check')
+  assert.equal(releaseIt.hooks?.['before:git:release'], 'pnpm run release:check')
   for (const workflow of [ciWorkflow, releaseWorkflow]) {
     assert.match(workflow, /node-version-file: \.node-version/u)
-    assert.match(workflow, /pnpm run release:check/u)
-    assert.doesNotMatch(workflow, /pnpm run (?:install|pack):check|npm pack/u)
   }
+  assert.match(ciWorkflow, /- run: pnpm run check/u)
+  assert.match(releaseWorkflow, /pnpm run release:check -- --artifacts-dir artifacts/u)
   assert.match(releaseWorkflow, /pnpm exec npm publish/u)
-  assert.doesNotMatch(releaseWorkflow, /^\s*npm (?:publish|view)\b/mu)
 })
 
 const workspacePackageFiles = [
