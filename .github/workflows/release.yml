@@ -148,7 +148,18 @@ jobs:
           publish_status=$?
           set -e
 
-          registry_url=$(npm view "${package_name}@${package_version}" dist.tarball --json | jq -er '.')
+          registry_url=''
+          for delay in 0 2 4 8 16 30; do
+            if [[ "$delay" -gt 0 ]]; then sleep "$delay"; fi
+            if registry_url=$(npm view "${package_name}@${package_version}" dist.tarball --json 2>/dev/null \
+              | jq -er '.'); then
+              break
+            fi
+          done
+          if [[ -z "$registry_url" ]]; then
+            echo "npm registry did not expose ${package_name}@${package_version} within 60 seconds" >&2
+            exit 1
+          fi
           curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
             "$registry_url" --output "$RUNNER_TEMP/registry.tgz"
           registry_sha=$(sha256sum "$RUNNER_TEMP/registry.tgz" | cut -d ' ' -f1)

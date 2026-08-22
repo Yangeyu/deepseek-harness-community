@@ -121,7 +121,10 @@ npm publication, and GitHub asset creation can be retried only when existing
 external state resolves to the same source or digest. A release therefore
 maintains the identity `github.sha = peeled tag SHA = receipt source SHA`, while
 npm and GitHub receive byte-identical archives. Release jobs do not use a
-dependency cache or rebuild the candidate after acceptance.
+dependency cache or rebuild the candidate after acceptance. npm read-side
+visibility is an explicit external consistency boundary: after a publish
+attempt, the workflow waits at most 60 seconds for that exact version to become
+readable, then compares the registry tarball with the accepted candidate.
 
 ## Invariants
 
