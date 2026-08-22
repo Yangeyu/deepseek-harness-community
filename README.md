@@ -165,18 +165,20 @@ Every workspace manifest refers to `catalog:dsh`, so an upgrade never requires
 distributing the same version across package files. `pnpm pack` replaces the
 catalog protocol with the concrete version in the published root manifest.
 
-Create a patch, minor, or major release from any authenticated development machine:
+After the intended commits are on `origin/main`, trigger the single remote
+release transaction from an authenticated development machine:
 
 ```sh
-pnpm release patch
+pnpm release
 ```
 
-`release-it` verifies the branch and worktree, updates the root version, then
-runs `release:check` before it creates and pushes the release commit and `v*`
-tag. That command is the complete local release entry point; running the gate
-separately is only useful when diagnosing an artifact failure. Routine CI runs
-the faster cross-platform `pnpm check`. The tag workflow repeats the full gate,
-retains its verified tarball, publishes it through Trusted Publishing (OIDC),
-and attaches it to one GitHub Release. Node, pnpm, npm, and the DeepSeek runtime
-train each have one repository-owned version source. Local npm credentials and
-repository `NPM_TOKEN` secrets are not used.
+Patch is the default. For a minor or major increment, invoke the same workflow
+with `gh workflow run release.yml --ref main -f bump=minor` (or `major`). The
+workflow updates the root version, runs `release:check` exactly once, atomically
+pushes the verified release commit and tag, publishes that retained tarball
+through Trusted Publishing (OIDC), and attaches it to one GitHub Release. Its
+`GITHUB_TOKEN` push does not recursively start another CI or tag workflow.
+Routine source CI remains the faster cross-platform `pnpm check`; there is no
+local release gate or second tag-triggered publishing path. Node, pnpm, npm,
+and the DeepSeek runtime train each have one repository-owned version source.
+Local npm credentials and repository `NPM_TOKEN` secrets are not used.

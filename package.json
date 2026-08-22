@@ -72,7 +72,7 @@
     "test": "vitest run tests/launcher.test.ts tests/release.test.ts && pnpm --filter './packages/*' run test",
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
     "dev": "pnpm run build && node bin/dscode-dev.js",
-    "release": "release-it",
+    "release": "gh workflow run release.yml --ref main",
     "release:check": "node scripts/release-gate.mjs",
     "start": "node bin/dscode.js"
   },
@@ -126,7 +126,6 @@
     "@types/node": "^22.20.0",
     "npm": "11.19.0",
     "oxlint": "1.76.0",
-    "release-it": "21.0.2",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"

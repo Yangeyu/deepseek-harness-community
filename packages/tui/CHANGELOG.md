@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+- Collapse release execution into one manually dispatched remote transaction:
+  remove release-it and tag-triggered duplication, run the artifact gate once,
+  then atomically push the verified version commit and tag before publishing
+  the retained tarball to npm and GitHub Release.
+
 ## 0.1.23 - 2026-08-22
 
 - Upgrade the coordinated DeepSeek Harness runtime to `0.1.1-rc.2` and replace

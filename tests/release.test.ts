@@ -17,11 +17,8 @@ interface PackageManifest {
   dsh?: { bundle?: { patch?: string } }
 }
 
-test('uses one pinned toolchain with separate CI and artifact acceptance', async () => {
+test('uses one pinned toolchain and one remote release transaction', async () => {
   const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
-  const releaseIt = JSON.parse(await readFile('.release-it.json', 'utf8')) as {
-    hooks?: { 'before:git:release'?: string }
-  }
   const [nodeVersion, ciWorkflow, releaseWorkflow] = await Promise.all([
     readFile('.node-version', 'utf8'),
     readFile('.github/workflows/ci.yml', 'utf8'),
@@ -31,14 +28,27 @@ test('uses one pinned toolchain with separate CI and artifact acceptance', async
   assert.match(nodeVersion.trim(), /^\d+\.\d+\.\d+$/u)
   assert.match(root.packageManager ?? '', /^pnpm@\d+\.\d+\.\d+$/u)
   assert.match(root.devDependencies?.npm ?? '', /^\d+\.\d+\.\d+$/u)
+  assert.equal(root.devDependencies?.['release-it'], undefined)
+  assert.equal(root.scripts?.release, 'gh workflow run release.yml --ref main')
   assert.equal(root.scripts?.['release:check'], 'node scripts/release-gate.mjs')
-  assert.equal(releaseIt.hooks?.['before:git:release'], 'pnpm run release:check')
   for (const workflow of [ciWorkflow, releaseWorkflow]) {
     assert.match(workflow, /node-version-file: \.node-version/u)
   }
   assert.match(ciWorkflow, /- run: pnpm run check/u)
-  assert.match(releaseWorkflow, /pnpm run release:check -- --artifacts-dir artifacts/u)
-  assert.match(releaseWorkflow, /pnpm exec npm publish/u)
+
+  assert.match(releaseWorkflow, /workflow_dispatch:/u)
+  assert.doesNotMatch(releaseWorkflow, /tags:\s*\['v\*'\]/u)
+  assert.equal(
+    releaseWorkflow.match(/pnpm run release:check -- --artifacts-dir artifacts/gu)?.length,
+    1,
+  )
+  const prepare = releaseWorkflow.indexOf('pnpm exec npm version')
+  const gate = releaseWorkflow.indexOf('pnpm run release:check -- --artifacts-dir artifacts')
+  const push = releaseWorkflow.indexOf('git push --atomic')
+  const publish = releaseWorkflow.indexOf('pnpm exec npm publish')
+  const release = releaseWorkflow.indexOf('gh release create')
+  assert.ok(prepare >= 0 && prepare < gate)
+  assert.ok(gate < push && push < publish && publish < release)
 })
 
 const workspacePackageFiles = [

@@ -1,8 +1,21 @@
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version increment
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -13,6 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -20,23 +36,33 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Verify tag and package version
+      - name: Prepare release version
+        id: version
         run: |
-          package_version=$(node --print "require('./package.json').version")
-          test "$GITHUB_REF_NAME" = "v${package_version}"
+          next_version=$(pnpm exec npm version "${{ inputs.bump }}" --no-git-tag-version)
+          echo "value=${next_version#v}" >> "$GITHUB_OUTPUT"
       - run: pnpm run release:check -- --artifacts-dir artifacts
+      - name: Commit and tag the verified version
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add package.json
+          git commit -m "chore: release v${VERSION}"
+          git tag -a "v${VERSION}" -m "v${VERSION}"
+          git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
       - name: Publish the installable package to npm
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           package_name=$(node --print "require('./package.json').name")
-          package_version=$(node --print "require('./package.json').version")
           archive_name="${package_name#@}"
-          archive_name="${archive_name//\//-}-${package_version}.tgz"
-          if pnpm exec npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
-            echo "${package_name}@${package_version} is already published"
-          else
-            pnpm exec npm publish "./artifacts/${archive_name}" --access public
-          fi
-      - run: gh release create "$GITHUB_REF_NAME" artifacts/*.tgz --generate-notes --title "$GITHUB_REF_NAME"
+          archive_name="${archive_name//\//-}-${VERSION}.tgz"
+          pnpm exec npm publish "./artifacts/${archive_name}" --access public
+      - name: Create the GitHub Release from the verified artifact
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: gh release create "v${VERSION}" artifacts/*.tgz --generate-notes --title "v${VERSION}"
