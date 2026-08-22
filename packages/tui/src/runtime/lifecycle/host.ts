@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@vascent/deepseek-harness-vision'
-import { legacyPromptTextFromContent } from '../../prompt-content.ts'
+import { promptTextFromContent } from '../../prompt-content.ts'
 import type { PromptNode, PromptNodeSink } from './types.ts'
 
 type UserMessageEvent = Extract<SessionEvent, { type: 'user/message' }>
@@ -18,8 +18,8 @@ export function isAcceptedPromptEvent(event: SessionEvent): event is AcceptedPro
     && event.data.source.kind === 'user'
 }
 
-function promptText(event: UserMessageEvent, attachments: readonly ImageAttachmentRef[]): string {
-  const text = legacyPromptTextFromContent(event.data.content, attachments.length)
+function promptText(event: UserMessageEvent): string {
+  const text = promptTextFromContent(event.data.content)
   if (text.trim() !== '') return text
   return '[Message]'
 }
@@ -94,7 +94,7 @@ export function projectPromptNode(
     turn: start.data.turn,
     workspaceRoot: session.header.cwd ?? process.cwd(),
     input: {
-      text: promptText(prompt, attachments),
+      text: promptText(prompt),
       attachments,
     },
     position: priorPrompt ? 'in-turn' : 'turn-entry',

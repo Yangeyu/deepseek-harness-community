@@ -65,7 +65,7 @@ describe('Prompt lifecycle Host projection', () => {
         id: 'native-prompt',
         role: 'user',
         source: { kind: 'user', rpcId: 'rpc-1' },
-        content: [{
+        content: [{ type: 'text', text: '[Image #1]' }, {
           type: 'image',
           attachment: {
             attachmentId: 'attachment-native',
@@ -171,7 +171,7 @@ describe('Prompt lifecycle Host projection', () => {
         id: 'first-prompt',
         role: 'user',
         source: { kind: 'user', rpcId: 'rpc-1' },
-        content: [{ type: 'text', text: 'first' }],
+        content: [{ type: 'text', text: 'first [Image #1]' }],
       },
     })
     const second = event({

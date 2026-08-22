@@ -53,7 +53,6 @@ const OPTIONS = [
   '--version',
   '--help',
   '--patch',
-  '--resume',
   '--last',
   '--cwd',
   '--image',
@@ -337,7 +336,6 @@ function parseInteractive(
   const patches: string[] = []
   const imagePaths: string[] = []
   const positionals: string[] = []
-  let resumeFlag: string | undefined
   let resumeLast = false
   let cwdProvided = false
   let model: string | undefined
@@ -358,13 +356,6 @@ function parseInteractive(
       if (patch !== undefined) {
         patches.push(patch.value)
         index = patch.nextIndex
-        continue
-      }
-      const resume = valueOption(args, index, ['--resume'])
-      if (resume !== undefined) {
-        if (resumeFlag !== undefined) throw new CliUsageError('--resume may only be provided once')
-        resumeFlag = resume.value
-        index = resume.nextIndex
         continue
       }
       const directory = valueOption(args, index, ['-C', '--cwd'])
@@ -417,10 +408,6 @@ function parseInteractive(
 
   const resumeCommand = command?.name === 'resume'
   if (resumeLast && !resumeCommand) throw new CliUsageError('--last is only valid with the resume command')
-  if (resumeCommand && resumeFlag !== undefined) {
-    throw new CliUsageError('resume <session-id> cannot be combined with --resume')
-  }
-
   let resume: ResumeTarget | undefined
   if (resumeCommand) {
     if (resumeLast) {
@@ -430,8 +417,6 @@ function parseInteractive(
       if (sessionId === undefined) throw new CliUsageError('resume requires a session id or --last')
       resume = { kind: 'session', sessionId }
     }
-  } else if (resumeFlag !== undefined) {
-    resume = { kind: 'session', sessionId: resumeFlag }
   } else if (base.sessionId !== undefined) {
     resume = { kind: 'session', sessionId: base.sessionId }
   }
@@ -482,7 +467,7 @@ export function tuiAppArgs(invocation: TuiProfileInvocation): string[] {
   const { config, startup } = invocation
   const args: string[] = []
   if (startup.resume?.kind === 'last') args.push('resume', '--last')
-  if (startup.resume?.kind === 'session') args.push('--resume', startup.resume.sessionId)
+  if (startup.resume?.kind === 'session') args.push('resume', startup.resume.sessionId)
   if (config.cwd !== undefined) args.push('--cwd', config.cwd)
   if (config.color === false) args.push('--no-color')
   for (const path of startup.imagePaths) args.push('--image', path)

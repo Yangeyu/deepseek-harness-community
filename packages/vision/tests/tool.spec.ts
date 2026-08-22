@@ -86,16 +86,15 @@ function fixture() {
   const readBytes = vi.fn(async () => png)
   const readImage = vi.fn(async () => storedAttachment)
   const saveImage = vi.fn(async () => storedAttachment.ref)
-  const validateImage = vi.fn(async () => undefined)
   const observe = vi.fn()
   const inspect = vi.fn(async () => inspection)
   const tool = createInspectImageTool({
-    attachments: { imageLimits: limits, readImage, saveImage, validateImage },
+    attachments: { imageLimits: limits, readImage, saveImage },
     fs: { resolve, stat, readBytes },
     observe,
     inspect,
   } as InspectImageToolOptions)
-  return { tool, resolve, stat, readBytes, readImage, saveImage, validateImage, observe, inspect }
+  return { tool, resolve, stat, readBytes, readImage, saveImage, observe, inspect }
 }
 
 describe('inspect_image', () => {
@@ -110,11 +109,6 @@ describe('inspect_image', () => {
 
     expect(current.tool.name).toBe(INSPECT_IMAGE_TOOL_NAME)
     expect(current.readImage).toHaveBeenCalledWith(storedAttachment.ref, exec.signal)
-    expect(current.validateImage).toHaveBeenCalledWith({
-      data: png,
-      mediaType: 'image/png',
-      name: 'screen.png',
-    })
     expect(current.saveImage).not.toHaveBeenCalled()
     expect(current.inspect).toHaveBeenCalledWith(storedAttachment.ref, 'Which control failed?', exec.signal)
     expect(value).toMatchObject({
@@ -150,7 +144,6 @@ describe('inspect_image', () => {
     expect(current.readBytes).toHaveBeenCalledWith(fileTarget, exec.signal, 1_024)
     expect(current.saveImage).toHaveBeenCalledWith({ data: png, mediaType: 'image/png' })
     expect(current.readImage).not.toHaveBeenCalled()
-    expect(current.validateImage).not.toHaveBeenCalled()
     expect(current.inspect).toHaveBeenCalledWith(storedAttachment.ref, 'What is shown on this slide?', exec.signal)
     expect(value).toMatchObject({ attachment_ref: storedAttachment.ref })
   })
@@ -164,6 +157,5 @@ describe('inspect_image', () => {
       },
     }, runContext().exec)).rejects.toThrow('attachment_ref.attachmentId must be a non-empty string')
     expect(current.readImage).not.toHaveBeenCalled()
-    expect(current.validateImage).not.toHaveBeenCalled()
   })
 })

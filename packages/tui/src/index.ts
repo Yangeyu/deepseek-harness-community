@@ -32,11 +32,6 @@ import {
   renderCliHelp,
 } from './application/cli.ts'
 import { formatSessionList } from './application/session-list.ts'
-import {
-  settingsKeymapGateway,
-  TUI_SETTINGS_NAMESPACE,
-  TuiSettingsSchema,
-} from './application/keymap-settings.ts'
 import { settingsPermissionDefaultGateway } from './application/permission-defaults.ts'
 
 export { Config, resolveConfig }
@@ -141,14 +136,9 @@ export function apply(ctx: Context, config: TuiConfig): void {
     })
     return
   }
-  const keymapScope = ctx.settings.register(TUI_SETTINGS_NAMESPACE, TuiSettingsSchema, {
-    base: { keymap: invocation.config.keymap ?? 'standard' },
-    applies: 'live',
-  })
-  const keymap = settingsKeymapGateway(keymapScope)
-  const resolved = resolveConfig({ ...invocation.config, keymap: keymap.current().keymap })
+  const resolved = resolveConfig(invocation.config)
   const memoryRewind = new MemoryRewindParticipant(ctx.memory)
-  const rewindRepository = new FileRewindRepository(dshHomePath('rewind', 'v2'), {
+  const rewindRepository = new FileRewindRepository(dshHomePath('rewind'), {
     onWarning: message => { ctx.logger.warn(message) },
   })
   const rewind = new RewindService(
@@ -196,7 +186,6 @@ export function apply(ctx: Context, config: TuiConfig): void {
       commandSource,
       vision: ctx.vision,
       web: ctx.communityWeb,
-      keymap,
       permissionDefault: settingsPermissionDefaultGateway(ctx.settings),
       startup: invocation.startup,
       attachments: ctx.attachments,

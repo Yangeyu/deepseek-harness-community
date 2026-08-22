@@ -60,7 +60,6 @@ function snapshot() {
         }],
       },
     },
-    keymap: 'standard' as const,
     detailsExpanded: false,
   }
 }
@@ -69,7 +68,6 @@ function view(overrides: {
   onReasoning?: (effort: string | undefined) => void
   onPermission?: (value: string) => void
   onDetails?: (expanded: boolean) => void
-  onKeymap?: () => void
   onWeb?: () => void
   onClose?: () => void
 } = {}, initialStage: 'root' | 'reasoning' | 'permissions' | 'plan' = 'root') {
@@ -84,7 +82,6 @@ function view(overrides: {
     overrides.onClose ?? vi.fn(),
     initialStage,
     undefined,
-    overrides.onKeymap,
     overrides.onWeb,
   )
 }
@@ -97,7 +94,6 @@ describe('ConfigView', () => {
     expect(initial).toContain('Config')
     expect(initial).toContain('› Model')
     expect(initial).toContain('Session')
-    expect(initial).toContain('Keybindings')
     config.handleInput('j')
     expect(config.render(80).join('\n')).toContain('› Reasoning')
     config.handleInput('G')
@@ -152,17 +148,6 @@ describe('ConfigView', () => {
     const direct = view({ onClose }, 'permissions')
     direct.handleInput('\u001b')
     expect(onClose).toHaveBeenCalledOnce()
-  })
-
-  it('opens the persistent keymap surface from Config', () => {
-    const onKeymap = vi.fn()
-    const config = view({ onKeymap })
-
-    config.handleInput('G')
-    config.handleInput('k')
-    config.handleInput('\r')
-
-    expect(onKeymap).toHaveBeenCalledOnce()
   })
 
   it('opens the Web provider surface from the unified Config list', () => {

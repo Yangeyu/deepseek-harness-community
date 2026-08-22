@@ -8,7 +8,7 @@ import type { VisionInspection } from './types.ts'
 export const INSPECT_IMAGE_TOOL_NAME = 'inspect_image'
 const PLUGIN_NAME = 'community-vision'
 
-type VisionAttachmentStore = Pick<AttachmentStore, 'imageLimits' | 'readImage' | 'saveImage' | 'validateImage'>
+type VisionAttachmentStore = Pick<AttachmentStore, 'imageLimits' | 'readImage' | 'saveImage'>
 type VisionFileSystem = Pick<FileSystem, 'readBytes' | 'resolve' | 'stat'>
 
 export interface InspectImageToolOptions {
@@ -198,12 +198,6 @@ export function createInspectImageTool(options: InspectImageToolOptions): ToolDe
         const requestedRef = imageAttachmentRef(args.source.attachment_ref)
         const stored = await options.attachments.readImage(requestedRef, exec.signal)
         exec.signal.throwIfAborted()
-        const name = stored.ref.name
-        await options.attachments.validateImage({
-          data: stored.data,
-          mediaType: stored.ref.mediaType,
-          ...name === undefined ? {} : { name },
-        })
         attachment = stored.ref
       }
       exec.signal.throwIfAborted()

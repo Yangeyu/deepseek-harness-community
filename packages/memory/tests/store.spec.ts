@@ -111,22 +111,6 @@ describe('MemoryFileStore', () => {
     expect((await store.read(cwd, 'project')).content).toContain('Share local repository memory.')
   })
 
-  it('merges legacy local-name directories into the canonical remote-backed directory', async () => {
-    const { cwd, memoryRoot, store } = await fixture()
-    const project = await store.project(cwd)
-    await store.write({ cwd, scope: 'project', summary: 'Canonical rule.' })
-    const digest = project.id.slice(-12)
-    const legacyDirectory = join(memoryRoot, 'projects', `project-${digest}`)
-    const legacyPath = join(legacyDirectory, 'MEMORY.md')
-    await mkdir(legacyDirectory, { recursive: true })
-    await writeFile(legacyPath, '# Project memory\n\n- Legacy worktree rule.\n')
-
-    const migrated = await store.read(cwd, 'project')
-    expect(migrated.content).toContain('Canonical rule.')
-    expect(migrated.content).toContain('Legacy worktree rule.')
-    await expect(readFile(legacyPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
-  })
-
   it('forgets an exact summary and can reverse and reapply the mutation', async () => {
     const { cwd, store } = await fixture()
     await store.write({ cwd, scope: 'project', summary: 'Run visual acceptance for every review.' })

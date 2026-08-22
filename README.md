@@ -31,6 +31,11 @@ dscode
 
 The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DASHSCOPE_API_KEY` for the bundled Bailian route or `DEEPSEEK_API_KEY` for DeepSeek Official before beginning a model-backed session. `web_search` automatically uses Tavily when `TAVILY_API_KEY` is configured and otherwise uses DeepSeek Official; `web_extract` uses Tavily. `/config web` changes the persisted search policy and reports every provider without displaying credential values. For image understanding with a text-only route, the bundle uses `bailian/qwen3.7-plus`; `/config vision` selects its routing mode. `DSH_HOME` continues to override the Harness data directory.
 
+The TUI has no React dependency. The official `@deepseek-ai/dsh` executable is
+the profile/plugin manager used by the launcher and currently brings its Web UI
+and React graph transitively; removing that graph would require replacing the
+official boot path rather than simplifying this package.
+
 ## Command line
 
 `dscode` parses the requested action before touching a Harness profile. Help,
@@ -52,8 +57,7 @@ dscode -v | -V | --version
 
 Interactive startup supports `-C`/`--cwd`, repeatable `-i`/`--image`,
 `-m`/`--model`, `--effort`, `--permission-mode`, `--plan`, and `--no-color`.
-`--resume <session-id>` remains accepted as a compatibility form. Use repeatable
-`--patch <path>` options to apply Harness profile overlays.
+Use repeatable `--patch <path>` options to apply Harness profile overlays.
 
 `exec` runs one task through the upstream Harness headless profile and prints
 its final assistant message. It accepts a positional prompt or piped stdin and
@@ -65,8 +69,8 @@ All three version aliases print the root package version as `dscode <version>`.
 
 - [`@vascent/dsh-tui`](package.json) is the only published npm package. It
   provides the launcher, bundled profile, and public TUI entry point.
-- [`packages/tui`](packages/tui) owns the public terminal-client API and Cordis
-  bundle implementation exposed as `@vascent/dsh-tui/tui`.
+- [`packages/tui`](packages/tui) owns the public terminal-client API and private
+  Cordis Bundle implementation exposed by the package root `@vascent/dsh-tui`.
 - [`packages/llm-bailian`](packages/llm-bailian) owns the first-class Bailian
   provider, endpoint validation, credential reference, common request
   policy, and schema-backed model capabilities exposed as
@@ -97,18 +101,19 @@ dscode's agent already knows who it is (the persona patch in
 Harness runtime-context snapshot). On top of that, the repository ships a
 documentation-driven guidance layer:
 
-- [`AGENTS.md`](AGENTS.md) at the repository root is a table of contents
-  plus core facts, not a knowledge dump. Every dscode session working in
-  this repository injects it automatically as its first-step instruction
-  baseline (`dsh-agent-instructions`); nothing to configure. For global
-  use across every project, copy it once:
+- [`AGENTS.md`](AGENTS.md) at the repository root is the developer instruction
+  entry point. Every dscode session working in this repository injects it
+  automatically (`dsh-agent-instructions`); it is not part of the npm runtime
+  artifact and should not be deployed as global user guidance.
+
+- For global use across every project, deploy the user-facing
+  [`guides/AGENTS.md`](guides/AGENTS.md) instead:
 
   ```sh
-  cp AGENTS.md ~/.dsh/AGENTS.md
+  cp guides/AGENTS.md ~/.dsh/AGENTS.md
+  mkdir -p ~/.dsh/docs
+  cp guides/docs/*.md ~/.dsh/docs/
   ```
-
-  (It also ships inside the published npm package, so a global install
-  provides it as `<npm prefix>/AGENTS.md`.)
 
 - The details live as ordinary documentation and are loaded on demand with
   the agent's own `read` tool, guided by the catalog at the top of
@@ -139,9 +144,9 @@ project you want the agent to edit; pass TUI arguments after `--`, for example
 `pnpm dev -- resume <session-id> --image screenshot.png`.
 
 TypeScript under `src/` is the only maintained implementation. Builds write
-ignored JavaScript, declarations, and source maps to each package's `dist/`;
-release archives are written to the ignored root `artifacts/` directory. Neither
-kind of generated output is committed.
+ignored JavaScript and declarations to each package's `dist/`; release archives
+are written to the ignored root `artifacts/` directory. Generated output is not
+committed, and source maps are not generated or published.
 
 `pnpm start` remains the production-equivalent local launcher and uses the
 regular `tui` profile.

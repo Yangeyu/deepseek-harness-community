@@ -16,7 +16,7 @@ import {
   type LifecycleNode,
   type LifecycleSnapshot,
 } from '../runtime/lifecycle/index.ts'
-import { legacyPromptTextFromContent } from '../prompt-content.ts'
+import { promptTextFromContent } from '../prompt-content.ts'
 import { displayUnknown, sanitizeTerminalLine, sanitizeTerminalText } from '../text.ts'
 
 export type TranscriptTone = 'accent' | 'dim' | 'error' | 'warning'
@@ -379,7 +379,7 @@ export function buildTranscriptItems(
         if (!human && !showDetails) break
         if (human) {
           const lifecycle = state.lifecycle.get(promptLifecycleKey(String(event.data.id)))
-          const text = legacyPromptTextFromContent(event.data.content)
+          const text = promptTextFromContent(event.data.content)
           if (text.trim() === '') break
           items.push({
             kind: 'prompt',
@@ -585,7 +585,7 @@ export function buildTranscriptItems(
   const visibleQueueRpcIds = new Set<string>()
   for (const [index, item] of state.queue.entries()) {
     if (item.placement === 'context') continue
-    const body = legacyPromptTextFromContent(item.message.content)
+    const body = promptTextFromContent(item.message.content)
     if (body.trim() === '') continue
     const source = item.message.source
     if (source.kind === 'user' && 'rpcId' in source) visibleQueueRpcIds.add(String(source.rpcId))

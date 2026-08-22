@@ -6,7 +6,6 @@ import { test } from 'vitest'
 import {
   ensureProfilePlugin,
   main,
-  profileLegacyPlugins,
   profileUsesPlugin,
   resolveDshHome,
   resolveTuiProfile,
@@ -43,50 +42,34 @@ test('profileUsesPlugin requires the active bundle to resolve to this package', 
   assert.equal(profileUsesPlugin(profile, join(root, 'other-plugin')), false)
 })
 
-test('ensureProfilePlugin removes the legacy package once and preserves the active local bundle', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-tui-migration-'))
+test('ensureProfilePlugin installs the current private bundle once', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-tui-profile-'))
   const profile = join(root, 'profile')
   const plugin = join(root, 'plugin')
   const manifestPath = join(profile, 'package.json')
-  await mkdir(join(profile, 'node_modules', '@vascent'), { recursive: true })
+  await mkdir(profile, { recursive: true })
   await mkdir(plugin)
   await writeFile(manifestPath, JSON.stringify({
-    dsh: {
-      profile: {
-        bundles: [
-          '@deepseek-ai/dsh-base',
-          '@vascent/deepseek-harness-tui',
-          '@yangeyu/deepseek-harness-tui',
-        ],
-      },
-    },
-    dependencies: {
-      '@vascent/deepseek-harness-tui': `link:${plugin}`,
-      '@yangeyu/deepseek-harness-tui': 'link:/obsolete/tui',
-    },
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
+    dependencies: {},
   }))
-  await symlink(plugin, join(profile, 'node_modules', '@vascent', 'deepseek-harness-tui'), 'dir')
 
   const calls: Array<readonly string[]> = []
   const runPlugin = async (args: readonly string[]) => {
-    const packageName = args[1]
-    assert.ok(packageName)
     calls.push(args)
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-    delete manifest.dependencies[packageName]
-    manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(
-      (name: string) => name !== packageName,
-    )
+    manifest.dependencies['@vascent/deepseek-harness-tui'] = `link:${plugin}`
+    manifest.dsh.profile.bundles.push('@vascent/deepseek-harness-tui')
     await writeFile(manifestPath, JSON.stringify(manifest))
+    await mkdir(join(profile, 'node_modules', '@vascent'), { recursive: true })
+    await symlink(plugin, join(profile, 'node_modules', '@vascent', 'deepseek-harness-tui'), 'dir')
     return 0
   }
 
-  assert.deepEqual(profileLegacyPlugins(profile), ['@yangeyu/deepseek-harness-tui'])
   assert.equal(await ensureProfilePlugin(profile, plugin, runPlugin, () => {}), 0)
-  assert.deepEqual(calls, [['remove', '@yangeyu/deepseek-harness-tui']])
-  assert.deepEqual(profileLegacyPlugins(profile), [])
+  assert.deepEqual(calls, [['add', plugin]])
   assert.equal(await ensureProfilePlugin(profile, plugin, runPlugin, () => {}), 0)
-  assert.deepEqual(calls, [['remove', '@yangeyu/deepseek-harness-tui']])
+  assert.deepEqual(calls, [['add', plugin]])
 })
 
 function output() {

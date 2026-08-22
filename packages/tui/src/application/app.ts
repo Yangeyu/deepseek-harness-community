@@ -123,11 +123,6 @@ import { VisionConfigView } from '../presentation/config/vision-view.ts'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
 import type { CommunityWebStatus, WebSearchSelection } from '@vascent/deepseek-harness-web'
 import { WebConfigView } from '../presentation/config/web-view.ts'
-import { KeymapView } from '../presentation/config/keymap-view.ts'
-import {
-  memoryKeymapGateway,
-  type KeymapSettingsGateway,
-} from './keymap-settings.ts'
 import type { PermissionDefaultGateway } from './permission-defaults.ts'
 import {
   resolveKeymapInput,
@@ -212,7 +207,6 @@ export interface TuiApplicationDependencies {
   commandSource?: HostCommandSource
   vision?: VisionGateway
   web?: WebGateway
-  keymap?: KeymapSettingsGateway
   permissionDefault?: PermissionDefaultGateway
   startup?: TuiStartupOptions
   clipboardImage?: ClipboardImageLoader
@@ -259,7 +253,6 @@ export class TuiApplication implements TuiControllerSink {
   private configView: ConfigView | undefined
   private visionConfigView: VisionConfigView | undefined
   private webConfigView: WebConfigView | undefined
-  private keymapView: KeymapView | undefined
   private taskView: TaskView | undefined
   private skillsView: SkillsView | undefined
   private removeInputListener?: () => void
@@ -290,8 +283,6 @@ export class TuiApplication implements TuiControllerSink {
   private autocompleteCwd: string
   private renderedSessionId: TuiState['sessionId'] = undefined
   private readonly removeAttachmentListener: () => void
-  private readonly keymap: KeymapSettingsGateway
-  private readonly removeKeymapListener: () => void
   private visionStatus: VisionStatus | undefined
   private webStatus: CommunityWebStatus | undefined
   private readonly web: WebGateway | undefined
@@ -320,7 +311,6 @@ export class TuiApplication implements TuiControllerSink {
       commandSource,
       vision,
       web,
-      keymap,
       permissionDefault,
       startup = { imagePaths: [], plan: false },
       clipboardImage = imageDraftFromClipboard,
@@ -360,7 +350,6 @@ export class TuiApplication implements TuiControllerSink {
     )
     this.vision = vision
     this.web = web
-    this.keymap = keymap ?? memoryKeymapGateway({ keymap: config.keymap })
     this.visionStatus = vision === undefined ? undefined : {
       config: vision.config,
       proxyRegistered: false,
@@ -452,13 +441,6 @@ export class TuiApplication implements TuiControllerSink {
       if (drafts.length === 0 && this.attachmentRailFocused) this.leaveAttachmentRail()
       this.tui.requestRender()
     })
-    this.removeKeymapListener = this.keymap.subscribe((settings) => {
-      if (this.disposed) return
-      this.keymapView?.setPreset(settings.keymap)
-      this.refreshConfigurationSurface()
-      this.updateStatus(this.controller.current)
-      this.tui.requestRender()
-    })
   }
 
   /** Start rendering, bind the requested session, then apply one startup intent. */
@@ -501,7 +483,6 @@ export class TuiApplication implements TuiControllerSink {
     this.skillCatalog.dispose()
     this.removeMemoryActivity()
     this.removeAttachmentListener()
-    this.removeKeymapListener()
     this.removeGitBranchListener?.()
     this.removeGitBranchListener = undefined
     this.attachmentCoordinator?.cancel(false)
@@ -710,7 +691,7 @@ export class TuiApplication implements TuiControllerSink {
     const resolution = resolveKeymapInput(data, {
       working: isWorking(this.controller.current),
       hasAttachments: this.attachmentDrafts.snapshot.length > 0,
-    }, this.keymap.current().keymap)
+    })
     if (resolution.kind !== 'unmatched') {
       if (resolution.kind === 'action') this.handleKeymapAction(resolution.action)
       return { consume: true }
@@ -991,12 +972,8 @@ export class TuiApplication implements TuiControllerSink {
     }, {
       name: 'config',
       description: 'Configure model, policy, and terminal preferences',
-      argumentHint: '[model|reasoning|permission|plan|vision|web|keybindings|interface]',
+      argumentHint: '[model|reasoning|permission|plan|vision|web|interface]',
       handler: argument => this.openConfigRoute(argument),
-    }, {
-      name: 'keymap',
-      description: 'Configure persistent terminal keybindings',
-      handler: () => { this.openKeymap() },
     }, {
       name: 'vision',
       description: 'Configure image routing and the Vision proxy',
@@ -1228,9 +1205,8 @@ export class TuiApplication implements TuiControllerSink {
     if (route === 'plan') return this.openConfig('plan')
     if (route === 'vision') return this.openVisionConfig()
     if (route === 'web') return this.openWebConfig()
-    if (route === 'keymap' || route === 'keybinding' || route === 'keybindings') return this.openKeymap()
     if (route === 'interface' || route === 'details') return this.openConfig()
-    throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, vision, web, keybindings, or interface.`)
+    throw new Error(`Unknown config section "${sanitizeTerminalText(argument.trim())}". Use model, reasoning, permission, plan, vision, web, or interface.`)
   }
 
   private openConfig(initialStage: ConfigEntryStage = 'root'): void {
@@ -1267,10 +1243,6 @@ export class TuiApplication implements TuiControllerSink {
       () => {
         close()
         void this.runAction(() => this.openVisionConfig())
-      },
-      () => {
-        close()
-        this.openKeymap()
       },
       () => {
         close()
@@ -1318,34 +1290,6 @@ export class TuiApplication implements TuiControllerSink {
       close,
     )
     this.visionConfigView = view
-    this.composerModalActive = true
-    this.layout.setActiveSurface({ kind: 'readable', component: view })
-    this.tui.setFocus(view)
-    this.tui.requestRender()
-  }
-
-  private openKeymap(): void {
-    if (this.tui.hasOverlay() || this.composerModalActive) return
-    const close = (): void => {
-      if (this.keymapView === undefined) return
-      this.keymapView = undefined
-      this.layout.setActiveSurface(undefined)
-      this.composerModalActive = false
-      this.tui.setFocus(this.editor)
-      this.tui.requestRender()
-    }
-    const view = new KeymapView(
-      this.keymap.current().keymap,
-      this.theme,
-      preset => {
-        void this.runAction(async () => {
-          await this.keymap.setPreset(preset)
-          this.controller.notice(`Keybindings changed to ${preset}.`)
-        })
-      },
-      close,
-    )
-    this.keymapView = view
     this.composerModalActive = true
     this.layout.setActiveSurface({ kind: 'readable', component: view })
     this.tui.setFocus(view)
@@ -1939,7 +1883,6 @@ export class TuiApplication implements TuiControllerSink {
       state.projections,
       this.showDetails,
       this.visionStatus,
-      this.keymap.current().keymap,
       this.web === undefined ? undefined : this.webStatus ?? null,
     )
   }

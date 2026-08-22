@@ -111,44 +111,6 @@ describe('FileRewindRepository', () => {
     await repository.close()
   })
 
-  it('migrates relative mutation paths from schema 2 to canonical absolute targets', async () => {
-    const root = await temporary('dsh-rewind-migration-')
-    const workspaceRoot = await temporary('dsh-rewind-migration-workspace-')
-    const repository = new FileRewindRepository(root)
-    await repository.save(stored(workspaceRoot), null)
-    const manifestName = (await readdir(join(root, 'timelines')))[0]
-    const manifestPath = join(root, 'timelines', manifestName ?? '')
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
-      schema: number
-      nodes: Array<{ workspaceMutations: Array<Record<string, unknown>> }>
-    }
-    manifest.schema = 2
-    for (const point of manifest.nodes) {
-      for (const mutation of point.workspaceMutations) {
-        mutation.path = 'a.txt'
-        delete mutation.absolutePath
-      }
-    }
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
-
-    const migrated = await repository.load(workspaceRoot)
-    expect(migrated?.value.timeline.nodes[0]?.workspaceMutations[0]).toMatchObject({
-      absolutePath: join(workspaceRoot, 'a.txt'),
-    })
-    if (migrated === undefined) throw new Error('schema 2 fixture was not migrated')
-    await repository.save(migrated.value, migrated.revision)
-    const upgraded = JSON.parse(await readFile(manifestPath, 'utf8')) as {
-      schema: number
-      nodes: Array<{ workspaceMutations: Array<Record<string, unknown>> }>
-    }
-    expect(upgraded.schema).toBe(3)
-    expect(upgraded.nodes[0]?.workspaceMutations[0]).toMatchObject({
-      absolutePath: join(workspaceRoot, 'a.txt'),
-    })
-    expect(upgraded.nodes[0]?.workspaceMutations[0]).not.toHaveProperty('path')
-    await repository.close()
-  })
-
   it('quarantines a malformed manifest instead of guessing or overwriting it', async () => {
     const root = await temporary('dsh-rewind-corrupt-')
     const workspaceRoot = await temporary('dsh-rewind-workspace-')

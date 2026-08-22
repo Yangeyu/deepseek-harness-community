@@ -43,7 +43,7 @@ dscode（DeepSeek Harness Community 终端）环境与运行故障的诊断参�
 
 ### 会话/终端行为异常
 - `/trajectory` 看执行链；`/rewind` 回退；`dscode resume <session-id>` 续接。
-- 版本漂移：`npm update -g @vascent/dsh-tui` 后首启自动迁移 legacy bundle（如 `@yangeyu/deepseek-harness-tui`）；报错时才需人工 `dscode plugin remove`。
+- 版本漂移：`npm update -g @vascent/dsh-tui` 后运行一次 `dscode`，launcher 会确认当前安装的私有 Bundle 已挂载；不再迁移历史包名或旧 profile 结构。
 
 ## 2. 隔离排查
 

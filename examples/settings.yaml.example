@@ -121,13 +121,7 @@
 #   extractMaxOutputChars: 60000
 
 # ────────────────────────────────────────────────────────────────────────
-# 6) community-tui　终端键位
-# ────────────────────────────────────────────────────────────────────────
-# community-tui:
-#   keymap: standard                      # standard | legacy
-
-# ────────────────────────────────────────────────────────────────────────
-# 7) permission　权限预设（终端内 /config permission 可视化）
+# 6) permission　权限预设（终端内 /config permission 可视化）
 # ────────────────────────────────────────────────────────────────────────
 #   defaultPreset：read-only | workspace-write | danger-full-access
 #   与 sandbox 和审批策略联动：danger-full-access = 审批条永不询问；
@@ -136,7 +130,7 @@
 #   defaultPreset: workspace-write
 
 # ────────────────────────────────────────────────────────────────────────
-# 8) ui-* 段（主题、会话队列、引导状态等 UI 偏好）
+# 7) ui-* 段（主题、会话队列、引导状态等 UI 偏好）
 # ────────────────────────────────────────────────────────────────────────
 # 例如 ui-theme / ui-conversation / ui-onboarding 等，只影响界面偏好，
 # 与 agent 能力无关；确有需要时再调整（细节见 docs/dscode-configuration.md）。

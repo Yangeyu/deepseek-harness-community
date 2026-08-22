@@ -33,11 +33,10 @@ describe('session control selectors', () => {
     const config = configurationSnapshot(undefined, projections, false)
     const task = taskSnapshot(projections, false, 0)
 
-    expect(config).toEqual({ models: undefined, keymap: 'standard', detailsExpanded: false })
+    expect(config).toEqual({ models: undefined, detailsExpanded: false })
     expect(task).toEqual({ goal: null, todos: null, running: false, queued: 0 })
     expect(configurationRows(config)).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'permissions', available: false }),
-      expect.objectContaining({ kind: 'keymap', value: 'standard · Tab queues while working' }),
       expect.objectContaining({ kind: 'details', available: true, scope: 'TUI' }),
     ]))
     expect(taskRows(task)).toEqual(expect.arrayContaining([
@@ -66,12 +65,12 @@ describe('session control selectors', () => {
   })
 
   it('distinguishes unavailable, loading, and configured Web status', () => {
-    const loading = configurationSnapshot(undefined, {}, false, undefined, 'standard', null)
+    const loading = configurationSnapshot(undefined, {}, false, undefined, null)
     expect(configurationRows(loading)).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'web', available: true, value: 'Loading provider status…' }),
     ]))
 
-    const ready = configurationSnapshot(undefined, {}, false, undefined, 'standard', {
+    const ready = configurationSnapshot(undefined, {}, false, undefined, {
       search: {
         selection: 'auto',
         activeProviderId: 'community-tavily',

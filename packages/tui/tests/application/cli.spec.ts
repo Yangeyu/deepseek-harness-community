@@ -91,19 +91,17 @@ describe('public command line contract', () => {
     expect(parsed.kind).toBe('interactive')
     if (parsed.kind !== 'interactive') return
     expect(tuiAppArgs(parsed)).toEqual(['resume', '--last', '--plan', '--', 'finish'])
+
+    const exact = parseCliArgs(['resume', 'session-2'])
+    expect(exact.kind).toBe('interactive')
+    if (exact.kind === 'interactive') expect(tuiAppArgs(exact)).toEqual(['resume', 'session-2'])
   })
 
   it('rejects missing, conflicting, and misspelled options with usage errors', () => {
     expect(() => parseCliArgs(['--image', '--no-color'])).toThrow('--image requires a value')
     expect(() => parseCliArgs(['resume'])).toThrow('session id or --last')
-    expect(() => parseCliArgs(['resume', '--last', '--resume', 'one'])).toThrow('cannot be combined')
     expect(() => parseCliArgs(['resume', 'one', '--cwd', '/other'])).toThrow('keeps its original workspace')
     expect(() => parseCliArgs(['--resum', 'one'])).toThrow(CliUsageError)
-    try {
-      parseCliArgs(['--resum', 'one'])
-    } catch (error) {
-      expect(error).toMatchObject({ suggestion: 'Did you mean --resume?' })
-    }
   })
 
   it('supports all version aliases as one informational action', () => {

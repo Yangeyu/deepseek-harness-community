@@ -88,29 +88,6 @@ export function removeImageMarker(text: string, marker: string): string {
   return result
 }
 
-function appendMarker(text: string, marker: string): string {
-  if (text === '') return marker
-  return /\s$/u.test(text) ? `${text}${marker}` : `${text} ${marker}`
-}
-
-/**
- * Compatibility-only repair for messages persisted before inline image references.
- * Live composer submission must use compilePromptDocument instead of guessing positions.
- */
-export function restoreLegacyImageMarkers(text: string, imageCount: number): string {
-  const existing = new Set(imageMarkers(text))
-  let result = text
-  let number = 1
-  while (existing.size < imageCount) {
-    const marker = imageMarker(number)
-    number += 1
-    if (existing.has(marker)) continue
-    existing.add(marker)
-    result = appendMarker(result, marker)
-  }
-  return result
-}
-
 /** Validate and materialize the one-to-one inline image reference contract. */
 export function compilePromptDocument<Image extends InlineImageToken>(
   rawText: string,
@@ -164,18 +141,10 @@ export function compilePromptDocument<Image extends InlineImageToken>(
 }
 
 /** Project exact durable text without inventing image positions. */
-function promptTextFromContent(content: readonly PromptTextBlock[]): string {
+export function promptTextFromContent(content: readonly PromptTextBlock[]): string {
   const textBlocks = content
     .filter(block => block.type === 'text')
     .map(block => block.text ?? '')
   const hasImages = content.some(block => block.type === 'image')
   return textBlocks.join(hasImages ? '' : '\n')
-}
-
-/** Read-boundary compatibility for old durable messages whose image blocks had no references. */
-export function legacyPromptTextFromContent(
-  content: readonly PromptTextBlock[],
-  imageCount = content.filter(block => block.type === 'image').length,
-): string {
-  return restoreLegacyImageMarkers(promptTextFromContent(content), imageCount)
 }

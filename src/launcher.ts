@@ -18,14 +18,12 @@ import { diagnose, formatDoctorReport } from './doctor.ts'
 const DEFAULT_PROFILE = 'tui'
 const HEADLESS_PROFILE = 'headless'
 const TUI_PACKAGE = '@vascent/deepseek-harness-tui'
-const LEGACY_TUI_PACKAGES = ['@yangeyu/deepseek-harness-tui']
 const SETTINGS_EXAMPLE_FILENAME = 'settings.yaml.example'
 const PATCH_EXAMPLE_FILENAME = 'cordis.patch.yml.example'
 const EXAMPLE_FILENAMES = [SETTINGS_EXAMPLE_FILENAME, PATCH_EXAMPLE_FILENAME]
 const require = createRequire(import.meta.url)
 
 interface ProfileManifest {
-  readonly dependencies?: Readonly<Record<string, string>>
   readonly dsh?: {
     readonly profile?: {
       readonly bundles?: unknown
@@ -137,37 +135,13 @@ export function profileUsesPlugin(profileDirectory: string, pluginDirectory: str
   }
 }
 
-/** Return obsolete TUI package names still referenced by one profile. */
-export function profileLegacyPlugins(profileDirectory: string): string[] {
-  const manifest = readProfileManifest(profileDirectory)
-  const dependencies = manifest?.dependencies ?? {}
-  const bundles = manifest?.dsh?.profile?.bundles
-  return LEGACY_TUI_PACKAGES.filter(packageName => (
-    Object.hasOwn(dependencies, packageName)
-    || (Array.isArray(bundles) && bundles.includes(packageName))
-  ))
-}
-
-/** Migrate legacy package names and ensure the profile points at this launcher copy. */
+/** Ensure the profile points at this launcher's private bundle workspace. */
 export async function ensureProfilePlugin(
   profileDirectory: string,
   pluginDirectory: string,
   runPlugin: RunPlugin,
   report: WriteText = text => process.stderr.write(text),
 ): Promise<number> {
-  const manifest = readProfileManifest(profileDirectory)
-  const dependencies = manifest?.dependencies ?? {}
-  for (const packageName of profileLegacyPlugins(profileDirectory)) {
-    if (!Object.hasOwn(dependencies, packageName)) {
-      throw new Error(`profile still references legacy bundle ${packageName} without an installed dependency`)
-    }
-    report(`dscode: removing legacy profile plugin ${packageName}\n`)
-    const removeCode = await runPlugin(['remove', packageName])
-    if (removeCode !== 0) return removeCode
-  }
-
-  const legacy = profileLegacyPlugins(profileDirectory)
-  if (legacy.length > 0) throw new Error(`legacy profile plugin remained after migration: ${legacy.join(', ')}`)
   if (profileUsesPlugin(profileDirectory, pluginDirectory)) return 0
 
   report('dscode: configuring the profile for this installation\n')

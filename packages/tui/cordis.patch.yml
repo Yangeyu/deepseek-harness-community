@@ -25,11 +25,6 @@
   config:
     searchProvider: community-web
 
-- id: tool-web
-  config:
-    fetch: false
-    searchTimeoutMs: 30000
-
 - insert:
     - id: code-runtime
       name: '@deepseek-ai/dsh-code-runtime-worker-thread'
@@ -155,4 +150,3 @@
         showReasoning: true
         thinkingMaxLines: 8
         color: true
-        keymap: standard

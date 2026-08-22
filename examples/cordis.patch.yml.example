@@ -47,7 +47,6 @@
 #     showReasoning: true                  # 展示推理过程
 #     thinkingMaxLines: 8                  # 思考块折叠行数
 #     color: true                          # 彩色输出
-#     keymap: standard                     # standard | legacy
 
 # ────────────────────────────────────────────────────────────────────────
 # Vision 线路（与 settings.yaml 的 vision 段同构；patch 层会覆盖补丁默认）

@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   compilePromptDocument,
   imageMarkerInsertion,
-  legacyPromptTextFromContent,
+  promptTextFromContent,
   removeImageMarker,
-  restoreLegacyImageMarkers,
 } from '../src/prompt-content.ts'
 
 describe('inline Prompt content', () => {
@@ -43,18 +42,17 @@ describe('inline Prompt content', () => {
       .toThrow('Image reference has no attachment: [Image #2]')
   })
 
-  it('keeps exact durable text separate from the legacy replay fallback', () => {
-    expect(legacyPromptTextFromContent([
+  it('projects exact durable text without inventing image positions', () => {
+    expect(promptTextFromContent([
       { type: 'text', text: 'before [Image #1]' },
       { type: 'image' },
       { type: 'text', text: ' after' },
     ])).toBe('before [Image #1] after')
-    expect(restoreLegacyImageMarkers('legacy', 2)).toBe('legacy [Image #1] [Image #2]')
-    expect(legacyPromptTextFromContent([
-      { type: 'text', text: 'legacy' },
+    expect(promptTextFromContent([
+      { type: 'text', text: 'exact' },
       { type: 'image' },
-    ])).toBe('legacy [Image #1]')
-    expect(legacyPromptTextFromContent([
+    ])).toBe('exact')
+    expect(promptTextFromContent([
       { type: 'text', text: 'first' },
       { type: 'text', text: 'second' },
     ])).toBe('first\nsecond')

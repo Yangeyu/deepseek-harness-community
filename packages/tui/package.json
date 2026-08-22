@@ -3,22 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "description": "Claude Code-inspired terminal client bundle for DeepSeek Harness",
-  "keywords": [
-    "deepseek",
-    "deepseek-harness",
-    "tui",
-    "coding-agent",
-    "terminal"
-  ],
-  "homepage": "https://github.com/Yangeyu/deepseek-harness-community/tree/main/packages/tui#readme",
-  "bugs": {
-    "url": "https://github.com/Yangeyu/deepseek-harness-community/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Yangeyu/deepseek-harness-community.git",
-    "directory": "packages/tui"
-  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -46,18 +30,7 @@
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
-  "files": [
-    "dist",
-    "cordis.patch.yml",
-    "README.md",
-    "CHANGELOG.md",
-    "LICENSE"
-  ],
   "license": "MIT",
-  "engines": {
-    "node": "^22.19.0 || >=24.0.0",
-    "pnpm": ">=10.0.0"
-  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

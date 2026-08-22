@@ -30,7 +30,7 @@ Direct edits and file synchronization are supported because Markdown remains
 the source of truth. Only writes made through the plugin carry source-turn
 metadata and can therefore participate in source-attributed Rewind.
 
-Project identity uses the normalized Git `origin` URL when available, including the repository name used in the directory prefix, so differently named clones and linked Worktrees share one memory directory on a synchronized memory root. Repositories without an origin use their Git common directory, which also unifies linked Worktrees. Non-Git directories fall back to their canonical path. Existing local-name directories are migrated into the stable directory when encountered.
+Project identity uses the normalized Git `origin` URL when available, including the repository name used in the directory prefix, so differently named clones and linked Worktrees share one memory directory on a synchronized memory root. Repositories without an origin use their Git common directory, which also unifies linked Worktrees. Non-Git directories fall back to their canonical path.
 
 ## Behavior
 

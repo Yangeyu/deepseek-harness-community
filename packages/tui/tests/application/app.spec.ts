@@ -16,10 +16,6 @@ import type { RewindAction, RewindPlan, RewindPort } from '../../src/rewind/inde
 import { resolveConfig } from '../../src/application/config.ts'
 import type { TuiState } from '../../src/runtime/controller.ts'
 import type { HostCommandSource, HostCommandResult } from '../../src/runtime/commands.ts'
-import {
-  memoryKeymapGateway,
-  type KeymapSettingsGateway,
-} from '../../src/application/keymap-settings.ts'
 import type { VisionGateway } from '../../src/application/attachments/coordinator.ts'
 import type { NewAttachmentDraft } from '../../src/application/attachments/drafts.ts'
 import type { AttachmentDraft } from '../../src/application/attachments/drafts.ts'
@@ -74,7 +70,6 @@ interface AppInternals {
   trajectoryView?: { handleInput(data: string): void; render(width: number): string[] }
   configView?: { handleInput(data: string): void; render(width: number): string[] }
   webConfigView?: { handleInput(data: string): void; render(width: number): string[] }
-  keymapView?: { handleInput(data: string): void; render(width: number): string[] }
   taskView?: { handleInput(data: string): void; render(width: number): string[] }
   skillsView?: { handleInput(data: string): void; render(width: number): string[] }
   composerModalActive: boolean
@@ -127,7 +122,10 @@ function rewindPlan(attachments: readonly ImageAttachmentRef[] = []): RewindPlan
     pointId: 'point-1',
     sessionId: 'session-1',
     turn: 1,
-    input: { text: 'inspect image', attachments },
+    input: {
+      text: attachments.length === 0 ? 'inspect image' : 'inspect [Image #1]',
+      attachments,
+    },
     createdAt: 1,
     codeScope: 'backward',
     state: 'safe',
@@ -184,7 +182,6 @@ function application(
   memory: TuiMemoryPort = memoryService(),
   runtimeOverrides: Partial<TuiRuntime> = {},
   commandSource?: HostCommandSource,
-  keymap?: KeymapSettingsGateway,
   dependencies: TuiApplicationDependencies = {},
 ): TuiApplication {
   const runtime: TuiRuntime = {
@@ -208,7 +205,6 @@ function application(
       },
       ...dependencies,
       ...commandSource === undefined ? {} : { commandSource },
-      ...keymap === undefined ? {} : { keymap },
     },
   )
   ;(app as unknown as AppInternals).tui.requestRender = vi.fn()
@@ -328,7 +324,6 @@ describe('TuiApplication input routing', () => {
         stdout: { isTTY: true, write: vi.fn() } as unknown as NodeJS.WriteStream,
       },
       undefined,
-      undefined,
       {
         permissionDefault: { setDefaultPreset },
         startup: {
@@ -374,7 +369,7 @@ describe('TuiApplication input routing', () => {
       { path: 'README.md', isDirectory: false },
       { path: 'src/read-model.ts', isDirectory: false },
     ])
-    const app = application(undefined, undefined, undefined, undefined, undefined, { workspacePaths })
+    const app = application(undefined, undefined, undefined, undefined, { workspacePaths })
     const internals = app as unknown as AppInternals
 
     for (const character of '@rea') internals.editor.handleInput(character)
@@ -417,7 +412,7 @@ describe('TuiApplication input routing', () => {
 
   it('copies a dragged primary-button selection without dispatching a block click', async () => {
     const clipboardText = vi.fn(async () => {})
-    const app = application(undefined, undefined, undefined, undefined, undefined, { clipboardText })
+    const app = application(undefined, undefined, undefined, undefined, { clipboardText })
     const internals = app as unknown as AppInternals
     internals.layout.transcriptRowAt = vi.fn(() => 0)
     internals.transcript.handlePointer = vi.fn(() => false)
@@ -526,15 +521,14 @@ describe('TuiApplication input routing', () => {
     expect(internals.tui.getFocusedComponent()).toBe(internals.editor)
   })
 
-  it('uses Ctrl+V as the primary image paste shortcut and keeps Alt+V compatible', () => {
+  it('uses Ctrl+V as the image paste shortcut', () => {
     const app = application()
     const internals = app as unknown as AppInternals
     const pasteImage = vi.fn(async () => {})
     internals.pasteImage = pasteImage
 
     expect(internals.handleGlobalInput('\u0016')).toEqual({ consume: true })
-    expect(internals.handleGlobalInput('\u001bv')).toEqual({ consume: true })
-    expect(pasteImage).toHaveBeenCalledTimes(2)
+    expect(pasteImage).toHaveBeenCalledTimes(1)
   })
 
   it('suppresses key repeat and release events before invoking image paste', () => {
@@ -555,7 +549,7 @@ describe('TuiApplication input routing', () => {
       resolveClipboard = resolve
     }))
     const vision = visionFixture()
-    const app = application(undefined, undefined, undefined, undefined, undefined, {
+    const app = application(undefined, undefined, undefined, undefined, {
       vision,
       clipboardImage,
     })
@@ -577,7 +571,7 @@ describe('TuiApplication input routing', () => {
 
   it('retains a Composer image created by the paste-image command', async () => {
     const vision = visionFixture()
-    const app = application(undefined, undefined, undefined, undefined, undefined, {
+    const app = application(undefined, undefined, undefined, undefined, {
       vision,
       clipboardImage: async () => clipboardPng(),
     })
@@ -593,7 +587,7 @@ describe('TuiApplication input routing', () => {
 
   it('treats an inline image reference as one editing unit', async () => {
     const vision = visionFixture()
-    const app = application(undefined, undefined, undefined, undefined, undefined, {
+    const app = application(undefined, undefined, undefined, undefined, {
       vision,
       clipboardImage: async () => clipboardPng(),
     })
@@ -632,7 +626,7 @@ describe('TuiApplication input routing', () => {
 
   it('attaches images when the Editor submit callback delivers raw encoded references', async () => {
     const vision = visionFixture()
-    const app = application(undefined, undefined, undefined, undefined, undefined, {
+    const app = application(undefined, undefined, undefined, undefined, {
       vision,
       clipboardImage: async () => clipboardPng(),
     })
@@ -677,7 +671,7 @@ describe('TuiApplication input routing', () => {
 
   it('removes session-scoped image tokens without dropping plain draft text on session switch', async () => {
     const vision = visionFixture()
-    const app = application(undefined, undefined, undefined, undefined, undefined, {
+    const app = application(undefined, undefined, undefined, undefined, {
       vision,
       clipboardImage: async () => clipboardPng(),
     })
@@ -695,7 +689,7 @@ describe('TuiApplication input routing', () => {
   it('discards an in-flight clipboard reservation when its session changes', async () => {
     let resolveClipboard!: (draft: NewAttachmentDraft) => void
     const vision = visionFixture()
-    const app = application(undefined, undefined, undefined, undefined, undefined, {
+    const app = application(undefined, undefined, undefined, undefined, {
       vision,
       clipboardImage: () => new Promise(resolve => { resolveClipboard = resolve }),
     })
@@ -723,7 +717,7 @@ describe('TuiApplication input routing', () => {
     }
     const restore = vi.fn(async () => async () => {})
     const commit = vi.fn(async () => {})
-    const app = application(rewindPort({ restore, commit }), undefined, undefined, undefined, undefined, {
+    const app = application(rewindPort({ restore, commit }), undefined, undefined, undefined, {
       attachments: {
         readImage: vi.fn(async () => ({
           ref,
@@ -738,7 +732,7 @@ describe('TuiApplication input routing', () => {
 
     expect(restore).toHaveBeenCalledOnce()
     expect(commit).toHaveBeenCalledWith(expect.anything(), 'code-and-conversation', 'forked')
-    expect(internals.editor.getExpandedText()).toBe('inspect image [Image #1]')
+    expect(internals.editor.getExpandedText()).toBe('inspect [Image #1]')
     expect(internals.attachmentDrafts.snapshot).toEqual([expect.objectContaining({
       name: 'image.png',
       source: 'rewind',
@@ -754,7 +748,7 @@ describe('TuiApplication input routing', () => {
       height: 1,
     }
     const restore = vi.fn(async () => async () => {})
-    const app = application(rewindPort({ restore }), undefined, undefined, undefined, undefined, {
+    const app = application(rewindPort({ restore }), undefined, undefined, undefined, {
       attachments: { readImage: vi.fn(async () => { throw new Error('missing attachment') }) },
     })
     const internals = app as unknown as AppInternals
@@ -777,7 +771,7 @@ describe('TuiApplication input routing', () => {
       height: 1,
     }
     const commit = vi.fn(async () => {})
-    const app = application(rewindPort({ commit }), undefined, undefined, undefined, undefined, {
+    const app = application(rewindPort({ commit }), undefined, undefined, undefined, {
       attachments: { readImage: vi.fn(async () => { throw new Error('must not be read') }) },
     })
     const internals = app as unknown as AppInternals
@@ -809,30 +803,12 @@ describe('TuiApplication input routing', () => {
     expect(submit).toHaveBeenCalledWith('next task', 'queue')
   })
 
-  it('keeps legacy Alt+Enter queueing configurable without consuming it while idle', () => {
-    const keymap = memoryKeymapGateway({ keymap: 'legacy' })
-    const app = application(undefined, undefined, undefined, undefined, keymap)
-    const internals = app as unknown as AppInternals
-    const submit = vi.fn(async () => {})
-    internals.submit = submit
-    const idleState = internals.controller.current
-
-    expect(internals.handleGlobalInput('\u001b\r')).toBeUndefined()
-    vi.spyOn(internals.controller, 'current', 'get').mockReturnValue({
-      ...idleState,
-      running: true,
-    })
-    internals.editor.setText('legacy task')
-    expect(internals.handleGlobalInput('\u001b\r')).toEqual({ consume: true })
-    expect(submit).toHaveBeenCalledWith('legacy task', 'queue')
-  })
-
   it('keeps model and workspace identity on the first footer row and metrics on the second', () => {
     const gitBranch = vi.fn((_cwd: string, onChange: (branch: string | undefined) => void) => {
       onChange('feature/footer-context')
       return () => {}
     })
-    const app = application(undefined, undefined, undefined, undefined, undefined, { gitBranch })
+    const app = application(undefined, undefined, undefined, undefined, { gitBranch })
     const internals = app as unknown as AppInternals
 
     app.render({
@@ -994,7 +970,7 @@ describe('TuiApplication input routing', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
     const vision = visionFixture()
-    const app = application(undefined, undefined, undefined, undefined, undefined, {
+    const app = application(undefined, undefined, undefined, undefined, {
       vision,
       clipboardImage: async () => clipboardPng(),
     })
@@ -1367,10 +1343,6 @@ describe('TuiApplication input routing', () => {
     internals.skillsView?.handleInput('\u001b')
     expect(internals.skillsView).toBeUndefined()
 
-    await internals.submit('/keymap')
-    expect(internals.keymapView?.render(80).join('\n')).toContain('Keybindings')
-    internals.keymapView?.handleInput('\u001b')
-    expect(internals.keymapView).toBeUndefined()
   })
 
   it('opens Web provider status without exposing credential values', async () => {
@@ -1413,7 +1385,7 @@ describe('TuiApplication input routing', () => {
       },
     }))
     const setSearchProvider = vi.fn(async () => {})
-    const app = application(undefined, undefined, undefined, undefined, undefined, {
+    const app = application(undefined, undefined, undefined, undefined, {
       web: { status, setSearchProvider },
     })
     const internals = app as unknown as AppInternals
@@ -1450,7 +1422,7 @@ describe('TuiApplication input routing', () => {
       execute,
       subscribe: () => () => {},
     }
-    const app = application(undefined, undefined, undefined, source, undefined, {
+    const app = application(undefined, undefined, undefined, source, {
       permissionDefault: { setDefaultPreset },
     })
     const internals = app as unknown as AppInternals
@@ -1539,7 +1511,7 @@ describe('TuiApplication input routing', () => {
       execute,
       subscribe: () => () => {},
     }
-    const app = application(undefined, undefined, undefined, source, undefined, {
+    const app = application(undefined, undefined, undefined, source, {
       permissionDefault: {
         setDefaultPreset: vi.fn(async () => { throw new Error('settings are read-only') }),
       },

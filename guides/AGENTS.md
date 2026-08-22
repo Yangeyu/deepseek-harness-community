@@ -30,7 +30,7 @@
 
 ## 核心速览
 
-- **settings.yaml 段**（细节见配置文档）：`agent-default-model:`（默认模型/provider/effort）、`llm-bailian:`（首类 Bailian provider）、`llm-pi-ai:`（聚合 provider）、`vision:`（`mode` = auto|proxy|disabled）、`community-web:`（`searchProvider` = auto|community-tavily|deepseek-official）、`community-tui:`（keymap）、`permission:`（defaultPreset）。
+- **settings.yaml 段**（细节见配置文档）：`agent-default-model:`（默认模型/provider/effort）、`llm-bailian:`（首类 Bailian provider）、`llm-pi-ai:`（聚合 provider）、`vision:`（`mode` = auto|proxy|disabled）、`community-web:`（`searchProvider` = auto|community-tavily|deepseek-official）、`permission:`（defaultPreset）。
 - **环境变量**：凭证 `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` / `TAVILY_API_KEY`；隔离 `DSH_HOME`、`DSH_TUI_PROFILE`、`DSH_TOOLS_MODE`、`DSH_PERMISSION_MODE`。
 - **斜杠命令**：`/status` `/task` `/trajectory` `/config [section]` `/vision` `/web` `/skills` `/memories` `/rewind` `/model` `/help`。
 - **CLI**：`dscode doctor [--json]`、`dscode sessions`/`resume`、`dscode exec [-C <path>]`、`dscode config show|default`、`dscode plugin <pnpm 参数>`、`--patch <file>`。

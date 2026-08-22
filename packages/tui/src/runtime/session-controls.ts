@@ -9,7 +9,6 @@ import type { GoalProjection } from '@deepseek-ai/dsh-goal/client'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
 import type { CommunityWebStatus } from '@vascent/deepseek-harness-web'
-import { keymapShortcut, type KeymapPreset } from '../input/keymap.ts'
 
 // Load optional projection-key augmentations at the client boundary only.
 import type {} from '@deepseek-ai/dsh-permission-presets/client'
@@ -23,7 +22,6 @@ export interface ConfigurationSnapshot {
   plan?: PlanProjection
   vision?: VisionStatus
   web?: CommunityWebStatus | null
-  keymap: KeymapPreset
   detailsExpanded: boolean
 }
 
@@ -34,7 +32,7 @@ export interface TaskSnapshot {
   queued: number
 }
 
-export type ConfigurationRowKind = 'model' | 'reasoning' | 'permissions' | 'plan' | 'vision' | 'web' | 'keymap' | 'details'
+export type ConfigurationRowKind = 'model' | 'reasoning' | 'permissions' | 'plan' | 'vision' | 'web' | 'details'
 export type TaskRowKind = 'goal' | 'todos' | 'runtime'
 
 export interface ControlRow<Kind extends string> {
@@ -58,7 +56,6 @@ export function configurationSnapshot(
   projections: Partial<SessionProjectionMap>,
   detailsExpanded: boolean,
   vision?: VisionStatus,
-  keymap: KeymapPreset = 'standard',
   web?: CommunityWebStatus | null,
 ): ConfigurationSnapshot {
   return {
@@ -67,7 +64,6 @@ export function configurationSnapshot(
     ...hasProjection(projections, 'plan') ? { plan: projections.plan } : {},
     ...vision === undefined ? {} : { vision },
     ...web === undefined ? {} : { web },
-    keymap,
     detailsExpanded,
   }
 }
@@ -159,12 +155,6 @@ export function configurationRows(
         : `${webSearch?.label ?? snapshot.web.search.activeProviderId} search · ${webExtract?.label ?? snapshot.web.extract.activeProviderId} read · ${webReady ? 'ready' : 'configuration required'}`,
     scope: 'TUI',
     available: snapshot.web !== undefined,
-  }, {
-    kind: 'keymap',
-    label: 'Keybindings',
-    value: `${snapshot.keymap} · ${keymapShortcut(snapshot.keymap, 'turn.queue') ?? 'unbound'} queues while working`,
-    scope: 'TUI',
-    available: true,
   }, {
     kind: 'details',
     label: 'Details',

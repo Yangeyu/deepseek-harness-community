@@ -1,6 +1,5 @@
 /** Application-level configuration materialized before runtime construction. */
 import z from '@deepseek-ai/schemastery'
-import { KEYMAP_PRESET_IDS, type KeymapPreset } from '../input/keymap.ts'
 
 /** User-configurable TUI presentation and history bounds. */
 export interface Config {
@@ -11,7 +10,6 @@ export interface Config {
   showReasoning?: boolean
   showHardwareCursor?: boolean
   color?: boolean
-  keymap?: KeymapPreset
   title?: string
   cwd?: string
   sessionId?: string
@@ -26,7 +24,6 @@ export const Config: z<Config> = z.object({
   showReasoning: z.boolean().default(true),
   showHardwareCursor: z.boolean().default(false),
   color: z.boolean().default(true),
-  keymap: z.union(KEYMAP_PRESET_IDS).default('standard'),
   title: z.string().default('DeepSeek Harness'),
   cwd: z.string(),
   sessionId: z.string(),
@@ -41,7 +38,6 @@ export interface ResolvedConfig {
   showReasoning: boolean
   showHardwareCursor: boolean
   color: boolean
-  keymap: KeymapPreset
   title: string
   cwd: string
 }
@@ -56,7 +52,6 @@ export function resolveConfig(config: Config): ResolvedConfig {
     showReasoning: config.showReasoning ?? true,
     showHardwareCursor: config.showHardwareCursor ?? false,
     color: config.color ?? true,
-    keymap: config.keymap ?? 'standard',
     title: config.title ?? 'DeepSeek Harness',
     cwd: config.cwd ?? process.cwd(),
   }

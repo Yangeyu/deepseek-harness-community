@@ -6,7 +6,7 @@ dscode（DeepSeek Harness Community 终端）配置的单一事实源。本文�
 
 - 路径：`$DSH_HOME/settings.yaml`（默认 `~/.dsh/settings.yaml`），热更新——编辑后无需重启进程。
 - **安装引导**：dscode 首次运行会把两份带注释的参考模板放到配置根目录（只写一次、不覆盖、不生效）：`$DSH_HOME/settings.yaml.example`（本文件全部段落的示例与修改指引）与 `$DSH_HOME/cordis.patch.yml.example`（patch 层示例）。改配置时照抄对应段落到 `settings.yaml` 即可。
-- 可视化界面对应 `settings.yaml` 各段：`/config [model|reasoning|permission|plan|vision|web|keybindings|interface]`、`/vision`、`/web`。
+- 可视化界面对应 `settings.yaml` 各段：`/config [model|reasoning|permission|plan|vision|web|interface]`、`/vision`、`/web`。
 - 程序化查看：`dscode config show`（launcher 转发 profile 的 dumped 配置）、`dscode config default`（默认值）。
 - 凭证规则：settings 文件只存**环境变量名引用**（值形如 `tavilyApiKeyEnv: TAVILY_API_KEY`）；密钥本体在环境变量或 `~/.dsh/.credentials.yaml`。任何情况下不得把密钥值写回 settings.yaml 或其它文件。
 
@@ -33,9 +33,6 @@ dscode（DeepSeek Harness Community 终端）配置的单一事实源。本文�
 - `searchProvider`：`auto`（有 `TAVILY_API_KEY` 走 Tavily，否则回落 DeepSeek Official）、`community-tavily`（强制 Tavily，无 key 时 readiness 失败）、`deepseek-official`（强制官方）。
 - `extractProvider`：页面提取 provider（默认 `community-tavily`）。
 - `tavily*`：`tavilyApiKeyEnv`（凭证引用名，默认 `TAVILY_API_KEY`）、`tavilySearchEndpoint` / `tavilyExtractEndpoint`、`tavilySearchDepth`（`basic|advanced|fast|ultra-fast`）、`tavilyExtractDepth`（`basic|advanced`）、`tavilyTimeoutSeconds`（1–60）、`extractMaxOutputChars`。
-
-### `community-tui:` — 终端键位
-- `keymap`：`standard` | `legacy`。
 
 ### `permission:` — 权限预设
 - `defaultPreset`：`read-only` | `workspace-write` | `danger-full-access`。
@@ -65,6 +62,6 @@ dscode（DeepSeek Harness Community 终端）配置的单一事实源。本文�
 
 ## 4. 修改方式与生效范围
 
-- 用 edit/write 修改 `settings.yaml`：热生效，会话可感知；`community-tui.keymap` 等 UI 项由 TUI 端热重载。
+- 用 edit/write 修改 `settings.yaml`：热生效，会话可感知。
 - 单次覆盖用 `--patch <file>`（launcher 的 profile 叠加层）或 profile 级 `~/.dsh/profiles/tui/cordis.patch.yml`。
 - 凭证改动只引导用户设置环境变量（shell profile 或 `.env`），不代写密钥。

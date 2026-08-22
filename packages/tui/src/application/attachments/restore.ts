@@ -8,7 +8,6 @@ import type { ComposerDraft } from '../composer-input.ts'
 import {
   compilePromptDocument,
   imageMarkers,
-  restoreLegacyImageMarkers,
 } from '../../prompt-content.ts'
 import type { AttachmentDraft } from './drafts.ts'
 
@@ -40,7 +39,7 @@ export async function preparePromptDraft(
   if (input.attachments.length === 0) return { text: input.text, attachments: [] }
   if (reader === undefined) throw new Error('Rewind cannot restore images because attachment storage is unavailable.')
   const stored = await Promise.all(input.attachments.map(attachment => reader.readImage(attachment)))
-  const text = restoreLegacyImageMarkers(input.text, stored.length)
+  const text = input.text
   const markers = [...new Set(imageMarkers(text))]
   const attachments = stored.map(({ ref, data }, index): AttachmentDraft => {
     const expected = input.attachments[index]

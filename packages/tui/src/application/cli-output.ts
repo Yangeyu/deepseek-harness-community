@@ -27,7 +27,6 @@ Interactive options:
       --effort <level>         Select reasoning effort for the startup model
       --permission-mode <id>  Select a Harness permission preset
       --plan                   Enter Plan Mode before submitting the initial prompt
-      --resume <session-id>    Resume a session (compatibility form)
       --no-color               Disable ANSI color in the TUI
 
 Launcher options:
@@ -125,7 +124,6 @@ const COMPLETION_WORDS = [
   '--effort',
   '--permission-mode',
   '--plan',
-  '--resume',
   '--last',
   '--no-color',
   '--patch',

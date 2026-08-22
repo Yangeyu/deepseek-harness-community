@@ -32,7 +32,6 @@ export interface CommunityWebProviderRegistration<Provider extends WebCapability
 
 /** Capability-local provider registry shared by execution policy and configuration status. */
 export class ProviderCatalog<Provider extends WebCapabilityProvider> {
-  private readonly providers = new Map<string, Provider>()
   private readonly registrations = new Map<string, CommunityWebProviderRegistration<Provider>>()
 
   constructor(private readonly ctx: Context) {}
@@ -46,13 +45,10 @@ export class ProviderCatalog<Provider extends WebCapabilityProvider> {
     if (this.registrations.has(id)) {
       throw new WebError(`web provider "${id}" is already registered`, 'WEB_DUPLICATE_PROVIDER')
     }
-    const providers = this.providers
     const registrations = this.registrations
     const dispose = this.ctx.effect(function* registerWebProvider() {
-      providers.set(id, registration.provider)
       registrations.set(id, registration)
       yield () => {
-        providers.delete(id)
         registrations.delete(id)
       }
     }, 'communityWeb.registerProvider()')
@@ -60,15 +56,15 @@ export class ProviderCatalog<Provider extends WebCapabilityProvider> {
   }
 
   get(id: string): Provider | undefined {
-    return this.providers.get(id)
+    return this.registrations.get(id)?.provider
   }
 
   has(id: string): boolean {
-    return this.providers.has(id)
+    return this.registrations.has(id)
   }
 
   someAvailable(): boolean {
-    return [...this.providers.values()].some(provider => provider.available())
+    return [...this.registrations.values()].some(registration => registration.provider.available())
   }
 
   async statuses(signal?: AbortSignal): Promise<CommunityWebProviderStatus[]> {

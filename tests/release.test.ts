@@ -14,6 +14,7 @@ interface PackageManifest {
   files?: string[]
   publishConfig?: { access?: string }
   exports?: Record<string, string | { types?: string; default?: string }>
+  dsh?: { bundle?: { patch?: string } }
 }
 
 test('uses one pinned toolchain and one release gate everywhere', async () => {
@@ -60,7 +61,6 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
 
   const expectedExports = {
     '.': './packages/tui/dist/index.js',
-    './tui': './packages/tui/dist/index.js',
     './bailian': './packages/tui/dist/bailian.js',
     './memory': './packages/tui/dist/memory.js',
     './vision': './packages/tui/dist/vision.js',
@@ -69,8 +69,9 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
   for (const [specifier, expected] of Object.entries(expectedExports)) {
     const target = root.exports?.[specifier]
     assert.equal(typeof target === 'object' ? target.default : target, expected)
-    assert.ok(root.files?.some(path => expected.startsWith(`./${path}`)), `${specifier} must be packed`)
   }
+  assert.ok(root.files?.includes('packages/tui/dist/*.js'))
+  assert.ok(root.files?.includes('packages/tui/dist/*.d.ts'))
 
   for (const file of workspacePackageFiles) {
     const workspace = JSON.parse(await readFile(file, 'utf8')) as PackageManifest
@@ -78,6 +79,8 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
     assert.equal(workspace.private, true, `${file} must block standalone publication`)
     assert.equal(workspace.publishConfig, undefined, `${file} must not declare registry access`)
   }
+  const tui = JSON.parse(await readFile('packages/tui/package.json', 'utf8')) as PackageManifest
+  assert.equal(tui.dsh?.bundle?.patch, './cordis.patch.yml')
 })
 
 test('uses the official pi-tui package without dependency patches', async () => {

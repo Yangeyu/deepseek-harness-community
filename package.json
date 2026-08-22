@@ -26,10 +26,6 @@
       "types": "./packages/tui/dist/index.d.ts",
       "default": "./packages/tui/dist/index.js"
     },
-    "./tui": {
-      "types": "./packages/tui/dist/index.d.ts",
-      "default": "./packages/tui/dist/index.js"
-    },
     "./memory": {
       "types": "./packages/tui/dist/memory.d.ts",
       "default": "./packages/tui/dist/memory.js"
@@ -51,20 +47,16 @@
   },
   "files": [
     "bin/dscode.js",
-    "AGENTS.md",
     "dist/launcher.js",
-    "dist/launcher.js.map",
     "examples/settings.yaml.example",
     "examples/cordis.patch.yml.example",
     "guides/AGENTS.md",
     "guides/docs/configuration.md",
     "guides/docs/troubleshooting.md",
-    "packages/tui/CHANGELOG.md",
     "packages/tui/cordis.patch.yml",
-    "packages/tui/dist",
-    "packages/tui/LICENSE",
+    "packages/tui/dist/*.d.ts",
+    "packages/tui/dist/*.js",
     "packages/tui/package.json",
-    "packages/tui/README.md",
     "README.md",
     "LICENSE"
   ],
@@ -74,7 +66,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @vascent/deepseek-harness-memory run build && pnpm --filter @vascent/deepseek-harness-llm-bailian run build && pnpm --filter @vascent/deepseek-harness-vision run build && pnpm --filter @vascent/deepseek-harness-web run build && pnpm --filter @vascent/deepseek-harness-tui run build && tsdown",
+    "build": "pnpm --filter @vascent/deepseek-harness-tui... run build && tsdown",
     "lint": "oxlint --deny-warnings src scripts tests tsdown.config.ts && pnpm --filter './packages/*' run lint",
     "typecheck": "tsc --noEmit && pnpm --filter './packages/*' run typecheck",
     "test": "vitest run tests/launcher.test.ts tests/release.test.ts && pnpm --filter './packages/*' run test",

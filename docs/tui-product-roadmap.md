@@ -59,17 +59,17 @@ execution core.
 
 - Align composer semantics with established terminal-agent interaction:
   `Enter` steers, `Tab` queues while working, and `Alt+Enter` remains multiline.
-  Resolve semantic actions through a persistent, context-aware keymap instead
-  of hard-coding gestures in the application shell.
+  Resolve semantic actions through one fixed, context-aware binding table
+  instead of hard-coding gestures in the application shell.
 - Support repeatable `-i`/`--image` startup attachments for portable scripted,
   new-session, and resumed-session image intake.
 - Add explicit image drafts from files and the system clipboard with a compact,
   keyboard-first attachment rail above the composer.
 - Introduce a public, TUI-independent Vision workspace that routes explicit
   image-capable models natively and text-only models through a configured proxy.
-- Use the existing generic LLM adapter for Alibaba Cloud Bailian and recommend
-  `qwen3.7-plus` as the first proxy route while DeepSeek remains the primary
-  coding model.
+- Use a first-class Bailian adapter for DashScope request/SSE semantics and
+  recommend `qwen3.7-plus` as the first proxy route while DeepSeek remains the
+  primary coding model.
 - Persist proxy image references, observations, status, usage, and duration as
   source-attributed session evidence visible in Transcript and Trajectory.
 - Configure Vision under `/config`, fail closed on missing capability or
