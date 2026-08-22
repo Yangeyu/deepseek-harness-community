@@ -69,6 +69,13 @@ launcher and bundle, services named by `cordis.patch.yml`, and host packages
 required by the coordinated runtime graph. Workspace development dependencies
 never become public dependencies by default.
 
+Profile setup removes the sole replaced Bundle identity
+`@yangeyu/deepseek-harness-tui` through the official plugin manager before it
+ensures the canonical `@vascent/deepseek-harness-tui` link. This bounded,
+idempotent normalization lets an existing device upgrade without loading both
+Bundles. Future runtime upgrades keep the canonical package name stable instead
+of accumulating package aliases or version-specific migration scripts.
+
 `pnpm-workspace.yaml#catalogs.dsh` is the single selected runtime train. One
 anchored scalar supplies every DSH catalog entry, and all workspace manifests
 refer to `catalog:dsh`; changing that scalar followed by ordinary

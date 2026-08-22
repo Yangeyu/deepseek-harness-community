@@ -72,6 +72,54 @@ test('ensureProfilePlugin installs the current private bundle once', async () =>
   assert.deepEqual(calls, [['add', plugin]])
 })
 
+test('ensureProfilePlugin replaces the previous bundle identity during upgrade', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-tui-upgrade-'))
+  const profile = join(root, 'profile')
+  const plugin = join(root, 'plugin')
+  const manifestPath = join(profile, 'package.json')
+  await mkdir(profile, { recursive: true })
+  await mkdir(plugin)
+  await writeFile(manifestPath, JSON.stringify({
+    dsh: {
+      profile: {
+        bundles: ['@deepseek-ai/dsh-base', '@yangeyu/deepseek-harness-tui'],
+      },
+    },
+    dependencies: {
+      '@yangeyu/deepseek-harness-tui': 'link:/obsolete/tui',
+    },
+  }))
+
+  const calls: Array<readonly string[]> = []
+  const runPlugin = async (args: readonly string[]) => {
+    calls.push(args)
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    if (args[0] === 'remove') {
+      delete manifest.dependencies['@yangeyu/deepseek-harness-tui']
+      manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(
+        (name: string) => name !== '@yangeyu/deepseek-harness-tui',
+      )
+    } else {
+      manifest.dependencies['@vascent/deepseek-harness-tui'] = `link:${plugin}`
+      manifest.dsh.profile.bundles.push('@vascent/deepseek-harness-tui')
+    }
+    await writeFile(manifestPath, JSON.stringify(manifest))
+    if (args[0] === 'add') {
+      await mkdir(join(profile, 'node_modules', '@vascent'), { recursive: true })
+      await symlink(plugin, join(profile, 'node_modules', '@vascent', 'deepseek-harness-tui'), 'dir')
+    }
+    return 0
+  }
+
+  assert.equal(await ensureProfilePlugin(profile, plugin, runPlugin, () => {}), 0)
+  assert.deepEqual(calls, [
+    ['remove', '@yangeyu/deepseek-harness-tui'],
+    ['add', plugin],
+  ])
+  assert.equal(await ensureProfilePlugin(profile, plugin, runPlugin, () => {}), 0)
+  assert.equal(calls.length, 2)
+})
+
 function output() {
   let value = ''
   return {
