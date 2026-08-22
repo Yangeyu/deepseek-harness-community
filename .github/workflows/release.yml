@@ -144,7 +144,7 @@ jobs:
           [[ "$(sha256sum "artifacts/${archive}" | cut -d ' ' -f1)" == "$expected_sha" ]]
 
           set +e
-          npm publish "artifacts/${archive}" --access public
+          npm publish "./artifacts/${archive}" --access public
           publish_status=$?
           set -e
 
