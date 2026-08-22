@@ -5,50 +5,25 @@ import { parse } from 'yaml'
 
 interface PackageManifest {
   name?: string
+  version?: string
   private?: boolean
   bin?: string | Record<string, string>
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
   packageManager?: string
-  scripts?: Record<string, string>
   files?: string[]
   publishConfig?: { access?: string }
   exports?: Record<string, string | { types?: string; default?: string }>
   dsh?: { bundle?: { patch?: string } }
 }
 
-test('uses one pinned toolchain and one remote release transaction', async () => {
+test('pins one explicit Node, pnpm, and npm toolchain', async () => {
   const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
-  const [nodeVersion, ciWorkflow, releaseWorkflow] = await Promise.all([
-    readFile('.node-version', 'utf8'),
-    readFile('.github/workflows/ci.yml', 'utf8'),
-    readFile('.github/workflows/release.yml', 'utf8'),
-  ])
+  const nodeVersion = await readFile('.node-version', 'utf8')
 
   assert.match(nodeVersion.trim(), /^\d+\.\d+\.\d+$/u)
   assert.match(root.packageManager ?? '', /^pnpm@\d+\.\d+\.\d+$/u)
   assert.match(root.devDependencies?.npm ?? '', /^\d+\.\d+\.\d+$/u)
-  assert.equal(root.devDependencies?.['release-it'], undefined)
-  assert.equal(root.scripts?.release, 'gh workflow run release.yml --ref main')
-  assert.equal(root.scripts?.['release:check'], 'node scripts/release-gate.mjs')
-  for (const workflow of [ciWorkflow, releaseWorkflow]) {
-    assert.match(workflow, /node-version-file: \.node-version/u)
-  }
-  assert.match(ciWorkflow, /- run: pnpm run check/u)
-
-  assert.match(releaseWorkflow, /workflow_dispatch:/u)
-  assert.doesNotMatch(releaseWorkflow, /tags:\s*\['v\*'\]/u)
-  assert.equal(
-    releaseWorkflow.match(/pnpm run release:check -- --artifacts-dir artifacts/gu)?.length,
-    1,
-  )
-  const prepare = releaseWorkflow.indexOf('pnpm exec npm version')
-  const gate = releaseWorkflow.indexOf('pnpm run release:check -- --artifacts-dir artifacts')
-  const push = releaseWorkflow.indexOf('git push --atomic')
-  const publish = releaseWorkflow.indexOf('pnpm exec npm publish')
-  const release = releaseWorkflow.indexOf('gh release create')
-  assert.ok(prepare >= 0 && prepare < gate)
-  assert.ok(gate < push && push < publish && publish < release)
 })
 
 const workspacePackageFiles = [
@@ -84,6 +59,7 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
     const workspace = JSON.parse(await readFile(file, 'utf8')) as PackageManifest
     assert.ok(workspace.name, `${file} must declare a package name`)
     assert.equal(workspace.private, true, `${file} must block standalone publication`)
+    assert.equal(workspace.version, undefined, `${file} must not declare an independent release version`)
     assert.equal(workspace.publishConfig, undefined, `${file} must not declare registry access`)
   }
   const tui = JSON.parse(await readFile('packages/tui/package.json', 'utf8')) as PackageManifest

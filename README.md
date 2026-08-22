@@ -165,20 +165,38 @@ Every workspace manifest refers to `catalog:dsh`, so an upgrade never requires
 distributing the same version across package files. `pnpm pack` replaces the
 catalog protocol with the concrete version in the published root manifest.
 
-After the intended commits are on `origin/main`, trigger the single remote
+The public distribution version lives only in the root `package.json`. Private
+workspaces deliberately have no independent versions. Prepare a release by
+changing that one committed value, for example:
+
+```sh
+pnpm exec npm version patch --no-git-tag-version
+git add package.json
+git commit -m "chore: prepare vX.Y.Z"
+git push
+```
+
+Use `minor` or `major` in place of `patch` when that is the intended semantic
+change. The version change is an ordinary reviewed source commit; the release
+workflow never writes back to `main`.
+
+After CI succeeds for that exact `origin/main` commit, trigger the remote
 release transaction from an authenticated development machine:
 
 ```sh
 pnpm release
 ```
 
-Patch is the default. For a minor or major increment, invoke the same workflow
-with `gh workflow run release.yml --ref main -f bump=minor` (or `major`). The
-workflow updates the root version, runs `release:check` exactly once, atomically
-pushes the verified release commit and tag, publishes that retained tarball
-through Trusted Publishing (OIDC), and attaches it to one GitHub Release. Its
-`GITHUB_TOKEN` push does not recursively start another CI or tag workflow.
-Routine source CI remains the faster cross-platform `pnpm check`; there is no
-local release gate or second tag-triggered publishing path. Node, pnpm, npm,
-and the DeepSeek runtime train each have one repository-owned version source.
-Local npm credentials and repository `NPM_TOKEN` secrets are not used.
+The workflow accepts no version input and performs no version mutation. It
+requires successful CI for the exact source commit, builds one tarball, records
+its source and SHA-256 in a receipt, then performs one strict fresh install and
+real 80x24 PTY startup check. Separate least-privilege jobs tag that exact
+commit, publish the retained tarball through Trusted Publishing (OIDC), and
+attach the same bytes to one GitHub Release. Retried downstream jobs reuse the
+accepted candidate and reconcile only identical tag and artifact state, so a
+partial external failure cannot silently replace a release. Routine Linux and
+macOS CI owns the full
+`pnpm check`; release acceptance does not duplicate its lint, typecheck, or test
+passes. Node, pnpm, npm, the public package, and the DeepSeek runtime train each
+have one repository-owned version source. Local npm credentials and repository
+`NPM_TOKEN` secrets are not used.

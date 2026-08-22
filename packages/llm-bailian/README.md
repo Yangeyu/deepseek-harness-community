@@ -12,7 +12,8 @@ read provider settings or credentials.
 The Provider stays in this repository as a private workspace package. The
 published application exposes the same implementation through
 `@vascent/dsh-tui/bailian`; it does not depend on TUI runtime or presentation
-code and can gain a standalone release boundary later without moving sources.
+code. Its module boundary is independent, while release ownership remains at
+the repository root.
 
 ```yaml
 llm-bailian:

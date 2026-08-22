@@ -1,6 +1,5 @@
 {
   "name": "@vascent/deepseek-harness-llm-bailian",
-  "version": "0.1.0",
   "private": true,
   "description": "First-class Alibaba Cloud Bailian LLM provider for DeepSeek Harness",
   "type": "module",
@@ -10,18 +9,9 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./package.json": "./package.json"
+    }
   },
-  "files": [
-    "dist",
-    "README.md"
-  ],
   "license": "MIT",
-  "engines": {
-    "node": "^22.19.0 || >=24.0.0",
-    "pnpm": ">=10.0.0"
-  },
   "scripts": {
     "build": "tsdown",
     "lint": "oxlint --deny-warnings src tests tsdown.config.ts",

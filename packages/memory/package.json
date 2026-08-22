@@ -1,23 +1,7 @@
 {
   "name": "@vascent/deepseek-harness-memory",
-  "version": "0.1.0",
   "private": true,
   "description": "File-backed project memory plugin for DeepSeek Harness",
-  "keywords": [
-    "deepseek",
-    "deepseek-harness",
-    "memory",
-    "coding-agent"
-  ],
-  "homepage": "https://github.com/Yangeyu/deepseek-harness-community/tree/main/packages/memory#readme",
-  "bugs": {
-    "url": "https://github.com/Yangeyu/deepseek-harness-community/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Yangeyu/deepseek-harness-community.git",
-    "directory": "packages/memory"
-  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -29,20 +13,9 @@
     "./store": {
       "types": "./dist/store.d.ts",
       "default": "./dist/store.js"
-    },
-    "./package.json": "./package.json"
+    }
   },
-  "files": [
-    "dist",
-    "README.md",
-    "CHANGELOG.md",
-    "LICENSE"
-  ],
   "license": "MIT",
-  "engines": {
-    "node": "^22.19.0 || >=24.0.0",
-    "pnpm": ">=10.0.0"
-  },
   "scripts": {
     "build": "tsdown",
     "lint": "oxlint --deny-warnings src tests tsdown.config.ts",

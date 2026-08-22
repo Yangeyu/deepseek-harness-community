@@ -1,6 +1,5 @@
 {
   "name": "@vascent/deepseek-harness-tui",
-  "version": "0.1.0",
   "private": true,
   "description": "Claude Code-inspired terminal client bundle for DeepSeek Harness",
   "type": "module",
@@ -26,9 +25,7 @@
     "./web": {
       "types": "./dist/web.d.ts",
       "default": "./dist/web.js"
-    },
-    "./package.json": "./package.json",
-    "./cordis.patch.yml": "./cordis.patch.yml"
+    }
   },
   "license": "MIT",
   "dsh": {
@@ -149,10 +146,10 @@
     "@deepseek-ai/dsh-token-meter": "catalog:dsh",
     "@deepseek-ai/dsh-web-search-deepseek": "catalog:dsh",
     "@types/node": "^22.20.0",
-    "@vascent/deepseek-harness-llm-bailian": "workspace:^",
-    "@vascent/deepseek-harness-memory": "workspace:^",
-    "@vascent/deepseek-harness-vision": "workspace:^",
-    "@vascent/deepseek-harness-web": "workspace:^",
+    "@vascent/deepseek-harness-llm-bailian": "workspace:*",
+    "@vascent/deepseek-harness-memory": "workspace:*",
+    "@vascent/deepseek-harness-vision": "workspace:*",
+    "@vascent/deepseek-harness-web": "workspace:*",
     "oxlint": "1.76.0",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",

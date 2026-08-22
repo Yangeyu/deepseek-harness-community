@@ -18,26 +18,17 @@ import { diagnose, formatDoctorReport } from './doctor.ts'
 const DEFAULT_PROFILE = 'tui'
 const HEADLESS_PROFILE = 'headless'
 const TUI_PACKAGE = '@vascent/deepseek-harness-tui'
-const PREVIOUS_TUI_PACKAGE = '@yangeyu/deepseek-harness-tui'
 const SETTINGS_EXAMPLE_FILENAME = 'settings.yaml.example'
 const PATCH_EXAMPLE_FILENAME = 'cordis.patch.yml.example'
 const EXAMPLE_FILENAMES = [SETTINGS_EXAMPLE_FILENAME, PATCH_EXAMPLE_FILENAME]
 const require = createRequire(import.meta.url)
 
 interface ProfileManifest {
-  readonly dependencies?: Readonly<Record<string, string>>
   readonly dsh?: {
     readonly profile?: {
       readonly bundles?: unknown
     }
   }
-}
-
-function profileReferencesPackage(profileDirectory: string, packageName: string): boolean {
-  const manifest = readProfileManifest(profileDirectory)
-  const bundles = manifest?.dsh?.profile?.bundles
-  return Object.hasOwn(manifest?.dependencies ?? {}, packageName)
-    || (Array.isArray(bundles) && bundles.includes(packageName))
 }
 
 type RunPlugin = (args: readonly string[]) => Promise<number>
@@ -144,22 +135,13 @@ export function profileUsesPlugin(profileDirectory: string, pluginDirectory: str
   }
 }
 
-/** Remove the conflicting predecessor identity and activate this private bundle. */
+/** Activate the canonical private Bundle for this installation. */
 export async function ensureProfilePlugin(
   profileDirectory: string,
   pluginDirectory: string,
   runPlugin: RunPlugin,
   report: WriteText = text => process.stderr.write(text),
 ): Promise<number> {
-  if (profileReferencesPackage(profileDirectory, PREVIOUS_TUI_PACKAGE)) {
-    report(`dscode: removing replaced profile bundle ${PREVIOUS_TUI_PACKAGE}\n`)
-    const removeCode = await runPlugin(['remove', PREVIOUS_TUI_PACKAGE])
-    if (removeCode !== 0) return removeCode
-    if (profileReferencesPackage(profileDirectory, PREVIOUS_TUI_PACKAGE)) {
-      throw new Error(`profile cleanup completed without removing ${PREVIOUS_TUI_PACKAGE}`)
-    }
-  }
-
   if (profileUsesPlugin(profileDirectory, pluginDirectory)) return 0
 
   report('dscode: configuring the profile for this installation\n')

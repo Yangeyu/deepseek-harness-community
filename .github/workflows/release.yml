@@ -2,67 +2,202 @@ name: Release
 
 on:
   workflow_dispatch:
-    inputs:
-      bump:
-        description: Version increment
-        required: true
-        default: patch
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
 
 concurrency:
   group: release
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  id-token: write
+permissions: {}
 
 jobs:
-  release:
+  candidate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      npm_version: ${{ steps.identity.outputs.npm_version }}
+      node_version: ${{ steps.identity.outputs.node_version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
-          fetch-depth: 0
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+          ref: ${{ github.sha }}
+      - name: Read the committed release identity
+        id: identity
+        shell: bash
+        run: |
+          version=$(node --print "require('./package.json').version")
+          npm_version=$(node --print "require('./package.json').devDependencies.npm")
+          node_version=$(tr -d '[:space:]' < .node-version)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$npm_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$node_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "npm_version=${npm_version}" >> "$GITHUB_OUTPUT"
+          echo "node_version=${node_version}" >> "$GITHUB_OUTPUT"
+      - name: Require successful CI for the exact source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          ci_state=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --event push --limit 1 \
+            --json status,conclusion --jq '.[0] | "\(.status):\(.conclusion)"')
+          if [[ "$ci_state" != "completed:success" ]]; then
+            echo "CI for ${GITHUB_SHA} is ${ci_state:-missing}; release requires completed:success" >&2
+            exit 1
+          fi
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           registry-url: https://registry.npmjs.org
-          cache: pnpm
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
-      - name: Prepare release version
-        id: version
-        run: |
-          next_version=$(pnpm exec npm version "${{ inputs.bump }}" --no-git-tag-version)
-          echo "value=${next_version#v}" >> "$GITHUB_OUTPUT"
-      - run: pnpm run release:check -- --artifacts-dir artifacts
-      - name: Commit and tag the verified version
+      - run: pnpm run build
+      - name: Build and verify one release candidate
+        run: pnpm run release:candidate -- --artifacts-dir artifacts --source-sha "$GITHUB_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: |
+            artifacts/*.tgz
+            artifacts/release-receipt.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  tag:
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: artifacts
+      - name: Tag the exact verified source
         env:
-          VERSION: ${{ steps.version.outputs.value }}
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add package.json
-          git commit -m "chore: release v${VERSION}"
-          git tag -a "v${VERSION}" -m "v${VERSION}"
-          git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
-      - name: Publish the installable package to npm
+          VERSION: ${{ needs.candidate.outputs.version }}
         shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.value }}
         run: |
-          package_name=$(node --print "require('./package.json').name")
-          archive_name="${package_name#@}"
-          archive_name="${archive_name//\//-}-${VERSION}.tgz"
-          pnpm exec npm publish "./artifacts/${archive_name}" --access public
-      - name: Create the GitHub Release from the verified artifact
+          receipt_sha=$(jq -er '.source.gitSha' artifacts/release-receipt.json)
+          receipt_version=$(jq -er '.package.version' artifacts/release-receipt.json)
+          [[ "$receipt_sha" == "$GITHUB_SHA" ]]
+          [[ "$receipt_version" == "$VERSION" ]]
+          main_sha=$(git ls-remote origin refs/heads/main | cut -f1)
+          [[ "$main_sha" == "$GITHUB_SHA" ]]
+
+          tag="v${VERSION}"
+          if git ls-remote --exit-code origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/${tag}:refs/tags/${tag}"
+            tag_sha=$(git rev-list -n 1 "$tag")
+            [[ "$tag_sha" == "$GITHUB_SHA" ]]
+          else
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git tag -a "$tag" -m "$tag"
+            git push origin "refs/tags/${tag}"
+          fi
+
+  publish-npm:
+    needs: [candidate, tag]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ needs.candidate.outputs.node_version }}
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: artifacts
+      - name: Install the pinned publishing client
+        env:
+          NPM_VERSION: ${{ needs.candidate.outputs.npm_version }}
+        shell: bash
+        run: |
+          npm install --global "npm@${NPM_VERSION}" --no-audit --no-fund
+          [[ "$(npm --version)" == "$NPM_VERSION" ]]
+      - name: Publish or reconcile the verified npm artifact
+        shell: bash
+        run: |
+          archive=$(jq -er '.artifact.file' artifacts/release-receipt.json)
+          expected_sha=$(jq -er '.artifact.sha256' artifacts/release-receipt.json)
+          package_name=$(jq -er '.package.name' artifacts/release-receipt.json)
+          package_version=$(jq -er '.package.version' artifacts/release-receipt.json)
+          [[ "$(jq -er '.source.gitSha' artifacts/release-receipt.json)" == "$GITHUB_SHA" ]]
+          [[ "$(sha256sum "artifacts/${archive}" | cut -d ' ' -f1)" == "$expected_sha" ]]
+
+          set +e
+          npm publish "artifacts/${archive}" --access public
+          publish_status=$?
+          set -e
+
+          registry_url=$(npm view "${package_name}@${package_version}" dist.tarball --json | jq -er '.')
+          curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+            "$registry_url" --output "$RUNNER_TEMP/registry.tgz"
+          registry_sha=$(sha256sum "$RUNNER_TEMP/registry.tgz" | cut -d ' ' -f1)
+          if [[ "$registry_sha" != "$expected_sha" ]]; then
+            echo "npm artifact digest ${registry_sha} does not match candidate ${expected_sha}" >&2
+            exit 1
+          fi
+          if [[ "$publish_status" -ne 0 ]]; then
+            echo "npm publish returned ${publish_status}, but the registry already contains the exact candidate"
+          fi
+
+  github-release:
+    needs: [candidate, publish-npm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: artifacts
+      - name: Create or reconcile the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.value }}
-        run: gh release create "v${VERSION}" artifacts/*.tgz --generate-notes --title "v${VERSION}"
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.candidate.outputs.version }}
+        shell: bash
+        run: |
+          archive=$(jq -er '.artifact.file' artifacts/release-receipt.json)
+          expected_sha=$(jq -er '.artifact.sha256' artifacts/release-receipt.json)
+          [[ "$(jq -er '.source.gitSha' artifacts/release-receipt.json)" == "$GITHUB_SHA" ]]
+          [[ "$(sha256sum "artifacts/${archive}" | cut -d ' ' -f1)" == "$expected_sha" ]]
+          tag="v${VERSION}"
+
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" "artifacts/${archive}" --verify-tag --generate-notes --title "$tag"
+          else
+            asset_digest=$(gh release view "$tag" --json assets \
+              | jq -r --arg archive "$archive" '.assets[] | select(.name == $archive) | .digest')
+            if [[ -z "$asset_digest" ]]; then
+              gh release upload "$tag" "artifacts/${archive}"
+            elif [[ "$asset_digest" != "sha256:${expected_sha}" ]]; then
+              echo "GitHub Release asset ${asset_digest} does not match candidate sha256:${expected_sha}" >&2
+              exit 1
+            fi
+          fi
+
+          final_digest=$(gh release view "$tag" --json assets \
+            | jq -r --arg archive "$archive" '.assets[] | select(.name == $archive) | .digest')
+          [[ "$final_digest" == "sha256:${expected_sha}" ]]

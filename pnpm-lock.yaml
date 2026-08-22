@@ -496,16 +496,16 @@ importers:
         specifier: ^22.20.0
         version: 22.20.1
       '@vascent/deepseek-harness-llm-bailian':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../llm-bailian
       '@vascent/deepseek-harness-memory':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../memory
       '@vascent/deepseek-harness-vision':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../vision
       '@vascent/deepseek-harness-web':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../web
       oxlint:
         specifier: 1.76.0

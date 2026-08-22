@@ -10,8 +10,8 @@ distribution without a second registry install.
 The current contracts and ownership boundaries live in
 [`../../docs/tui-architecture.md`](../../docs/tui-architecture.md). Milestones
 live in [`../../docs/tui-product-roadmap.md`](../../docs/tui-product-roadmap.md).
-Historical behavior belongs in Git history and `CHANGELOG.md`, not in this
-README.
+Historical behavior belongs in Git history and GitHub Releases, not in this
+README or private-workspace release files.
 
 Development uses the repository commands:
 

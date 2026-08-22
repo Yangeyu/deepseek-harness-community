@@ -1,6 +1,6 @@
 {
   "name": "@vascent/dsh-tui",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "description": "One-command DeepSeek Harness TUI launcher and community extension workspace",
   "keywords": [
     "deepseek",
@@ -73,7 +73,7 @@
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
     "dev": "pnpm run build && node bin/dscode-dev.js",
     "release": "gh workflow run release.yml --ref main",
-    "release:check": "node scripts/release-gate.mjs",
+    "release:candidate": "node scripts/release-candidate.mjs",
     "start": "node bin/dscode.js"
   },
   "dependencies": {
