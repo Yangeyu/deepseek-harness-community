@@ -1,7 +1,7 @@
 import type {
   RewindConversationHistory,
   RewindPointInput,
-} from '../../src/rewind/index.ts'
+} from '../../src/modules/rewind/index.ts'
 
 /** Mutable Session-log stand-in. RewindService may read it but never owns it. */
 export class TestRewindConversationHistory implements RewindConversationHistory {

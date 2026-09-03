@@ -2,8 +2,8 @@ import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { installRewindWorkspaceAdapter, type RewindWorkspaceSink } from '../../src/rewind/index.ts'
-import { decodeWorkspaceMutation } from '../../src/rewind/adapters/host.ts'
+import { installRewindWorkspaceAdapter, type RewindWorkspaceSink } from '../../src/modules/rewind/index.ts'
+import { decodeWorkspaceMutation } from '../../src/modules/rewind/adapters/host.ts'
 
 const target = {
   targetKey: '/workspace/a.txt',

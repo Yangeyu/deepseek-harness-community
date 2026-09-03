@@ -7,7 +7,7 @@ import {
   FileRewindRepository,
   RewindRepositoryConflictError,
   type StoredRewindTimeline,
-} from '../../src/rewind/index.ts'
+} from '../../src/modules/rewind/index.ts'
 
 const temporaryDirectories: string[] = []
 

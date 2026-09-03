@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { RewindTransaction, type RewindPlan, type RewindPort } from '../../src/rewind/index.ts'
+import { RewindTransaction, type RewindPlan, type RewindPort } from '../../src/modules/rewind/index.ts'
 
 function plan(): RewindPlan {
   return {

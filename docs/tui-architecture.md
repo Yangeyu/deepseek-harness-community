@@ -14,15 +14,21 @@ Harness Host
       ├── Vision fallback (route policy · proxy analysis · evidence admission)
       ├── Web service (official registry · community provider adapters)
       │
-      │ transport-neutral ApiProxy plus narrow Command/Memory/Vision/Web ports
+      │ transport-neutral ApiProxy plus narrow consumer-owned ports
       ▼
-Terminal runtime
-  HarnessController · append-only event window · lifecycle projection · submission coordinator · catalogs
+Infrastructure adapters
+  Harness transport · terminal decoding · clipboard · filesystem · workspace observation
       │
-      │ immutable-by-convention state and semantic records
+      │ explicit contracts; no presentation policy
       ▼
-pi-tui presentation
-  transcript · config/task/skill surfaces · trajectory view · composer · dialogs
+Statically composed TUI
+  runtime kernel      Application/Session scopes · dispatch/effects · execution projection
+  feature modules     composer · interaction · rewind · transcript · trajectory · config/task/skills/session
+  presentation shell semantic input · SurfaceHost · viewport/focus · status · pi-tui rendering
+      │
+      │ one coalesced TerminalSnapshot commit
+      ▼
+RenderScheduler → pi-tui
 ```
 
 The executable has a separate pre-Host boundary:
@@ -33,28 +39,55 @@ argv → shared CLI contract → help/version/completion/doctor
                            → Harness delegation → exec/config/plugin
 ```
 
-The Host owns durable domain facts. The terminal runtime owns connection,
-paging, semantic indexing, and interaction state. Presentation code owns only
-layout, colors, focus, keyboard handling, pointer handling, and scrolling.
+The Host owns durable domain facts. The terminal runtime owns application and
+Session lifetimes, connection state, paging, semantic indexing, effect
+cancellation, and snapshot publication. Feature modules own their local process
+state and workflows. Presentation code owns layout, colors, focus, semantic
+input binding, pointer handling, and scrolling. `application/` is the static
+composition root and public lifecycle facade; it is not a domain owner.
 
 ## Source layout
 
 ```text
 src/
-├── application/   # composition, configuration, and top-level UI orchestration
-├── input/         # fixed semantic bindings and context-aware resolution
-├── runtime/       # transport-neutral session, control, submission, Slash, and Skill state
-├── trajectory/    # trace records, hierarchy, timing, and interaction view
-├── presentation/  # pi-tui components, dialogs, diffs, layout, and theme
-├── rewind/        # pure contracts/domain, application transaction, and external adapters
-├── prompt-content.ts # validated inline text/image reference compiler and exact projector
-├── text.ts        # terminal-safety boundary shared across presentation modules
-└── index.ts       # stable public and Cordis plugin entry point
+├── application/      # static composition, startup/exit, command routing, facade, TerminalSnapshot
+├── runtime/          # lifecycle kernel, Session runtime, execution projection, dispatch, render scheduling
+├── modules/          # vertical feature owners: composer, interaction, rewind, transcript, trajectory, etc.
+├── presentation/
+│   ├── primitives/   # reusable toolkit-neutral presentation contracts and widgets
+│   └── shell/        # semantic input, SurfaceHost, viewport, focus, status, main screen
+├── infrastructure/   # Harness, terminal, clipboard, filesystem, and workspace adapters
+├── bailian.ts        # declared package subpath entry point
+├── memory.ts         # declared package subpath entry point
+├── vision.ts         # declared package subpath entry point
+├── web.ts            # declared package subpath entry point
+└── index.ts          # stable public and Cordis plugin entry point
 ```
 
-Tests mirror these directories. A module stays at the root when it is both
-small and cross-cutting; directories express ownership rather than merely
-reducing the number of visible files.
+Tests mirror these directories. Root files are restricted to declared package
+entry points. Directories express ownership rather than merely reducing the
+number of visible files; shared behavior moves to `runtime` or presentation
+primitives only when it has a genuinely cross-feature contract.
+
+The dependency direction is enforced by tests:
+
+```text
+application (composition only)
+  ├── runtime kernel
+  ├── feature modules ──> runtime contracts + presentation primitives
+  ├── presentation shell ──> read-only runtime/module selectors
+  └── infrastructure adapters ──> consumer-owned ports
+
+runtime ──X──> modules / presentation / infrastructure / application
+modules ──X──> application / concrete infrastructure / presentation shell
+```
+
+Infrastructure points inward because it implements ports declared by the
+consumer. Feature-specific views stay with their vertical module; only generic
+terminal widgets and shell mechanics live under `presentation`. Build, lint,
+package, profile, and release configuration stays outside `src`; the
+`modules/configuration` directory is product behavior for the TUI's `/config`
+feature, not repository tooling configuration.
 
 ## Distribution and release boundary
 
@@ -225,11 +258,134 @@ readable, then compares the registry tarball with the accepted candidate.
     consumed before app arguments, while the TUI receives one startup intent for
     session selection, controls, attachments, and the optional initial prompt.
 15. Append-only streaming and structural history replacement are different
-    runtime operations. Semantically inert chunks reuse the current lifecycle
+    runtime operations. Semantically inert chunks reuse the current execution
     and Trajectory projections; Transcript updates only its live tail and keeps
-    stable rendered blocks. Reconnect, paging, replacement, and lifecycle
+    stable rendered blocks. Reconnect, paging, replacement, and execution
     boundaries fall back to the canonical full projection, so optimization does
     not create a second source of truth.
+16. Every long-lived terminal timer, listener, subprocess, feature effect,
+    Surface, and feature instance belongs to one `LifecycleScope`. Children
+    cannot outlive parents; disposal aborts first and releases registered
+    resources in reverse order. Cleanup is idempotent and awaited at application
+    shutdown.
+17. Session binding is one prepare/commit/rollback transaction shared by new,
+    clear, resume, and Rewind. Only the latest operation may commit. A successful
+    Host create/resume advances the Session epoch exactly once; late work from a
+    retired epoch cannot write into the visible Session.
+18. Composer, Interaction, Skills, Task, Trajectory, and Transcript are fresh
+    feature instances for every committed Session epoch. Stable shell Hosts swap
+    that complete feature set as a unit. A clear operation may temporarily
+    suspend the previous set for rollback, but no render-time Session-id check
+    performs lifecycle cleanup.
+19. Rewind is application/workspace-scoped, not Session-scoped. Its transaction
+    intentionally spans the source Session, durable fork, replacement Session,
+    and compensation. Application disposal waits for an active Rewind transaction
+    before completing, and Rewind uses the same Session replacement path as every
+    other navigation action.
+20. Mux connection, Host connection, Session binding, and execution run state
+    are orthogonal axes. A reconnect never fabricates an idle turn, and a running
+    turn never implies that either transport is online. Mux attachment makes an
+    idle Session usable; a Host stream still awaiting its first activity is
+    reported as pending rather than treated as a failure, while Host reconnecting
+    or offline phases remain explicit degraded states.
+21. Renderer-visible state is committed through one `TerminalSnapshot`. It is a
+    coalesced, read-only composition of runtime, installed feature, and shell
+    slices—not another durable store. Synchronous slice changes become visible
+    together; one snapshot notification is the only path to `RenderScheduler`
+    and the concrete `requestRender` call.
+22. Normalized terminal gestures resolve through the fixed contextual keymap,
+    then `ActionDispatcher` sends each semantic action to one statically
+    registered owner. Duplicate action ownership is an error. Asynchronous
+    handlers run through `ScopedEffectRunner`; aborts and retired-scope results
+    are ignored, while live timeouts and failures remain visible errors.
+23. `SurfaceHost` exclusively owns active-Surface stacking, placement, focus
+    capture/restoration, close identity, and Surface input routing. Both
+    `readable` and `workspace` placements are clipped to the available terminal
+    rows and retain a navigable scroll position; mouse wheel input cannot leak to
+    the Transcript while a Surface is active.
+24. `runtime/execution` is the execution read-model boundary; application and
+    Session lifecycle code never shares its terminology or state machine.
+    Append-only accepted entries update one canonical accumulator. Structural
+    replacement replays the accepted window, and equivalence tests protect both
+    paths.
+25. The in-memory event window is intentionally not evicted yet. It therefore
+    remains an unbounded retention risk for very long Sessions even though
+    append-only execution folding is incremental. A bounded window requires a
+    correctness-preserving Host/checkpoint contract and must not be introduced as
+    an arbitrary UI cache policy.
+
+## Lifecycle kernel and state flow
+
+The TUI is a static modular monolith. The kernel supplies ownership and
+transition primitives; it does not discover modules dynamically and does not
+define another persistence format.
+
+```text
+ApplicationScope
+├── terminal                TerminalSnapshot · RenderScheduler · terminal lifetime
+├── session-kernel
+│   ├── host-connection     Mux and Host read loops
+│   └── workspace
+│       └── SessionScope(epoch N)
+│           ├── SessionRuntime
+│           └── features
+│               ├── Composer          ├── Interaction       ├── Skills
+│               ├── Task              ├── Trajectory        └── Transcript
+├── rewind                 cross-Session transaction and compensation
+├── configuration          application preference and model controls
+├── memory                 application-visible Memory activity
+├── session-center         root Session discovery/navigation
+├── surfaces               placement, viewport, focus, close handles
+├── input / commands       semantic dispatch and command routing
+└── shell-status           header, footer, clocks, Git observation
+```
+
+`ApplicationMachine` is one-way: `created -> starting -> running -> stopping ->
+disposed`. Its root scope is the cancellation and cleanup authority. Startup
+failure enters the same awaited disposal path as normal shutdown.
+
+`SessionManager` owns transport coordination. `SessionWorkspace` owns binding
+transactions and the visible/suspended runtimes. `SessionRuntime` owns the
+immutable-by-convention read model for one `(sessionId, epoch)`, including the
+accepted event window, projection cells, pending submissions, models, and the
+execution snapshot. The connection scope is a sibling of Session scopes, so a
+Session replacement does not restart transport loops.
+
+Session replacement follows one protocol:
+
+1. `begin` records a latest-wins operation and either preserves the previous
+   presentation or publishes an immediate empty presentation for `/clear`.
+2. The transport performs the durable create/resume/fork operation.
+3. `commit` advances the epoch, installs a fresh `SessionRuntime`, constructs
+   one complete Session feature set, and retires previous scopes.
+4. A pre-commit failure rolls the suspended Session and feature set back. If
+   feature construction fails after the durable commit, the new Session remains
+   active with an explicit error and the partially created feature scope is
+   immediately disposed; stable Hosts atomically unbind the retired feature set,
+   and the client does not pretend the Host commit vanished.
+
+Before initial Session attachment, an unbound feature set accepts startup input.
+Its draft transfers into the first Session. Later Session replacements transfer
+plain draft text but strip image markers and attachments whose durable ownership
+belongs to the previous Session.
+
+The renderer flow is unidirectional:
+
+```text
+Host/terminal input
+  -> transport event or normalized gesture
+  -> SessionRuntime / semantic Action owner
+  -> scoped Effect when required
+  -> owner-local immutable snapshot
+  -> TerminalSnapshotCoordinator (one microtask commit)
+  -> RenderScheduler
+  -> pi-tui render
+```
+
+Rendering performs no Host calls, Session transitions, cleanup, or durable
+mutation. Stable Hosts (`ComposerHost`, `InteractionHost`, `SkillsHost`,
+`TaskHost`, `TrajectoryHost`, and `TranscriptHost`) let the shell keep stable
+component references while the Session-owned implementations are replaced.
 
 ## Transcript interaction contract
 
@@ -272,13 +428,30 @@ readable, then compares the registry tarball with the accepted candidate.
   demand. Content renders inline in the conversation and never owns a nested
   viewport.
 
-## Current components
+## Current implementation owners
 
-- `HarnessController` owns session switching, stream reconciliation, history
-  paging, projection watermarks, pending submissions, and atomic publication of
-  one resolved lifecycle snapshot with every state update. Its lifecycle
-  projection retains semantic identity across inert token deltas and delegates
-  structural changes to the canonical lifecycle builder.
+- `TuiApplication` is a thin public lifecycle facade. `createApplication`
+  statically assembles the graph, while `createSessionFeatureSet` is the only
+  construction site for Session-scoped feature processes. Neither file is a
+  mutable business-state owner.
+- `ApplicationMachine` and `LifecycleScope` own one-way process phases,
+  cancellation, child ownership, and reverse-order cleanup. `ResourceSlot`
+  handles replaceable resources such as timers and process/listener handles.
+- `SessionManager` owns the transport loops and narrow Session operations;
+  `SessionWorkspace` owns replacement transactions; and `SessionRuntime` owns
+  the read model for exactly one Session epoch. `BoundSession` exposes that
+  epoch to feature processes and rejects writes after retirement.
+- `SessionFeatureCoordinator` swaps Composer, Interaction, Skills, Task,
+  Trajectory, and Transcript together through stable shell Hosts. It implements
+  the same prepare/activate/rollback protocol as `SessionWorkspace` rather than
+  reacting to a later render.
+- `TerminalSnapshotCoordinator` composes all renderer-facing slices at one
+  microtask commit boundary. `RenderScheduler` coalesces those commits into the
+  repository's only concrete `requestRender` call.
+- `ActionDispatcher` gives each semantic input action one static owner, and
+  `ScopedEffectRunner` binds asynchronous work to that owner's scope. Raw escape
+  decoding is confined to `infrastructure/terminal`; contextual gesture
+  resolution lives in `presentation/shell/input`.
 - `TerminalCommandDirectory` merges local interaction commands with the
   effective agent-scoped `ctx.commands` descriptors. Help and autocomplete read
   the same descriptor list, while a narrow application port executes resolved
@@ -299,12 +472,12 @@ readable, then compares the registry tarball with the accepted candidate.
   Its equal-width wrap representation stays private to the adapter; public text,
   durable Session content, and provider requests retain canonical `[Image #n]`
   references.
-- `ComposerAnchoredLayout` owns one discriminated active-surface contract.
-  `readable` surfaces replace the editor with a bounded bottom frame for
-  approvals, Rewind, and configuration; `workspace` surfaces replace the whole
-  viewport and receive every available content column. Framing, replacement,
-  restoration, and focus lifecycle stay shared without coupling workspace
-  geometry to decision-card reading width.
+- `SurfaceHost` owns one stack of close-identity handles, focus capture and
+  restoration, semantic Surface input, and the only active-placement mutation.
+  `ComposerAnchoredLayout` implements its discriminated `readable` and
+  `workspace` placements. Both placements are height-bounded and share
+  key/mouse scrolling, while workspace geometry remains independent of the
+  narrower decision-card reading width.
 - `VisionService` owns only image-route policy, proxy fallback inference, and
   bounded source-attributed evidence. It does not decode images, derive
   dimensions, normalize bytes, persist media, or serialize native-provider
@@ -347,33 +520,35 @@ readable, then compares the registry tarball with the accepted candidate.
   `permission.defaultPreset` setting through a narrow application port; the
   session projection remains the effective-state authority, and launcher
   overrides bypass this preference write.
-- `SkillCatalog` generation-binds effective RPC rows to one session;
-  `SlashCatalog` merges them with Commands while preserving dispatch semantics.
+- Each Session feature set owns a fresh `SkillCatalog`; its local request version
+  rejects stale refreshes within that epoch. `SlashCatalog` merges effective
+  Skill rows with Commands while preserving dispatch semantics.
 - `SkillAuthoringCoordinator` keeps file creation, editor handoff, validation,
   and effective-catalog settlement outside presentation components.
-- `TrajectoryModel` indexes lifecycle parent keys once per event snapshot and
+- `TrajectoryModel` indexes execution parent keys once per event snapshot and
   computes offsets, durations, parent share, sibling bottlenecks, and the global
   bottleneck in linear time.
-- `runtime/lifecycle` is the only module that projects accepted Prompt
+- `runtime/execution/projection` is the only module that projects accepted Prompt
   boundaries, pairs execution facts, and enforces transition legality. It
   exposes one immutable snapshot for Turn, Prompt, Step, Thought, Tool,
   Command, and Vision nodes. Its post-commit Prompt feed is replayable from the
-  same Session log and contains no Rewind policy.
-- Prompt lifecycle retains both `turn-entry` and `in-turn` user admissions.
+  same Session log and contains no Rewind policy. Append-only inputs update one
+  accumulator; history prepend/replacement uses the canonical replay path.
+- Prompt projection retains both `turn-entry` and `in-turn` user admissions.
   Rewind's adapter selects only `turn-entry`, matching the Host's completed-turn
   fork contract instead of silently deduplicating steering messages in Journal.
-  The lifecycle feed upserts immutable Prompt snapshots so later Vision evidence
+  The Prompt feed upserts immutable snapshots so later Vision evidence
   can add attachment references without creating another Prompt or Rewind point.
   Durable Vision evidence names its owning `promptId`; projections never infer
   ownership from the nearest or latest Prompt.
 - `buildTrajectoryRecords` and `buildTranscriptItems` join presentation payloads
-  to resolved lifecycle nodes without re-pairing execution events or importing
+  to resolved execution nodes without re-pairing execution events or importing
   each other's models.
   `TranscriptComponent` paints and interacts with those items, while
   `TrajectoryView` provides the diagnostic hierarchy. None owns persistence.
   Stable item keys retain rendered Markdown, prompt, and Diff blocks across
   viewport movement. Append-only assistant chunks update the live Transcript
-  tail; Trajectory keeps its semantic record index until a lifecycle boundary
+  tail; Trajectory keeps its semantic record index until an execution boundary
   or durable event changes it. Async Diff line lookups scan only new events and
   publish one immutable result batch.
   Trajectory records keep a Tool's callable name separate from its operation
@@ -383,16 +558,18 @@ readable, then compares the registry tarball with the accepted candidate.
   styles and truncation resets.
 - In the split Trajectory surface, Shift+J/K scroll the overflowing detail
   panel while j/k keep stepping the ledger selection.
-- `rewind/contracts` is independent of Cordis, Memory, Node, and pi-tui.
+- `modules/rewind/contracts` is independent of Cordis, Memory, Node, and pi-tui.
   The injected `RewindConversationHistory` rebuilds Prompt checkpoints from the
-  active Session log. `rewind/domain` owns only the bounded reversible-effect
-  lineage and pure reverse planning; `rewind/application` joins those two
+  active Session log. `modules/rewind/domain` owns only the bounded
+  reversible-effect lineage and pure reverse planning;
+  `modules/rewind/application` joins those two
   sources and owns the active timeline Repository port, restore, and conversation
   compensation; and
-  `rewind/adapters` is the only layer that translates Prompt nodes, Host
+  `modules/rewind/adapters` is the only layer that translates Prompt nodes, Host
   filesystem events, Memory payloads, durable Harness-home files, or the local
   workspace. Presentation consumes only the `RewindPort`, point summaries, and
-  immutable plans.
+  immutable plans. `RewindProcess` itself is application-scoped because its
+  transaction crosses Session retirement and replacement.
 
 ## Planned evolution
 
@@ -443,10 +620,12 @@ competing with this canonical contract.
   first-class Bailian package directly owns its endpoint, credential, model
   capabilities, request serialization, and SSE translation; `/config Vision`
   selects routing policy without reading or writing provider configuration.
-- Keep one fixed, context-aware binding table in `input/keymap.ts` and let
-  `TuiApplication` handle semantic actions only. Key sequences are neither a
-  persisted setting nor a configuration surface; changing a product gesture is
-  one source edit instead of a compatibility preset migration.
+- Keep one fixed, context-aware binding table in
+  `presentation/shell/input/keymap.ts`. Raw bytes are normalized by the terminal
+  adapter before `InputCoordinator` dispatches semantic actions to explicit
+  owners. Key sequences are neither a persisted setting nor a configuration
+  surface; changing a product gesture is one source edit instead of a
+  compatibility preset migration.
 - Parse the public command line through one shared action contract used by the
   package launcher and direct TUI profile entry. Repeatable startup images enter
   the same validated draft store as interactive file attachment; command-line
@@ -454,12 +633,14 @@ competing with this canonical contract.
 
 ### v0.1.8 implemented architecture
 
-- One private `runtime/lifecycle` module canonically projects the current event
-  window into immutable semantic nodes and generation-scoped Vision activity.
-- Controller updates reuse the existing lifecycle snapshot while append-only
-  stream chunks leave lifecycle semantics unchanged. Event replacement, Host
-  running state, Session generation, Vision activity, and semantic boundaries
-  use the canonical full projection.
+- One private `runtime/execution/projection` module canonically projects the
+  current event window into immutable semantic nodes and Session-epoch-scoped
+  Vision activity.
+- `SessionRuntime` updates one canonical accumulator for append-only events and
+  reuses the existing execution snapshot while stream chunks leave execution
+  semantics unchanged. Event replacement or prepend uses canonical full replay;
+  Host running state, Session epoch, Vision activity, and semantic boundaries
+  rematerialize from the accumulator.
 - Transcript, Trajectory, composer status, Diff, and Activity consume that one
   snapshot; copied statuses, consumer pairing Maps, and child-running fallbacks
   have been removed.
@@ -474,11 +655,12 @@ competing with this canonical contract.
 - One `rewind` domain replaces the TUI-owned Git checkpoint subsystem; there is
   no compatibility reader, detached index, tree snapshot, or alternate restore
   path.
-- `runtime/lifecycle/host` projects a first-class Prompt only from a committed
-  human `user/message`; `rewind/adapters/prompt` maps its `turn-entry` subset to
-  Rewind points. Vision transport and evidence cannot create or suppress that
-  point; evidence can only enrich its durable attachment references.
-- `rewind/adapters/host` joins `fs/observed` and `tools/result` by execution
+- `runtime/execution/projection/host` projects a first-class Prompt only from a
+  committed human `user/message`; `modules/rewind/adapters/prompt` maps its
+  `turn-entry` subset to Rewind points. Vision transport and evidence cannot
+  create or suppress that point; evidence can only enrich its durable attachment
+  references.
+- `modules/rewind/adapters/host` joins `fs/observed` and `tools/result` by execution
   identity, validates the canonical text-mutation contract, and attributes it
   through stable root-call, session, and turn identities without parsing tool
   names or presentation diffs.
@@ -516,16 +698,44 @@ competing with this canonical contract.
   retains the future segment until a new attributed Prompt branches from the
   restored point; only backward code navigation is exposed in this milestone.
 
+### Current lifecycle-kernel foundation
+
+- The former controller and application God Object have been removed without a
+  compatibility forwarding layer. The public application is a lifecycle facade;
+  static composition and Session-feature composition are separate roots.
+- A hierarchical lifecycle kernel now owns Application, connection, workspace,
+  Session-epoch, feature, Surface, command, and effect resources. Session new,
+  clear, resume, and Rewind share one latest-wins replacement protocol.
+- One complete Session feature set is constructed per committed epoch and
+  swapped through stable Hosts. `/clear` has an explicit suspend/rollback path;
+  stale Session effects cannot commit after retirement.
+- `TerminalSnapshot` is the single renderer publication boundary, followed by
+  one coalescing `RenderScheduler`. Rendering no longer performs Session cleanup
+  or infers feature lifecycle from an observed Session id.
+- All terminal keys and pointer sequences pass through terminal normalization,
+  contextual semantic resolution, and explicit action ownership. Scoped effects
+  centralize cancellation, stale-result rejection, and live error reporting.
+- `SurfaceHost` unifies decision and workspace surfaces, focus restoration,
+  close identity, height clipping, key paging, and mouse-wheel routing. A modal
+  Surface cannot overflow the terminal or scroll the Transcript behind it.
+- The execution read model now has an unambiguous `runtime/execution` name and an
+  incremental append path with canonical replay equivalence. Raw event retention
+  remains deliberately unbounded until a correctness-preserving checkpoint
+  contract exists.
+- Dependency-direction tests reject old paths, forbidden layer imports,
+  duplicate construction/placement owners, raw-key leakage, and additional
+  concrete render request sites.
+
 ### Following architecture work
 
-- Introduce an immutable terminal session snapshot containing the event window,
-  semantic nodes, projection cells, and command descriptors.
 - Add Session Query-backed cross-session search and parent/child lineage views.
 - Add a remote Vision RPC only when Web or another out-of-process client becomes
   a real consumer; the in-process service is the `v0.1.7` boundary.
 - Add backward/forward timeline navigation on top of the retained cursor only
   when its interaction and branch-discard policy are exposed as one coherent
   Session Center workflow.
+- Define a correctness-preserving execution checkpoint and eviction contract
+  before bounding the in-memory Session event window.
 
 ### Extension rule
 

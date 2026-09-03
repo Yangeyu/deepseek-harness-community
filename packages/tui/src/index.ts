@@ -1,7 +1,7 @@
 /**
  * Third-party terminal profile bundle for DeepSeek Harness. The application
  * consumes only the transport-neutral ApiProxy and keeps pi-tui behind its own
- * controller/rendering seam.
+ * runtime and presentation boundaries.
  * @module @vascent/deepseek-harness-tui
  */
 
@@ -13,7 +13,8 @@ import {
   InProcessApiClient,
   toFetchHandler,
 } from '@deepseek-ai/dsh-host-apiproxy'
-import { TuiApplication, type TuiRuntime } from './application/app.ts'
+import type { TuiRuntime } from './application/contracts.ts'
+import { createTuiApplication } from './application/create-application.ts'
 import {
   installRewindWorkspaceAdapter,
   installRewindPromptAdapter,
@@ -22,7 +23,7 @@ import {
   LocalWorkspaceRewind,
   MemoryRewindParticipant,
   RewindService,
-} from './rewind/index.ts'
+} from './modules/rewind/index.ts'
 import type { HostCommandSource } from './runtime/commands.ts'
 import { Config, resolveConfig, type Config as TuiConfig } from './application/config.ts'
 import {
@@ -31,12 +32,11 @@ import {
   parseCliArgs,
   renderCliHelp,
 } from './application/cli.ts'
-import { formatSessionList } from './application/session-list.ts'
-import { settingsPermissionDefaultGateway } from './application/permission-defaults.ts'
+import { formatSessionList } from './modules/session-center/model.ts'
+import { settingsPermissionDefaultGateway } from './infrastructure/harness/permission-default.ts'
 
 export { Config, resolveConfig }
 export type { TuiConfig, TuiRuntime }
-export { HarnessController } from './runtime/controller.ts'
 export { TerminalCommandDirectory } from './runtime/commands.ts'
 export type {
   RewindAction,
@@ -46,19 +46,16 @@ export type {
   RewindPlanState,
   RewindPointSummary,
   RewindPort,
-} from './rewind/index.ts'
+} from './modules/rewind/index.ts'
 export type {
   HostCommandSource,
   TerminalCommandDefinition,
   TerminalCommandDescriptor,
 } from './runtime/commands.ts'
 export type {
-  ApprovalPrompt,
   PendingSubmission,
-  QuestionPrompt,
-  TuiControllerSink,
-  TuiState,
-} from './runtime/controller.ts'
+} from './runtime/session/manager.ts'
+export type { ApprovalPrompt, QuestionPrompt } from './runtime/session/interactions.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -176,7 +173,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
     },
     subscribe: listener => ctx.on('commands/change', listener),
   }
-  const app = new TuiApplication(
+  const app = createTuiApplication(
     api,
     resolved,
     runtime,

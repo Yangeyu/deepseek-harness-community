@@ -1,6 +1,6 @@
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { describe, expect, it } from 'vitest'
-import { rewindPointFromPrompt, rewindPointsFromSession } from '../../src/rewind/index.ts'
+import { rewindPointFromPrompt, rewindPointsFromSession } from '../../src/modules/rewind/index.ts'
 
 describe('Rewind Prompt adapter', () => {
   it('preserves lifecycle identity, time, and conversation boundary', () => {

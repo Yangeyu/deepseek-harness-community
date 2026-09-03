@@ -1,6 +1,6 @@
 import type { MemoryMutation } from '@vascent/deepseek-harness-memory'
 import { describe, expect, it, vi } from 'vitest'
-import { MemoryRewindParticipant } from '../../src/rewind/index.ts'
+import { MemoryRewindParticipant } from '../../src/modules/rewind/index.ts'
 
 function mutation(id: string, turn: number): MemoryMutation {
   return {

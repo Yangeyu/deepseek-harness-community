@@ -10,7 +10,7 @@ import {
   type PreparedRewindParticipant,
   type RewindParticipant,
   type RewindPointInput,
-} from '../../src/rewind/index.ts'
+} from '../../src/modules/rewind/index.ts'
 import { TestRewindConversationHistory } from './history-fixture.ts'
 
 const temporaryDirectories: string[] = []

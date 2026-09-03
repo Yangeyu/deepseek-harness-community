@@ -1,8 +1,8 @@
 import { visibleWidth } from '@earendil-works/pi-tui'
 import { describe, expect, it, vi } from 'vitest'
-import { RewindDialog, RewindPointDialog } from '../../src/presentation/rewind/index.ts'
-import { createTheme } from '../../src/presentation/theme.ts'
-import type { RewindPlan } from '../../src/rewind/index.ts'
+import { RewindDialog, RewindPointDialog } from '../../src/modules/rewind/view/index.ts'
+import { createTheme } from '../../src/presentation/primitives/theme.ts'
+import type { RewindPlan } from '../../src/modules/rewind/index.ts'
 
 function plan(overrides: Partial<RewindPlan> = {}): RewindPlan {
   return {
@@ -37,7 +37,7 @@ describe('RewindDialog', () => {
     expect(output).toContain('1 memory update will be reverted when code state is restored')
     expect(output).toContain('› 1. Restore code and conversation')
 
-    dialog.handleInput('\r')
+    dialog.handleAction('surface.confirm')
     expect(confirm).toHaveBeenCalledWith('code-and-conversation')
     expect(cancel).not.toHaveBeenCalled()
     expect(dialog.render(40).every(line => visibleWidth(line) <= 40)).toBe(true)
@@ -54,7 +54,7 @@ describe('RewindDialog', () => {
     const output = dialog.render(80).join('\n')
     expect(output).toContain('1. Restore code and conversation (unavailable)')
     expect(output).toContain('› 2. Restore conversation only')
-    dialog.handleInput('\r')
+    dialog.handleAction('surface.confirm')
     expect(confirm).toHaveBeenCalledWith('conversation-only')
     expect(cancel).not.toHaveBeenCalled()
   })
@@ -70,7 +70,7 @@ describe('RewindDialog', () => {
     expect(output.length).toBeLessThanOrEqual(10)
     expect(output.join('\n')).toContain('1. Restore code')
     for (let page = 0; page < 20; page += 1) {
-      dialog.handleInput('\u001b[6~')
+      dialog.handleAction('surface.page-next')
       output = dialog.render(32)
     }
     expect(output.length).toBeLessThanOrEqual(10)
@@ -83,8 +83,8 @@ describe('RewindDialog', () => {
     const confirm = vi.fn()
     const dialog = new RewindDialog(plan(), () => 24, createTheme(false), confirm, vi.fn())
 
-    dialog.handleInput('3')
-    dialog.handleInput('\r')
+    dialog.handleAction('surface.select-3')
+    dialog.handleAction('surface.confirm')
 
     expect(confirm).toHaveBeenCalledWith('code-only')
   })
@@ -102,12 +102,12 @@ describe('RewindPointDialog', () => {
 
     expect(dialog.render(80).join('\n')).toContain('› third')
     expect(dialog.render(80).join('\n')).toContain('No AI file edits · 1 unsupported')
-    dialog.handleInput('\u001b[A')
+    dialog.handleAction('surface.previous')
     expect(dialog.render(80).join('\n')).toContain('2 AI-edited files this turn · 2 images · 1 memory update')
-    dialog.handleInput('\r')
+    dialog.handleAction('surface.confirm')
     expect(select).toHaveBeenCalledWith(summaries[1])
 
-    dialog.handleInput('\u001b')
+    dialog.handleAction('surface.back')
     expect(cancel).toHaveBeenCalledOnce()
   })
 

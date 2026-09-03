@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { WorkspaceMutation } from '../../src/rewind/index.ts'
-import { planWorkspaceContent } from '../../src/rewind/domain/planner.ts'
+import type { WorkspaceMutation } from '../../src/modules/rewind/index.ts'
+import { planWorkspaceContent } from '../../src/modules/rewind/domain/planner.ts'
 
 function mutation(before: string | null, after: string): Extract<WorkspaceMutation, { kind: 'reversible' }> {
   return {

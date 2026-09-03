@@ -42,7 +42,8 @@ describe('TerminalCommandDirectory', () => {
       name: 'status',
       description: 'Terminal status',
       handler: vi.fn(),
-    }], host.source, changed)
+    }], host.source)
+    directory.subscribe(changed)
 
     expect(directory.setSession('session-command' as SessionSummary['sessionId'])).toBe(true)
 
@@ -91,7 +92,6 @@ describe('TerminalCommandDirectory', () => {
     const directory = new TerminalCommandDirectory(
       [],
       host.source,
-      undefined,
       [{ name: 'permission', onBare: picker, afterHostSuccess: persist }],
     )
     const sessionId = 'session-command' as SessionSummary['sessionId']
@@ -119,7 +119,6 @@ describe('TerminalCommandDirectory', () => {
     const directory = new TerminalCommandDirectory(
       [],
       host.source,
-      undefined,
       [{ name: 'permission', onBare: vi.fn(), afterHostSuccess: persist }],
     )
     directory.setSession('session-command' as SessionSummary['sessionId'])
@@ -137,7 +136,8 @@ describe('TerminalCommandDirectory', () => {
       aliases: ['trace'],
       description: 'Terminal trace',
       handler: vi.fn(),
-    }], host.source, changed)
+    }], host.source)
+    directory.subscribe(changed)
     expect(directory.setSession('session-command' as SessionSummary['sessionId'])).toBe(true)
     expect(directory.descriptors.map(command => command.name)).toEqual(['trajectory'])
     expect(directory.resolutionNames).toEqual(['trajectory', 'trace'])

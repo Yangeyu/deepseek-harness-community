@@ -11,7 +11,7 @@ import {
   MemoryRewindParticipant,
   type RewindPointInput,
   RewindService,
-} from '../../src/rewind/index.ts'
+} from '../../src/modules/rewind/index.ts'
 import { TestRewindConversationHistory } from './history-fixture.ts'
 
 const temporaryDirectories: string[] = []

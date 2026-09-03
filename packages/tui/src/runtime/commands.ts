@@ -58,6 +58,7 @@ export class TerminalCommandDirectory {
   private readonly localByName = new Map<string, TerminalCommandDefinition>()
   private readonly decorations = new Map<string, TerminalCommandDecoration>()
   private readonly executions = new Set<AbortController>()
+  private readonly listeners = new Set<() => void>()
   private readonly removeHostListener: () => void
   private sessionId: SessionId | undefined
   private host: TerminalCommandDescriptor[] = []
@@ -66,7 +67,6 @@ export class TerminalCommandDirectory {
   constructor(
     private readonly local: readonly TerminalCommandDefinition[],
     private readonly source?: HostCommandSource,
-    private readonly onChange: () => void = () => {},
     decorations: readonly TerminalCommandDecoration[] = [],
   ) {
     for (const definition of local) {
@@ -75,7 +75,7 @@ export class TerminalCommandDirectory {
     }
     for (const decoration of decorations) this.decorations.set(decoration.name.toLowerCase(), decoration)
     this.removeHostListener = source?.subscribe(() => {
-      if (this.refreshHost()) this.onChange()
+      if (this.refreshHost()) this.notify()
     }) ?? (() => {})
     this.refreshHost()
   }
@@ -103,6 +103,11 @@ export class TerminalCommandDirectory {
 
   has(name: string): boolean {
     return this.resolutionNames.includes(name.toLowerCase())
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
   }
 
   /** Whether a resolution name executes through the Host source rather than a local handler. */
@@ -175,6 +180,7 @@ export class TerminalCommandDirectory {
   dispose(): void {
     this.abortExecutions()
     this.removeHostListener()
+    this.listeners.clear()
   }
 
   private abortExecutions(): void {
@@ -195,5 +201,9 @@ export class TerminalCommandDirectory {
     this.host = next
     this.signature = signature
     return true
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) listener()
   }
 }

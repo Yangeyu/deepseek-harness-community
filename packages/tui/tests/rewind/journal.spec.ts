@@ -1,7 +1,7 @@
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { describe, expect, it } from 'vitest'
-import type { RewindPointInput } from '../../src/rewind/index.ts'
-import { RewindJournal } from '../../src/rewind/domain/journal.ts'
+import type { RewindPointInput } from '../../src/modules/rewind/index.ts'
+import { RewindJournal } from '../../src/modules/rewind/domain/journal.ts'
 
 function journal(history = 2): RewindJournal {
   return new RewindJournal({ history, maxMutationBytes: 100, maxSessionBytes: 200 })

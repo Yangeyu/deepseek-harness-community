@@ -33,11 +33,13 @@ permissions · vision  ->  goal · todos · agents -> changes · trace   -> skil
 ```
 
 The TUI is already strong in the middle of one session: streaming output,
-visual evidence, tool and diff rendering, memory, and a unified execution
-lifecycle beneath transcript and trajectory inspection. The next milestone
-rebuilds Rewind around source-attributed mutations and conflict-aware recovery,
-then completes the session, parallel-work, review, and reuse loops around that
-execution core.
+visual evidence, tool and diff rendering, memory, a unified execution read
+model, and source-attributed Rewind. Its client foundation now has explicit
+Application and Session-epoch lifecycles, fresh Session feature sets, semantic
+input dispatch, one Surface host, and one renderer snapshot boundary. The next
+product work completes the session, parallel-work, review, and reuse loops
+around that execution core; it must extend those owners rather than rebuilding
+another control plane inside a feature.
 
 ## Milestones
 
@@ -79,12 +81,12 @@ execution core.
 ### v0.1.8 — Unified Execution Lifecycle
 
 - Replace independent Transcript and Trajectory event pairing with one typed,
-  replayable lifecycle snapshot for Turn, Step, Thought, Tool, Command, and
+  replayable execution snapshot for Turn, Step, Thought, Tool, Command, and
   Vision execution.
 - Use stable semantic identities, monotonic transitions, recorded timing,
   parent settlement, and bounded diagnostics across live streaming, resume,
   and older-history prepend.
-- Keep pre-admission runtime activity in a generation-scoped overlay that
+- Keep pre-admission runtime activity in a Session-epoch-scoped overlay that
   reconciles with durable evidence without creating fake Session events.
 - Make Diff a Tool-result presentation facet and Activity an adjacency
   projection so neither owns a second lifecycle.
@@ -100,7 +102,7 @@ execution core.
 
 - Replace TUI-owned whole-worktree checkpoint policy with one transport-neutral
   Rewind domain consumed through a narrow application port.
-- Project each accepted human `user/message` into the existing TUI lifecycle as
+- Project each accepted human `user/message` into the TUI execution read model as
   one stable Prompt node; use the same node for text, native-image, and
   proxy-image turns, classify turn-entry versus in-turn placement, and retain
   Vision evidence as a child contribution that enriches the Prompt's durable
@@ -124,6 +126,11 @@ execution core.
   state, compatibility bridges, and TUI-owned Git restore code after cutover.
 
 ### v0.1.10 — Session Center
+
+The current foundation already exposes `/resume` through the shared Surface
+host and shows root-session ids with working directory, durable title, and fork
+lineage. That is navigation scaffolding, not completion of this milestone; the
+search, management, and temporal-navigation capabilities below remain planned.
 
 - Upgrade resume selection with durable titles, workspace and activity
   metadata, running state, and parent/child lineage.
