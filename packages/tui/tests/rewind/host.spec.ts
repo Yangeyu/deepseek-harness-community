@@ -70,7 +70,7 @@ describe('decodeWorkspaceMutation', () => {
         session: {
           id: 'session-1',
           header: { cwd: '/workspace' },
-          events: [{
+          snapshotEvents: () => [{
             type: 'tool/call',
             seq: 3,
             time: 3,

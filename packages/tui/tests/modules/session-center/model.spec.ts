@@ -1,4 +1,4 @@
-import type { SessionSummary } from '@deepseek-ai/dsh-host-apiproxy'
+import type { SessionSummary } from '../../../src/runtime/session/contracts.ts'
 import { describe, expect, it } from 'vitest'
 import {
   formatSessionList,

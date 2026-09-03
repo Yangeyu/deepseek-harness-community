@@ -2,7 +2,7 @@
 
 import { highlight, supportsLanguage, type Theme as SyntaxTheme } from 'cli-highlight'
 import { diffLines } from 'diff'
-import type { ToolResultView } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ToolResultView } from '../../runtime/session/contracts.ts'
 import type { TuiTheme } from '../../presentation/primitives/theme.ts'
 
 type FileDiff = Extract<ToolResultView, { card: 'diff' }>['diffs'][number]

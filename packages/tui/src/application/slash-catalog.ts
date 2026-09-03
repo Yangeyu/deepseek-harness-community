@@ -1,4 +1,4 @@
-import type { SkillEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { SkillEntry } from '../runtime/session/contracts.ts'
 import type { TerminalCommandDescriptor } from '../runtime/commands.ts'
 
 export type SlashCandidate =

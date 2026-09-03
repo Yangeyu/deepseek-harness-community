@@ -233,14 +233,15 @@ describe('TrajectoryView', () => {
   })
 
   it('keeps duration visible while omitting verbose tool operations from a narrow ledger row', () => {
-    const entries = toolEvents(true)
-    const call = entries[0]
-    if (call?.event.type === 'tool/call') {
-      call.view = {
+    const entries = toolEvents(true).map((entry, index) => index === 0
+      ? {
+          ...entry,
+          view: {
         for: 'call',
         view: { card: 'terminal', title: 'a very long tool title that cannot fit in a narrow terminal row' },
-      }
-    }
+          },
+        } as typeof entry
+      : entry)
     const view = new TrajectoryView(
       state(entries),
       () => 10,
@@ -362,7 +363,7 @@ describe('TrajectoryView', () => {
           },
         },
       },
-    }] as RuntimeSessionSnapshot['events']
+    }] as unknown as RuntimeSessionSnapshot['events']
     const view = new TrajectoryView(
       state(entries),
       () => 24,

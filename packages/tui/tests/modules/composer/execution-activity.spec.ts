@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry } from '../../../src/runtime/session/contracts.ts'
 import { buildExecutionSnapshot } from '../../../src/runtime/execution/projection/index.ts'
 import { previousTurnDuration } from '../../../src/modules/composer/execution-activity.ts'
 import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manager.ts'

@@ -7,7 +7,7 @@ import { rewindPointFromPrompt } from './prompt.ts'
 /** Rebuild every turn-entry checkpoint from the canonical append-only Session log. */
 export function rewindPointsFromSession(session: Session): readonly RewindPointInput[] {
   const points = new Map<string, RewindPointInput>()
-  for (const event of session.events) {
+  for (const event of session.snapshotEvents()) {
     const prompt = projectPromptNode(session, event)
     if (prompt === undefined) continue
     const point = rewindPointFromPrompt(prompt)

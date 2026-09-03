@@ -6,7 +6,7 @@ import { emptyRuntimeSessionSnapshot } from '../../src/runtime/session/runtime.t
 
 function fixture() {
   let application = { phase: 'running' as const, active: true }
-  let session = emptyRuntimeSessionSnapshot('/workspace', { mux: 'online', host: 'online' }, 0)
+  let session = emptyRuntimeSessionSnapshot('/workspace', { events: 'online', control: 'online' }, 0)
   let composer: ComposerSnapshot = {
     text: '',
     attachments: [],

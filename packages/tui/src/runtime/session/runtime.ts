@@ -1,10 +1,9 @@
 import type {
   HistoryEntry,
-  ModelSelection,
+  ModelCatalog,
   QueuedInboxItem,
-  RpcId,
-  SessionModels,
-} from '@deepseek-ai/dsh-host-apiproxy'
+  SessionRequestId,
+} from './contracts.ts'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import {
   buildExecutionSnapshot,
@@ -63,7 +62,7 @@ export function emptyRuntimeSessionSnapshot(
       sessionRunning: false,
       runtimeActivities: [],
     }),
-    models: undefined,
+    modelCatalog: undefined,
     projections: {},
     notice: undefined,
     error: undefined,
@@ -76,7 +75,7 @@ export class SessionRuntime {
   private readonly submissions = new SubmissionTracker()
   private readonly store: AtomicSnapshotStore<RuntimeSessionSnapshot>
   private projectionSeqs: Record<string, number> = {}
-  private resyncTask: Promise<void> | undefined
+  private followCursor: number | undefined
 
   constructor(
     private readonly scope: LifecycleScope,
@@ -95,7 +94,7 @@ export class SessionRuntime {
       historyHasMore: false,
       queue: [],
       pendingSubmissions: [],
-      models: undefined,
+      modelCatalog: undefined,
       projections: {},
       notice: undefined,
       error: undefined,
@@ -104,6 +103,14 @@ export class SessionRuntime {
 
   get active(): boolean {
     return this.scope.active
+  }
+
+  get signal(): AbortSignal {
+    return this.scope.signal
+  }
+
+  get historyCursor(): number | undefined {
+    return this.followCursor
   }
 
   get current(): Readonly<RuntimeSessionSnapshot> {
@@ -151,15 +158,8 @@ export class SessionRuntime {
     this.update(data => ({ ...data, runState }))
   }
 
-  setModels(models: SessionModels): void {
-    this.update(data => ({ ...data, models }))
-  }
-
-  selectModel(selected: ModelSelection): void {
-    this.update(data => ({
-      ...data,
-      models: data.models === undefined ? undefined : { ...data.models, current: selected },
-    }))
+  setModelCatalog(modelCatalog: ModelCatalog): void {
+    this.update(data => ({ ...data, modelCatalog }))
   }
 
   setQueue(queue: readonly QueuedInboxItem[]): void {
@@ -179,9 +179,9 @@ export class SessionRuntime {
     this.publishSubmissions()
   }
 
-  acceptSubmission(key: number, rpcId: RpcId): void {
+  acceptSubmission(key: number, requestId: SessionRequestId): void {
     if (!this.active) return
-    this.submissions.accept(key, rpcId)
+    this.submissions.accept(key, requestId)
     this.publishSubmissions()
   }
 
@@ -197,8 +197,9 @@ export class SessionRuntime {
     this.publishSubmissions()
   }
 
-  hydrate(page: SessionHistoryPage): void {
+  hydrate(page: SessionHistoryPage, cursor: number): void {
     if (!this.active) return
+    this.followCursor = cursor
     this.submissions.observeEvents(page.events)
     this.update(data => ({
       ...data,
@@ -252,16 +253,12 @@ export class SessionRuntime {
     }))
   }
 
-  resync(load: () => Promise<SessionHistoryPage>): Promise<void> {
-    if (this.resyncTask !== undefined) return this.resyncTask
-    const task = (async () => {
-      const page = await load()
-      this.hydrate(page)
-    })().finally(() => {
-      if (this.resyncTask === task) this.resyncTask = undefined
-    })
-    this.resyncTask = task
-    return task
+  applyProjectionBaseline(baseline: SessionProjectionBaseline): void {
+    if (!this.active) return
+    this.update(data => ({
+      ...data,
+      projections: this.mergeProjectionBaseline(data.projections, baseline),
+    }))
   }
 
   private mergeProjectionBaseline(

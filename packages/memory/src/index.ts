@@ -8,7 +8,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { PERSONA_ORDER, PERSONA_SECTION } from '@deepseek-ai/dsh-system-prompt'
+import { PERSONA_SECTION } from '@deepseek-ai/dsh-system-prompt'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
   MemoryFileStore,
@@ -188,7 +188,7 @@ function escapeMemoryTag(value: string): string {
 
 function latestPublishedMemory(agent: Agent): string | undefined {
   const surface = new Set(agent.session.surface.nodes)
-  const event = agent.session.events.findLast(candidate => candidate.type === 'user/message'
+  const event = agent.session.snapshotEvents().findLast(candidate => candidate.type === 'user/message'
     && surface.has(candidate.seq)
     && candidate.data.source.kind === 'plugin'
     && candidate.data.source.plugin === PLUGIN_NAME)
@@ -212,7 +212,7 @@ function renderContext(global: MemoryDocument, project: MemoryDocument, maxBytes
 }
 
 function latestTurn(agent: Agent): number | undefined {
-  const event = agent.session.events.findLast(candidate => candidate.type === 'turn/start')
+  const event = agent.session.snapshotEvents().findLast(candidate => candidate.type === 'turn/start')
   return event?.type === 'turn/start' ? event.data.turn : undefined
 }
 
@@ -224,10 +224,11 @@ function sourceFor(agent: Agent, childSources: ReadonlyMap<string, MutationSourc
 }
 
 function transcriptForTurn(session: Session, turn: number, maxBytes: number): string | undefined {
-  const start = session.events.findIndex(event => event.type === 'turn/start' && event.data.turn === turn)
+  const events = session.snapshotEvents()
+  const start = events.findIndex(event => event.type === 'turn/start' && event.data.turn === turn)
   if (start === -1) return undefined
   const rows: Array<{ role: 'user' | 'assistant'; text: string }> = []
-  for (const event of session.events.slice(start + 1)) {
+  for (const event of events.slice(start + 1)) {
     if (event.type === 'turn/end' && event.data.turn === turn) break
     if (event.type === 'user/message' && event.data.source.kind === 'user') {
       const text = textOf(event.data.content)
@@ -671,7 +672,7 @@ export class ProjectMemoryService extends Service {
         childCtx.tools.restrict({ allow: ['memory_read', 'memory_write', 'memory_forget'] })
         childCtx.systemPrompt.section({
           name: PERSONA_SECTION,
-          order: PERSONA_ORDER,
+          order: childCtx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA'),
           text: 'You are a quiet memory maintenance agent. Extract only durable, user-supported memory and use the provided memory tools. Reconcile new facts with the existing memory before recording: prefer updating or replacing entries over duplicating or contradicting them. Do not perform project work or answer the original user.',
         })
       },

@@ -1,5 +1,5 @@
 import type { Component } from '@earendil-works/pi-tui'
-import type { SessionSummary } from '@deepseek-ai/dsh-host-apiproxy'
+import type { SessionSummary } from '../../runtime/session/contracts.ts'
 import { ChoiceDialog } from '../../presentation/primitives/widgets/dialogs.ts'
 import type { TuiTheme } from '../../presentation/primitives/theme.ts'
 import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'

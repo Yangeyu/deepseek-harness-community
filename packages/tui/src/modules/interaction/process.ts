@@ -47,17 +47,17 @@ export interface InteractionSnapshot {
 }
 
 function approvalKey(prompt: ApprovalPrompt): string {
-  return `approval:${String(prompt.sessionId)}:${String(prompt.approvalId)}`
+  return `approval:${String(prompt.sessionId)}:${prompt.requestId}`
 }
 
 function questionKey(prompt: QuestionPrompt): string {
-  return `question:${String(prompt.sessionId)}:${String(prompt.rpcId)}`
+  return `question:${String(prompt.sessionId)}:${prompt.requestId}`
 }
 
 function resolutionKey(resolution: InteractionResolution): string {
   return resolution.type === 'approval/resolved'
-    ? `approval:${String(resolution.sessionId)}:${String(resolution.approvalId)}`
-    : `question:${String(resolution.sessionId)}:${String(resolution.questionRpcId)}`
+    ? `approval:${String(resolution.sessionId)}:${resolution.requestId}`
+    : `question:${String(resolution.sessionId)}:${resolution.requestId}`
 }
 
 function questionTitle(question: QuestionPrompt['questions'][number]): string {

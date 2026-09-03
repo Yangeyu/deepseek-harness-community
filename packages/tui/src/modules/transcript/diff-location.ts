@@ -1,7 +1,7 @@
 /** Resolve absolute line numbers for applied diff hunks against the live workspace. */
 
 import { isAbsolute, resolve } from 'node:path'
-import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry } from '../../runtime/session/contracts.ts'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
 import { appendedHistoryEntries } from '../../runtime/session/event-window.ts'
 

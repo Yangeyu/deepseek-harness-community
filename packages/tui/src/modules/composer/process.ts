@@ -2,7 +2,7 @@ import type {
   AutocompleteItem,
   SlashCommand,
 } from '@earendil-works/pi-tui'
-import type { ModelSelection } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ModelSelection } from '../../runtime/session/contracts.ts'
 import type { TuiTheme } from '../../presentation/primitives/theme.ts'
 import { AttachmentRail } from './view/attachment-rail.ts'
 import { ComposerEditorFrame } from './view/editor-frame.ts'
@@ -10,6 +10,7 @@ import { AtomicSnapshotStore, type SnapshotListener } from '../../runtime/dispat
 import { ResourceSlot } from '../../runtime/lifecycle/resource-slot.ts'
 import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
+import { selectedModel } from '../../runtime/session/model-selection.ts'
 import type { PreparedPrompt, PromptPreparationContext } from '../../runtime/session/prompt.ts'
 import { ComposerAutocompleteProvider, type WorkspacePathSource } from './autocomplete.ts'
 import {
@@ -319,7 +320,7 @@ export class ComposerProcess {
   private async submitImages(text: string, mode: 'queue' | 'steer'): Promise<void> {
     const coordinator = this.coordinator
     const state = this.options.session.current
-    const selection: ModelSelection | undefined = state.models?.current
+    const selection: ModelSelection | undefined = selectedModel(state.modelCatalog, state.projections)
     if (coordinator === undefined) throw new Error('Vision is unavailable in this profile.')
     if (state.sessionId === undefined || selection === undefined) {
       throw new Error('Wait for the active session and model before submitting images.')

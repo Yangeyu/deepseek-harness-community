@@ -11,7 +11,7 @@ import {
   stat,
 } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
-import { isJsonValue } from '@deepseek-ai/dsh-session'
+import { isJsonValue } from '@deepseek-ai/dsh-util-values'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type {
   RewindEffectPayload,

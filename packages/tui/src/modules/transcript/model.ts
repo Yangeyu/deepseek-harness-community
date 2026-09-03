@@ -2,7 +2,7 @@ import type {
   HistoryEntry,
   ToolCallView,
   ToolResultView,
-} from '@deepseek-ai/dsh-host-apiproxy'
+} from '../../runtime/session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
 import {
@@ -582,23 +582,22 @@ export function buildTranscriptItems(
   }
 
   const grouped = groupTranscriptActivity(items)
-  const visibleQueueRpcIds = new Set<string>()
+  const visibleQueueRequestIds = new Set<string>()
   for (const [index, item] of state.queue.entries()) {
     if (item.placement === 'context') continue
     const body = promptTextFromContent(item.message.content)
     if (body.trim() === '') continue
-    const source = item.message.source
-    if (source.kind === 'user' && 'rpcId' in source) visibleQueueRpcIds.add(String(source.rpcId))
+    if (item.rpcId !== undefined) visibleQueueRequestIds.add(String(item.rpcId))
     grouped.push({
       kind: 'prompt',
-      key: `queue:${source.kind === 'user' && 'rpcId' in source ? String(source.rpcId) : String(index)}`,
+      key: `queue:${item.rpcId === undefined ? String(index) : String(item.rpcId)}`,
       body,
       promptStatus: item.placement === 'steering' ? 'Steering next step…' : 'Queued',
     })
   }
   for (const submission of state.pendingSubmissions) {
     const promptVisible = submission.durablePromptObserved === true
-      || (submission.rpcId !== undefined && visibleQueueRpcIds.has(String(submission.rpcId)))
+      || (submission.requestId !== undefined && visibleQueueRequestIds.has(String(submission.requestId)))
     if (!promptVisible) {
       grouped.push({
         kind: 'prompt',

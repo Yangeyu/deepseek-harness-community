@@ -17,29 +17,16 @@
     # yaml-language-server-disable Unresolved tag
     mode: !!js process.env.DSH_TOOLS_MODE
 
-# Keep the official model-tool contract while delegating provider policy to one
-# live settings-backed search adapter. Page extraction remains independent.
+# Keep the official search/fetch tool contract while delegating search policy
+# to one live settings-backed adapter. Safe HTTP fetching stays upstream-owned.
 - id: web
   config:
     searchProvider: community-web
+    fetchProvider: http
 
 - insert:
     - id: code-runtime
       name: '@deepseek-ai/dsh-code-runtime-worker-thread'
-
-    - id: storage
-      name: '@deepseek-ai/dsh-storage'
-
-    - id: storage-json
-      name: '@deepseek-ai/dsh-storage-json'
-      config:
-        # yaml-language-server-disable Unresolved tag
-        root: !!js dshHomePath('storages')
-
-    - id: storage-domain
-      name: '@deepseek-ai/dsh-storage-domain'
-      config:
-        backend: json
 
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
@@ -120,12 +107,6 @@
         tavilyExtractDepth: basic
         tavilyTimeoutSeconds: 30
 
-    - id: session-projection-cache
-      name: '@deepseek-ai/dsh-session-projection-cache'
-      config:
-        writeEveryEvents: 200
-        writeIntervalMs: 5000
-
     # Web's composer statistics read this whole-log projection. Keep the TUI
     # on the same counts and timing source instead of folding its history page.
     - id: session-stats
@@ -134,8 +115,11 @@
     - id: directory-picker
       name: '@deepseek-ai/dsh-host-directory-picker-browse'
 
-    - id: api-gateway
-      name: '@deepseek-ai/dsh-host-apiproxy'
+    # The v0.1.2 Session Controller is the in-process Host boundary. The TUI
+    # adapts it to consumer-owned ports; browser Connection/Remote state is not
+    # duplicated inside this terminal process.
+    - id: session-controller
+      name: '@deepseek-ai/dsh-api-session-controller'
 
     - id: cordis-host-runner
       name: '@deepseek-ai/dsh-cordis-host-runner'

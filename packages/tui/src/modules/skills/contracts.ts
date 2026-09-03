@@ -1,4 +1,4 @@
-import type { SessionSummary, SkillEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { SessionSummary, SkillEntry } from '../../runtime/session/contracts.ts'
 
 export type SkillSessionId = SessionSummary['sessionId']
 

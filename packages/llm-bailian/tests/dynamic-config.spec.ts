@@ -4,12 +4,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { FileSettingsProvider } from '@deepseek-ai/dsh-settings-file'
 import * as Bailian from '../src/index.ts'
 import type { BailianModelConfig } from '../src/config.ts'
 
-const NS = settingsNamespace('llm-bailian')
+const NS = 'llm-bailian'
 const cleanups: Array<() => Promise<void>> = []
 
 function model(name?: string): BailianModelConfig {

@@ -7,7 +7,7 @@ import {
   type ImageAttachmentRef,
   type ImageRequestPolicy,
 } from '@deepseek-ai/dsh-attachment'
-import { CallId, createAssistantMessage, createToolResultMessage, createUserMessage, ReasoningEffortId, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createToolResultMessage, createUserMessage, ReasoningEffortId, type StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
 import {
   BailianAdapter,
   BAILIAN_PROVIDER_ID,
@@ -495,14 +495,14 @@ describe('Bailian wire contract', () => {
     const messages = [
       createAssistantMessage({
         content: [
-          { type: 'tool-call' as const, id: CallId('call-1'), name: 'read_image', arguments: '{"file":"img1.png"}' },
-          { type: 'tool-call' as const, id: CallId('call-2'), name: 'read_image', arguments: '{"file":"img2.png"}' },
-          { type: 'tool-call' as const, id: CallId('call-3'), name: 'read_image', arguments: '{"file":"img3.png"}' },
+          { type: 'tool-call' as const, id: ToolCallId('call-1'), name: 'read_image', arguments: '{"file":"img1.png"}' },
+          { type: 'tool-call' as const, id: ToolCallId('call-2'), name: 'read_image', arguments: '{"file":"img2.png"}' },
+          { type: 'tool-call' as const, id: ToolCallId('call-3'), name: 'read_image', arguments: '{"file":"img3.png"}' },
         ],
         source: { provider: 'test', model: 'test' },
       }),
       createToolResultMessage({
-        callId: CallId('call-1'),
+        callId: ToolCallId('call-1'),
         content: [
           { type: 'text' as const, text: 'Image 1 data' },
           { type: 'image' as const, attachment: imageRef1 },
@@ -510,7 +510,7 @@ describe('Bailian wire contract', () => {
         isError: false,
       }),
       createToolResultMessage({
-        callId: CallId('call-2'),
+        callId: ToolCallId('call-2'),
         content: [
           { type: 'text' as const, text: 'Image 2 data' },
           { type: 'image' as const, attachment: imageRef2 },
@@ -518,7 +518,7 @@ describe('Bailian wire contract', () => {
         isError: false,
       }),
       createToolResultMessage({
-        callId: CallId('call-3'),
+        callId: ToolCallId('call-3'),
         content: [
           { type: 'text' as const, text: 'Image 3 data' },
           { type: 'image' as const, attachment: imageRef3 },

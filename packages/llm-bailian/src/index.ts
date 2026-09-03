@@ -1,7 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
+import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
 import { BailianAdapter } from './adapter.ts'
 import {
   assertBailianConfig,
@@ -40,7 +41,7 @@ export {
 } from './config.ts'
 export const name = 'llm-bailian'
 export const inject = ['llm']
-export const BAILIAN_SETTINGS_NAMESPACE = settingsNamespace('llm-bailian')
+export const BAILIAN_SETTINGS_NAMESPACE = 'llm-bailian'
 
 export function apply(ctx: Context, config: Config): void {
   let current = () => config
@@ -100,9 +101,11 @@ export function apply(ctx: Context, config: Config): void {
     registration.replace([BAILIAN_PROVIDER_ID])
     registeredPolicy = policy
   }
-  installSettingsSection(ctx, BAILIAN_SETTINGS_NAMESPACE, Config, config, {
-    validate: assertBailianConfig,
-    setSource: source => { current = source },
-    onChange: refreshRegistration,
+  ctx.inject(['settings'], (settingsCtx) => {
+    settingsCtx.settings.installSection(ctx, BAILIAN_SETTINGS_NAMESPACE, Config, config, {
+      validate: assertBailianConfig,
+      setSource: source => { current = source },
+      onChange: refreshRegistration,
+    })
   })
 }

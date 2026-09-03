@@ -24,13 +24,16 @@ function promptText(event: UserMessageEvent): string {
   return '[Message]'
 }
 
-function promptEventFor(session: Session, event: SessionEvent): AcceptedPromptEvent | undefined {
+function promptEventFor(
+  events: readonly SessionEvent[],
+  event: SessionEvent,
+): AcceptedPromptEvent | undefined {
   if (isAcceptedPromptEvent(event)) return event
   if (event.type !== 'user/message'
     || event.surfaceOp !== 'append'
     || event.data.source.kind !== 'community-vision') return undefined
   const promptId = event.data.source.promptId
-  return session.events.find((candidate): candidate is AcceptedPromptEvent => (
+  return events.find((candidate): candidate is AcceptedPromptEvent => (
     candidate.seq < event.seq
     && isAcceptedPromptEvent(candidate)
     && String(candidate.data.id) === promptId
@@ -38,13 +41,13 @@ function promptEventFor(session: Session, event: SessionEvent): AcceptedPromptEv
 }
 
 function promptAttachments(
-  session: Session,
+  events: readonly SessionEvent[],
   prompt: AcceptedPromptEvent,
   throughSeq: number,
 ): ImageAttachmentRef[] {
   const refs = [
     ...prompt.data.content.flatMap(block => block.type === 'image' ? [block.attachment] : []),
-    ...session.events.flatMap((candidate) => {
+    ...events.flatMap((candidate) => {
       if (candidate.seq <= prompt.seq
         || candidate.seq > throughSeq
         || candidate.type !== 'user/message'
@@ -64,14 +67,15 @@ export function projectPromptNode(
   session: Session,
   event: SessionEvent,
 ): PromptNode | undefined {
-  const prompt = promptEventFor(session, event)
+  const events = session.snapshotEvents()
+  const prompt = promptEventFor(events, event)
   if (prompt === undefined) return undefined
 
-  const start = session.events.findLast(candidate => (
+  const start = events.findLast(candidate => (
     candidate.seq < prompt.seq && candidate.type === 'turn/start'
   ))
   if (start?.type !== 'turn/start') return undefined
-  const closed = session.events.some(candidate => (
+  const closed = events.some(candidate => (
     candidate.seq > start.seq
     && candidate.seq <= event.seq
     && candidate.type === 'turn/end'
@@ -79,15 +83,15 @@ export function projectPromptNode(
   ))
   if (closed) return undefined
 
-  const priorPrompt = session.events.some(candidate => (
+  const priorPrompt = events.some(candidate => (
     candidate.seq > start.seq
     && candidate.seq < prompt.seq
     && isAcceptedPromptEvent(candidate)
   ))
-  const previous = session.events.findLast(candidate => (
+  const previous = events.findLast(candidate => (
     candidate.seq < start.seq && candidate.type === 'turn/end'
   ))
-  const attachments = promptAttachments(session, prompt, event.seq)
+  const attachments = promptAttachments(events, prompt, event.seq)
   return {
     promptId: String(prompt.data.id),
     sessionId: String(session.id),

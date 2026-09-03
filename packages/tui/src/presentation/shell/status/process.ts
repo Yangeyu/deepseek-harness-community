@@ -5,6 +5,7 @@ import { goalTaskSummary } from '../../../modules/task/model.ts'
 import { ResourceSlot } from '../../../runtime/lifecycle/resource-slot.ts'
 import type { LifecycleScope } from '../../../runtime/lifecycle/scope.ts'
 import type { RuntimeSessionSnapshot } from '../../../runtime/session/snapshot.ts'
+import { selectedModel } from '../../../runtime/session/model-selection.ts'
 import { formatDuration } from '../../primitives/duration.ts'
 import { spinnerGlyph } from '../../primitives/spinner.ts'
 import type { TuiTheme } from '../../primitives/theme.ts'
@@ -92,7 +93,7 @@ export class ShellStatusProcess {
   }
 
   private updateFooter(state: Readonly<RuntimeSessionSnapshot>): void {
-    const selection = state.models?.current
+    const selection = selectedModel(state.modelCatalog, state.projections)
     const model = selection === undefined
       ? 'model unavailable'
       : `${selection.provider}/${selection.model}${selection.reasoningEffort === undefined ? '' : ` · ${selection.reasoningEffort}`}`
@@ -183,16 +184,13 @@ export class ShellStatusProcess {
     const lastTurn = previousTurn === undefined
       ? ''
       : ` · last ${formatDuration(previousTurn)}`
-    const muxReady = state.connection.mux === 'online'
-    const hostFailed = state.connection.host === 'reconnecting' || state.connection.host === 'offline'
-    const ready = muxReady && !hostFailed
-    const hostPending = state.connection.host === 'connecting' ? ' · host awaiting activity' : ''
+    const ready = state.connection.events === 'online' && state.connection.control === 'online'
     const connectionLabel = [
-      state.connection.mux === 'online' ? undefined : `mux ${state.connection.mux}`,
-      state.connection.host === 'online' ? undefined : `host ${state.connection.host}`,
+      state.connection.events === 'online' ? undefined : `events ${state.connection.events}`,
+      state.connection.control === 'online' ? undefined : `control ${state.connection.control}`,
     ].filter((value): value is string => value !== undefined).join(' · ')
     this.status.setText(ready
-      ? `${this.options.theme.bold(this.options.theme.success('Ready'))}${this.options.theme.secondary(`${hostPending}${lastTurn}${policyStatus}${history}`)}`
+      ? `${this.options.theme.bold(this.options.theme.success('Ready'))}${this.options.theme.secondary(`${lastTurn}${policyStatus}${history}`)}`
       : this.options.theme.warning(`${connectionLabel === '' ? 'Connecting' : connectionLabel}…${history}`))
   }
 }

@@ -1,4 +1,4 @@
-import type { ModelSelection } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ModelSelection } from '../../../runtime/session/contracts.ts'
 import type {
   ResolvedImageRoute,
   ResolvedProxyImageRoute,
@@ -108,13 +108,13 @@ export class AttachmentCoordinator {
         abort.signal.throwIfAborted()
         return {
           kind: 'admission',
-          commit: async ({ rpcId, clientTimeZone }) => {
+          commit: async ({ requestId, clientTimeZone }) => {
             abort.signal.throwIfAborted()
             await this.vision.admit({
               analysis,
               promptText: prompt.text,
               mode,
-              rpcId: String(rpcId),
+              rpcId: String(requestId),
               ...clientTimeZone === undefined ? {} : { clientTimeZone },
             })
             active.restoreDrafts = false

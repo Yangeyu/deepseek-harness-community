@@ -1,10 +1,10 @@
-import type { SessionModels } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ModelDirectorySnapshot } from '../../../../src/modules/configuration/contracts.ts'
 import { visibleWidth } from '@earendil-works/pi-tui'
 import { describe, expect, it, vi } from 'vitest'
 import { ConfigView } from '../../../../src/modules/configuration/view/config-view.ts'
 import { createTheme } from '../../../../src/presentation/primitives/theme.ts'
 
-function models(): SessionModels {
+function models(): ModelDirectorySnapshot {
   return {
     current: { provider: 'deepseek', model: 'v4', reasoningEffort: 'max' },
     routable: true,

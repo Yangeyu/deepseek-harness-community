@@ -1,5 +1,4 @@
 import { ProcessTerminal, type Terminal } from '@earendil-works/pi-tui'
-import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
 import type { ResolvedConfig } from './config.ts'
 import type { TuiStartupOptions } from './cli.ts'
 import type { TuiRuntime } from './contracts.ts'
@@ -10,9 +9,9 @@ import { CommandRouter } from './command-router.ts'
 import { InputCoordinator } from './input-coordinator.ts'
 import { createLocalCommands } from './local-commands.ts'
 import { createSessionFeatureSet } from './create-session-features.ts'
+import type { TuiHostPorts } from './host-ports.ts'
 import { createClipboardTextWriter } from '../infrastructure/clipboard/text-writer.ts'
 import { HarnessModelPort } from '../infrastructure/harness/models.ts'
-import { HarnessSessionTransport } from '../infrastructure/harness/session-transport.ts'
 import { attachTerminalInput } from '../infrastructure/terminal/input-adapter.ts'
 import { watchGitBranch } from '../infrastructure/workspace/git-branch.ts'
 import {
@@ -100,7 +99,7 @@ export interface ApplicationAssembly {
 
 /** Statically compose one terminal application; no feature discovery occurs at runtime. */
 export function createApplication(
-  api: IApiClient,
+  host: TuiHostPorts,
   config: ResolvedConfig,
   runtime: TuiRuntime,
   rewind: RewindPort,
@@ -138,7 +137,8 @@ export function createApplication(
   const renderScheduler = terminalScope.own(new RenderScheduler(() => { tui.requestRender() }))
   const session = new SessionManager(
     lifecycle.scope.fork('session-kernel'),
-    new HarnessSessionTransport(api),
+    host.sessions,
+    host.interactions,
     config.cwd,
     config.historyMessages,
   )
@@ -267,7 +267,7 @@ export function createApplication(
   })
   configuration = new ConfigurationProcess({
     session,
-    models: new HarnessModelPort(api, session),
+    models: new HarnessModelPort(host.sessions, session),
     commands,
     surfaces,
     tui,
@@ -297,7 +297,8 @@ export function createApplication(
   })
 
   const sessionFeatureOptions = {
-    api,
+    skills: host.skills,
+    goals: host.goals,
     runtime,
     terminal,
     tui,
@@ -445,12 +446,12 @@ export function createApplication(
 }
 
 export function createTuiApplication(
-  api: IApiClient,
+  host: TuiHostPorts,
   config: ResolvedConfig,
   runtime: TuiRuntime,
   rewind: RewindPort,
   memory: TuiMemoryPort,
   dependencies: TuiApplicationDependencies = {},
 ): TuiApplication {
-  return createApplication(api, config, runtime, rewind, memory, dependencies).application
+  return createApplication(host, config, runtime, rewind, memory, dependencies).application
 }

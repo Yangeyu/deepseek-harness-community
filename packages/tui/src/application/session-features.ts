@@ -1,4 +1,4 @@
-import type { PromptContentPart } from '@deepseek-ai/dsh-host-apiproxy'
+import type { PromptContentPart } from '../runtime/session/contracts.ts'
 import type { LifecycleScope } from '../runtime/lifecycle/scope.ts'
 import type { SessionOperation } from '../runtime/lifecycle/session-machine.ts'
 import type {

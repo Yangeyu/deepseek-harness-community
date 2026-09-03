@@ -20,20 +20,21 @@
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/schemastery": "^3.18.2",
     "eventsource-parser": "^3.0.6"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/dsh-attachment": "catalog:dsh",
     "@deepseek-ai/dsh-credentials": "catalog:dsh",
     "@deepseek-ai/dsh-launch-environment": "catalog:dsh",
     "@deepseek-ai/dsh-llm": "catalog:dsh",
     "@deepseek-ai/dsh-settings": "catalog:dsh",
-    "@deepseek-ai/dsh-timeout": "catalog:dsh"
+    "@deepseek-ai/dsh-timeout": "catalog:dsh",
+    "@deepseek-ai/dsh-util-values": "catalog:dsh"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/dsh-attachment": "catalog:dsh",
     "@deepseek-ai/dsh-credentials": "catalog:dsh",
     "@deepseek-ai/dsh-launch-environment": "catalog:dsh",
@@ -41,6 +42,7 @@
     "@deepseek-ai/dsh-settings": "catalog:dsh",
     "@deepseek-ai/dsh-settings-file": "catalog:dsh",
     "@deepseek-ai/dsh-timeout": "catalog:dsh",
+    "@deepseek-ai/dsh-util-values": "catalog:dsh",
     "@types/node": "^22.20.0",
     "oxlint": "1.76.0",
     "tsdown": "^0.22.2",

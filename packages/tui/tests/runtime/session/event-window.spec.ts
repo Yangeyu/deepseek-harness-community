@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry } from '../../../src/runtime/session/contracts.ts'
 import { appendedHistoryEntries } from '../../../src/runtime/session/event-window.ts'
 
 function entry(seq: number): HistoryEntry {
@@ -10,7 +10,7 @@ function entry(seq: number): HistoryEntry {
       time: seq,
       data: { turn: seq },
     },
-  }
+  } as unknown as HistoryEntry
 }
 
 describe('appendedHistoryEntries', () => {

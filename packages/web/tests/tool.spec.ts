@@ -1,4 +1,5 @@
-import type { JsonValue, ToolRunContext } from '@deepseek-ai/dsh-tools'
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createWebExtractTool,

@@ -1,5 +1,5 @@
 import type { TUI } from '@earendil-works/pi-tui'
-import type { PromptContentPart } from '@deepseek-ai/dsh-host-apiproxy'
+import type { PromptContentPart } from '../../../src/runtime/session/contracts.ts'
 import type { ResolvedProxyImageRoute, VisionRequest } from '@vascent/deepseek-harness-vision'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ComposerProcess, type ComposerSessionPort } from '../../../src/modules/composer/process.ts'
@@ -18,7 +18,7 @@ function sessionSnapshot(sessionId = 'session-1'): RuntimeSessionSnapshot {
     sessionId: sessionId as RuntimeSessionSnapshot['sessionId'],
     cwd: '/workspace',
     runState: 'idle',
-    connection: { mux: 'online', host: 'online' },
+    connection: { events: 'online', control: 'online' },
     events: [],
     historyHasMore: false,
     queue: [],
@@ -29,9 +29,9 @@ function sessionSnapshot(sessionId = 'session-1'): RuntimeSessionSnapshot {
       entries: [],
       sessionRunning: false,
     }),
-    models: {
-      current: { provider: 'provider', model: 'model' },
-      routable: true,
+    modelCatalog: {
+      default: { provider: 'provider', model: 'model' },
+      routableProviders: ['provider'],
       groups: [],
       failures: [],
     },

@@ -1,30 +1,24 @@
-import type { IApiClient, ModelSelection, SessionModels } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ModelCatalog, ModelSelection } from '../../runtime/session/contracts.ts'
 import type { ModelPort } from '../../modules/configuration/contracts.ts'
 import type { SessionEffectScopeSource } from '../../runtime/session/effect-scope.ts'
-import { harnessValue } from './result.ts'
+import type { SessionTransport } from '../../runtime/session/transport.ts'
 
 /** Harness adapter that commits model results only into the captured Session epoch. */
 export class HarnessModelPort implements ModelPort {
   constructor(
-    private readonly api: IApiClient,
+    private readonly transport: Pick<SessionTransport, 'modelCatalog' | 'selectModel'>,
     private readonly sessions: SessionEffectScopeSource,
   ) {}
 
-  async refresh(): Promise<SessionModels> {
+  async refresh(): Promise<ModelCatalog> {
     const scope = this.sessions.captureSession()
-    const models = harnessValue(await this.api.sessions.models({ sessionId: scope.sessionId }))
-    scope.commitModels(models)
-    return models
+    const catalog = await this.transport.modelCatalog()
+    scope.commitModelCatalog(catalog)
+    return catalog
   }
 
   async select(selection: ModelSelection): Promise<void> {
     const scope = this.sessions.captureSession()
-    const selected = harnessValue(await this.api.sessions.selectModel({
-      sessionId: scope.sessionId,
-      provider: selection.provider,
-      model: selection.model,
-      ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
-    })).selected
-    scope.commitModelSelection(selected)
+    await this.transport.selectModel(scope.sessionId, selection)
   }
 }

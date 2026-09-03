@@ -55,9 +55,9 @@ describe('TUI dependency direction', () => {
         const target = internalTarget(source, specifier)
         if (target === undefined) {
           if ((from.startsWith('runtime/') || from.startsWith('presentation/'))
-            && specifier === '@deepseek-ai/dsh-host-apiproxy'
-            && /\bIApiClient\b/u.test(contents)) {
-            violations.push(`${from} imports concrete Host API ${specifier}`)
+            && specifier === '@deepseek-ai/dsh-api-session-controller'
+            && /\bSessionController\b/u.test(contents)) {
+            violations.push(`${from} imports concrete Host service ${specifier}`)
           }
           continue
         }

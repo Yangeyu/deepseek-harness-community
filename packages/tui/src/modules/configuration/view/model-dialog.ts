@@ -2,8 +2,8 @@ import { truncateToWidth } from '@earendil-works/pi-tui'
 import type {
   ModelReasoningEffort,
   ModelSelection,
-  SessionModels,
-} from '@deepseek-ai/dsh-host-apiproxy'
+} from '../../../runtime/session/contracts.ts'
+import type { ModelDirectorySnapshot } from '../contracts.ts'
 import type { TuiTheme } from '../../../presentation/primitives/theme.ts'
 import type {
   SurfaceInputAction,
@@ -13,7 +13,7 @@ import type {
 interface ModelRow {
   providerId: string
   providerName: string
-  model: SessionModels['groups'][number]['models'][number]
+  model: ModelDirectorySnapshot['groups'][number]['models'][number]
 }
 
 interface EffortChoice {
@@ -52,7 +52,7 @@ export class ModelDialog implements SurfaceInputTarget {
   private effortIndex = 0
 
   constructor(
-    private readonly models: SessionModels,
+    private readonly models: ModelDirectorySnapshot,
     private readonly visibleRows: () => number,
     private readonly theme: TuiTheme,
     private readonly onSelect: (selection: ModelSelection) => void,

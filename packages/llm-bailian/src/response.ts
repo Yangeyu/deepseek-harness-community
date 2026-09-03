@@ -1,4 +1,4 @@
-import { CallId, EMPTY_RESPONSE_CODE, LlmError } from '@deepseek-ai/dsh-llm'
+import { EMPTY_RESPONSE_CODE, LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, FinishReason, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import { DONE } from './sse.ts'
 import type { WireChunk, WireUsage } from './types.ts'
@@ -48,7 +48,7 @@ function closeBlock(block: OpenBlock): ContentBlock {
       }
       return {
         type: 'tool-call',
-        id: CallId(block.callId),
+        id: ToolCallId(block.callId),
         name: block.name ?? '',
         arguments: block.text,
       }
@@ -141,7 +141,7 @@ export async function* translateResponse(payloads: AsyncIterable<string>): Async
         yield {
           type: 'tool-call-delta',
           index: block.index,
-          id: CallId(block.callId),
+          id: ToolCallId(block.callId),
           ...block.name === undefined ? {} : { name: block.name },
           argumentsDelta,
         }

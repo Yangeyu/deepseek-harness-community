@@ -14,10 +14,10 @@ Harness Host
       ├── Vision fallback (route policy · proxy analysis · evidence admission)
       ├── Web service (official registry · community provider adapters)
       │
-      │ transport-neutral ApiProxy plus narrow consumer-owned ports
+      │ in-process Session Controller and Cordis lifecycle events
       ▼
 Infrastructure adapters
-  Harness transport · terminal decoding · clipboard · filesystem · workspace observation
+  consumer-owned Host ports · terminal decoding · clipboard · filesystem · workspace observation
       │
       │ explicit contracts; no presentation policy
       ▼
@@ -45,6 +45,11 @@ cancellation, and snapshot publication. Feature modules own their local process
 state and workflows. Presentation code owns layout, colors, focus, semantic
 input binding, pointer handling, and scrolling. `application/` is the static
 composition root and public lifecycle facade; it is not a domain owner.
+
+The in-process TUI has one Host path: `SessionController` and scoped Cordis
+events are adapted once in `infrastructure/harness` to the ports owned by the
+runtime and feature consumers. It does not instantiate the browser Remote
+client, emulate an HTTP/RPC carrier, or retain the removed ApiProxy/Mux path.
 
 ## Source layout
 
@@ -125,6 +130,28 @@ graph. React is not a TUI dependency. The workspace pins only the transitive
 ReactDOM compatibility choice needed by pnpm's auto-peer resolution, while the
 public dependency boundary remains limited to the single distribution's
 runtime closure.
+
+## Upstream DSH alignment and community extension ownership
+
+The selected upstream train is `@deepseek-ai/dsh@0.1.2-rc.1`, corresponding to
+the official `dsh-v0.1.2-rc.1` tag. This upgrade is a hard cutover: source,
+manifests, patch rows, tests, and built artifacts contain no compatibility
+alias or fallback to `dsh-host-apiproxy`, its storage services, or its Session
+projection cache.
+
+| Community component | Decision after rc1 | Single remaining responsibility |
+|---|---|---|
+| TUI | Replace the removed ApiProxy/RPC/Mux integration with direct `SessionController` ports and Cordis Approval/Question waterfalls. | Session follow owns history/events; the control stream owns queue/projection baselines; `api-session/status` owns live run state. |
+| Bailian | Keep and update; do not replace with the generic upstream adapter until DashScope request, reasoning, image-budget, and SSE parity is proven. | Bailian owns only its provider route, model capabilities, request translation, and response translation. |
+| Memory | Keep and update; rc1 has no equivalent project-memory service. | Files are Memory's durable facts; live conversation reads use `Session.snapshotEvents()` directly and prompt placement comes from the system-prompt registry. |
+| Vision | Keep and update; native multimodal admission does not replace text-model proxy analysis. | Official Attachment/Host code owns image storage and native admission; Vision owns route policy, proxy inference, and attributed evidence only. |
+| Web | Keep the community provider layer, while reducing it around upstream ownership. | Official `ctx.web` and Web tools own the model-facing search/fetch contract and safe HTTP fetch; community code owns Tavily adapters, live provider selection, readiness, and extraction. |
+
+Four obsolete catalog rows are removed with the old TUI path:
+`dsh-session-projection-cache`, `dsh-storage`, `dsh-storage-domain`, and
+`dsh-storage-json`. Background Jobs are not projected into a placeholder TUI
+state: they remain an unavailable v0.2 capability until a real feature owner
+and view consume the upstream control frames.
 
 The archive includes only executable JavaScript, public declarations, the
 Bundle manifest and patch, launcher examples, and user documentation. Source
@@ -282,12 +309,13 @@ readable, then compares the registry tarball with the accepted candidate.
     and compensation. Application disposal waits for an active Rewind transaction
     before completing, and Rewind uses the same Session replacement path as every
     other navigation action.
-20. Mux connection, Host connection, Session binding, and execution run state
-    are orthogonal axes. A reconnect never fabricates an idle turn, and a running
-    turn never implies that either transport is online. Mux attachment makes an
-    idle Session usable; a Host stream still awaiting its first activity is
-    reported as pending rather than treated as a failure, while Host reconnecting
-    or offline phases remain explicit degraded states.
+20. Session follow connection, Host control connection, Session binding, and
+    execution run state are orthogonal axes. A reconnect never fabricates an
+    idle turn, and a running turn never implies that either stream is online.
+    Each Session epoch owns exactly one follow loop beginning with an atomic
+    history/projection snapshot; the application owns one control loop beginning
+    with queue/projection baselines. Reconnecting and offline phases remain
+    explicit degraded states.
 21. Renderer-visible state is committed through one `TerminalSnapshot`. It is a
     coalesced, read-only composition of runtime, installed feature, and shell
     slices—not another durable store. Synchronous slice changes become visible
@@ -324,9 +352,10 @@ define another persistence format.
 ApplicationScope
 ├── terminal                TerminalSnapshot · RenderScheduler · terminal lifetime
 ├── session-kernel
-│   ├── host-connection     Mux and Host read loops
+│   ├── control-connection  Session Controller queue/projection stream
 │   └── workspace
 │       └── SessionScope(epoch N)
+│           ├── history-follow   opening snapshot and ordered event suffix
 │           ├── SessionRuntime
 │           └── features
 │               ├── Composer          ├── Interaction       ├── Skills
@@ -347,9 +376,12 @@ failure enters the same awaited disposal path as normal shutdown.
 `SessionManager` owns transport coordination. `SessionWorkspace` owns binding
 transactions and the visible/suspended runtimes. `SessionRuntime` owns the
 immutable-by-convention read model for one `(sessionId, epoch)`, including the
-accepted event window, projection cells, pending submissions, models, and the
-execution snapshot. The connection scope is a sibling of Session scopes, so a
-Session replacement does not restart transport loops.
+accepted event window, projection cells, pending submissions, model catalog,
+and execution snapshot. Effective model selection is derived at read time from
+the `modelSelection` projection, falling back to the catalog default; it is not
+stored as another mutable runtime field. The control connection is
+application-scoped, while each follow loop belongs to its Session scope, so
+replacement retires the old event stream without restarting Host-wide control.
 
 Session replacement follows one protocol:
 
@@ -441,6 +473,11 @@ component references while the Session-owned implementations are replaced.
   `SessionWorkspace` owns replacement transactions; and `SessionRuntime` owns
   the read model for exactly one Session epoch. `BoundSession` exposes that
   epoch to feature processes and rejects writes after retirement.
+- `TuiHostPorts` is the application composition boundary. `HarnessSessionTransport`
+  maps the upstream Session Controller once into history follow, control,
+  commands, paging, and model catalog operations. `HarnessInteractionSource`
+  maps scoped Approval and Question waterfalls directly; no Remote response
+  channel or second interaction state source exists.
 - `SessionFeatureCoordinator` swaps Composer, Interaction, Skills, Task,
   Trajectory, and Transcript together through stable shell Hosts. It implements
   the same prepare/activate/rollback protocol as `SessionWorkspace` rather than
@@ -495,8 +532,8 @@ component references while the Session-owned implementations are replaced.
   declare media type, and Attachment storage remains authoritative for byte
   validation and normalization. Both sources then enter the same
   reference-only proxy inference core and return text-only untrusted evidence.
-- `VisionEvidenceAdmissionAdapter` is a stateless compatibility seam for the
-  current Agent API: it converts one complete proxy carrier into the exact
+- `VisionEvidenceAdmissionAdapter` is the stateless admission boundary for the
+  Agent pre-step contract: it converts one complete proxy carrier into the exact
   human Prompt plus a source-attributed evidence message during `pre-step`.
   There is no process-local staging Map, expiry, or discard protocol. Delete
   this adapter when upstream admission can atomically accept multiple messages.
@@ -520,6 +557,10 @@ component references while the Session-owned implementations are replaced.
   `permission.defaultPreset` setting through a narrow application port; the
   session projection remains the effective-state authority, and launcher
   overrides bypass this preference write.
+- Model selection has one state path. `modelCatalog` contains only discoverable
+  routes and the deployment default; the `modelSelection` Session projection is
+  the only current/pending selection fact. A selection command writes only to
+  the Host, and the visible TUI changes only after that projection advances.
 - Each Session feature set owns a fresh `SkillCatalog`; its local request version
   rejects stale refreshes within that epoch. `SlashCatalog` merges effective
   Skill rows with Commands while preserving dispatch semantics.
@@ -584,7 +625,7 @@ competing with this canonical contract.
   session state; `ConfigView` and `TaskView` remain independent presentation
   domains and do not create a second plan, goal, permission, or todo store.
 - One typed Slash catalog merges local commands, Host commands, and
-  Skill RPC rows while preserving their distinct dispatch paths.
+  Session Controller Skill rows while preserving their distinct dispatch paths.
 - Local Skill file mutation and external-editor lifecycle stay behind an
   application-owned authoring port so transport-neutral runtime code remains
   filesystem- and process-free.

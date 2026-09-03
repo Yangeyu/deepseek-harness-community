@@ -1,6 +1,6 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { credentialRef, type CredentialInfo } from '@deepseek-ai/dsh-credentials'
-import { settingsNamespace, type SettingsScope } from '@deepseek-ai/dsh-settings'
+import type { SettingsScope } from '@deepseek-ai/dsh-settings'
 import { WebError, type WebSearchProvider } from '@deepseek-ai/dsh-web'
 import {
   AUTOMATIC_SEARCH_PROVIDER_ID,
@@ -55,7 +55,7 @@ export { DEEPSEEK_PROVIDER_ID } from '@deepseek-ai/dsh-web-search-deepseek'
 export { createWebExtractTool, WEB_EXTRACT_TIMEOUT_MS, WEB_EXTRACT_TOOL_NAME } from './tool.ts'
 
 export const name = 'community-web'
-export const COMMUNITY_WEB_SETTINGS_NAMESPACE = settingsNamespace('community-web')
+export const COMMUNITY_WEB_SETTINGS_NAMESPACE = 'community-web'
 
 export interface CommunityWebCapabilityStatus {
   activeProviderId: string

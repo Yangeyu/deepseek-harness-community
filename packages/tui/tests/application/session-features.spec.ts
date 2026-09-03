@@ -86,7 +86,7 @@ describe('SessionFeatureCoordinator', () => {
       scope: nextScope,
       sessionId: 'session-next' as SessionId,
       epoch: 1,
-      runtime: emptyRuntimeSessionSnapshot('/workspace', { mux: 'online', host: 'online' }, 1),
+      runtime: emptyRuntimeSessionSnapshot('/workspace', { events: 'online', control: 'online' }, 1),
     })
 
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ epoch: 1 }), bootstrap)
@@ -106,7 +106,7 @@ describe('SessionFeatureCoordinator', () => {
       scope: new LifecycleScope('session/features'),
       sessionId: 'session-next' as SessionId,
       epoch: 1,
-      runtime: emptyRuntimeSessionSnapshot('/workspace', { mux: 'online', host: 'online' }, 1),
+      runtime: emptyRuntimeSessionSnapshot('/workspace', { events: 'online', control: 'online' }, 1),
     })).toThrow('feature graph failed')
 
     expect(bootstrap.scope.active).toBe(false)
@@ -120,7 +120,7 @@ describe('BoundSession', () => {
     const scope = new LifecycleScope('session-feature')
     const sessionId = 'session-one' as SessionId
     const initial = {
-      ...emptyRuntimeSessionSnapshot('/workspace', { mux: 'online', host: 'online' }, 1),
+      ...emptyRuntimeSessionSnapshot('/workspace', { events: 'online', control: 'online' }, 1),
       sessionId,
       execution: buildExecutionSnapshot({
         sessionId: String(sessionId), epoch: 1, entries: [], sessionRunning: false,

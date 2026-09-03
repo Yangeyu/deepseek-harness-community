@@ -1,10 +1,23 @@
-import type { ModelSelection, SessionModels } from '@deepseek-ai/dsh-host-apiproxy'
+import type {
+  ModelCatalog,
+  ModelCatalogFailure,
+  ModelProviderGroup,
+  ModelSelection,
+} from '../../runtime/session/contracts.ts'
 import type { VisionConfig, VisionMode, VisionStatus } from '@vascent/deepseek-harness-vision'
 import type { CommunityWebStatus, WebSearchSelection } from '@vascent/deepseek-harness-web'
 
+/** Configuration-facing aggregate derived from the catalog and Session projection. */
+export interface ModelDirectorySnapshot {
+  readonly current: ModelSelection
+  readonly routable: boolean
+  readonly groups: readonly ModelProviderGroup[]
+  readonly failures: readonly ModelCatalogFailure[]
+}
+
 /** Consumer-owned model operations used by Configuration and startup policy. */
 export interface ModelPort {
-  refresh(): Promise<SessionModels>
+  refresh(): Promise<ModelCatalog>
   select(selection: ModelSelection): Promise<void>
 }
 

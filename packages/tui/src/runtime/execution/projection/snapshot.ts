@@ -1,4 +1,4 @@
-import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry } from '../../session/contracts.ts'
 import type {
   ExecutionDiagnostic,
   ExecutionKey,

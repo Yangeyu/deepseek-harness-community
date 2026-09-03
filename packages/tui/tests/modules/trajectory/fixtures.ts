@@ -1,4 +1,4 @@
-import type { HistoryEntry, SessionSummary } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry, SessionSummary } from '../../../src/runtime/session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manager.ts'
 import { buildExecutionSnapshot } from '../../../src/runtime/execution/projection/index.ts'
@@ -111,12 +111,12 @@ export function state(
     sessionId: 'session-trajectory' as SessionSummary['sessionId'],
     cwd: '/workspace',
     runState: 'idle' as const,
-    connection: { mux: 'online' as const, host: 'online' as const },
+    connection: { events: 'online' as const, control: 'online' as const },
     events,
     historyHasMore: false,
     queue: [],
     pendingSubmissions: [],
-    models: undefined,
+    modelCatalog: undefined,
     projections: {},
     notice: undefined,
     error: undefined,

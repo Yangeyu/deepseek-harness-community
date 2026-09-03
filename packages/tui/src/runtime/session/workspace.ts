@@ -40,8 +40,8 @@ export class SessionWorkspace {
     cwd: string,
   ) {
     this.store = new AtomicSnapshotStore(emptyRuntimeSessionSnapshot(cwd, {
-      mux: 'connecting',
-      host: 'connecting',
+      events: 'connecting',
+      control: 'connecting',
     }, 0))
   }
 

@@ -1,4 +1,4 @@
-import type { PromptContentPart, RpcId } from '@deepseek-ai/dsh-host-apiproxy'
+import type { PromptContentPart, SessionRequestId } from './contracts.ts'
 import type { SubmissionActivityUpdate } from './submission.ts'
 
 /** Progress channel retained from local preparation through durable event handoff. */
@@ -7,7 +7,7 @@ export interface PromptPreparationContext {
 }
 
 export interface PreparedPromptCommitContext {
-  rpcId: RpcId
+  requestId: SessionRequestId
   clientTimeZone?: string
 }
 

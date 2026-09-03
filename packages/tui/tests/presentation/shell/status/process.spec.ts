@@ -12,7 +12,7 @@ function sessionSnapshot(overrides: Partial<RuntimeSessionSnapshot> = {}): Runti
     sessionId: 'session-1' as RuntimeSessionSnapshot['sessionId'],
     cwd: '/workspace/project',
     runState: 'idle',
-    connection: { mux: 'online', host: 'online' },
+    connection: { events: 'online', control: 'online' },
     events: [],
     historyHasMore: false,
     queue: [],
@@ -23,7 +23,7 @@ function sessionSnapshot(overrides: Partial<RuntimeSessionSnapshot> = {}): Runti
       entries: [],
       sessionRunning: false,
     }),
-    models: undefined,
+    modelCatalog: undefined,
     projections: {},
     notice: undefined,
     error: undefined,
@@ -105,33 +105,34 @@ describe('ShellStatusProcess', () => {
     test.process.start()
     test.publishSession(sessionSnapshot({
       cwd: '/next',
-      connection: { mux: 'reconnecting', host: 'online' },
+      connection: { events: 'reconnecting', control: 'online' },
     }))
 
     expect(test.process.header.render(120).join('\n')).toContain('/next')
-    expect(test.process.status.render(120).join('\n')).toContain('mux reconnecting')
+    expect(test.process.status.render(120).join('\n')).toContain('events reconnecting')
   })
 
-  it('is ready after Mux attachment while an idle Host stream awaits its first activity', () => {
+  it('waits for the control baseline after the event stream attaches', () => {
     const test = fixture()
     test.process.start()
     test.publishSession(sessionSnapshot({
-      connection: { mux: 'online', host: 'connecting' },
+      connection: { events: 'online', control: 'connecting' },
     }))
 
     const status = stripTerminalSequences(test.process.status.render(120).join('\n'))
-    expect(status).toContain('Ready · host awaiting activity')
+    expect(status).toContain('control connecting')
+    expect(status).not.toContain('Ready')
   })
 
   it('keeps a failed Host stream visible instead of reporting readiness', () => {
     const test = fixture()
     test.process.start()
     test.publishSession(sessionSnapshot({
-      connection: { mux: 'online', host: 'reconnecting' },
+      connection: { events: 'online', control: 'reconnecting' },
     }))
 
     const status = stripTerminalSequences(test.process.status.render(120).join('\n'))
-    expect(status).toContain('host reconnecting')
+    expect(status).toContain('control reconnecting')
     expect(status).not.toContain('Ready')
   })
 

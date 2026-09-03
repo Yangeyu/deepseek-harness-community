@@ -3,12 +3,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { SessionId, type Session } from '@deepseek-ai/dsh-session'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectMemoryService, type Config } from '../src/index.ts'
 
 const temporaryDirectories: string[] = []
 const contexts: Context[] = []
+
+function sessionFixture(id: string, cwd: string): Session {
+  const sessionId = SessionId(id)
+  return Session.create(sessionId, undefined, {
+    version: SESSION_FORMAT_VERSION,
+    id: sessionId,
+    createdAt: 0,
+    cwd,
+    isSeeded: false,
+  })
+}
 
 async function memoryService(overrides: {
   config?: Partial<Config>
@@ -42,12 +54,7 @@ describe('ProjectMemoryService context projection', () => {
   it('publishes changed snapshots once and clears them when session use is disabled', async () => {
     const { ctx, cwd, service } = await memoryService()
     await service.write({ cwd, scope: 'project', summary: 'Use focused checks.' })
-    const session = {
-      id: SessionId('memory-session'),
-      header: { cwd },
-      events: [] as Array<Record<string, unknown>>,
-      surface: { nodes: [] as number[] },
-    }
+    const session = sessionFixture('memory-session', cwd)
     const agent = { id: session.id, session } as unknown as Agent
     const preStep = (): Promise<PreStepDecision> => ctx.waterfall('agent/pre-step', {
       agent,
@@ -60,9 +67,7 @@ describe('ProjectMemoryService context projection', () => {
       if (decision.kind === 'reject') throw new Error('fixture unexpectedly rejected the step')
       const message = decision.messages.at(-1)
       if (message === undefined) throw new Error('fixture did not receive a memory message')
-      const seq = session.events.length
-      session.events.push({ type: 'user/message', seq, time: seq, data: message })
-      session.surface.nodes.push(seq)
+      session.append('user/message', message, { surfaceOp: 'append' })
     }
 
     const initial = await preStep()
@@ -108,26 +113,16 @@ describe('ProjectMemoryService quiet learning', () => {
         create: vi.fn(async () => handle),
       } as unknown,
     })
-    const turnEnd = {
-      type: 'turn/end',
-      seq: 2,
-      time: 3,
-      data: { turn: 1, reason: { kind: 'completed' } },
-    }
-    const session = {
-      id: SessionId('memory-quiet-learning'),
-      header: { cwd },
-      events: [
-        { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
-        { type: 'user/message', seq: 1, time: 2, data: {
-          id: 'message-user-learning',
-          role: 'user',
-          source: { kind: 'user' },
-          content: [{ type: 'text', text: '记住：以后提交前必须先跑 lint。' }],
-        } },
-        turnEnd,
-      ],
-    } as unknown as Session
+    const session = sessionFixture('memory-quiet-learning', cwd)
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      source: { kind: 'user' },
+      content: [{ type: 'text', text: '记住：以后提交前必须先跑 lint。' }],
+    }), { surfaceOp: 'append' })
+    const turnEnd = session.append('turn/end', {
+      turn: 1,
+      reason: { kind: 'completed' },
+    })
     const agent = {
       id: session.id,
       session,
@@ -139,7 +134,7 @@ describe('ProjectMemoryService quiet learning', () => {
       }),
     } as unknown as Agent
 
-    await ctx.parallel('session/event', session, turnEnd as Session['events'][number])
+    await ctx.parallel('session/event', session, turnEnd)
     await service.settle(String(session.id))
 
     expect(followup).toHaveBeenCalledTimes(1)

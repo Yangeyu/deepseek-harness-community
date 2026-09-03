@@ -1,4 +1,4 @@
-import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry } from '../../runtime/session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type {} from '@vascent/deepseek-harness-vision'
 import { displayUnknown, sanitizeTerminalLine } from '../../presentation/primitives/text.ts'

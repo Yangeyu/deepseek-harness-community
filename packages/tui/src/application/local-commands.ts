@@ -96,8 +96,8 @@ export function createLocalCommands(actions: LocalCommandActions): TerminalComma
         `Session: ${state.sessionId === undefined ? 'none' : String(state.sessionId)}`,
         `Directory: ${state.cwd}`,
         `State: ${state.runState}`,
-        `Mux stream: ${state.connection.mux}`,
-        `Host stream: ${state.connection.host}`,
+        `Event stream: ${state.connection.events}`,
+        `Control stream: ${state.connection.control}`,
         `Queued: ${state.queue.length}`,
       ].join('\n'))
     },

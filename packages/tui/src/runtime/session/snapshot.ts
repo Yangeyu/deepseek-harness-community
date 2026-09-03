@@ -1,9 +1,9 @@
 import type {
   HistoryEntry,
+  ModelCatalog,
   QueuedInboxItem,
-  SessionModels,
   SessionSummary,
-} from '@deepseek-ai/dsh-host-apiproxy'
+} from './contracts.ts'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { ExecutionSnapshot } from '../execution/projection/index.ts'
 import type { PendingSubmission } from './submission.ts'
@@ -14,8 +14,8 @@ export type SessionId = SessionSummary['sessionId']
 export type ConnectionPhase = 'connecting' | 'online' | 'reconnecting' | 'offline'
 
 export interface SessionConnectionState {
-  readonly mux: ConnectionPhase
-  readonly host: ConnectionPhase
+  readonly events: ConnectionPhase
+  readonly control: ConnectionPhase
 }
 
 export type SessionRunState = 'idle' | 'running' | 'interrupting'
@@ -32,7 +32,7 @@ export interface RuntimeSessionSnapshot {
   readonly queue: readonly QueuedInboxItem[]
   readonly pendingSubmissions: readonly PendingSubmission[]
   readonly execution: ExecutionSnapshot
-  readonly models: SessionModels | undefined
+  readonly modelCatalog: ModelCatalog | undefined
   readonly projections: Readonly<Partial<SessionProjectionMap>>
   readonly notice: string | undefined
   readonly error: string | undefined

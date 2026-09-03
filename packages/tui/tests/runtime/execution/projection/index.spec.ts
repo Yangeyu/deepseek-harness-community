@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry } from '../../../../src/runtime/session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type {} from '@vascent/deepseek-harness-vision'
 import {

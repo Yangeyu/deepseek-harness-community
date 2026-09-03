@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type {
   HistoryEntry,
-  RpcId,
-} from '@deepseek-ai/dsh-host-apiproxy'
+  SessionRequestId,
+} from '../../../src/runtime/session/contracts.ts'
 import { SubmissionTracker } from '../../../src/runtime/session/submission.ts'
 
-const rpcId = 'rpc-prompt' as RpcId
+const requestId = 'rpc-prompt' as SessionRequestId
 
 function userEvent(text: string): HistoryEntry {
   return {
@@ -17,7 +17,7 @@ function userEvent(text: string): HistoryEntry {
       data: {
         id: 'message-durable',
         role: 'user',
-        source: { kind: 'user', rpcId },
+        source: { kind: 'user', rpcId: requestId },
         content: [{ type: 'text', text }],
       },
     },
@@ -60,16 +60,16 @@ describe('SubmissionTracker', () => {
     tracker.observeEvents([userEvent('durable prompt')])
     expect(tracker.snapshot).toEqual([pending])
 
-    tracker.accept(pending.key, rpcId)
+    tracker.accept(pending.key, requestId)
     expect(tracker.snapshot).toEqual([])
   })
 
   it('retires an accepted prompt when its durable event arrives', () => {
     const tracker = new SubmissionTracker()
     const pending = tracker.start('durable prompt', 'steer', true)
-    tracker.accept(pending.key, rpcId)
+    tracker.accept(pending.key, requestId)
 
-    expect(tracker.snapshot[0]?.rpcId).toBe(rpcId)
+    expect(tracker.snapshot[0]?.requestId).toBe(requestId)
     expect(tracker.snapshot[0]?.intent).toBe('steering')
     tracker.observeEvents([userEvent('durable prompt')])
     expect(tracker.snapshot).toEqual([])
@@ -92,7 +92,7 @@ describe('SubmissionTracker', () => {
       activity: { kind: 'vision', analysisId, imageCount: 2, startedAt: expect.any(Number) },
     })
 
-    tracker.accept(pending.key, rpcId)
+    tracker.accept(pending.key, requestId)
     tracker.observeEvents([userEvent('analyze')])
     expect(tracker.snapshot[0]).toMatchObject({ durablePromptObserved: true, activity: { analysisId } })
 

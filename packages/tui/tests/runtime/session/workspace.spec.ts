@@ -4,7 +4,7 @@ import { SessionWorkspace } from '../../../src/runtime/session/workspace.ts'
 import type { SessionId } from '../../../src/runtime/session/snapshot.ts'
 
 const id = (value: string): SessionId => value as SessionId
-const online = { mux: 'online', host: 'online' } as const
+const online = { events: 'online', control: 'online' } as const
 
 describe('SessionWorkspace', () => {
   it('publishes one committed Session epoch and retires the previous scope', async () => {
@@ -73,7 +73,7 @@ describe('SessionWorkspace', () => {
     await workspace.dispose()
   })
 
-  it('keeps Mux, Host, and run phases as independent lifecycle axes', async () => {
+  it('keeps event follow, control, and run phases as independent lifecycle axes', async () => {
     const workspace = new SessionWorkspace(new LifecycleScope('workspace'), '/workspace')
     const operation = workspace.begin('previous')
     const runtime = workspace.commit(operation, {
@@ -82,17 +82,17 @@ describe('SessionWorkspace', () => {
     expect(runtime).toBeDefined()
 
     runtime?.setRunState('running')
-    runtime?.setConnection('mux', 'reconnecting')
+    runtime?.setConnection('events', 'reconnecting')
     expect(workspace.current).toMatchObject({
       runState: 'running',
-      connection: { mux: 'reconnecting', host: 'online' },
+      connection: { events: 'reconnecting', control: 'online' },
     })
 
-    runtime?.setConnection('host', 'offline')
+    runtime?.setConnection('control', 'offline')
     runtime?.setRunState('interrupting')
     expect(workspace.current).toMatchObject({
       runState: 'interrupting',
-      connection: { mux: 'reconnecting', host: 'offline' },
+      connection: { events: 'reconnecting', control: 'offline' },
     })
     await workspace.dispose()
   })

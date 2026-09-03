@@ -1,7 +1,7 @@
 import type {
   HistoryEntry,
-  RpcId,
-} from '@deepseek-ai/dsh-host-apiproxy'
+  SessionRequestId,
+} from './contracts.ts'
 
 export interface PendingVisionActivity {
   kind: 'vision'
@@ -19,12 +19,12 @@ export interface PendingSubmission {
   text: string
   mode: 'queue' | 'steer'
   intent: 'working' | 'queueing' | 'steering'
-  rpcId?: RpcId
+  requestId?: SessionRequestId
   durablePromptObserved?: boolean
   activity?: PendingSubmissionActivity
 }
 
-function userMessageRpcId(entry: HistoryEntry): RpcId | undefined {
+function userMessageRequestId(entry: HistoryEntry): SessionRequestId | undefined {
   const event = entry.event
   if (event.type !== 'user/message' || event.data.source.kind !== 'user') return undefined
   return 'rpcId' in event.data.source ? event.data.source.rpcId : undefined
@@ -41,7 +41,7 @@ function visionAnalysisId(entry: HistoryEntry): string | undefined {
 export class SubmissionTracker {
   private nextKey = 0
   private pending: PendingSubmission[] = []
-  private readonly observedRpcIds = new Set<RpcId>()
+  private readonly observedRequestIds = new Set<SessionRequestId>()
 
   /** Return an immutable-by-convention state snapshot for the renderer. */
   get snapshot(): PendingSubmission[] {
@@ -63,15 +63,15 @@ export class SubmissionTracker {
       : item)
   }
 
-  /** Attach the echoed RPC identity or retire an already durable prompt. */
-  accept(key: number, rpcId: RpcId): void {
-    const durablePromptObserved = this.observedRpcIds.has(rpcId)
+  /** Attach the request identity or retire an already durable prompt. */
+  accept(key: number, requestId: SessionRequestId): void {
+    const durablePromptObserved = this.observedRequestIds.has(requestId)
     this.pending = this.pending.flatMap((item): PendingSubmission[] => {
       if (item.key !== key) return [item]
-      if (!durablePromptObserved) return [{ ...item, rpcId }]
-      return item.activity === undefined ? [] : [{ ...item, rpcId, durablePromptObserved: true }]
+      if (!durablePromptObserved) return [{ ...item, requestId }]
+      return item.activity === undefined ? [] : [{ ...item, requestId, durablePromptObserved: true }]
     })
-    this.pruneObservedRpcIds()
+    this.pruneObservedRequestIds()
   }
 
   /** Remove a prompt whose Host request failed. */
@@ -82,13 +82,13 @@ export class SubmissionTracker {
   /** Retire input settled without a durable user-message event, such as a command. */
   settle(key: number): void {
     this.pending = this.pending.filter(item => item.key !== key)
-    this.pruneObservedRpcIds()
+    this.pruneObservedRequestIds()
   }
 
   /** Reconcile prompts represented by durable user-message events. */
   observeEvents(entries: readonly HistoryEntry[]): void {
     for (const entry of entries) {
-      this.observe(userMessageRpcId(entry))
+      this.observe(userMessageRequestId(entry))
       const analysisId = visionAnalysisId(entry)
       if (analysisId !== undefined) {
         this.pending = this.pending.filter(item =>
@@ -101,29 +101,29 @@ export class SubmissionTracker {
   /** Drop terminal-local state when switching sessions. */
   reset(): void {
     this.pending = []
-    this.observedRpcIds.clear()
+    this.observedRequestIds.clear()
   }
 
-  private observe(rpcId: RpcId | undefined): void {
-    if (rpcId === undefined) return
-    if (this.pending.some(item => item.rpcId === undefined || item.rpcId === rpcId)) {
-      this.observedRpcIds.add(rpcId)
+  private observe(requestId: SessionRequestId | undefined): void {
+    if (requestId === undefined) return
+    if (this.pending.some(item => item.requestId === undefined || item.requestId === requestId)) {
+      this.observedRequestIds.add(requestId)
     }
   }
 
   private reconcile(): void {
     this.pending = this.pending.flatMap((item): PendingSubmission[] => {
-      if (item.rpcId === undefined || !this.observedRpcIds.has(item.rpcId)) return [item]
+      if (item.requestId === undefined || !this.observedRequestIds.has(item.requestId)) return [item]
       return item.activity === undefined ? [] : [{ ...item, durablePromptObserved: true }]
     })
-    this.pruneObservedRpcIds()
+    this.pruneObservedRequestIds()
   }
 
-  private pruneObservedRpcIds(): void {
-    if (this.pending.some(item => item.rpcId === undefined)) return
-    const active = new Set(this.pending.flatMap(item => item.rpcId === undefined ? [] : [item.rpcId]))
-    for (const rpcId of this.observedRpcIds) {
-      if (!active.has(rpcId)) this.observedRpcIds.delete(rpcId)
+  private pruneObservedRequestIds(): void {
+    if (this.pending.some(item => item.requestId === undefined)) return
+    const active = new Set(this.pending.flatMap(item => item.requestId === undefined ? [] : [item.requestId]))
+    for (const requestId of this.observedRequestIds) {
+      if (!active.has(requestId)) this.observedRequestIds.delete(requestId)
     }
   }
 }

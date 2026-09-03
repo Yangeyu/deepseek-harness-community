@@ -18,12 +18,13 @@ agent loop, permission system, task model, or plugin format.
 4. **One concept per job.** Skills are reusable model instructions. Commands
    are deterministic human actions. The TUI must not introduce a third prompt
    macro format that overlaps both.
-5. **Optional capabilities degrade cleanly.** A missing projection or RPC means
+5. **Optional capabilities degrade cleanly.** A missing projection or Host capability means
    that feature is unavailable in the active composition, not that the session
    is corrupt.
-6. **Developer preview is a compatibility constraint.** Harness is still
-   evolving below `0.2.0`; new integrations need narrow ports, capability
-   checks, and contract tests rather than direct UI-to-plugin coupling.
+6. **Developer preview requires explicit cutovers.** Harness is still evolving
+   below `0.2.0`; each selected runtime train is integrated through narrow
+   ports and contract tests, and superseded paths are deleted rather than kept
+   as version fallbacks.
 
 ## Product flow
 

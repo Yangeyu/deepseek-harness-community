@@ -8,7 +8,7 @@ import {
   type LlmFailure,
 } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { settingsNamespace, type SettingsScope } from '@deepseek-ai/dsh-settings'
+import type { SettingsScope } from '@deepseek-ai/dsh-settings'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { VisionConfigSchema } from './config.ts'
 import {
@@ -58,7 +58,7 @@ export type {
 } from './types.ts'
 
 const PLUGIN_NAME = 'community-vision'
-const VISION_NAMESPACE = settingsNamespace('vision')
+const VISION_NAMESPACE = 'vision'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

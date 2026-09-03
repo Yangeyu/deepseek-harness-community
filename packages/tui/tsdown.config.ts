@@ -14,9 +14,9 @@ export default defineConfig({
     neverBundle: [
       '@deepseek-ai/cordis',
       '@deepseek-ai/dsh-agent',
+      '@deepseek-ai/dsh-api-session-controller',
       '@deepseek-ai/dsh-attachment',
       '@deepseek-ai/dsh-credentials',
-      '@deepseek-ai/dsh-host-apiproxy',
       '@deepseek-ai/dsh-launch-environment',
       '@deepseek-ai/dsh-llm',
       '@deepseek-ai/dsh-permission-presets',

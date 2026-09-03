@@ -1,15 +1,41 @@
-import type { MuxFrame, RpcId } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand'
+import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval/types'
+import type {
+  AskUserQuestionAnswer,
+  AskUserQuestionItem,
+} from '@deepseek-ai/dsh-user-questions/types'
+import type { SessionId } from './contracts.ts'
 
-/** Answerable approval request delivered by the mux stream. */
-export type ApprovalPrompt = Extract<MuxFrame, { type: 'approval/requested' }> & { rpcId: RpcId }
+export interface ApprovalPrompt {
+  readonly requestId: string
+  readonly sessionId: SessionId
+  readonly toolName: string
+  readonly callId?: ToolCallId
+  readonly reason?: string
+  readonly signal?: AbortSignal
+}
 
-/** Answerable question batch delivered by the mux stream. */
-export type QuestionPrompt = Extract<MuxFrame, { type: 'question/requested' }> & { rpcId: RpcId }
+export interface QuestionPrompt {
+  readonly requestId: string
+  readonly sessionId: SessionId
+  readonly questions: readonly AskUserQuestionItem[]
+  readonly signal?: AbortSignal
+}
 
-/** Authoritative Host notification that a pending terminal interaction is no longer answerable. */
+/** Local lifecycle edge emitted when the Host request is answered or withdrawn. */
 export type InteractionResolution =
-  | Extract<MuxFrame, { type: 'approval/resolved' }>
-  | Extract<MuxFrame, { type: 'question/resolved' }>
+  | {
+      readonly type: 'approval/resolved'
+      readonly sessionId: SessionId
+      readonly requestId: string
+      readonly outcome: ApprovalOutcome
+    }
+  | {
+      readonly type: 'question/resolved'
+      readonly sessionId: SessionId
+      readonly requestId: string
+      readonly outcome: 'answered' | 'cancelled'
+    }
 
 export type SessionInteractionEvent =
   | { readonly type: 'approval'; readonly prompt: ApprovalPrompt }
@@ -17,3 +43,13 @@ export type SessionInteractionEvent =
   | { readonly type: 'resolved'; readonly resolution: InteractionResolution }
 
 export type SessionInteractionListener = (event: SessionInteractionEvent) => void
+
+export interface SessionInteractionHandler {
+  approval(prompt: ApprovalPrompt): Promise<ApprovalOutcome | undefined>
+  questions(prompt: QuestionPrompt): Promise<AskUserQuestionAnswer | undefined>
+}
+
+/** Host-owned waterfall adapter; undefined delegates to the next answerer. */
+export interface SessionInteractionSource {
+  connect(handler: SessionInteractionHandler): () => void
+}

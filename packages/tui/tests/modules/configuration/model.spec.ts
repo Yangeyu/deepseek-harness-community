@@ -1,4 +1,4 @@
-import type { SessionModels } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ModelCatalog } from '../../../src/runtime/session/contracts.ts'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import { describe, expect, it } from 'vitest'
 import {
@@ -7,10 +7,10 @@ import {
   sessionControlSummary,
 } from '../../../src/modules/configuration/model.ts'
 
-function models(): SessionModels {
+function catalog(): ModelCatalog {
   return {
-    current: { provider: 'deepseek', model: 'v4', reasoningEffort: 'max' },
-    routable: true,
+    default: { provider: 'deepseek', model: 'v4' },
+    routableProviders: ['deepseek'],
     groups: [{
       id: 'deepseek',
       name: 'DeepSeek',
@@ -36,7 +36,11 @@ describe('configuration model', () => {
   })
 
   it('renders model, reasoning, policy, and scope from authoritative facts', () => {
-    const snapshot = configurationSnapshot(models(), {
+    const snapshot = configurationSnapshot(catalog(), {
+      modelSelection: {
+        lastUsed: null,
+        next: { provider: 'deepseek', model: 'v4', reasoningEffort: 'max' },
+      },
       permissions: {
         currentValue: 'workspace-write',
         options: [{ value: 'workspace-write', name: 'Workspace write' }],

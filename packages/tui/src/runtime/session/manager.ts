@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval/types'
+import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions/types'
 import type {
-  HostFrame,
   PromptContentPart,
-  SessionModels,
+  ModelCatalog,
+  SessionRequestId,
   SessionSummary,
-} from '@deepseek-ai/dsh-host-apiproxy'
-import { RpcId } from '@deepseek-ai/dsh-host-apiproxy'
+} from './contracts.ts'
 // Merge the Web composer's projection keys into SessionProjectionMap.
 import type {} from '@deepseek-ai/dsh-session-stats/client'
 import type {} from '@deepseek-ai/dsh-token-meter/client'
@@ -14,12 +15,17 @@ import type { SessionRuntime } from './runtime.ts'
 import type { RuntimeSessionSnapshot, SessionId } from './snapshot.ts'
 import { SessionWorkspace } from './workspace.ts'
 import type { SessionEffectScope } from './effect-scope.ts'
-import type { SessionMuxRequest, SessionTransport } from './transport.ts'
+import type {
+  SessionControlFrame,
+  SessionTransport,
+} from './transport.ts'
 import type { SubmissionActivityUpdate } from './submission.ts'
 import type { PreparedPrompt, PromptPreparationContext } from './prompt.ts'
+import { selectedModel } from './model-selection.ts'
 import type {
   ApprovalPrompt,
   QuestionPrompt,
+  SessionInteractionSource,
   SessionInteractionEvent,
   SessionInteractionListener,
 } from './interactions.ts'
@@ -33,6 +39,22 @@ export interface SessionForkRequest {
   readonly sessionId: string
   readonly previousTurnEndSeq?: number
 }
+
+type PendingHostInteraction =
+  | {
+      readonly kind: 'approval'
+      readonly prompt: ApprovalPrompt
+      readonly resolve: (outcome: ApprovalOutcome) => void
+      readonly reject: (error: unknown) => void
+      readonly removeAbort: () => void
+    }
+  | {
+      readonly kind: 'questions'
+      readonly prompt: QuestionPrompt
+      readonly resolve: (answer: AskUserQuestionAnswer) => void
+      readonly reject: (error: unknown) => void
+      readonly removeAbort: () => void
+    }
 
 function terminalTimeZone(): string | undefined {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -58,15 +80,19 @@ export class SessionManager {
   private readonly connectionScope: LifecycleScope
   private readonly workspace: SessionWorkspace
   private readonly interactionListeners = new Set<SessionInteractionListener>()
+  private readonly pendingInteractions = new Map<string, PendingHostInteraction>()
+  private started = false
 
   constructor(
     private readonly scope: LifecycleScope,
     private readonly transport: SessionTransport,
+    private readonly interactionSource: SessionInteractionSource,
     cwd: string,
     private readonly historyMessages: number,
   ) {
     this.connectionScope = scope.fork('host-connection')
     this.workspace = new SessionWorkspace(scope.fork('workspace'), cwd)
+    scope.onDispose(() => { this.retireInteractions(new Error('terminal interaction owner disposed')) })
   }
 
   /** Current immutable-by-convention state snapshot. */
@@ -95,24 +121,30 @@ export class SessionManager {
       sessionId: runtime.sessionId,
       epoch: runtime.epoch,
       get active() { return workspace.owns(runtime) },
-      commitModels(models) {
+      commitModelCatalog(catalog) {
         if (!workspace.owns(runtime)) return false
-        runtime.setModels(models)
-        return true
-      },
-      commitModelSelection(selection) {
-        if (!workspace.owns(runtime)) return false
-        runtime.selectModel(selection)
+        runtime.setModelCatalog(catalog)
         return true
       },
     }
   }
 
-  /** Create or resume the initial session, then attach both event streams. */
+  /** Bind Host signals, create or resume the initial Session, then attach control state. */
   async start(resumeSessionId?: string): Promise<void> {
+    if (this.started) throw new Error('SessionManager has already started')
+    this.started = true
+    this.connectionScope.onDispose(this.transport.onStatus((sessionId, running) => {
+      this.workspace.runtimeFor(sessionId)?.setRunState(running ? 'running' : 'idle')
+    }))
+    this.connectionScope.onDispose(this.transport.onError((sessionId, message) => {
+      this.workspace.runtimeFor(sessionId)?.setError(message)
+    }))
+    this.connectionScope.onDispose(this.interactionSource.connect({
+      approval: prompt => this.requestApproval(prompt),
+      questions: prompt => this.requestQuestions(prompt),
+    }))
     await this.openSession(resumeSessionId)
-    void this.runMuxLoop()
-    void this.runHostLoop()
+    void this.runControlLoop()
   }
 
   /** Stop stream reads and reject further Session work. */
@@ -134,12 +166,14 @@ export class SessionManager {
   async loadEarlierHistory(): Promise<boolean> {
     const runtime = this.requireRuntime()
     const beforeSeq = runtime.current.events.at(0)?.event.seq
-    if (!runtime.current.historyHasMore || beforeSeq === undefined) return false
-    const page = await this.transport.history({
+    const throughSeq = runtime.historyCursor
+    if (!runtime.current.historyHasMore || beforeSeq === undefined || throughSeq === undefined) return false
+    const page = await this.transport.page({
       sessionId: runtime.sessionId,
+      throughSeq,
       beforeSeq,
       maxMessages: this.historyMessages,
-    })
+    }, runtime.signal)
     if (!this.workspace.owns(runtime)) return false
     return runtime.prependHistory(page)
   }
@@ -168,7 +202,7 @@ export class SessionManager {
     if (request.previousTurnEndSeq === undefined) {
       const created = await this.transport.createSession({ cwd: this.current.cwd })
       target = created.sessionId
-      const selection = this.current.models?.current
+      const selection = selectedModel(this.current.modelCatalog, this.current.projections)
       if (selection !== undefined) {
         await this.transport.selectModel(target, {
           provider: selection.provider,
@@ -220,7 +254,7 @@ export class SessionManager {
       if (this.workspace.owns(runtime)) runtime.setSubmissionActivity(pending.key, activity)
     }
     const clientTimeZone = terminalTimeZone()
-    let response: Awaited<ReturnType<SessionTransport['prompt']>>
+    const requestId = randomUUID() as SessionRequestId
     try {
       const prepared = typeof contentOrPreparation === 'function'
         ? await contentOrPreparation({ setActivity })
@@ -229,31 +263,27 @@ export class SessionManager {
         throw new Error('The active session changed while preparing the prompt.')
       }
       if (prepared.kind === 'admission') {
-        const externalRpcId = RpcId(randomUUID())
         await prepared.commit({
-          rpcId: externalRpcId,
+          requestId,
           ...clientTimeZone === undefined ? {} : { clientTimeZone },
         })
         if (!this.workspace.owns(runtime)) return
-        runtime.acceptSubmission(pending.key, externalRpcId)
+        runtime.acceptSubmission(pending.key, requestId)
         return
       }
-      response = await this.transport.prompt({
+      const response = await this.transport.prompt({
+        requestId,
         sessionId: runtime.sessionId,
         mode,
         content: prepared.content,
         ...clientTimeZone === undefined ? {} : { clientTimeZone },
-      })
+      }, runtime.signal)
+      if (!this.workspace.owns(runtime)) return
+      runtime.acceptSubmission(pending.key, response.requestId)
     } catch (error: unknown) {
       rejectPending()
       throw error
     }
-    if (!this.workspace.owns(runtime)) return
-    if (response.command !== undefined) {
-      runtime.settleSubmission(pending.key)
-      return
-    }
-    runtime.acceptSubmission(pending.key, response.rpcId)
   }
 
   /** Hand a local authoring file to the Host platform opener when available. */
@@ -274,28 +304,47 @@ export class SessionManager {
     }
   }
 
-  /** Answer one approval request through the response leg of the RPC protocol. */
+  /** Settle one Host approval waterfall owned by this terminal. */
   async answerApproval(prompt: ApprovalPrompt, outcome: 'allowed-once' | 'rejected'): Promise<void> {
-    await this.respond(prompt.rpcId, {
-      sessionId: prompt.sessionId,
-      approvalId: prompt.approvalId,
-      outcome,
+    const pending = this.pendingInteractions.get(prompt.requestId)
+    if (pending?.kind !== 'approval' || pending.prompt !== prompt) {
+      throw new Error('approval request is no longer answerable')
+    }
+    this.pendingInteractions.delete(prompt.requestId)
+    pending.removeAbort()
+    pending.resolve(outcome)
+    this.publishInteraction({
+      type: 'resolved',
+      resolution: {
+        type: 'approval/resolved',
+        sessionId: prompt.sessionId,
+        requestId: prompt.requestId,
+        outcome,
+      },
     })
   }
 
-  /** Answer a complete question batch through the response leg of the RPC protocol. */
+  /** Settle one Host question waterfall owned by this terminal. */
   async answerQuestions(
     prompt: QuestionPrompt,
     answers: Array<{ id: string; selected: string[]; custom?: string }>,
   ): Promise<void> {
-    await this.respond(prompt.rpcId, {
-      sessionId: prompt.sessionId,
-      answer: { answers },
+    const pending = this.pendingInteractions.get(prompt.requestId)
+    if (pending?.kind !== 'questions' || pending.prompt !== prompt) {
+      throw new Error('question request is no longer answerable')
+    }
+    this.pendingInteractions.delete(prompt.requestId)
+    pending.removeAbort()
+    pending.resolve({ answers })
+    this.publishInteraction({
+      type: 'resolved',
+      resolution: {
+        type: 'question/resolved',
+        sessionId: prompt.sessionId,
+        requestId: prompt.requestId,
+        outcome: 'answered',
+      },
     })
-  }
-
-  private async respond(rpcId: RpcId, value: unknown): Promise<void> {
-    await this.transport.respond(rpcId, value)
   }
 
   private requireSession(): SessionId {
@@ -316,11 +365,13 @@ export class SessionManager {
       const host = await this.transport.describeHost()
       let cwd = previous.cwd || host.cwd
       let requested: SessionId | undefined
+      let requestedRunning = false
       if (resumeSessionId !== undefined) {
         const summary = (await this.transport.listSessions())
           .find(item => String(item.sessionId) === resumeSessionId)
         if (summary === undefined) throw new Error(`session "${resumeSessionId}" was not found`)
         requested = summary.sessionId
+        requestedRunning = summary.running
         cwd = summary.cwd ?? host.cwd
       }
       const created = await this.transport.createSession({
@@ -334,12 +385,16 @@ export class SessionManager {
       })
       if (commit === undefined) return
       committed = true
+      this.retireInteractions(new Error('the active Session changed'))
       await commit.retirement
       if (commit.activationError !== undefined) throw commit.activationError
-      await Promise.all([
-        this.resync(commit.runtime),
-        this.refreshRuntimeModels(commit.runtime).catch(() => undefined),
-      ])
+      if (requestedRunning) commit.runtime.setRunState('running')
+      await this.startFollow(commit.runtime)
+      await this.refreshRuntimeModels(commit.runtime).catch((error: unknown) => {
+        if (this.workspace.owns(commit.runtime)) {
+          commit.runtime.setError(`model catalog unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      })
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       if (committed) this.workspace.setError(message)
@@ -348,118 +403,164 @@ export class SessionManager {
     }
   }
 
-  private async resync(runtime: SessionRuntime = this.requireRuntime()): Promise<void> {
-    await runtime.resync(async () => this.transport.history({
-      sessionId: runtime.sessionId,
-      maxMessages: this.historyMessages,
-    }))
+  private async refreshRuntimeModels(runtime: SessionRuntime): Promise<ModelCatalog> {
+    const catalog = await this.transport.modelCatalog()
+    if (this.workspace.owns(runtime)) runtime.setModelCatalog(catalog)
+    return catalog
   }
 
-  private async refreshRuntimeModels(runtime: SessionRuntime): Promise<SessionModels> {
-    const models = await this.transport.models(runtime.sessionId)
-    if (this.workspace.owns(runtime)) runtime.setModels(models)
-    return models
+  private startFollow(runtime: SessionRuntime): Promise<void> {
+    const opening = Promise.withResolvers<void>()
+    void this.runFollowLoop(runtime, opening)
+    return opening.promise
   }
 
-  private async runMuxLoop(): Promise<void> {
-    while (this.connectionScope.active) {
+  private async runFollowLoop(
+    runtime: SessionRuntime,
+    opening: PromiseWithResolvers<void>,
+  ): Promise<void> {
+    const followScope = runtime.forkScope('history-follow')
+    let opened = false
+    while (followScope.active) {
       try {
-        for await (const request of this.transport.mux(this.connectionScope.signal)) {
-          this.workspace.setConnection('mux', 'online', undefined)
-          await this.handleMux(request)
+        let snapshotSeen = false
+        for await (const frame of this.transport.follow(
+          runtime.sessionId,
+          this.historyMessages,
+          followScope.signal,
+        )) {
+          if (!this.workspace.owns(runtime)) return
+          runtime.setConnection('events', 'online', undefined)
+          if (frame.type === 'snapshot') {
+            runtime.hydrate(frame.page, frame.cursor)
+            snapshotSeen = true
+            if (!opened) {
+              opened = true
+              opening.resolve()
+            }
+            continue
+          }
+          if (!snapshotSeen) throw new Error('Session follow stream emitted an event before its snapshot')
+          if (runtime.appendEvent(frame.entry) === 'gap') {
+            throw new Error('Session follow stream contained a sequence gap')
+          }
         }
+        if (followScope.active) throw new Error('Session follow stream ended unexpectedly')
       } catch (error: unknown) {
-        if (!this.connectionScope.active) return
-        this.workspace.setConnection('mux', 'reconnecting', `event stream disconnected: ${String(error)}`)
+        if (!followScope.active || !this.workspace.owns(runtime)) return
+        const message = error instanceof Error ? error.message : String(error)
+        runtime.setConnection('events', 'reconnecting', `event stream disconnected: ${message}`)
+        if (!opened) {
+          opening.reject(error)
+          return
+        }
       }
-      if (!this.connectionScope.active) return
-      this.workspace.setConnection('mux', 'reconnecting')
-      await abortableDelay(500, this.connectionScope.signal)
-      await this.resync().catch(() => undefined)
+      await abortableDelay(500, followScope.signal)
     }
   }
 
-  private async runHostLoop(): Promise<void> {
+  private async runControlLoop(): Promise<void> {
     while (this.connectionScope.active) {
       try {
-        for await (const frame of this.transport.host(this.connectionScope.signal)) {
-          this.workspace.setConnection('host', 'online', undefined)
-          this.handleHost(frame)
+        for await (const frame of this.transport.control(this.connectionScope.signal)) {
+          this.workspace.setConnection('control', 'online', undefined)
+          this.handleControl(frame)
         }
+        if (this.connectionScope.active) throw new Error('Session control stream ended unexpectedly')
       } catch (error: unknown) {
         if (!this.connectionScope.active) return
-        this.workspace.setConnection('host', 'reconnecting')
-        this.workspace.setError(`host stream disconnected: ${String(error)}`)
+        this.workspace.setConnection('control', 'reconnecting', `control stream disconnected: ${String(error)}`)
       }
-      if (!this.connectionScope.active) return
-      this.workspace.setConnection('host', 'reconnecting')
       await abortableDelay(500, this.connectionScope.signal)
     }
   }
 
-  private async handleMux(request: SessionMuxRequest): Promise<void> {
-    const frame = request.payload
-    if (frame.type === 'stream/error') {
-      this.workspace.setConnection('mux', 'reconnecting')
-      this.workspace.setError(frame.error.message)
+  private handleControl(frame: SessionControlFrame): void {
+    if (frame.type === 'baseline') {
+      const runtime = this.workspace.active
+      if (runtime === undefined) return
+      runtime.setQueue(frame.queues[String(runtime.sessionId)] ?? [])
+      const projections = frame.projections[String(runtime.sessionId)]
+      if (projections !== undefined) runtime.applyProjectionBaseline(projections)
       return
     }
     const runtime = this.workspace.runtimeFor(frame.sessionId)
     if (runtime === undefined) return
-    if (frame.type === 'approval/requested') {
-      if (this.workspace.visible(runtime)) {
-        this.publishInteraction({ type: 'approval', prompt: { ...frame, rpcId: request.rpcId } })
-      }
+    if (frame.type === 'queue') {
+      runtime.setQueue(frame.items)
       return
     }
-    if (frame.type === 'question/requested') {
-      if (this.workspace.visible(runtime)) {
-        this.publishInteraction({ type: 'questions', prompt: { ...frame, rpcId: request.rpcId } })
-      }
-      return
-    }
-    switch (frame.type) {
-      case 'session/event': {
-        const result = runtime.appendEvent({
-          event: frame.event,
-          ...frame.view === undefined ? {} : { view: frame.view },
-        })
-        if (result === 'gap') await this.resync(runtime)
-        return
-      }
-      case 'session/subscribed': {
-        const last = runtime.current.events.at(-1)?.event.seq ?? -1
-        if (frame.lastSeq !== last) await this.resync(runtime)
-        return
-      }
-      case 'session/queue':
-        runtime.setQueue(frame.items)
-        return
-      case 'session/projection':
-        runtime.applyProjection(frame.key, frame.value, frame.seq)
-        return
-      case 'approval/resolved':
-      case 'question/resolved':
-        if (this.workspace.visible(runtime)) {
-          this.publishInteraction({ type: 'resolved', resolution: frame })
-        }
-        return
-      case 'session/jobs':
-        return
+    if (frame.type === 'projection') {
+      runtime.applyProjection(frame.key, frame.value, frame.seq)
     }
   }
 
-  private handleHost(frame: HostFrame): void {
-    if (frame.type === 'stream/error') {
-      this.workspace.setConnection('host', 'reconnecting')
-      this.workspace.setError(frame.error.message)
-      return
+  private requestApproval(prompt: ApprovalPrompt): Promise<ApprovalOutcome | undefined> {
+    if (!this.ownsInteraction(prompt.sessionId)) return Promise.resolve(undefined)
+    return new Promise<ApprovalOutcome>((resolve, reject) => {
+      const removeAbort = this.observeInteractionAbort(prompt, reject)
+      this.pendingInteractions.set(prompt.requestId, {
+        kind: 'approval', prompt, resolve, reject, removeAbort,
+      })
+      this.publishInteraction({ type: 'approval', prompt })
+    })
+  }
+
+  private requestQuestions(prompt: QuestionPrompt): Promise<AskUserQuestionAnswer | undefined> {
+    if (!this.ownsInteraction(prompt.sessionId)) return Promise.resolve(undefined)
+    return new Promise<AskUserQuestionAnswer>((resolve, reject) => {
+      const removeAbort = this.observeInteractionAbort(prompt, reject)
+      this.pendingInteractions.set(prompt.requestId, {
+        kind: 'questions', prompt, resolve, reject, removeAbort,
+      })
+      this.publishInteraction({ type: 'questions', prompt })
+    })
+  }
+
+  private ownsInteraction(sessionId: SessionId): boolean {
+    const runtime = this.workspace.runtimeFor(sessionId)
+    return runtime !== undefined && this.workspace.visible(runtime)
+  }
+
+  private observeInteractionAbort(
+    prompt: ApprovalPrompt | QuestionPrompt,
+    reject: (error: unknown) => void,
+  ): () => void {
+    const signal = prompt.signal
+    if (signal === undefined) return () => {}
+    const onAbort = (): void => {
+      const pending = this.pendingInteractions.get(prompt.requestId)
+      if (pending === undefined) return
+      this.pendingInteractions.delete(prompt.requestId)
+      reject(signal.reason ?? new Error('Host interaction was cancelled'))
+      this.publishInteraction({
+        type: 'resolved',
+        resolution: 'questions' in prompt
+          ? {
+              type: 'question/resolved',
+              sessionId: prompt.sessionId,
+              requestId: prompt.requestId,
+              outcome: 'cancelled',
+            }
+          : {
+              type: 'approval/resolved',
+              sessionId: prompt.sessionId,
+              requestId: prompt.requestId,
+              outcome: 'cancelled',
+            },
+      })
     }
-    if (!('sessionId' in frame)) return
-    const runtime = this.workspace.runtimeFor(frame.sessionId)
-    if (runtime === undefined) return
-    if (frame.type === 'host/session-status') runtime.setRunState(frame.running ? 'running' : 'idle')
-    if (frame.type === 'host/agent-error') runtime.setError(frame.message)
+    if (signal.aborted) queueMicrotask(onAbort)
+    else signal.addEventListener('abort', onAbort, { once: true })
+    return () => { signal.removeEventListener('abort', onAbort) }
+  }
+
+  private retireInteractions(error: Error): void {
+    for (const pending of this.pendingInteractions.values()) {
+      pending.removeAbort()
+      pending.reject(error)
+    }
+    this.pendingInteractions.clear()
   }
 
   private publishInteraction(event: SessionInteractionEvent): void {

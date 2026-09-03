@@ -17,19 +17,16 @@ function act(component: Component | undefined, action: SurfaceInputAction): void
 
 function approval(id: string): ApprovalPrompt {
   return {
-    type: 'approval/requested',
-    sessionId: 'session-1',
-    approvalId: id,
-    rpcId: `rpc-${id}`,
+    sessionId: 'session-1' as ApprovalPrompt['sessionId'],
+    requestId: id,
     toolName: 'shell',
-  } as ApprovalPrompt
+  }
 }
 
 function questions(): QuestionPrompt {
   return {
-    type: 'question/requested',
-    sessionId: 'session-1',
-    rpcId: 'rpc-questions',
+    sessionId: 'session-1' as QuestionPrompt['sessionId'],
+    requestId: 'questions',
     questions: [{
       id: 'language',
       question: 'Language?',
@@ -39,7 +36,7 @@ function questions(): QuestionPrompt {
       question: 'Database?',
       options: [{ label: 'SQLite' }, { label: 'Postgres' }],
     }],
-  } as QuestionPrompt
+  }
 }
 
 function fixture(overrides: Partial<InteractionPort> = {}) {

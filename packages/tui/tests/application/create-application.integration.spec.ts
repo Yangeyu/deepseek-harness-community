@@ -3,7 +3,6 @@ import {
   type Terminal,
 } from '@earendil-works/pi-tui'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { HistoryEntry, IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createApplication,
@@ -12,6 +11,7 @@ import {
   type TuiMemoryPort,
 } from '../../src/application/create-application.ts'
 import type { TuiRuntime } from '../../src/application/contracts.ts'
+import type { TuiHostPorts } from '../../src/application/host-ports.ts'
 import type { RewindPlan, RewindPort } from '../../src/modules/rewind/index.ts'
 import { resolveConfig } from '../../src/application/config.ts'
 import type { RuntimeSessionSnapshot } from '../../src/runtime/session/manager.ts'
@@ -24,6 +24,40 @@ import type {
   InteractionResolution,
 } from '../../src/runtime/session/interactions.ts'
 import { decodeTerminalInput } from '../../src/infrastructure/terminal/decode-input.ts'
+import type { HistoryEntry } from '../../src/runtime/session/contracts.ts'
+
+function hostPorts(): TuiHostPorts {
+  const unavailable = async (): Promise<never> => { throw new Error('Host port is not configured for this test') }
+  const emptyStream = async function*(): AsyncGenerator<never> {}
+  return {
+    sessions: {
+      describeHost: async () => ({ cwd: '/workspace' }),
+      listSessions: async () => [],
+      createSession: unavailable,
+      forkSession: unavailable,
+      page: unavailable,
+      modelCatalog: unavailable,
+      selectModel: unavailable,
+      prompt: unavailable,
+      cancel: unavailable,
+      openPath: unavailable,
+      follow: emptyStream,
+      control: emptyStream,
+      onStatus: () => () => {},
+      onError: () => () => {},
+    },
+    interactions: { connect: () => () => {} },
+    skills: { list: async () => [] },
+    goals: () => ({
+      create: unavailable,
+      edit: unavailable,
+      pause: unavailable,
+      resume: unavailable,
+      complete: unavailable,
+      clear: unavailable,
+    }),
+  }
+}
 
 function sendInput(internals: ApplicationAssembly, data: string): { consume?: boolean } | undefined {
   return internals.input.handle(decodeTerminalInput(data))
@@ -71,10 +105,8 @@ function rewindPlan(attachments: readonly ImageAttachmentRef[] = []): RewindPlan
 
 function approvalPrompt(): ApprovalPrompt {
   return {
-    type: 'approval/requested',
     sessionId: 'session-1',
-    approvalId: 'approval-1',
-    rpcId: 'rpc-approval-1',
+    requestId: 'approval-1',
     toolName: 'shell',
     reason: 'The command needs workspace access.',
   } as ApprovalPrompt
@@ -87,7 +119,7 @@ function approvalResolution(
   return {
     type: 'approval/resolved',
     sessionId: prompt.sessionId,
-    approvalId: prompt.approvalId,
+    requestId: prompt.requestId,
     outcome,
   }
 }
@@ -132,7 +164,7 @@ function application(
     ...runtimeOverrides,
   }
   const assembly = createApplication(
-    {} as IApiClient,
+    hostPorts(),
     resolveConfig({ cwd: '/workspace', color: false }),
     runtime,
     rewind,
@@ -725,9 +757,9 @@ describe('createApplication integration', () => {
     app.render({
       ...internals.session.current,
       runState: 'running',
-      models: {
-        current: { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' },
-        routable: true,
+      modelCatalog: {
+        default: { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' },
+        routableProviders: ['deepseek-official'],
         groups: [],
         failures: [],
       },
@@ -919,7 +951,7 @@ describe('createApplication integration', () => {
     const internals = app
     const running = {
       ...internals.session.current,
-      connection: { mux: 'online', host: 'online' },
+      connection: { events: 'online', control: 'online' },
       runState: 'running',
       pendingSubmissions: [{
         key: 1,
@@ -984,7 +1016,7 @@ describe('createApplication integration', () => {
     const state = {
       ...internals.session.current,
       sessionId: 'session-command' as RuntimeSessionSnapshot['sessionId'],
-      connection: { mux: 'online', host: 'online' },
+      connection: { events: 'online', control: 'online' },
     } satisfies RuntimeSessionSnapshot
     vi.spyOn(internals.session, 'current', 'get').mockReturnValue(state)
     app.render(state)
@@ -1006,7 +1038,7 @@ describe('createApplication integration', () => {
   it('keeps local commands out of the Host command working wait', async () => {
     const app = application()
     const internals = app
-    const state = { ...internals.session.current, connection: { mux: 'online', host: 'online' } } satisfies RuntimeSessionSnapshot
+    const state = { ...internals.session.current, connection: { events: 'online', control: 'online' } } satisfies RuntimeSessionSnapshot
     vi.spyOn(internals.session, 'current', 'get').mockReturnValue(state)
     vi.spyOn(internals.session, 'notice').mockImplementation(() => {})
     app.render(state)
@@ -1063,7 +1095,7 @@ describe('createApplication integration', () => {
     }]
     const preparing = {
       ...internals.session.current,
-      connection: { mux: 'online', host: 'online' },
+      connection: { events: 'online', control: 'online' },
       pendingSubmissions,
       execution: buildExecutionSnapshot({
         sessionId: undefined,
@@ -1086,7 +1118,7 @@ describe('createApplication integration', () => {
     const internals = app
     app.render({
       ...internals.session.current,
-      connection: { mux: 'online', host: 'online' },
+      connection: { events: 'online', control: 'online' },
       projections: {
         permissions: {
           currentValue: 'workspace-write',
@@ -1108,7 +1140,7 @@ describe('createApplication integration', () => {
     const internals = app
     app.render({
       ...internals.session.current,
-      connection: { mux: 'online', host: 'online' },
+      connection: { events: 'online', control: 'online' },
       execution: buildExecutionSnapshot({
         sessionId: undefined,
         epoch: 0,
@@ -1129,7 +1161,7 @@ describe('createApplication integration', () => {
     const internals = app
     app.render({
       ...internals.session.current,
-      connection: { mux: 'online', host: 'online' },
+      connection: { events: 'online', control: 'online' },
       projections: {
         permissions: {
           currentValue: 'workspace-write',

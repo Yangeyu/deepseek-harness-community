@@ -1,6 +1,6 @@
 // Loads the session-title `SessionProjectionMap.title` augmentation for list rows.
 import type {} from '@deepseek-ai/dsh-session-title'
-import type { SessionSummary } from '@deepseek-ai/dsh-host-apiproxy'
+import type { SessionSummary } from '../../runtime/session/contracts.ts'
 
 export interface SessionListRow {
   sessionId: string

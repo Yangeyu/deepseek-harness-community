@@ -1,4 +1,4 @@
-import type { SkillEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { SkillEntry } from '../runtime/session/contracts.ts'
 import type { LifecycleScope } from '../runtime/lifecycle/scope.ts'
 import type { RuntimeSessionSnapshot } from '../runtime/session/snapshot.ts'
 import type { TerminalCommandDirectory } from '../runtime/commands.ts'

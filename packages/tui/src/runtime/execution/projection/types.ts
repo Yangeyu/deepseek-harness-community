@@ -1,5 +1,5 @@
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry } from '../../session/contracts.ts'
 
 declare const executionKeyBrand: unique symbol
 

@@ -1,20 +1,18 @@
 /**
- * Third-party terminal profile bundle for DeepSeek Harness. The application
- * consumes only the transport-neutral ApiProxy and keeps pi-tui behind its own
- * runtime and presentation boundaries.
+ * Third-party terminal profile bundle for DeepSeek Harness. The composition
+ * root adapts in-process Host services to consumer-owned application ports and
+ * keeps Cordis and pi-tui outside the lifecycle kernel.
  * @module @vascent/deepseek-harness-tui
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@vascent/deepseek-harness-web'
 import type { CommandDescriptor } from '@deepseek-ai/dsh-commands'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
-import {
-  InProcessApiClient,
-  toFetchHandler,
-} from '@deepseek-ai/dsh-host-apiproxy'
 import type { TuiRuntime } from './application/contracts.ts'
 import { createTuiApplication } from './application/create-application.ts'
+import type { TuiHostPorts } from './application/host-ports.ts'
 import {
   installRewindWorkspaceAdapter,
   installRewindPromptAdapter,
@@ -34,6 +32,10 @@ import {
 } from './application/cli.ts'
 import { formatSessionList } from './modules/session-center/model.ts'
 import { settingsPermissionDefaultGateway } from './infrastructure/harness/permission-default.ts'
+import { HarnessGoalPort } from './infrastructure/harness/goal.ts'
+import { HarnessInteractionSource } from './infrastructure/harness/interactions.ts'
+import { HarnessSessionTransport } from './infrastructure/harness/session-transport.ts'
+import { harnessSkillCatalogSource } from './infrastructure/harness/skills.ts'
 
 export { Config, resolveConfig }
 export type { TuiConfig, TuiRuntime }
@@ -68,18 +70,23 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-function rpcValue<T>(response: {
-  result: { ok: true; value: T } | { ok: false; error: { message: string } }
-}): T {
-  if (response.result.ok) return response.result.value
-  throw new Error(response.result.error.message)
-}
-
 /** Stable Cordis plugin name. */
 export const name = 'community-tui'
 
-/** The in-process API gateway must exist before the terminal can activate. */
-export const inject = ['apiProxy', 'agents', 'attachments', 'commands', 'communityWeb', 'memory', 'settings', 'vision']
+/** Host services required by the in-process terminal composition root. */
+export const inject = [
+  'sessionController',
+  'sessionSkillCatalog',
+  'goals',
+  'tools',
+  'agents',
+  'attachments',
+  'commands',
+  'communityWeb',
+  'memory',
+  'settings',
+  'vision',
+]
 
 /** Mount the terminal application and bind its lifetime to the plugin effect. */
 export function apply(ctx: Context, config: TuiConfig): void {
@@ -115,13 +122,12 @@ export function apply(ctx: Context, config: TuiConfig): void {
     stderr: process.stderr,
     exit,
   }
-  const api = new InProcessApiClient(toFetchHandler(ctx.apiProxy))
   if (invocation.kind === 'sessions') {
     ctx.effect(() => {
       const abort = new AbortController()
       void (async () => {
         await ctx.get('loader')?.await()
-        const sessions = rpcValue(await api.sessions.list({}, abort.signal)).items
+        const sessions = (await ctx.sessionController.list({}, abort.signal)).items
         runtime.stdout.write(formatSessionList(sessions, invocation.json))
         exit(0)
       })().catch((error: unknown) => {
@@ -134,6 +140,21 @@ export function apply(ctx: Context, config: TuiConfig): void {
     return
   }
   const resolved = resolveConfig(invocation.config)
+  const sessionTransport = new HarnessSessionTransport({
+    cwd: resolved.cwd,
+    controller: ctx.sessionController,
+    tools: ctx.tools,
+    toolScope: sessionId => ctx.agents.get(sessionId),
+    onStatus: listener => ctx.on('api-session/status', listener),
+    onError: listener => ctx.on('api-session/error', listener),
+    onPresenterError: message => { ctx.logger.warn(message) },
+  })
+  const host: TuiHostPorts = {
+    sessions: sessionTransport,
+    interactions: new HarnessInteractionSource(ctx),
+    skills: harnessSkillCatalogSource(ctx.sessionSkillCatalog),
+    goals: session => new HarnessGoalPort(ctx.sessionController, ctx.goals, session),
+  }
   const memoryRewind = new MemoryRewindParticipant(ctx.memory)
   const rewindRepository = new FileRewindRepository(dshHomePath('rewind'), {
     onWarning: message => { ctx.logger.warn(message) },
@@ -174,7 +195,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
     subscribe: listener => ctx.on('commands/change', listener),
   }
   const app = createTuiApplication(
-    api,
+    host,
     resolved,
     runtime,
     rewind,

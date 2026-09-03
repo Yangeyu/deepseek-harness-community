@@ -1,4 +1,4 @@
-import type { SkillEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { SkillEntry } from '../../runtime/session/contracts.ts'
 import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
 import type { SkillCatalogSnapshot } from './catalog.ts'
 import { SkillsProcess } from './process.ts'

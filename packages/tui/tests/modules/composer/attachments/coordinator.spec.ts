@@ -2,7 +2,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
-import type { PromptContentPart, RpcId } from '@deepseek-ai/dsh-host-apiproxy'
+import type { PromptContentPart, SessionRequestId } from '../../../../src/runtime/session/contracts.ts'
 import type {
   ResolvedImageRoute,
   ResolvedProxyImageRoute,
@@ -87,7 +87,7 @@ function preparedSender(
   return vi.fn<PreparedPromptSender>(async (_text, _mode, prepareContent) => {
     const prepared = await prepareContent({ setActivity: activity => { onActivity?.(activity) } })
     if (prepared.kind === 'content') onContent?.(prepared.content)
-    else await prepared.commit({ rpcId: 'rpc-test' as RpcId })
+    else await prepared.commit({ requestId: 'rpc-test' as SessionRequestId })
   })
 }
 
@@ -327,7 +327,7 @@ describe('AttachmentCoordinator', () => {
     const send = vi.fn<PreparedPromptSender>(async (_text, _mode, prepareContent) => {
       const prepared = await prepareContent({ setActivity: () => {} })
       if (prepared.kind !== 'admission') throw new Error('expected Vision admission')
-      await prepared.commit({ rpcId: 'rpc-test' as RpcId })
+      await prepared.commit({ requestId: 'rpc-test' as SessionRequestId })
       throw new Error('presentation failed after admission')
     })
 

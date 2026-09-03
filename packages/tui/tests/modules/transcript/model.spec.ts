@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { HistoryEntry, SessionSummary } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry, SessionSummary } from '../../../src/runtime/session/contracts.ts'
 import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manager.ts'
 import {
   appendTranscriptChunks,
@@ -24,7 +24,7 @@ function state(events: HistoryEntry[], running = false): RuntimeSessionSnapshot 
     sessionId: 'session-test' as SessionSummary['sessionId'],
     cwd: '/workspace',
     runState: running ? 'running' : 'idle',
-    connection: { mux: 'online', host: 'online' },
+    connection: { events: 'online', control: 'online' },
     events,
     historyHasMore: false,
     queue: [],
@@ -35,7 +35,7 @@ function state(events: HistoryEntry[], running = false): RuntimeSessionSnapshot 
       entries: events,
       sessionRunning: running,
     }),
-    models: undefined,
+    modelCatalog: undefined,
     projections: {},
     notice: undefined,
     error: undefined,

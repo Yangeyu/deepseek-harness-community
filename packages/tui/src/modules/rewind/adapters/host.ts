@@ -50,7 +50,7 @@ export function decodeWorkspaceMutation(
 function sourceFor(exec: Readonly<ToolExecution>): MutationSource | undefined {
   const agent = exec.agent
   if (agent === undefined) return undefined
-  const call = agent.session.events.findLast(event => (
+  const call = agent.session.snapshotEvents().findLast(event => (
     event.type === 'tool/call' && String(event.data.callId) === String(exec.rootCallId)
   ))
   if (call === undefined || call.type !== 'tool/call') return undefined

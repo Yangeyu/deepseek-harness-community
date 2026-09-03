@@ -1,5 +1,5 @@
 import type { Component, TUI } from '@earendil-works/pi-tui'
-import type { SkillEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { SkillEntry } from '../../runtime/session/contracts.ts'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
 import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
 import { ScopedEffectRunner } from '../../runtime/dispatch/effect-runner.ts'

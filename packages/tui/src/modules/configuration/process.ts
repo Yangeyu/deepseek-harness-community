@@ -1,5 +1,5 @@
 import type { Component, TUI } from '@earendil-works/pi-tui'
-import type { ModelSelection } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ModelSelection } from '../../runtime/session/contracts.ts'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
 import type { CommunityWebStatus } from '@vascent/deepseek-harness-web'
 import { ModelDialog } from './view/model-dialog.ts'
@@ -8,10 +8,11 @@ import { sanitizeTerminalText } from '../../presentation/primitives/text.ts'
 import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
 import { ScopedEffectRunner } from '../../runtime/dispatch/effect-runner.ts'
-import { configurationSnapshot } from './model.ts'
+import { configurationSnapshot, modelDirectorySnapshot } from './model.ts'
 import type { ConfigurationSnapshot } from './model.ts'
 import type {
   ConfigurationCommandPort,
+  ModelDirectorySnapshot,
   ModelPort,
   VisionConfigurationPort,
   WebConfigurationPort,
@@ -158,7 +159,7 @@ export class ConfigurationProcess {
     this.configView = view
     surface = this.options.surfaces.open({ placement: 'readable', component: view })
     if ((initialStage === 'root' || initialStage === 'reasoning')
-      && state.models === undefined
+      && state.modelCatalog === undefined
       && state.sessionId !== undefined) {
       void this.run(async () => { await this.options.models.refresh() })
     }
@@ -169,7 +170,7 @@ export class ConfigurationProcess {
 
   async openModelSelector(): Promise<void> {
     if (this.options.surfaces.active) return
-    const models = await this.options.models.refresh()
+    const models = await this.loadModelDirectory()
     if (this.options.surfaces.active || !this.options.scope.active) return
     let surface!: ConfigurationSurfaceHandle
     const close = (): void => { surface.close() }
@@ -187,8 +188,8 @@ export class ConfigurationProcess {
   }
 
   async selectNamedModel(name: string, reasoningEffort?: string): Promise<void> {
-    const models = await this.options.models.refresh()
-    const matches = models.groups.flatMap(group => group.models
+    const catalog = await this.options.models.refresh()
+    const matches = catalog.groups.flatMap(group => group.models
       .filter(model => `${group.id}/${model.id}` === name || model.id === name)
       .map(model => ({ provider: group.id, model: model.id })))
     if (matches.length !== 1) throw new Error(matches.length === 0
@@ -201,7 +202,7 @@ export class ConfigurationProcess {
   }
 
   async cycleReasoningEffort(): Promise<void> {
-    const models = this.options.session.current.models ?? await this.options.models.refresh()
+    const models = await this.loadModelDirectory()
     const current = models.current
     const model = models.groups.find(group => group.id === current.provider)
       ?.models.find(candidate => candidate.id === current.model)
@@ -292,7 +293,7 @@ export class ConfigurationProcess {
   }
 
   async selectReasoningEffort(reasoningEffort: string | undefined): Promise<void> {
-    const models = this.options.session.current.models ?? await this.options.models.refresh()
+    const models = await this.loadModelDirectory()
     const current = models.current
     await this.selectModel({
       provider: current.provider,
@@ -317,12 +318,21 @@ export class ConfigurationProcess {
 
   private snapshot(state: Readonly<RuntimeSessionSnapshot> = this.options.session.current) {
     return configurationSnapshot(
-      state.models,
+      state.modelCatalog,
       state.projections,
       this.detailsExpanded,
       this.visionStatus,
       this.options.web === undefined ? undefined : this.webStatus ?? null,
     )
+  }
+
+  private async loadModelDirectory(): Promise<ModelDirectorySnapshot> {
+    const before = this.options.session.current
+    const catalog = before.modelCatalog ?? await this.options.models.refresh()
+    const state = this.options.session.current
+    const models = modelDirectorySnapshot(catalog, state.projections)
+    if (models === undefined) throw new Error('Model state is unavailable for the active session.')
+    return models
   }
 
   private refreshSurface(): void {

@@ -15,7 +15,7 @@ function session(events: readonly SessionEvent[]): Session {
   return {
     id: 'session-1',
     header: { cwd: '/workspace' },
-    events,
+    snapshotEvents: () => events,
   } as unknown as Session
 }
 

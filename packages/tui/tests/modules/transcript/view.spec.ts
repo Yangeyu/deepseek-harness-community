@@ -3,7 +3,7 @@ import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
 import type {
   HistoryEntry,
   SessionSummary,
-} from '@deepseek-ai/dsh-host-apiproxy'
+} from '../../../src/runtime/session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manager.ts'
 import { sanitizeTerminalText } from '../../../src/presentation/primitives/text.ts'
@@ -21,7 +21,7 @@ function state(
     sessionId: 'session-test' as SessionSummary['sessionId'],
     cwd: '/workspace',
     runState: running ? 'running' : 'idle',
-    connection: { mux: 'online', host: 'online' },
+    connection: { events: 'online', control: 'online' },
     events,
     historyHasMore: false,
     queue: [],
@@ -38,7 +38,7 @@ function state(
           : []
       }),
     }),
-    models: undefined,
+    modelCatalog: undefined,
     projections: {},
     notice: undefined,
     error: undefined,
@@ -771,7 +771,7 @@ describe('TranscriptComponent', () => {
       text: 'analyze [Image #1] now',
       mode: 'queue',
       intent: 'working',
-      rpcId: 'rpc-image' as never,
+      requestId: 'rpc-image' as never,
       durablePromptObserved: true,
       activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: Date.now() },
     }])
@@ -790,18 +790,17 @@ describe('TranscriptComponent', () => {
       text: 'queued once',
       mode: 'queue',
       intent: 'working',
-      rpcId: 'rpc-queued' as never,
+      requestId: 'rpc-queued' as never,
       }],
       queue: [{
-        id: 'message-queued',
+        id: 'message-queued' as never,
         placement: 'queued',
+        rpcId: 'rpc-queued' as never,
         message: {
-          id: 'message-queued',
-          role: 'user',
-          source: { kind: 'user', rpcId: 'rpc-queued' },
+          id: 'message-queued' as never,
           content: [{ type: 'text', text: 'queued once' }],
         },
-      }] as unknown as RuntimeSessionSnapshot['queue'],
+      }],
     } satisfies RuntimeSessionSnapshot
 
     const visible = new TranscriptComponent(queued, createTheme(false), true, 8).render(80).join('\n')

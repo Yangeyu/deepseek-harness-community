@@ -1,4 +1,3 @@
-import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy'
 import type {
   AutocompleteItem,
   SlashCommand,
@@ -9,8 +8,6 @@ import type { TuiRuntime } from './contracts.ts'
 import type { BoundSession, SessionFeatureSet } from './session-features.ts'
 import { NodeTextFileReader } from '../infrastructure/filesystem/text-file-reader.ts'
 import { LocalSkillAuthoring } from '../infrastructure/filesystem/local-skill-authoring.ts'
-import { HarnessGoalPort } from '../infrastructure/harness/goal.ts'
-import { harnessSkillCatalogSource } from '../infrastructure/harness/skills.ts'
 import { InlineReferenceEditor } from '../infrastructure/terminal/inline-reference-editor.ts'
 import { TerminalSkillDocumentEditor } from '../infrastructure/terminal/skill-document-editor.ts'
 import type { ClipboardImageLoader } from '../modules/composer/attachments/clipboard.ts'
@@ -21,6 +18,8 @@ import { ComposerProcess } from '../modules/composer/process.ts'
 import { composerDraftForSession } from '../modules/composer/session-draft.ts'
 import { InteractionProcess } from '../modules/interaction/process.ts'
 import { SkillsProcess } from '../modules/skills/process.ts'
+import type { SkillCatalogSource } from '../modules/skills/contracts.ts'
+import type { GoalPort, GoalSessionSource } from '../modules/task/contracts.ts'
 import { TaskProcess } from '../modules/task/process.ts'
 import { TrajectoryProcess } from '../modules/trajectory/process.ts'
 import { TranscriptHost } from '../modules/transcript/host.ts'
@@ -32,7 +31,8 @@ import type { LifecycleScope } from '../runtime/lifecycle/scope.ts'
 import type { SessionManager } from '../runtime/session/manager.ts'
 
 export interface SessionFeatureSetOptions {
-  readonly api: IApiClient
+  readonly skills: SkillCatalogSource
+  readonly goals: (session: GoalSessionSource) => GoalPort
   readonly runtime: TuiRuntime
   readonly terminal: Terminal
   readonly tui: TUI
@@ -115,7 +115,7 @@ export function createSessionFeatureSet(
   })
   const task = new TaskProcess({
     session,
-    goals: new HarnessGoalPort(options.api, session),
+    goals: options.goals(session),
     surfaces: options.surfaces,
     tui: options.tui,
     theme: options.theme,
@@ -125,7 +125,7 @@ export function createSessionFeatureSet(
   })
   const skills = new SkillsProcess({
     session,
-    source: harnessSkillCatalogSource(options.api),
+    source: options.skills,
     authoring: new LocalSkillAuthoring(),
     editor: new TerminalSkillDocumentEditor(
       session,

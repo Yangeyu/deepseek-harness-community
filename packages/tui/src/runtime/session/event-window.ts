@@ -1,4 +1,4 @@
-import type { HistoryEntry } from '@deepseek-ai/dsh-host-apiproxy'
+import type { HistoryEntry } from './contracts.ts'
 
 /** Return the append-only suffix, or undefined when history was replaced or prepended. */
 export function appendedHistoryEntries(

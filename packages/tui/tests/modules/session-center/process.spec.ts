@@ -1,4 +1,4 @@
-import type { SessionSummary } from '@deepseek-ai/dsh-host-apiproxy'
+import type { SessionSummary } from '../../../src/runtime/session/contracts.ts'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionCenterProcess } from '../../../src/modules/session-center/process.ts'
 import { createTheme } from '../../../src/presentation/primitives/theme.ts'
@@ -31,7 +31,7 @@ describe('SessionCenterProcess', () => {
     })
     const process = new SessionCenterProcess({
       session: {
-        current: emptyRuntimeSessionSnapshot('/workspace', { mux: 'online', host: 'online' }, 0),
+        current: emptyRuntimeSessionSnapshot('/workspace', { events: 'online', control: 'online' }, 0),
         sessions,
         resume: vi.fn(async () => {}),
         notice: vi.fn(),
@@ -65,7 +65,7 @@ describe('SessionCenterProcess', () => {
     const open = vi.fn()
     const process = new SessionCenterProcess({
       session: {
-        current: emptyRuntimeSessionSnapshot('/workspace', { mux: 'online', host: 'online' }, 0),
+        current: emptyRuntimeSessionSnapshot('/workspace', { events: 'online', control: 'online' }, 0),
         sessions: () => new Promise(resolve => { release = resolve }),
         resume: vi.fn(async () => {}),
         notice: vi.fn(),

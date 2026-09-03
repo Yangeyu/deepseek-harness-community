@@ -136,7 +136,7 @@ describe('trajectory records', () => {
       event: { type: 'step/end', seq: 6, time: 1_800, data: { turn: 1, step: 1 } },
     }, {
       event: { type: 'turn/end', seq: 7, time: 1_900, data: { turn: 1, reason: { kind: 'completed' } } },
-    }] as RuntimeSessionSnapshot['events']
+    }] as unknown as RuntimeSessionSnapshot['events']
 
     const result = records(entries)
 
@@ -175,7 +175,7 @@ describe('trajectory records', () => {
           },
         },
       },
-    }] as RuntimeSessionSnapshot['events']
+    }] as unknown as RuntimeSessionSnapshot['events']
 
     const record = records(entries).at(-1)
 
@@ -212,7 +212,7 @@ describe('trajectory records', () => {
           text: 'Context compacted',
         },
       },
-    }] as RuntimeSessionSnapshot['events'])
+    }] as unknown as RuntimeSessionSnapshot['events'])
 
     const command = result.find(record => record.kind === 'command')
     expect(command).toMatchObject({
@@ -247,7 +247,7 @@ describe('trajectory records', () => {
           header: { config: { provider: 'deepseek', model: 'chat' } },
         },
       },
-    }] as RuntimeSessionSnapshot['events'])
+    }] as unknown as RuntimeSessionSnapshot['events'])
 
     expect(result.at(-1)).toMatchObject({ kind: 'request', turn: 2 })
     expect(result.at(-1)).not.toHaveProperty('step')

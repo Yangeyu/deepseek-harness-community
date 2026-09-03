@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ModelSelection, SessionModels } from '@deepseek-ai/dsh-host-apiproxy'
+import type { ModelSelection } from '../../../../src/runtime/session/contracts.ts'
+import type { ModelDirectorySnapshot } from '../../../../src/modules/configuration/contracts.ts'
 import { ModelDialog } from '../../../../src/modules/configuration/view/model-dialog.ts'
 import { createTheme } from '../../../../src/presentation/primitives/theme.ts'
 
-const models: SessionModels = {
+const models: ModelDirectorySnapshot = {
   current: { provider: 'deepseek', model: 'flash', reasoningEffort: 'medium' },
   routable: true,
   groups: [{
@@ -51,7 +52,7 @@ describe('ModelDialog', () => {
   })
 
   it('keeps the selected model visible without exceeding a 24-row terminal', () => {
-    const manyModels: SessionModels = {
+    const manyModels: ModelDirectorySnapshot = {
       ...models,
       current: { provider: 'deepseek', model: 'model-1' },
       groups: [{

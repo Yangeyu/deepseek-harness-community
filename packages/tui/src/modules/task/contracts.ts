@@ -1,4 +1,9 @@
-import type { GoalRef } from '@deepseek-ai/dsh-host-apiproxy'
+import type { GoalRef } from '@deepseek-ai/dsh-goal/types'
+import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
+
+export interface GoalSessionSource {
+  readonly current: Readonly<RuntimeSessionSnapshot>
+}
 
 /** Goal operations consumed by the Task feature. */
 export interface GoalPort {

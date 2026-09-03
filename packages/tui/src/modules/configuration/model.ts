@@ -1,19 +1,21 @@
 import type {
+  ModelCatalog,
   ModelReasoningEffort,
-  SessionModels,
-} from '@deepseek-ai/dsh-host-apiproxy'
+} from '../../runtime/session/contracts.ts'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { PermissionSelect } from '@deepseek-ai/dsh-permission-presets/client'
 import type { PlanProjection } from '@deepseek-ai/dsh-plan-mode/client'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
 import type { CommunityWebStatus } from '@vascent/deepseek-harness-web'
+import { selectedModel } from '../../runtime/session/model-selection.ts'
+import type { ModelDirectorySnapshot } from './contracts.ts'
 
 // Load optional projection-key augmentations at this consumer boundary.
 import type {} from '@deepseek-ai/dsh-permission-presets/client'
 import type {} from '@deepseek-ai/dsh-plan-mode/client'
 
 export interface ConfigurationSnapshot {
-  models: SessionModels | undefined
+  models: ModelDirectorySnapshot | undefined
   permissions?: PermissionSelect
   plan?: PlanProjection
   vision?: VisionStatus
@@ -40,19 +42,33 @@ function hasProjection<K extends keyof SessionProjectionMap>(
 
 /** Project authoritative Session and capability facts for the Configuration feature. */
 export function configurationSnapshot(
-  models: SessionModels | undefined,
+  catalog: ModelCatalog | undefined,
   projections: Partial<SessionProjectionMap>,
   detailsExpanded: boolean,
   vision?: VisionStatus,
   web?: CommunityWebStatus | null,
 ): ConfigurationSnapshot {
   return {
-    models,
+    models: modelDirectorySnapshot(catalog, projections),
     ...hasProjection(projections, 'permissions') ? { permissions: projections.permissions } : {},
     ...hasProjection(projections, 'plan') ? { plan: projections.plan } : {},
     ...vision === undefined ? {} : { vision },
     ...web === undefined ? {} : { web },
     detailsExpanded,
+  }
+}
+
+export function modelDirectorySnapshot(
+  catalog: ModelCatalog | undefined,
+  projections: Readonly<Partial<SessionProjectionMap>>,
+): ModelDirectorySnapshot | undefined {
+  const current = selectedModel(catalog, projections)
+  if (catalog === undefined || current === undefined) return undefined
+  return {
+    current,
+    routable: catalog.routableProviders.includes(current.provider),
+    groups: catalog.groups,
+    failures: catalog.failures,
   }
 }
 
