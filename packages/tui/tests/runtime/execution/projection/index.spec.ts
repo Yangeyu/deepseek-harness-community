@@ -118,6 +118,104 @@ describe('execution projection', () => {
     expect(snapshot.diagnostics()).toEqual([])
   })
 
+  it('attaches the model request and response to their owning Step', () => {
+    const snapshot = build([
+      { event: { type: 'turn/start', seq: 0, time: 100, data: { turn: 1 } } },
+      { event: { type: 'step/start', seq: 1, time: 110, data: { turn: 1, step: 1 } } },
+      {
+        event: {
+          type: 'user/message',
+          seq: 2,
+          time: 115,
+          surfaceOp: 'append',
+          data: {
+            id: 'prompt-1',
+            role: 'user',
+            source: { kind: 'user' },
+            content: [{ type: 'text', text: 'Inspect the trace' }],
+          },
+        },
+      },
+      {
+        event: {
+          type: 'request/header',
+          seq: 3,
+          time: 120,
+          data: {
+            reason: 'initial',
+            header: { config: { provider: 'deepseek', model: 'chat' } },
+          },
+        },
+      },
+      {
+        event: {
+          type: 'assistant/message',
+          seq: 4,
+          time: 140,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 1,
+            message: {
+              id: 'response-1',
+              role: 'assistant',
+              source: { kind: 'model', provider: 'deepseek', model: 'chat' },
+              content: [{ type: 'text', text: 'Done.' }],
+            },
+          },
+        },
+      },
+      { event: { type: 'step/end', seq: 5, time: 150, data: { turn: 1, step: 1 } } },
+      { event: { type: 'step/start', seq: 6, time: 160, data: { turn: 1, step: 2 } } },
+      {
+        event: {
+          type: 'assistant/chunk',
+          seq: 7,
+          time: 170,
+          data: { turn: 1, step: 2, chunk: { type: 'text-delta', index: 0, text: 'Again.' } },
+        },
+      },
+      {
+        event: {
+          type: 'assistant/message',
+          seq: 8,
+          time: 180,
+          surfaceOp: 'append',
+          data: {
+            turn: 1,
+            step: 2,
+            message: {
+              id: 'response-2',
+              role: 'assistant',
+              source: { kind: 'model', provider: 'deepseek', model: 'chat' },
+              content: [{ type: 'text', text: 'Again.' }],
+            },
+          },
+        },
+      },
+      { event: { type: 'step/end', seq: 9, time: 190, data: { turn: 1, step: 2 } } },
+    ])
+
+    const call = snapshot.modelCall(stepExecutionKey(1, 1))
+    expect(call).toMatchObject({ request: { seq: 3 }, responseSeq: 4 })
+    expect(snapshot.modelRequest(stepExecutionKey(1, 1))).toMatchObject({
+      provider: 'deepseek',
+      model: 'chat',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Inspect the trace' }] }],
+    })
+    expect(snapshot.entry(call?.responseSeq)?.event.type).toBe('assistant/message')
+
+    const nextKey = stepExecutionKey(1, 2)
+    expect(snapshot.modelCall(nextKey)).toMatchObject({
+      request: { seq: 7, header: { config: { provider: 'deepseek', model: 'chat' } } },
+      responseSeq: 8,
+    })
+    expect(snapshot.modelRequest(nextKey)?.messages).toMatchObject([
+      { role: 'user', content: [{ type: 'text', text: 'Inspect the trace' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
+    ])
+  })
+
   it('settles Thought as soon as non-empty answer text starts', () => {
     const snapshot = build([
       { event: { type: 'step/start', seq: 0, time: 100, data: { turn: 1, step: 2 } } },
@@ -219,6 +317,9 @@ describe('execution projection', () => {
     ])
     const semanticValue = (snapshot: ReturnType<typeof buildExecutionSnapshot>) => ({
       nodes: snapshot.ordered(),
+      modelCalls: snapshot.ordered()
+        .filter(node => node.kind === 'step')
+        .map(node => snapshot.modelCall(node.key)),
       active: snapshot.active(),
       diagnostics: snapshot.diagnostics(),
     })

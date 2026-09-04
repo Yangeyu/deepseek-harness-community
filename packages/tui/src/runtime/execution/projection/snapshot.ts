@@ -1,4 +1,5 @@
 import type { HistoryEntry } from '../../session/contracts.ts'
+import { resolveModelRequest, type StepModelCall } from './model-call.ts'
 import type {
   ExecutionDiagnostic,
   ExecutionKey,
@@ -10,6 +11,7 @@ export class ImmutableExecutionSnapshot implements ExecutionSnapshot {
   private readonly byKey: ReadonlyMap<ExecutionKey, ExecutionNode>
   private readonly byParent: ReadonlyMap<ExecutionKey, readonly ExecutionNode[]>
   private readonly bySeq: ReadonlyMap<number, HistoryEntry>
+  private readonly modelCalls: ReadonlyMap<ExecutionKey, StepModelCall>
   private readonly activeNodes: readonly ExecutionNode[]
 
   constructor(
@@ -17,7 +19,8 @@ export class ImmutableExecutionSnapshot implements ExecutionSnapshot {
     readonly epoch: number,
     private readonly nodes: readonly ExecutionNode[],
     private readonly issues: readonly ExecutionDiagnostic[],
-    entries: readonly HistoryEntry[],
+    calls: readonly StepModelCall[],
+    private readonly entries: readonly HistoryEntry[],
   ) {
     this.byKey = new Map(nodes.map(node => [node.key, node]))
     const children = new Map<ExecutionKey, ExecutionNode[]>()
@@ -29,6 +32,7 @@ export class ImmutableExecutionSnapshot implements ExecutionSnapshot {
     }
     this.byParent = new Map([...children].map(([key, value]) => [key, Object.freeze(value)]))
     this.bySeq = new Map(entries.map(entry => [entry.event.seq, entry]))
+    this.modelCalls = new Map(calls.map(call => [call.key, call]))
     this.activeNodes = Object.freeze(nodes.filter(node => node.state.phase !== 'settled'))
   }
 
@@ -54,5 +58,13 @@ export class ImmutableExecutionSnapshot implements ExecutionSnapshot {
 
   entry(seq: number | undefined): HistoryEntry | undefined {
     return seq === undefined ? undefined : this.bySeq.get(seq)
+  }
+
+  modelCall(key: ExecutionKey | string): StepModelCall | undefined {
+    return this.modelCalls.get(key as ExecutionKey)
+  }
+
+  modelRequest(key: ExecutionKey | string) {
+    return resolveModelRequest(this.entries, this.modelCall(key)?.request)
   }
 }

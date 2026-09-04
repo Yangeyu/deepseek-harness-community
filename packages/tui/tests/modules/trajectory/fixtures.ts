@@ -3,11 +3,11 @@ import type {} from '@deepseek-ai/dsh-commands/types'
 import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manager.ts'
 import { buildExecutionSnapshot } from '../../../src/runtime/execution/projection/index.ts'
 
-export function toolEvents(completed: boolean): RuntimeSessionSnapshot['events'] {
+export function toolEvents(completed: boolean, firstSeq = 3): RuntimeSessionSnapshot['events'] {
   return [{
     event: {
       type: 'tool/call',
-      seq: 3,
+      seq: firstSeq,
       time: 1_200,
       data: {
         turn: 1,
@@ -21,7 +21,7 @@ export function toolEvents(completed: boolean): RuntimeSessionSnapshot['events']
   }, ...completed ? [{
     event: {
       type: 'tool/result',
-      seq: 4,
+      seq: firstSeq + 1,
       time: 1_500,
       surfaceOp: 'append',
       data: {

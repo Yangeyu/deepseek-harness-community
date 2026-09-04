@@ -1,9 +1,11 @@
 import type { HistoryEntry } from '../../session/contracts.ts'
 import { appendedHistoryEntries } from '../../session/event-window.ts'
-import { materializeExecutionSnapshot, replayExecutionEntries } from './accumulator.ts'
-import { applyExecutionEntry } from './definitions.ts'
-import { thoughtExecutionKey } from './keys.ts'
-import type { ExecutionReducer } from './reducer.ts'
+import {
+  type ExecutionAccumulator,
+  materializeExecutionSnapshot,
+  replayExecutionEntries,
+} from './accumulator.ts'
+import { stepExecutionKey, thoughtExecutionKey } from './keys.ts'
 import type {
   ExecutionBuildInput,
   ExecutionSnapshot,
@@ -26,6 +28,8 @@ function sameRuntimeActivities(
 
 function chunkChangesExecution(entry: HistoryEntry, snapshot: ExecutionSnapshot): boolean {
   if (entry.event.type !== 'assistant/chunk') return true
+  const stepKey = stepExecutionKey(entry.event.data.turn, entry.event.data.step)
+  if (snapshot.modelCall(stepKey)?.request === undefined) return true
   const chunk = entry.event.data.chunk
   const node = snapshot.get(thoughtExecutionKey(entry.event.data.turn, entry.event.data.step))
   if (chunk.type === 'reasoning-delta' && chunk.text !== '') {
@@ -41,7 +45,7 @@ function chunkChangesExecution(entry: HistoryEntry, snapshot: ExecutionSnapshot)
 export class ExecutionProjector {
   private input: ExecutionBuildInput | undefined
   private snapshot: ExecutionSnapshot | undefined
-  private accumulator: ExecutionReducer | undefined
+  private accumulator: ExecutionAccumulator | undefined
 
   project(input: ExecutionBuildInput): ExecutionSnapshot {
     const previous = this.input
@@ -63,7 +67,7 @@ export class ExecutionProjector {
     if (appended === undefined || this.accumulator === undefined) {
       this.accumulator = replayExecutionEntries(input)
     } else {
-      for (const entry of appended) applyExecutionEntry(entry, this.accumulator)
+      for (const entry of appended) this.accumulator.apply(entry)
     }
     this.input = input
     if (reusable) return current

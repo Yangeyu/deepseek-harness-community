@@ -1,5 +1,6 @@
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { HistoryEntry } from '../../session/contracts.ts'
+import type { ModelRequest, StepModelCall } from './model-call.ts'
 
 declare const executionKeyBrand: unique symbol
 
@@ -79,6 +80,8 @@ export interface ExecutionSnapshot {
   active(): readonly ExecutionNode[]
   diagnostics(): readonly ExecutionDiagnostic[]
   entry(seq: number | undefined): HistoryEntry | undefined
+  modelCall(key: ExecutionKey | string): StepModelCall | undefined
+  modelRequest(key: ExecutionKey | string): ModelRequest | undefined
 }
 
 export interface RuntimeVisionActivity {

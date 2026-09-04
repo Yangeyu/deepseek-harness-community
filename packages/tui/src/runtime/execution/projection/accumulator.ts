@@ -1,22 +1,33 @@
 import { applyExecutionEntry } from './definitions.ts'
 import { visionExecutionKey } from './keys.ts'
+import { StepModelCallAccumulator } from './model-call.ts'
 import { ExecutionReducer } from './reducer.ts'
 import { ImmutableExecutionSnapshot } from './snapshot.ts'
 import type { ExecutionBuildInput, ExecutionSnapshot } from './types.ts'
 
+export class ExecutionAccumulator {
+  readonly executions = new ExecutionReducer()
+  readonly modelCalls = new StepModelCallAccumulator()
+
+  apply(entry: ExecutionBuildInput['entries'][number]): void {
+    applyExecutionEntry(entry, this.executions)
+    this.modelCalls.apply(entry)
+  }
+}
+
 /** Canonically rebuild disposable execution state from the accepted Host log. */
-export function replayExecutionEntries(input: ExecutionBuildInput): ExecutionReducer {
-  const reducer = new ExecutionReducer()
-  for (const entry of input.entries) applyExecutionEntry(entry, reducer)
-  return reducer
+export function replayExecutionEntries(input: ExecutionBuildInput): ExecutionAccumulator {
+  const accumulator = new ExecutionAccumulator()
+  for (const entry of input.entries) accumulator.apply(entry)
+  return accumulator
 }
 
 /** Add snapshot-only idle/runtime overlays without mutating the durable accumulator. */
 export function materializeExecutionSnapshot(
-  accumulator: ExecutionReducer,
+  accumulator: ExecutionAccumulator,
   input: ExecutionBuildInput,
 ): ExecutionSnapshot {
-  const reducer = accumulator.fork()
+  const reducer = accumulator.executions.fork()
   if (!input.sessionRunning) {
     for (const node of reducer.openNodes()) {
       reducer.settle(
@@ -47,6 +58,7 @@ export function materializeExecutionSnapshot(
     input.epoch,
     result.nodes,
     result.diagnostics,
+    accumulator.modelCalls.result(),
     input.entries,
   )
 }

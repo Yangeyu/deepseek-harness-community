@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-commands/types'
 import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manager.ts'
 import {
   buildTrajectoryRecords,
+  trajectoryParentKey,
   trajectoryTiming,
 } from '../../../src/modules/trajectory/records.ts'
 import { buildExecutionSnapshot } from '../../../src/runtime/execution/projection/index.ts'
@@ -96,7 +97,7 @@ describe('trajectory records', () => {
     expect(trajectoryTiming(result[1]!)).toEqual({ status: 'completed', startedAt: 1_000, completedAt: 2_500 })
   })
 
-  it('projects resolved turn, step, and tool executions with request schema and timing', () => {
+  it('keeps the model Request and Response on Step while exposing its Assistant and Tool children', () => {
     const entries = [{
       event: { type: 'turn/start', seq: 0, time: 1_000, data: { turn: 1 } },
     }, {
@@ -114,11 +115,11 @@ describe('trajectory records', () => {
           },
         },
       },
-    }, ...toolEvents(true), {
+    }, {
       event: {
         type: 'assistant/message',
-        seq: 5,
-        time: 1_700,
+        seq: 3,
+        time: 1_175,
         surfaceOp: 'append',
         data: {
           turn: 1,
@@ -127,12 +128,15 @@ describe('trajectory records', () => {
             id: 'assistant-1',
             role: 'assistant',
             source: { kind: 'model', provider: 'deepseek', model: 'chat' },
-            content: [{ type: 'text', text: 'Done.' }],
+            content: [
+              { type: 'reasoning', text: 'Check the command result.' },
+              { type: 'text', text: 'Done.' },
+            ],
           },
           usage: { inputTokens: 10, outputTokens: 2 },
         },
       },
-    }, {
+    }, ...toolEvents(true, 4), {
       event: { type: 'step/end', seq: 6, time: 1_800, data: { turn: 1, step: 1 } },
     }, {
       event: { type: 'turn/end', seq: 7, time: 1_900, data: { turn: 1, reason: { kind: 'completed' } } },
@@ -140,18 +144,39 @@ describe('trajectory records', () => {
 
     const result = records(entries)
 
-    expect(result.map(record => record.kind)).toEqual(['turn', 'step', 'request', 'tool', 'assistant'])
+    expect(result.map(record => record.kind)).toEqual(['turn', 'step', 'thinking', 'assistant', 'tool'])
     expect(trajectoryTiming(result[0]!)).toEqual({ status: 'completed', startedAt: 1_000, completedAt: 1_900 })
     expect(trajectoryTiming(result[1]!)).toEqual({ status: 'completed', startedAt: 1_100, completedAt: 1_800 })
-    expect(result[2]).toMatchObject({ turn: 1, step: 1 })
+    expect(result[1]).toMatchObject({
+      kind: 'step',
+      result: { message: { role: 'assistant' }, usage: { inputTokens: 10, outputTokens: 2 } },
+      schema: [{ name: 'bash' }],
+    })
+    expect(result[1]?.modelRequest?.()).toMatchObject({
+      provider: 'deepseek',
+      model: 'chat',
+      messages: [],
+    })
+    expect(result[2]).toMatchObject({
+      kind: 'thinking',
+      title: 'Thinking',
+      summary: 'Check the command result.',
+    })
+    expect(trajectoryParentKey(result[2]!)).toBe('step:1:1')
     expect(result[3]).toMatchObject({
+      kind: 'assistant',
+      title: 'Assistant response',
+      summary: 'Done.',
+    })
+    expect(trajectoryParentKey(result[3]!)).toBe('step:1:1')
+    expect(result[4]).toMatchObject({
       title: 'echo NAVIGATION_OK',
       toolName: 'bash',
       summary: 'Completed',
       result: 'NAVIGATION_OK',
       schema: { name: 'bash' },
     })
-    expect(trajectoryTiming(result[3]!)).toEqual({ status: 'completed', startedAt: 1_200, completedAt: 1_500 })
+    expect(trajectoryTiming(result[4]!)).toEqual({ status: 'completed', startedAt: 1_200, completedAt: 1_500 })
   })
 
   it('keeps complete semantic detail while limiting only the ledger preview', () => {
@@ -182,6 +207,34 @@ describe('trajectory records', () => {
     expect(record?.summary.endsWith('…')).toBe(true)
     expect(record?.detail).toBe(detail)
     expect(record?.detail).toContain('VISIBLE_TAIL')
+  })
+
+  it('omits an empty Assistant item without dropping the Step response', () => {
+    const result = records([{
+      event: { type: 'step/start', seq: 0, time: 1_000, data: { turn: 1, step: 1 } },
+    }, {
+      event: {
+        type: 'assistant/message',
+        seq: 1,
+        time: 1_200,
+        surfaceOp: 'append',
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'assistant-empty',
+            role: 'assistant',
+            source: { kind: 'model', provider: 'deepseek', model: 'chat' },
+            content: [{ type: 'reasoning', text: 'Use the tool.' }],
+          },
+        },
+      },
+    }, {
+      event: { type: 'step/end', seq: 2, time: 1_300, data: { turn: 1, step: 1 } },
+    }] as unknown as RuntimeSessionSnapshot['events'])
+
+    expect(result.map(record => record.kind)).toEqual(['step', 'thinking'])
+    expect(result[0]).toMatchObject({ result: { message: { id: 'assistant-empty' } } })
   })
 
   it('projects a durable command execution into one semantic record', () => {
@@ -230,26 +283,4 @@ describe('trajectory records', () => {
     expect(command).not.toHaveProperty('step')
   })
 
-  it('resets semantic location when a new turn starts before a malformed prior tail closes', () => {
-    const result = records([{
-      event: { type: 'turn/start', seq: 0, time: 1_000, data: { turn: 1 } },
-    }, {
-      event: { type: 'step/start', seq: 1, time: 1_100, data: { turn: 1, step: 9 } },
-    }, {
-      event: { type: 'turn/start', seq: 2, time: 1_200, data: { turn: 2 } },
-    }, {
-      event: {
-        type: 'request/header',
-        seq: 3,
-        time: 1_250,
-        data: {
-          reason: 'initial',
-          header: { config: { provider: 'deepseek', model: 'chat' } },
-        },
-      },
-    }] as unknown as RuntimeSessionSnapshot['events'])
-
-    expect(result.at(-1)).toMatchObject({ kind: 'request', turn: 2 })
-    expect(result.at(-1)).not.toHaveProperty('step')
-  })
 })

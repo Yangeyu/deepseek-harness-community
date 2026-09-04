@@ -9,6 +9,7 @@ import {
   executionStartedAt,
   promptExecutionKey,
   stepExecutionKey,
+  thoughtExecutionKey,
   toolExecutionKey,
   turnExecutionKey,
   visionExecutionKey,
@@ -17,7 +18,7 @@ import {
   type ExecutionSnapshot,
 } from '../../runtime/execution/projection/index.ts'
 
-export type TrajectoryKind = 'turn' | 'step' | 'user' | 'request' | 'assistant' | 'tool' | 'command' | 'vision' | 'context' | 'event'
+export type TrajectoryKind = 'turn' | 'step' | 'user' | 'thinking' | 'assistant' | 'tool' | 'command' | 'vision' | 'context' | 'event'
 export type TrajectoryPresentationTone = 'warning' | 'info'
 export type TrajectoryStatus = ExecutionStatus | TrajectoryPresentationTone
 
@@ -36,6 +37,7 @@ interface TrajectoryRecordBase {
   summary: string
   detail?: string
   payload?: unknown
+  modelRequest?: () => unknown
   result?: unknown
   schema?: unknown
 }
@@ -113,23 +115,23 @@ function locatedPosition(
   }
 }
 
-function contentText(value: unknown): string {
+type MessageTextKind = 'text' | 'reasoning'
+
+function contentText(value: unknown, kind: MessageTextKind): string {
   if (!Array.isArray(value)) return ''
   const parts: string[] = []
   for (const item of value) {
     const block = recordValue(item)
     if (block === undefined) continue
-    if (typeof block.text === 'string') parts.push(block.text)
-    if (Array.isArray(block.content)) {
-      const nested = contentText(block.content)
-      if (nested !== '') parts.push(nested)
-    }
+    if (block.type === kind && typeof block.text === 'string') parts.push(block.text)
+    const nested = contentText(block.content, kind)
+    if (nested !== '') parts.push(nested)
   }
   return parts.join('\n')
 }
 
-function messageText(value: unknown): string {
-  return contentText(recordValue(value)?.content)
+function messageText(value: unknown, kind: MessageTextKind = 'text'): string {
+  return contentText(recordValue(value)?.content, kind)
 }
 
 function oneLine(value: string, maximum = 140): string {
@@ -198,7 +200,7 @@ function trajectoryKind(node: ExecutionNode): TrajectoryKind {
     case 'tool': return 'tool'
     case 'command': return 'command'
     case 'vision': return 'vision'
-    case 'thought': throw new Error('Thought execution nodes belong to the transcript, not the trajectory ledger')
+    case 'thought': return 'thinking'
   }
 }
 
@@ -207,6 +209,23 @@ function executionRecord(
   values: Omit<TrajectoryExecutionRecord, 'key' | 'kind' | 'execution'>,
 ): TrajectoryExecutionRecord {
   return { ...values, key: String(node.key), kind: trajectoryKind(node), execution: node }
+}
+
+function stepModelDetails(
+  node: ExecutionNode,
+  execution: ExecutionSnapshot,
+): Pick<TrajectoryRecordBase, 'modelRequest' | 'result' | 'schema'> {
+  const call = execution.modelCall(node.key)
+  const event = execution.entry(call?.responseSeq)?.event
+  const result = event?.type === 'assistant/message' ? event.data : undefined
+  const schema = call?.request?.header?.tools
+  let request: unknown
+  return {
+    modelRequest: () => request ??= execution.modelRequest(node.key)
+      ?? 'Model request unavailable in the loaded Session history.',
+    ...result === undefined ? {} : { result },
+    ...schema === undefined ? {} : { schema },
+  }
 }
 
 /** Build presentation records by joining payloads to the one execution snapshot. */
@@ -260,8 +279,7 @@ export function buildTrajectoryRecords(
           step: event.data.step,
           title: `Step ${String(event.data.step)}`,
           summary: stateWord(node),
-          result: event.data,
-          payload: event.data,
+          ...stepModelDetails(node, execution),
         }))
         break
       }
@@ -317,7 +335,6 @@ export function buildTrajectoryRecords(
       case 'step/start': {
         const node = execution.get(stepExecutionKey(event.data.turn, event.data.step))
         if (node === undefined) break
-        const completed = settledEntry(node, execution)
         records.push(executionRecord(node, {
           type: event.type,
           ...completionFields(node, execution),
@@ -326,8 +343,7 @@ export function buildTrajectoryRecords(
           step: event.data.step,
           title: `Step ${String(event.data.step)}`,
           summary: stateWord(node),
-          ...completed?.event.type === 'step/end' ? { result: completed.event.data } : {},
-          payload: event.data,
+          ...stepModelDetails(node, execution),
         }))
         break
       }
@@ -391,8 +407,24 @@ export function buildTrajectoryRecords(
         break
       }
       case 'assistant/message': {
+        if (event.surfaceOp !== 'append') break
+        const reasoning = messageText(event.data.message, 'reasoning')
+        const thought = execution.get(thoughtExecutionKey(event.data.turn, event.data.step))
+        if (reasoning !== '' && thought !== undefined) {
+          records.push(executionRecord(thought, {
+            type: event.type,
+            ...completionFields(thought, execution),
+            seq: event.seq,
+            turn: event.data.turn,
+            step: event.data.step,
+            title: 'Thinking',
+            summary: oneLine(reasoning),
+            detail: reasoning,
+            result: reasoning,
+          }))
+        }
         const text = messageText(event.data.message)
-        const detail = text === '' ? '(empty response)' : text
+        if (text.trim() === '') break
         records.push({
           key: `event:${String(event.seq)}`,
           kind: 'assistant',
@@ -401,13 +433,13 @@ export function buildTrajectoryRecords(
           turn: event.data.turn,
           step: event.data.step,
           title: 'Assistant response',
-          summary: oneLine(detail),
-          detail,
+          summary: oneLine(text),
+          detail: text,
           tone: 'info',
           occurredAt: event.time,
           payload: { source: event.data.message.source },
           result: {
-            content: text === '' ? event.data.message.content : text,
+            content: text,
             ...event.data.usage === undefined ? {} : { usage: event.data.usage },
           },
         })
@@ -464,38 +496,8 @@ export function buildTrajectoryRecords(
         }))
         break
       }
-      case 'request/header': {
-        const config = event.data.header.config
-        records.push({
-          key: `event:${String(event.seq)}`,
-          kind: 'request',
-          type: event.type,
-          seq: event.seq,
-          ...at,
-          title: 'Model request',
-          summary: `${config.provider}/${config.model}${config.reasoningEffort === undefined ? '' : ` · ${String(config.reasoningEffort)}`}`,
-          detail: `Model request to ${config.provider}/${config.model}${config.reasoningEffort === undefined ? '' : ` with ${String(config.reasoningEffort)} reasoning`}`,
-          tone: 'info',
-          occurredAt: event.time,
-          payload: event.data.header,
-          ...event.data.header.tools === undefined ? {} : { schema: event.data.header.tools },
-        })
-        break
-      }
+      case 'request/header':
       case 'request/context':
-        records.push({
-          key: `event:${String(event.seq)}`,
-          kind: 'context',
-          type: event.type,
-          seq: event.seq,
-          ...at,
-          title: 'Request context',
-          summary: `${event.data.provider}/${event.data.model}${event.data.contextWindow === undefined ? '' : ` · ${String(event.data.contextWindow)} context`}`,
-          detail: `Request context for ${event.data.provider}/${event.data.model}${event.data.contextWindow === undefined ? '' : ` with a ${String(event.data.contextWindow)} token window`}`,
-          tone: 'info',
-          occurredAt: event.time,
-          payload: event.data,
-        })
         break
       default: {
         const detail = displayUnknown(event.data)

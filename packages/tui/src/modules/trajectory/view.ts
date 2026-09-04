@@ -27,10 +27,10 @@ import type {
 
 type TrajectoryTab = 'summary' | 'payload' | 'result' | 'schema' | 'timing'
 
-const TABS: ReadonlyArray<{ id: TrajectoryTab; label: string }> = [
+const TABS: ReadonlyArray<{ id: TrajectoryTab; label: string; stepLabel?: string }> = [
   { id: 'summary', label: 'Summary' },
-  { id: 'payload', label: 'Input' },
-  { id: 'result', label: 'Output' },
+  { id: 'payload', label: 'Input', stepLabel: 'Request' },
+  { id: 'result', label: 'Output', stepLabel: 'Response' },
   { id: 'schema', label: 'Schema' },
   { id: 'timing', label: 'Timing' },
 ]
@@ -109,10 +109,14 @@ function tabValue(record: TrajectoryRecord, tab: TrajectoryTab, metrics: Traject
         `Completed    ${timing.completedAt === undefined ? 'Still running or not applicable' : new Date(timing.completedAt).toISOString()}`,
       ]
     }
-    case 'payload':
-      return record.payload === undefined ? ['No payload recorded for this event.'] : displayUnknown(record.payload).split('\n')
+    case 'payload': {
+      const payload = record.kind === 'step' ? record.modelRequest?.() : record.payload
+      return payload === undefined ? ['No input recorded for this item.'] : displayUnknown(payload).split('\n')
+    }
     case 'result':
-      return record.result === undefined ? ['No result recorded for this event.'] : displayUnknown(record.result).split('\n')
+      return record.result === undefined
+        ? [record.kind === 'step' ? 'No model response recorded for this Step.' : 'No result recorded for this event.']
+        : displayUnknown(record.result).split('\n')
     case 'schema':
       return record.schema === undefined ? ['Schema unavailable for this event.'] : displayUnknown(record.schema).split('\n')
     case 'timing': {
@@ -146,7 +150,7 @@ function kindLabel(kind: TrajectoryKind): string {
     case 'turn': return 'TURN'
     case 'step': return 'STEP'
     case 'user': return 'USER'
-    case 'request': return 'REQUEST'
+    case 'thinking': return 'THINKING'
     case 'assistant': return 'ASSISTANT'
     case 'tool': return 'TOOL'
     case 'command': return 'COMMAND'
@@ -512,7 +516,7 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
     rowOffset: number,
     columnOffset: number,
   ): string[] {
-    const tabs = this.renderTabs(width, rowOffset + 2, columnOffset)
+    const tabs = this.renderTabs(record, width, rowOffset + 2, columnOffset)
     const location = [
       record.turn === undefined ? undefined : `Turn ${String(record.turn)}`,
       record.step === undefined ? undefined : `Step ${String(record.step)}`,
@@ -679,12 +683,18 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
     return paintLedgerRow(line, selected, width, this.theme)
   }
 
-  private renderTabs(width: number, row: number, columnOffset: number): string {
+  private renderTabs(
+    record: TrajectoryRecord,
+    width: number,
+    row: number,
+    columnOffset: number,
+  ): string {
     let column = 0
     const segments = TABS.map((tab, index) => {
+      const label = record.kind === 'step' ? tab.stepLabel ?? tab.label : tab.label
       const segment = index === this.tabIndex
-        ? this.theme.bold(this.theme.accent(`[${tab.label}]`))
-        : this.theme.dim(` ${tab.label} `)
+        ? this.theme.bold(this.theme.accent(`[${label}]`))
+        : this.theme.dim(` ${label} `)
       const segmentWidth = visibleWidth(segment)
       const columnStart = columnOffset + column
       const columnEnd = columnOffset + Math.min(width, column + segmentWidth)

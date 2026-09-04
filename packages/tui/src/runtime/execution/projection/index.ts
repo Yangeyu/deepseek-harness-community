@@ -8,6 +8,7 @@ import type {
 } from './types.ts'
 
 export { ExecutionProjector } from './projector.ts'
+export type { ModelRequest, ModelRequestBoundary, StepModelCall } from './model-call.ts'
 
 export { installPromptProjection, isAcceptedPromptEvent, projectPromptNode } from './host.ts'
 export {

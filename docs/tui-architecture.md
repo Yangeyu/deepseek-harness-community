@@ -343,6 +343,11 @@ readable, then compares the registry tarball with the accepted candidate.
     append-only execution folding is incremental. A bounded window requires a
     correctness-preserving Host/checkpoint contract and must not be introduced as
     an arbitrary UI cache policy.
+26. A Step owns exactly one model exchange. The execution projection associates
+    its request boundary and assembled append response with that Step. Trajectory
+    exposes them as the Step's Request and Response detail. Reasoning and
+    non-empty answer content become separately labelled Thinking and Assistant
+    children; request metadata is not a parallel ledger record.
 
 ## Lifecycle kernel and state flow
 
@@ -587,7 +592,9 @@ component references while the Session-owned implementations are replaced.
   exposes one immutable snapshot for Turn, Prompt, Step, Thought, Tool,
   Command, and Vision nodes. Its post-commit Prompt feed is replayable from the
   same Session log and contains no Rewind policy. Append-only inputs update one
-  accumulator; history prepend/replacement uses the canonical replay path.
+  accumulator; history prepend/replacement uses the canonical replay path. That
+  accumulator also records each Step's model request boundary and response event;
+  complete Request detail is derived lazily from the canonical Session surface.
 - Prompt projection retains both `turn-entry` and `in-turn` user admissions.
   Rewind's adapter selects only `turn-entry`, matching the Host's completed-turn
   fork contract instead of silently deduplicating steering messages in Journal.
@@ -600,6 +607,9 @@ component references while the Session-owned implementations are replaced.
   each other's models.
   `TranscriptComponent` paints and interacts with those items, while
   `TrajectoryView` provides the diagnostic hierarchy. None owns persistence.
+  A Trajectory Step presents its complete model exchange through Request and
+  Response detail tabs. Its final response is also split by canonical content
+  type into separately selectable Thinking and Assistant child records.
   Stable item keys retain rendered Markdown, prompt, and Diff blocks across
   viewport movement. Append-only assistant chunks update the live Transcript
   tail; Trajectory keeps its semantic record index until an execution boundary
