@@ -50,15 +50,44 @@ export type SurfaceInputAction =
   | 'surface.tab-previous'
   | 'surface.toggle'
 
+/** Pointer actions translated into the active Surface's rendered content coordinates. */
+export type SurfacePointerAction =
+  | { readonly kind: 'click'; readonly row: number; readonly column: number }
+  | {
+      readonly kind: 'wheel'
+      readonly row: number
+      readonly column: number
+      readonly direction: -1 | 1
+    }
+
+/** Pointer gestures in terminal-screen coordinates before Surface hit testing. */
+export type SurfacePointerGesture =
+  | { readonly kind: 'click'; readonly x: number; readonly y: number }
+  | {
+      readonly kind: 'wheel'
+      readonly x: number
+      readonly y: number
+      readonly direction: -1 | 1
+    }
+
 export interface SurfaceInputTarget extends Component {
   readonly inputContext: SurfaceInputContext
   handleAction(action: SurfaceInputAction): void
+}
+
+export interface SurfacePointerTarget extends Component {
+  handlePointer(action: SurfacePointerAction): boolean
 }
 
 export function isSurfaceInputTarget(component: Component | null): component is SurfaceInputTarget {
   if (component === null || typeof component !== 'object') return false
   const candidate = component as Partial<SurfaceInputTarget>
   return typeof candidate.inputContext === 'string' && typeof candidate.handleAction === 'function'
+}
+
+export function isSurfacePointerTarget(component: Component | null): component is SurfacePointerTarget {
+  if (component === null || typeof component !== 'object') return false
+  return typeof (component as Partial<SurfacePointerTarget>).handlePointer === 'function'
 }
 
 export function isSurfaceInputAction(action: string): action is SurfaceInputAction {

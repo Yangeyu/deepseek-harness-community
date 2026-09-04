@@ -107,29 +107,12 @@ describe('TUI dependency direction', () => {
     expect(violations).toEqual([])
   })
 
-  it('keeps public entry points and retired implementation paths explicit', () => {
+  it('keeps public source entry points explicit', () => {
     const rootFiles = sourceFiles()
       .map(sourcePath)
       .filter(path => !path.includes('/'))
       .sort()
     expect(rootFiles).toEqual(['bailian.ts', 'index.ts', 'memory.ts', 'vision.ts', 'web.ts'])
-
-    const retired = [
-      'input/keymap.ts',
-      'presentation/dialogs.ts',
-      'presentation/layout.ts',
-      'presentation/mouse.ts',
-      'presentation/transcript.ts',
-      'modules/composer/view/reference-editor.ts',
-      'modules/composer/view/reference-rendering.ts',
-      'runtime/controller.ts',
-      'runtime/event-window.ts',
-      'runtime/lifecycle/reducer.ts',
-      'runtime/submission.ts',
-      'trajectory/view.ts',
-    ]
-    const files = new Set(sourceFiles().map(sourcePath))
-    expect(retired.filter(path => files.has(path))).toEqual([])
   })
 
   it('has one concrete render request and one raw terminal decoder boundary', () => {

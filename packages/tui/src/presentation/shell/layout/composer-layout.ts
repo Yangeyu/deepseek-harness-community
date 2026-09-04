@@ -37,6 +37,11 @@ export class ComposerAnchoredLayout extends Container {
   private surfaceTop = 0
   private surfacePageRows = 1
   private surfaceMaxTop = 0
+  private renderedSurfaceTop = 0
+  private renderedSurfaceRows = 0
+  private renderedSurfaceScreenRow = 0
+  private renderedSurfaceContentColumn = 0
+  private renderedSurfaceContentColumns = 0
 
   constructor(
     private readonly header: Component,
@@ -69,8 +74,10 @@ export class ComposerAnchoredLayout extends Container {
 
   override render(width: number): string[] {
     const viewportRows = Math.max(0, this.viewportRows())
+    this.renderedSurfaceRows = 0
     if (this.activeSurface?.kind === 'workspace') {
       const lines = this.renderActiveSurface(width, this.activeSurface, viewportRows)
+      this.captureSurfaceGeometry(0, lines.length, width, this.activeSurface)
       return [
         ...lines.slice(0, viewportRows),
         ...Array<string>(Math.max(0, viewportRows - lines.length)).fill(''),
@@ -97,6 +104,9 @@ export class ComposerAnchoredLayout extends Container {
     this.renderedTranscriptScreenRow = visibleTranscriptStart - top
 
     const gap = Math.max(0, availableRows - visible.length)
+    if (this.activeSurface !== undefined) {
+      this.captureSurfaceGeometry(availableRows, composer.length, width, this.activeSurface)
+    }
     return [
       ...visible,
       ...Array<string>(gap + composerGapRows).fill(''),
@@ -110,6 +120,7 @@ export class ComposerAnchoredLayout extends Container {
     this.activeSurface = surface
     this.surfaceTop = 0
     this.surfaceMaxTop = 0
+    this.renderedSurfaceRows = 0
     if (surface !== undefined) this.addChild(surface.component)
   }
 
@@ -157,6 +168,23 @@ export class ComposerAnchoredLayout extends Container {
     return this.renderedTranscriptTop + relative
   }
 
+  /** Map one terminal cell into the active Surface's last rendered content geometry. */
+  surfacePointAt(
+    screenRow: number,
+    screenColumn: number,
+    viewportTop: number,
+  ): { readonly row: number; readonly column: number } | undefined {
+    const renderedRow = viewportTop + screenRow
+    const relativeRow = renderedRow - this.renderedSurfaceScreenRow
+    const relativeColumn = screenColumn - this.renderedSurfaceContentColumn
+    if (relativeRow < 0 || relativeRow >= this.renderedSurfaceRows) return undefined
+    if (relativeColumn < 0 || relativeColumn >= this.renderedSurfaceContentColumns) return undefined
+    return {
+      row: this.renderedSurfaceTop + relativeRow,
+      column: relativeColumn,
+    }
+  }
+
   private renderComposer(width: number, viewportRows: number): string[] {
     if (this.activeSurface !== undefined) {
       return this.renderActiveSurface(width, this.activeSurface, viewportRows)
@@ -184,6 +212,24 @@ export class ComposerAnchoredLayout extends Container {
       const edge = index === 0 ? 'top' : index === visible.length - 1 ? 'bottom' : 'middle'
       return this.renderSurfaceLine(line, safeWidth, edge)
     })
+  }
+
+  private captureSurfaceGeometry(
+    screenRow: number,
+    rows: number,
+    width: number,
+    surface: ActiveSurface,
+  ): void {
+    const safeWidth = Math.max(1, width)
+    const prefix = truncateToWidth('│  ', safeWidth, '')
+    const availableWidth = Math.max(1, safeWidth - 3)
+    this.renderedSurfaceTop = this.surfaceTop
+    this.renderedSurfaceRows = rows
+    this.renderedSurfaceScreenRow = screenRow
+    this.renderedSurfaceContentColumn = visibleWidth(prefix)
+    this.renderedSurfaceContentColumns = surface.kind === 'workspace'
+      ? availableWidth
+      : Math.min(READABLE_SURFACE_COLUMNS, availableWidth)
   }
 
   private renderSurfaceLine(

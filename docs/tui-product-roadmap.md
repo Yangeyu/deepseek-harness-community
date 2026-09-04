@@ -44,7 +44,11 @@ another control plane inside a feature.
 
 ## Milestones
 
-### v0.1.6 — Configuration, Task, and User Extensions
+Milestone names describe capability sequence and delivery state; they are not
+npm or Git release versions. The published package version in `package.json`
+and matching Git tags are the release identity.
+
+### Delivered — Configuration, Task, and User Extensions
 
 - Show the effective permission preset, plan state, goal lifecycle, and current
   todo progress without refolding Host-owned whole-log state.
@@ -58,7 +62,7 @@ another control plane inside a feature.
 - Keep real command authoring plugin-owned; reusable prompt workflows are
   authored as Skills.
 
-### v0.1.7 — Visual Input and Vision Proxy
+### Delivered — Visual Input and Vision Proxy
 
 - Align composer semantics with established terminal-agent interaction:
   `Enter` steers, `Tab` queues while working, and `Alt+Enter` remains multiline.
@@ -79,7 +83,7 @@ another control plane inside a feature.
 - Configure Vision under `/config`, fail closed on missing capability or
   credentials, and keep secrets and originating local paths out of events.
 
-### v0.1.8 — Unified Execution Lifecycle
+### Delivered — Unified Execution Lifecycle
 
 - Replace independent Transcript and Trajectory event pairing with one typed,
   replayable execution snapshot for Turn, Step, Thought, Tool, Command, and
@@ -99,7 +103,7 @@ another control plane inside a feature.
 - Borrow Cordis's contract, ownership, scope, and cleanup principles without
   introducing a lifecycle plugin API, service, or second persistence format.
 
-### v0.1.9 — Source-Attributed Rewind
+### Delivered — Source-Attributed Rewind
 
 - Replace TUI-owned whole-worktree checkpoint policy with one transport-neutral
   Rewind domain consumed through a narrow application port.
@@ -126,7 +130,7 @@ another control plane inside a feature.
 - Remove whole-worktree inference, tool-name parsing, duplicated checkpoint
   state, compatibility bridges, and TUI-owned Git restore code after cutover.
 
-### v0.1.10 — Session Center
+### Next — Session Center
 
 The current foundation already exposes `/resume` through the shared Surface
 host and shows root-session ids with working directory, durable title, and fork
@@ -145,7 +149,7 @@ search, management, and temporal-navigation capabilities below remain planned.
   marker and branch-discard confirmation when a new message is sent from the
   past.
 
-### v0.2.0 — Parallel Execution Console
+### Planned — Parallel Execution Console
 
 - Add a parent/child Agent tree with status, depth, task label, elapsed time,
   latest activity, and durable lineage.
@@ -156,7 +160,7 @@ search, management, and temporal-navigation capabilities below remain planned.
 - Keep ownership and authorization in the Host; the terminal is a client of
   subagent and job capabilities.
 
-### v0.2.x — Review and Handoff
+### Planned — Review and Handoff
 
 - Add a workspace-wide `/changes` review surface with file navigation, aggregate
   line counts, full diffs, and test results.
@@ -192,7 +196,7 @@ search, management, and temporal-navigation capabilities below remain planned.
 
 ## Milestone gate
 
-A milestone is ready to release only when its user-visible state survives
+A capability milestone is complete only when its user-visible state survives
 resume and history replacement, its unavailable-capability behavior is
 explicit, keyboard and narrow-terminal flows are tested, and the published
 package remains compatible with the declared Harness range.

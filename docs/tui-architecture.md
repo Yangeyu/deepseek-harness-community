@@ -329,8 +329,10 @@ readable, then compares the registry tarball with the accepted candidate.
 23. `SurfaceHost` exclusively owns active-Surface stacking, placement, focus
     capture/restoration, close identity, and Surface input routing. Both
     `readable` and `workspace` placements are clipped to the available terminal
-    rows and retain a navigable scroll position; mouse wheel input cannot leak to
-    the Transcript while a Surface is active.
+    rows. Readable documents use the host viewport; workspace pointer input is
+    translated from terminal coordinates through the last rendered Surface
+    geometry, then resolved by the active feature's pane and row hit map. Mouse
+    wheel input cannot leak to the Transcript while a Surface is active.
 24. `runtime/execution` is the execution read-model boundary; application and
     Session lifecycle code never shares its terminology or state machine.
     Append-only accepted entries update one canonical accumulator. Structural
@@ -449,11 +451,13 @@ component references while the Session-owned implementations are replaced.
   A disclosure block that reaches the transcript end keeps tail ownership
   instead: freezing a viewport with no rendered rows below the block would
   leave the newly expanded content hidden below the bottom edge.
-- Main-screen text selection owns rendered cell coordinates, grapheme-aware
-  highlighting, and plain-text extraction. The application owns clipboard I/O.
+- Main-screen text selection, including active Surface content, owns rendered
+  cell coordinates, grapheme-aware highlighting, and plain-text extraction.
+  The application owns clipboard I/O.
   A primary press starts one gesture; dragging updates selection, while release
-  either copies a non-empty range or dispatches the existing title click. Block
-  actions therefore never run speculatively on button press.
+  either copies a non-empty range or dispatches a click to the rendered target.
+  Transcript disclosure and Surface row selection therefore never run
+  speculatively on button press.
 - Diff is intentionally specialized: returned file evidence never enters an
   Activity group and remains top-level regardless of execution status. Small
   edits open by default; large edits start as a title and summary and expand on
@@ -517,9 +521,13 @@ component references while the Session-owned implementations are replaced.
 - `SurfaceHost` owns one stack of close-identity handles, focus capture and
   restoration, semantic Surface input, and the only active-placement mutation.
   `ComposerAnchoredLayout` implements its discriminated `readable` and
-  `workspace` placements. Both placements are height-bounded and share
-  key/mouse scrolling, while workspace geometry remains independent of the
-  narrower decision-card reading width.
+  `workspace` placements. Both placements are height-bounded; readable content
+  keeps a host-managed document viewport, while a workspace owns its semantic
+  panes and row hit map. In Trajectory, wheel input over Execution moves the
+  ledger selection, wheel input over Detail scrolls only its detail viewport,
+  and a released click activates the rendered Execution row or Detail tab.
+  Workspace geometry remains independent of the narrower decision-card reading
+  width.
 - `VisionService` owns only image-route policy, proxy fallback inference, and
   bounded source-attributed evidence. It does not decode images, derive
   dimensions, normalize bytes, persist media, or serialize native-provider
@@ -621,10 +629,10 @@ component references while the Session-owned implementations are replaced.
 
 Product sequencing lives in [`tui-product-roadmap.md`](tui-product-roadmap.md).
 This section records the implemented architecture that supports that sequence;
-completed version-specific design documents remain in Git history rather than
-competing with this canonical contract.
+package versions and completed version-specific design documents remain in Git
+history rather than competing with this canonical contract.
 
-### v0.1.6 implemented architecture
+### Implemented: Configuration, Task, and User Extensions
 
 - Pure session-control selectors consume optional Host projections and current
   session state; `ConfigView` and `TaskView` remain independent presentation
@@ -638,7 +646,7 @@ competing with this canonical contract.
   authoring safety, and terminal-editor restoration have focused test seams;
   release acceptance still includes the complete package and manual PTY gates.
 
-### v0.1.7 implemented architecture
+### Implemented: Visual Input and Vision Proxy
 
 - Add `packages/vision` as a terminal-independent Cordis service workspace. It depends on
   Harness LLM, Attachment, Agent/Session, Settings, and Credentials contracts,
@@ -677,7 +685,7 @@ competing with this canonical contract.
   the same validated draft store as interactive file attachment; command-line
   intake does not create a parallel submission path.
 
-### v0.1.8 implemented architecture
+### Implemented: Unified Execution Lifecycle
 
 - One private `runtime/execution/projection` module canonically projects the
   current event window into immutable semantic nodes and Session-epoch-scoped
@@ -696,7 +704,7 @@ competing with this canonical contract.
   missing parents, starts, results, and contradictory terminal facts remain
   inspectable through deduplicated, bounded diagnostics.
 
-### v0.1.9 implemented architecture
+### Implemented: Source-Attributed Rewind
 
 - One `rewind` domain replaces the TUI-owned Git checkpoint subsystem; there is
   no compatibility reader, detached index, tree snapshot, or alternate restore
@@ -768,15 +776,16 @@ competing with this canonical contract.
   incremental append path with canonical replay equivalence. Raw event retention
   remains deliberately unbounded until a correctness-preserving checkpoint
   contract exists.
-- Dependency-direction tests reject old paths, forbidden layer imports,
-  duplicate construction/placement owners, raw-key leakage, and additional
-  concrete render request sites.
+- Dependency-direction tests enforce public entry points, allowed layer
+  imports, single construction and placement owners, the raw-key boundary,
+  and one concrete render request site.
 
 ### Following architecture work
 
 - Add Session Query-backed cross-session search and parent/child lineage views.
 - Add a remote Vision RPC only when Web or another out-of-process client becomes
-  a real consumer; the in-process service is the `v0.1.7` boundary.
+  a real consumer; the in-process service is the Visual Input and Vision Proxy
+  boundary.
 - Add backward/forward timeline navigation on top of the retained cursor only
   when its interaction and branch-discard policy are exposed as one coherent
   Session Center workflow.

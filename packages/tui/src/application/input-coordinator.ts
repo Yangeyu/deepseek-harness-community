@@ -9,6 +9,7 @@ import {
   isSurfaceInputAction,
   type SurfaceInputAction,
   type SurfaceInputContext,
+  type SurfacePointerGesture,
 } from '../presentation/primitives/surface-input.ts'
 import { ActionDispatcher } from '../runtime/dispatch/dispatcher.ts'
 import { ScopedEffectRunner } from '../runtime/dispatch/effect-runner.ts'
@@ -88,7 +89,7 @@ export interface InputCoordinatorOptions {
     readonly active: boolean
     readonly inputContext: SurfaceInputContext | undefined
     dispatchInput(action: SurfaceInputAction): boolean
-    scroll(direction: -1 | 1): boolean
+    handlePointer(pointer: SurfacePointerGesture, viewportTop: number): boolean
   }
   readonly layout: InputLayoutPort
   readonly transcript: InputTranscriptPort
@@ -198,9 +199,9 @@ export class InputCoordinator {
 
   private handlePointer(pointer: PointerAction): void {
     const { layout, screen, transcript } = this.options
-    const blocked = this.options.surfaces.active
+    const surfaceActive = this.options.surfaces.active
     if (pointer.kind === 'move') {
-      const line = blocked
+      const line = surfaceActive
         ? -1
         : layout.transcriptRowAt(pointer.y, screen.captureRenderState().previousViewportTop)
       if (transcript.handlePointer(line, 'move')) this.options.invalidate()
@@ -211,24 +212,19 @@ export class InputCoordinator {
     let changed = false
     if (pointer.kind === 'wheel') {
       changed = screen.clearTextSelection() || changed
-      if (!blocked) changed = transcript.handlePointer(transcriptLine, 'move') || changed
-      const blockScrolled = blocked
-        ? false
-        : transcript.handlePointer(
-            transcriptLine,
-            pointer.direction < 0 ? 'wheel-up' : 'wheel-down',
-          )
-      changed = blockScrolled || changed
-      if (!blockScrolled) {
-        changed = blocked
-          ? this.options.surfaces.scroll(pointer.direction) || changed
-          : layout.scrollTranscript(pointer.direction) || changed
+      if (surfaceActive) {
+        this.options.surfaces.handlePointer(pointer, renderState.previousViewportTop)
+      } else {
+        changed = transcript.handlePointer(transcriptLine, 'move') || changed
+        const blockScrolled = transcript.handlePointer(
+          transcriptLine,
+          pointer.direction < 0 ? 'wheel-up' : 'wheel-down',
+        )
+        changed = blockScrolled || changed
+        if (!blockScrolled) changed = layout.scrollTranscript(pointer.direction) || changed
       }
-    } else if (blocked) {
-      changed = transcript.handlePointer(-1, 'move') || changed
-      changed = screen.clearTextSelection() || changed
     } else {
-      changed = transcript.handlePointer(transcriptLine, 'move') || changed
+      changed = transcript.handlePointer(surfaceActive ? -1 : transcriptLine, 'move') || changed
       if (pointer.kind === 'press') {
         changed = screen.beginTextSelection(pointer.x, pointer.y) || changed
       } else if (pointer.kind === 'drag') {
@@ -241,11 +237,18 @@ export class InputCoordinator {
             this.options.session.notice(`Could not copy selection: ${error instanceof Error ? error.message : String(error)}`)
           })
         } else if (result.kind === 'click') {
-          const disclosureChanged = transcript.handlePointer(transcriptLine, 'click')
-          if (disclosureChanged && !transcript.isTrailingBlock(transcriptLine)) {
-            layout.preserveTranscriptViewport()
+          if (surfaceActive) {
+            this.options.surfaces.handlePointer(
+              { kind: 'click', x: pointer.x, y: pointer.y },
+              renderState.previousViewportTop,
+            )
+          } else {
+            const disclosureChanged = transcript.handlePointer(transcriptLine, 'click')
+            if (disclosureChanged && !transcript.isTrailingBlock(transcriptLine)) {
+              layout.preserveTranscriptViewport()
+            }
+            changed = disclosureChanged || changed
           }
-          changed = disclosureChanged || changed
         }
       }
     }

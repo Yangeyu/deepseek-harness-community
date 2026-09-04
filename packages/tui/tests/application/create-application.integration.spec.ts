@@ -387,10 +387,12 @@ describe('createApplication integration', () => {
     expect(suggestionRow).toBeLessThan(inputRowWithSuggestions)
   })
 
-  it('copies a dragged primary-button selection without dispatching a block click', async () => {
+  it('copies a dragged selection from the active Trajectory surface', async () => {
     const clipboardText = vi.fn(async () => {})
     const app = application(undefined, undefined, undefined, undefined, { clipboardText })
     const internals = app
+    internals.trajectory.open()
+    expect(internals.surfaces.active).toBe(true)
     internals.layout.transcriptRowAt = vi.fn(() => 0)
     internals.transcript.handlePointer = vi.fn(() => false)
     internals.tui.beginTextSelection = vi.fn(() => true)
@@ -401,12 +403,74 @@ describe('createApplication integration', () => {
       text: 'selected output',
     }))
 
-    expect(sendInput(internals, '\u001b[<0;1;1M')).toEqual({ consume: true })
-    expect(sendInput(internals, '\u001b[<32;8;1M')).toEqual({ consume: true })
-    expect(sendInput(internals, '\u001b[<0;8;1m')).toEqual({ consume: true })
+    sendInput(internals, '\u001b[<0;1;1M')
+    sendInput(internals, '\u001b[<32;8;1M')
+    sendInput(internals, '\u001b[<0;8;1m')
     await vi.waitFor(() => { expect(clipboardText).toHaveBeenCalledWith('selected output') })
 
     expect(internals.transcript.handlePointer).not.toHaveBeenCalledWith(0, 'click')
+  })
+
+  it('routes Trajectory clicks and wheel input to the rendered pane', () => {
+    const terminal = { ...quietTerminal(), columns: 140, rows: 10 }
+    const app = application(undefined, undefined, undefined, undefined, { terminal })
+    const internals = app
+    const events = [
+      { event: { type: 'turn/start', seq: 0, time: 1_000, data: { turn: 1 } } },
+      { event: { type: 'step/start', seq: 1, time: 1_100, data: { turn: 1, step: 1 } } },
+    ] as unknown as HistoryEntry[]
+    const state = {
+      ...internals.session.current,
+      events,
+      execution: buildExecutionSnapshot({
+        sessionId: undefined,
+        epoch: 0,
+        entries: events,
+        sessionRunning: false,
+      }),
+    } satisfies RuntimeSessionSnapshot
+
+    internals.trajectory.open()
+    const view = internals.trajectory.activeView
+    if (view === undefined) throw new Error('expected active Trajectory view')
+    view.setState(state)
+    const latest = view.snapshot.selectedKey
+    expect(view.snapshot.records).toBe(2)
+
+    const initial = internals.tui.render(140).map(stripTerminalSequences)
+    const firstRecordRow = initial.findIndex(line => line.includes('TURN') && line.includes('Turn 1'))
+    const paneHeaderRow = initial.findIndex(line => line.includes('EXECUTION') && line.includes('DETAIL'))
+    const executionColumn = initial[paneHeaderRow]?.indexOf('EXECUTION') ?? -1
+    expect(firstRecordRow).toBeGreaterThanOrEqual(0)
+    expect(paneHeaderRow).toBeGreaterThanOrEqual(0)
+    expect(executionColumn).toBeGreaterThanOrEqual(0)
+    sendInput(internals, `\u001b[<0;${String(executionColumn + 1)};${String(firstRecordRow + 1)}M`)
+    sendInput(internals, `\u001b[<0;${String(executionColumn + 1)};${String(firstRecordRow + 1)}m`)
+    const selected = view.snapshot.selectedKey
+    expect(selected).not.toBe(latest)
+
+    const detailTopLines = internals.tui.render(140).map(stripTerminalSequences)
+    const detailColumn = detailTopLines[paneHeaderRow]?.indexOf('DETAIL') ?? -1
+    const detailTop = detailTopLines.join('\n')
+    expect(detailColumn).toBeGreaterThan(executionColumn)
+    expect(detailTop).toMatch(/1-1\/\d+/u)
+    sendInput(internals, `\u001b[<65;${String(detailColumn + 1)};${String(paneHeaderRow + 1)}M`)
+    expect(view.snapshot.selectedKey).toBe(selected)
+    const detailScrolled = internals.tui.render(140).map(stripTerminalSequences).join('\n')
+    expect(detailScrolled).toMatch(/2-2\/\d+/u)
+
+    const tabRow = detailTopLines.findIndex(line => line.includes('[Summary]') && line.includes('Output'))
+    const outputColumn = detailTopLines[tabRow]?.indexOf('Output') ?? -1
+    expect(tabRow).toBeGreaterThanOrEqual(0)
+    expect(outputColumn).toBeGreaterThan(detailColumn)
+    sendInput(internals, `\u001b[<0;${String(outputColumn + 1)};${String(tabRow + 1)}M`)
+    sendInput(internals, `\u001b[<0;${String(outputColumn + 1)};${String(tabRow + 1)}m`)
+    const outputTab = internals.tui.render(140).map(stripTerminalSequences).join('\n')
+    expect(outputTab).toContain('[Output]')
+    expect(outputTab).toContain('No result recorded for this event.')
+
+    sendInput(internals, `\u001b[<65;${String(executionColumn + 1)};${String(paneHeaderRow + 1)}M`)
+    expect(view.snapshot.selectedKey).toBe(latest)
   })
 
   it('dispatches a title click only after a primary-button gesture ends without selection', () => {

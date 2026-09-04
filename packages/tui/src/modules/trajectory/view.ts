@@ -21,6 +21,8 @@ import { executionStatus } from '../../runtime/execution/projection/index.ts'
 import type {
   SurfaceInputAction,
   SurfaceInputTarget,
+  SurfacePointerAction,
+  SurfacePointerTarget,
 } from '../../presentation/primitives/surface-input.ts'
 
 type TrajectoryTab = 'summary' | 'payload' | 'result' | 'schema' | 'timing'
@@ -44,6 +46,17 @@ interface TrajectoryRecordPresentation {
   readonly heading: string
   readonly ledger: string
   readonly summary: readonly string[]
+}
+
+type TrajectoryClickTarget =
+  | { readonly kind: 'record'; readonly index: number }
+  | { readonly kind: 'tab'; readonly index: number }
+
+interface TrajectoryClickHit {
+  readonly row: number
+  readonly columnStart: number
+  readonly columnEnd: number
+  readonly target: TrajectoryClickTarget
 }
 
 /** Keep record identity ordering consistent across the ledger and detail pane. */
@@ -166,7 +179,7 @@ function recordGlyph(record: TrajectoryRecord, theme: TuiTheme): string {
 }
 
 /** Full-screen, keyboard-first execution ledger and event detail surface. */
-export class TrajectoryView implements SurfaceInputTarget {
+export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget {
   readonly inputContext = 'trajectory' as const
   private state: Readonly<RuntimeSessionSnapshot>
   private records: TrajectoryRecord[]
@@ -182,6 +195,9 @@ export class TrajectoryView implements SurfaceInputTarget {
   private loadingEarlier = false
   private loadError: string | undefined
   private splitLayout = false
+  private executionColumnEnd = 0
+  private detailColumnStart: number | undefined
+  private readonly clickHits: TrajectoryClickHit[] = []
   private readonly collapsedTurns = new Set<number>()
   private readonly collapsedSteps = new Set<string>()
 
@@ -341,11 +357,53 @@ export class TrajectoryView implements SurfaceInputTarget {
     }
   }
 
+  handlePointer(action: SurfacePointerAction): boolean {
+    const region = action.column < this.executionColumnEnd
+      ? 'execution'
+      : this.detailColumnStart !== undefined && action.column >= this.detailColumnStart
+        ? 'detail'
+        : undefined
+    if (region === undefined) return false
+    if (action.kind === 'click') {
+      const hit = this.clickHits.find(candidate => (
+        candidate.row === action.row
+        && action.column >= candidate.columnStart
+        && action.column < candidate.columnEnd
+      ))
+      if (hit?.target.kind === 'tab') {
+        return this.activateTab(hit.target.index)
+      }
+      if (hit?.target.kind !== 'record') return false
+      const followsTail = hit.target.index === this.records.length - 1
+      const changed = this.index !== hit.target.index
+        || this.mode !== 'list'
+        || this.followTail !== followsTail
+        || this.detailOffset !== 0
+      this.index = hit.target.index
+      this.mode = 'list'
+      this.followTail = followsTail
+      this.detailOffset = 0
+      return changed
+    }
+    if (region === 'detail') {
+      const previous = this.detailOffset
+      this.scrollDetail(action.direction)
+      return this.detailOffset !== previous
+    }
+    const previous = this.index
+    if (action.direction < 0 && this.index === 0) void this.loadEarlier()
+    else this.move(action.direction)
+    return this.index !== previous
+  }
+
   invalidate(): void {}
 
   render(width: number): string[] {
     const now = Date.now()
     const { metrics, bottleneck } = this.model.measure(now)
+    this.clickHits.splice(0)
+    this.executionColumnEnd = 0
+    this.detailColumnStart = undefined
     this.splitLayout = width >= SPLIT_MIN_WIDTH && this.records[this.index] !== undefined
     if (this.splitLayout) return this.renderSplit(width, metrics, bottleneck)
     return this.mode === 'detail'
@@ -370,7 +428,8 @@ export class TrajectoryView implements SurfaceInputTarget {
       width,
     )]
     const available = Math.max(0, height - header.length - footer.length - 1)
-    const body = this.renderListRows(width, available, metrics)
+    this.executionColumnEnd = width
+    const body = this.renderListRows(width, available, metrics, header.length + 1)
     return this.fit([
       ...header,
       this.renderColumnHeader(width),
@@ -398,10 +457,12 @@ export class TrajectoryView implements SurfaceInputTarget {
     const record = this.records[this.index]
     if (record === undefined) return this.renderList(width, metrics, bottleneck)
 
+    this.executionColumnEnd = leftWidth
+    this.detailColumnStart = leftWidth + 3
     const leftBodyRows = Math.max(0, available - 1)
     const left = [
       this.renderColumnHeader(leftWidth),
-      ...this.renderListRows(leftWidth, leftBodyRows, metrics),
+      ...this.renderListRows(leftWidth, leftBodyRows, metrics, header.length + 1),
     ]
     const right = this.renderDetailPanel(
       rightWidth,
@@ -409,6 +470,8 @@ export class TrajectoryView implements SurfaceInputTarget {
       record,
       metrics.get(record.key) ?? { offsetMs: 0, slowest: false },
       true,
+      header.length,
+      this.detailColumnStart,
     )
     const divider = this.mode === 'detail' ? this.theme.accent('│') : this.theme.dim('│')
     const body = Array.from({ length: available }, (_, row) => {
@@ -428,12 +491,15 @@ export class TrajectoryView implements SurfaceInputTarget {
       this.mode = 'list'
       return this.renderList(width, metrics, undefined)
     }
+    this.detailColumnStart = 0
     return this.renderDetailPanel(
       width,
       Math.max(1, this.visibleRows()),
       record,
       metrics.get(record.key) ?? { offsetMs: 0, slowest: false },
       false,
+      0,
+      0,
     )
   }
 
@@ -443,10 +509,10 @@ export class TrajectoryView implements SurfaceInputTarget {
     record: TrajectoryRecord,
     metrics: TrajectoryMetrics,
     split: boolean,
+    rowOffset: number,
+    columnOffset: number,
   ): string[] {
-    const tabs = TABS.map((tab, index) => index === this.tabIndex
-      ? this.theme.bold(this.theme.accent(`[${tab.label}]`))
-      : this.theme.dim(` ${tab.label} `)).join(' ')
+    const tabs = this.renderTabs(width, rowOffset + 2, columnOffset)
     const location = [
       record.turn === undefined ? undefined : `Turn ${String(record.turn)}`,
       record.step === undefined ? undefined : `Step ${String(record.step)}`,
@@ -529,6 +595,7 @@ export class TrajectoryView implements SurfaceInputTarget {
     width: number,
     available: number,
     metrics: ReadonlyMap<string, TrajectoryMetrics>,
+    rowOffset: number,
   ): string[] {
     this.listPageRows = Math.max(1, available)
     const visibleIndexes = this.visibleRecordIndexes()
@@ -539,15 +606,21 @@ export class TrajectoryView implements SurfaceInputTarget {
     if (visible.length === 0 && available > 0) {
       return [this.theme.dim('No execution records yet. Events will appear here while the session runs.')]
     }
-    return visible.map(recordIndex => this.renderRecord(
-      this.records[recordIndex] as TrajectoryRecord,
-      recordIndex === this.index,
-      width,
-      metrics.get((this.records[recordIndex] as TrajectoryRecord).key) ?? {
-        offsetMs: 0,
-        slowest: false,
-      },
-    ))
+    return visible.map((recordIndex, row) => {
+      this.clickHits.push({
+        row: rowOffset + row,
+        columnStart: 0,
+        columnEnd: width,
+        target: { kind: 'record', index: recordIndex },
+      })
+      const record = this.records[recordIndex] as TrajectoryRecord
+      return this.renderRecord(
+        record,
+        recordIndex === this.index,
+        width,
+        metrics.get(record.key) ?? { offsetMs: 0, slowest: false },
+      )
+    })
   }
 
   private renderRecord(
@@ -606,6 +679,29 @@ export class TrajectoryView implements SurfaceInputTarget {
     return paintLedgerRow(line, selected, width, this.theme)
   }
 
+  private renderTabs(width: number, row: number, columnOffset: number): string {
+    let column = 0
+    const segments = TABS.map((tab, index) => {
+      const segment = index === this.tabIndex
+        ? this.theme.bold(this.theme.accent(`[${tab.label}]`))
+        : this.theme.dim(` ${tab.label} `)
+      const segmentWidth = visibleWidth(segment)
+      const columnStart = columnOffset + column
+      const columnEnd = columnOffset + Math.min(width, column + segmentWidth)
+      if (column < width && columnEnd > columnStart) {
+        this.clickHits.push({
+          row,
+          columnStart,
+          columnEnd,
+          target: { kind: 'tab', index },
+        })
+      }
+      column += segmentWidth + 1
+      return segment
+    })
+    return segments.join(' ')
+  }
+
   private visibleRecordIndexes(): number[] {
     const indexes: number[] = []
     for (const [index, record] of this.records.entries()) {
@@ -661,15 +757,21 @@ export class TrajectoryView implements SurfaceInputTarget {
   }
 
   private openDetail(): void {
-    this.mode = 'detail'
-    this.followTail = false
-    this.tabIndex = 0
-    this.detailOffset = 0
+    this.activateTab(0)
   }
 
   private selectTab(offset: number): void {
-    this.tabIndex = (this.tabIndex + offset + TABS.length) % TABS.length
+    this.activateTab(this.tabIndex + offset)
+  }
+
+  private activateTab(index: number): boolean {
+    const next = (index + TABS.length) % TABS.length
+    const changed = this.tabIndex !== next || this.mode !== 'detail' || this.detailOffset !== 0
+    this.tabIndex = next
+    this.mode = 'detail'
+    this.followTail = false
     this.detailOffset = 0
+    return changed
   }
 
   private scrollDetail(offset: number): void {

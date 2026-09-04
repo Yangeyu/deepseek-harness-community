@@ -2,8 +2,11 @@ import type { Component } from '@earendil-works/pi-tui'
 import type { LifecycleScope } from '../../../runtime/lifecycle/scope.ts'
 import {
   isSurfaceInputTarget,
+  isSurfacePointerTarget,
   type SurfaceInputAction,
   type SurfaceInputContext,
+  type SurfacePointerAction,
+  type SurfacePointerGesture,
   type SurfaceInputTarget,
 } from '../../primitives/surface-input.ts'
 import type { ActiveSurface, ComposerAnchoredLayout } from '../layout/composer-layout.ts'
@@ -94,19 +97,35 @@ export class SurfaceHost {
   }
 
   dispatchInput(action: SurfaceInputAction): boolean {
+    const active = this.stack.at(-1)?.surface
     const target = this.inputTarget()
-    if (target === undefined) return false
+    if (active === undefined || target === undefined) return false
     target.handleAction(action)
-    if (action === 'surface.page-previous') this.layout.pageSurface(-1)
-    else if (action === 'surface.page-next') this.layout.pageSurface(1)
-    else if (action === 'surface.previous') this.layout.scrollSurface(-1)
-    else if (action === 'surface.next') this.layout.scrollSurface(1)
+    if (active.placement === 'readable') {
+      if (action === 'surface.page-previous') this.layout.pageSurface(-1)
+      else if (action === 'surface.page-next') this.layout.pageSurface(1)
+      else if (action === 'surface.previous') this.layout.scrollSurface(-1)
+      else if (action === 'surface.next') this.layout.scrollSurface(1)
+    }
     this.invalidate()
     return true
   }
 
-  scroll(direction: -1 | 1): boolean {
-    const changed = this.layout.scrollSurface(direction)
+  handlePointer(pointer: SurfacePointerGesture, viewportTop: number): boolean {
+    const active = this.stack.at(-1)?.surface
+    if (active === undefined) return false
+    const point = this.layout.surfacePointAt(pointer.y, pointer.x, viewportTop)
+    const target = isSurfacePointerTarget(active.component) ? active.component : undefined
+    const action: SurfacePointerAction | undefined = point === undefined
+      ? undefined
+      : pointer.kind === 'click'
+        ? { kind: 'click', ...point }
+        : { kind: 'wheel', ...point, direction: pointer.direction }
+    const changed = action !== undefined && target !== undefined
+      ? target.handlePointer(action)
+      : pointer.kind === 'wheel' && active.placement === 'readable'
+        ? this.layout.scrollSurface(pointer.direction)
+        : false
     if (changed) this.invalidate()
     return changed
   }
