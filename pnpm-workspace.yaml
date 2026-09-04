@@ -21,6 +21,8 @@ catalogs:
     '@deepseek-ai/dsh-compaction': *dsh-runtime-version
     '@deepseek-ai/dsh-cordis-host-runner': *dsh-runtime-version
     '@deepseek-ai/dsh-credentials': *dsh-runtime-version
+    '@deepseek-ai/dsh-file-reference': *dsh-runtime-version
+    '@deepseek-ai/dsh-file-reference-local': *dsh-runtime-version
     '@deepseek-ai/dsh-fs': *dsh-runtime-version
     '@deepseek-ai/dsh-goal': *dsh-runtime-version
     '@deepseek-ai/dsh-home-paths': *dsh-runtime-version

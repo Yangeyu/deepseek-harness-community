@@ -41,10 +41,11 @@
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-api-session-controller": "catalog:dsh",
     "@deepseek-ai/dsh-code-runtime-worker-thread": "catalog:dsh",
     "@deepseek-ai/dsh-commands": "catalog:dsh",
     "@deepseek-ai/dsh-cordis-host-runner": "catalog:dsh",
-    "@deepseek-ai/dsh-api-session-controller": "catalog:dsh",
+    "@deepseek-ai/dsh-file-reference-local": "catalog:dsh",
     "@deepseek-ai/dsh-goal": "catalog:dsh",
     "@deepseek-ai/dsh-home-paths": "catalog:dsh",
     "@deepseek-ai/dsh-host-directory-picker-browse": "catalog:dsh",
@@ -54,7 +55,6 @@
     "@deepseek-ai/dsh-workspace": "catalog:dsh",
     "@deepseek-ai/schemastery": "^3.18.2",
     "@earendil-works/pi-tui": "^0.84.2",
-    "@vscode/ripgrep": "^1.18.0",
     "cli-highlight": "^2.1.11",
     "diff": "^9.0.0",
     "yaml": "^2.4.2"
@@ -65,6 +65,7 @@
     "@deepseek-ai/dsh-attachment": "catalog:dsh",
     "@deepseek-ai/dsh-base": "catalog:dsh",
     "@deepseek-ai/dsh-credentials": "catalog:dsh",
+    "@deepseek-ai/dsh-file-reference": "catalog:dsh",
     "@deepseek-ai/dsh-fs": "catalog:dsh",
     "@deepseek-ai/dsh-launch-environment": "catalog:dsh",
     "@deepseek-ai/dsh-llm": "catalog:dsh",
@@ -104,6 +105,9 @@
     "@deepseek-ai/dsh-credentials": {
       "optional": true
     },
+    "@deepseek-ai/dsh-file-reference": {
+      "optional": true
+    },
     "@deepseek-ai/dsh-fs": {
       "optional": true
     },
@@ -136,6 +140,7 @@
     "@deepseek-ai/dsh-attachment": "catalog:dsh",
     "@deepseek-ai/dsh-base": "catalog:dsh",
     "@deepseek-ai/dsh-credentials": "catalog:dsh",
+    "@deepseek-ai/dsh-file-reference": "catalog:dsh",
     "@deepseek-ai/dsh-fs": "catalog:dsh",
     "@deepseek-ai/dsh-launch-environment": "catalog:dsh",
     "@deepseek-ai/dsh-session-projection": "catalog:dsh",

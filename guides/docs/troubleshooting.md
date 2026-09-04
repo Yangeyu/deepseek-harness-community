@@ -9,7 +9,6 @@ dscode（DeepSeek Harness Community 终端）环境与运行故障的诊断参�
    - `node`：Node 版本（需 ^22.19.0 或 ≥24）
    - `dsh`：Harness 可执行文件能否解析
    - `tui-bundle`：本安装的社区 bundle 能否解析
-   - `ripgrep`：搜索二进制
    - `profile`：profile 是否指向本安装（见下节）
    - `terminal` / `workspace` / `clipboard`：运行环境基本能力
 3. **配置**：read `settings.yaml` 相关段（schema 与语义见 `guides/docs/configuration.md`）。

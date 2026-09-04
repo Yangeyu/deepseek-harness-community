@@ -121,7 +121,7 @@ export class ComposerHost {
   cancelImageSubmission(restoreDrafts?: boolean): void {
     this.process?.cancelImageSubmission(restoreDrafts)
   }
-  refreshAutocomplete(cwd?: string): void { this.process?.refreshAutocomplete(cwd) }
+  refreshAutocomplete(): void { this.process?.refreshAutocomplete() }
 
   /** Focus callbacks passed to the concrete process keep stable shell identities. */
   focusPort(setFocus: (component: Component) => void): { editor(): void; attachments(): void } {

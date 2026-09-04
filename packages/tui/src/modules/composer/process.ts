@@ -12,7 +12,7 @@ import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
 import { selectedModel } from '../../runtime/session/model-selection.ts'
 import type { PreparedPrompt, PromptPreparationContext } from '../../runtime/session/prompt.ts'
-import { ComposerAutocompleteProvider, type WorkspacePathSource } from './autocomplete.ts'
+import { ComposerAutocompleteProvider, type FileReferenceSource } from './autocomplete.ts'
 import {
   AttachmentCoordinator,
   type VisionGateway,
@@ -38,7 +38,6 @@ import type { ComposerEditorFactory, ComposerEditorPort } from './editor-port.ts
 
 export interface ComposerSessionPort {
   readonly current: Readonly<RuntimeSessionSnapshot>
-  subscribe(listener: (snapshot: Readonly<RuntimeSessionSnapshot>) => void): () => void
   prompt(text: string, mode: 'queue' | 'steer'): Promise<void>
   promptWithPreparation(
     text: string,
@@ -70,7 +69,7 @@ export interface ComposerProcessOptions {
   readonly theme: TuiTheme
   readonly session: ComposerSessionPort
   readonly commands: ComposerCommandPort
-  readonly workspacePaths: WorkspacePathSource
+  readonly fileReferences: FileReferenceSource
   readonly clipboardImage: ClipboardImageLoader
   readonly vision?: VisionGateway
   readonly createEditor: ComposerEditorFactory
@@ -91,7 +90,6 @@ export class ComposerProcess {
   private readonly rewindTimer: ResourceSlot<ReturnType<typeof setTimeout>>
   private readonly store: AtomicSnapshotStore<ComposerSnapshot>
   private started = false
-  private autocompleteCwd: string
   private attachmentRailFocused = false
   private clipboardPastePending = false
 
@@ -107,7 +105,6 @@ export class ComposerProcess {
     )
     this.editor = options.createEditor(() => this.drafts.placeholders)
     this.editorFrame = new ComposerEditorFrame(this.editor)
-    this.autocompleteCwd = options.session.current.cwd
     this.editor.onChange = text => {
       this.drafts.reconcileText(text)
       this.input.observeEditorText(text)
@@ -144,8 +141,7 @@ export class ComposerProcess {
   start(): void {
     if (this.started) throw new Error('ComposerProcess has already started.')
     this.started = true
-    this.editor.setAutocompleteProvider(this.createAutocompleteProvider(this.autocompleteCwd))
-    this.options.scope.onDispose(this.options.session.subscribe(snapshot => this.bindSession(snapshot)))
+    this.editor.setAutocompleteProvider(this.createAutocompleteProvider())
     this.options.scope.onDispose(this.drafts.onChange((drafts) => {
       if (!this.options.scope.active) return
       this.input.observeAttachments(drafts)
@@ -305,16 +301,10 @@ export class ComposerProcess {
     this.publish()
   }
 
-  refreshAutocomplete(cwd = this.options.session.current.cwd): void {
+  refreshAutocomplete(): void {
     if (!this.options.scope.active) return
-    this.editor.setAutocompleteProvider(this.createAutocompleteProvider(cwd))
-    this.autocompleteCwd = cwd
+    this.editor.setAutocompleteProvider(this.createAutocompleteProvider())
     this.publish()
-  }
-
-  private bindSession(snapshot: Readonly<RuntimeSessionSnapshot>): void {
-    if (snapshot.cwd !== this.autocompleteCwd) this.refreshAutocomplete(snapshot.cwd)
-    else this.publish()
   }
 
   private async submitImages(text: string, mode: 'queue' | 'steer'): Promise<void> {
@@ -408,11 +398,13 @@ export class ComposerProcess {
     if (this.coordinator === undefined) throw new Error('Vision is unavailable in this profile.')
   }
 
-  private createAutocompleteProvider(cwd: string): ComposerAutocompleteProvider {
+  private createAutocompleteProvider(): ComposerAutocompleteProvider {
+    const { cwd, sessionId } = this.options.session.current
     return new ComposerAutocompleteProvider(
       this.options.commands.autocompleteItems(),
       cwd,
-      this.options.workspacePaths,
+      sessionId,
+      this.options.fileReferences,
     )
   }
 

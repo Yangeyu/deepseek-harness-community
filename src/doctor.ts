@@ -24,7 +24,6 @@ export interface DoctorContext {
   profileDirectory: string
   profileConfigured: boolean
   resolveDshBin(): string
-  resolveRgBin(): Promise<string>
 }
 
 function nodeSupported(version: string): boolean {
@@ -35,15 +34,6 @@ function nodeSupported(version: string): boolean {
 function readableFile(path: string): boolean {
   try {
     accessSync(path, constants.R_OK)
-    return statSync(path).isFile()
-  } catch {
-    return false
-  }
-}
-
-function executableFile(path: string, platform: NodeJS.Platform): boolean {
-  try {
-    accessSync(path, platform === 'win32' ? constants.F_OK : constants.X_OK)
     return statSync(path).isFile()
   } catch {
     return false
@@ -99,7 +89,7 @@ function clipboardCheck(context: DoctorContext): DoctorCheck {
 }
 
 /** Inspect the installation without creating or repairing a Harness profile. */
-export async function diagnose(context: DoctorContext): Promise<DoctorReport> {
+export function diagnose(context: DoctorContext): DoctorReport {
   const checks: DoctorCheck[] = [{
     id: 'node',
     status: nodeSupported(context.nodeVersion) ? 'pass' : 'fail',
@@ -125,18 +115,6 @@ export async function diagnose(context: DoctorContext): Promise<DoctorReport> {
     status: pluginAvailable ? 'pass' : 'fail',
     detail: pluginAvailable ? context.pluginDirectory : `missing bundle manifest: ${pluginManifest}`,
   })
-
-  try {
-    const rgBin = await context.resolveRgBin()
-    const available = executableFile(rgBin, context.platform)
-    checks.push({
-      id: 'ripgrep',
-      status: available ? 'pass' : 'fail',
-      detail: available ? rgBin : `unreadable executable: ${rgBin}`,
-    })
-  } catch (error) {
-    checks.push({ id: 'ripgrep', status: 'fail', detail: error instanceof Error ? error.message : String(error) })
-  }
 
   checks.push(workspaceAccess(context.cwd))
   checks.push({

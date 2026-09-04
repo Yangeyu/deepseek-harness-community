@@ -32,7 +32,7 @@ export interface CommandRouterOptions {
   readonly directory: TerminalCommandDirectory
   readonly session: CommandRouterSessionPort
   readonly skills: CommandRouterSkillsPort
-  readonly refreshAutocomplete: (cwd?: string) => void
+  readonly refreshAutocomplete: () => void
   readonly onActivity: () => void
   readonly scope: LifecycleScope
   readonly now?: () => number
@@ -105,7 +105,7 @@ export class CommandRouter {
 
   private bindSession(snapshot: Readonly<RuntimeSessionSnapshot>): void {
     if (this.options.directory.setSession(snapshot.sessionId)) {
-      this.options.refreshAutocomplete(snapshot.cwd)
+      this.options.refreshAutocomplete()
     }
   }
 }

@@ -12,7 +12,7 @@ import { InlineReferenceEditor } from '../infrastructure/terminal/inline-referen
 import { TerminalSkillDocumentEditor } from '../infrastructure/terminal/skill-document-editor.ts'
 import type { ClipboardImageLoader } from '../modules/composer/attachments/clipboard.ts'
 import type { VisionGateway } from '../modules/composer/attachments/coordinator.ts'
-import type { WorkspacePathSource } from '../modules/composer/autocomplete.ts'
+import type { FileReferenceSource } from '../modules/composer/autocomplete.ts'
 import { ComposerHost } from '../modules/composer/host.ts'
 import { ComposerProcess } from '../modules/composer/process.ts'
 import { composerDraftForSession } from '../modules/composer/session-draft.ts'
@@ -41,7 +41,7 @@ export interface SessionFeatureSetOptions {
   readonly composer: ComposerHost
   readonly transcript: TranscriptHost
   readonly surfaces: SurfaceHost
-  readonly workspacePaths: WorkspacePathSource
+  readonly fileReferences: FileReferenceSource
   readonly clipboardImage: ClipboardImageLoader
   readonly showReasoning: boolean
   readonly maxToolOutputLines: number
@@ -78,7 +78,7 @@ export function createSessionFeatureSet(
       dispatch: options.dispatchCommand,
       autocompleteItems: options.autocompleteItems,
     },
-    workspacePaths: options.workspacePaths,
+    fileReferences: options.fileReferences,
     clipboardImage: options.clipboardImage,
     createEditor: references => new InlineReferenceEditor(
       options.tui,

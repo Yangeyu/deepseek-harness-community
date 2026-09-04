@@ -84,7 +84,6 @@ function fixture(options: {
   vision?: VisionGateway
 } = {}) {
   const current = sessionSnapshot()
-  const listeners = new Set<(snapshot: Readonly<RuntimeSessionSnapshot>) => void>()
   const submittedContent: PromptContentPart[][] = []
   const promptWithPreparation = vi.fn<ComposerSessionPort['promptWithPreparation']>(
     async (_text, _mode, prepareContent) => {
@@ -94,10 +93,6 @@ function fixture(options: {
   )
   const session: ComposerSessionPort = {
     get current() { return current },
-    subscribe(listener) {
-      listeners.add(listener)
-      return () => { listeners.delete(listener) }
-    },
     prompt: vi.fn(async () => {}),
     promptWithPreparation,
     notice: vi.fn(),
@@ -120,7 +115,7 @@ function fixture(options: {
       dispatch: vi.fn(async () => false),
       autocompleteItems: () => [],
     },
-    workspacePaths: vi.fn(async () => []),
+    fileReferences: { list: vi.fn(async () => []) },
     clipboardImage: options.clipboardImage ?? (async () => png()),
     createEditor: references => new InlineReferenceEditor(
       tui,
@@ -135,7 +130,6 @@ function fixture(options: {
     scope,
   })
   process.start()
-  for (const listener of listeners) listener(current)
   return {
     process,
     scope,

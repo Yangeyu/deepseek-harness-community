@@ -47,6 +47,7 @@ function hostPorts(): TuiHostPorts {
       onError: () => () => {},
     },
     interactions: { connect: () => () => {} },
+    fileReferences: { list: async () => [] },
     skills: { list: async () => [] },
     goals: () => ({
       create: unavailable,
@@ -365,33 +366,6 @@ describe('createApplication integration', () => {
     await app.dispose()
     expect(terminal.stop).toHaveBeenCalledOnce()
     expect(removeMemoryActivity).toHaveBeenCalledOnce()
-  })
-
-  it('opens and applies workspace file suggestions for @ input', async () => {
-    const workspacePaths = vi.fn(async () => [
-      { path: 'README.md', isDirectory: false },
-      { path: 'src/read-model.ts', isDirectory: false },
-    ])
-    const app = application(undefined, undefined, undefined, undefined, { workspacePaths })
-    const internals = app
-
-    for (const character of '@rea') internals.composer.editor.handleInput(character)
-    const before = internals.layout.render(80).map(stripTerminalSequences)
-    const inputRow = before.findIndex(line => line.includes('@rea'))
-
-    await vi.waitFor(() => { expect(internals.composer.editor.isShowingAutocomplete()).toBe(true) })
-    const after = internals.layout.render(80).map(stripTerminalSequences)
-    const suggestionRow = after.findIndex(line => line.includes('README.md'))
-    const inputRowWithSuggestions = after.findIndex(line => line.includes('@rea'))
-
-    expect(inputRow).toBeGreaterThanOrEqual(0)
-    expect(inputRowWithSuggestions).toBe(inputRow)
-    expect(suggestionRow).toBeGreaterThanOrEqual(0)
-    expect(suggestionRow).toBeLessThan(inputRowWithSuggestions)
-
-    internals.composer.editor.handleInput('\r')
-    expect(internals.composer.editor.getText()).toBe('@README.md ')
-    expect(workspacePaths).toHaveBeenCalledWith('/workspace', expect.any(AbortSignal))
   })
 
   it('keeps slash suggestions above the same bottom-anchored input row', async () => {

@@ -17,6 +17,7 @@ export default defineConfig({
       '@deepseek-ai/dsh-api-session-controller',
       '@deepseek-ai/dsh-attachment',
       '@deepseek-ai/dsh-credentials',
+      '@deepseek-ai/dsh-file-reference',
       '@deepseek-ai/dsh-launch-environment',
       '@deepseek-ai/dsh-llm',
       '@deepseek-ai/dsh-permission-presets',
@@ -29,7 +30,6 @@ export default defineConfig({
       '@deepseek-ai/dsh-web',
       '@deepseek-ai/dsh-web-search-deepseek',
       '@earendil-works/pi-tui',
-      '@vscode/ripgrep',
     ],
   },
 })

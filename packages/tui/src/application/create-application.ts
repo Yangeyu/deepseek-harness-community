@@ -19,8 +19,6 @@ import {
   type ClipboardImageLoader,
 } from '../modules/composer/attachments/clipboard.ts'
 import type { VisionGateway } from '../modules/composer/attachments/coordinator.ts'
-import type { WorkspacePathSource } from '../modules/composer/autocomplete.ts'
-import { listWorkspacePaths } from '../modules/composer/autocomplete.ts'
 import { ComposerHost } from '../modules/composer/host.ts'
 import type {
   PermissionDefaultPort,
@@ -68,7 +66,6 @@ export interface TuiApplicationDependencies {
   clipboardImage?: ClipboardImageLoader
   clipboardText?: ClipboardTextWriter
   attachments?: PromptAttachmentReader
-  workspacePaths?: WorkspacePathSource
   gitBranch?: GitBranchSource
   terminal?: Terminal
 }
@@ -115,7 +112,6 @@ export function createApplication(
     clipboardImage = imageDraftFromClipboard,
     clipboardText,
     attachments,
-    workspacePaths = listWorkspacePaths,
     gitBranch = watchGitBranch,
     terminal = new ProcessTerminal(),
   } = dependencies
@@ -291,7 +287,7 @@ export function createApplication(
     directory: commands,
     session,
     skills,
-    refreshAutocomplete: cwd => { composer.refreshAutocomplete(cwd) },
+    refreshAutocomplete: () => { composer.refreshAutocomplete() },
     onActivity: () => { shellStatus.refresh() },
     scope: commandScope,
   })
@@ -307,7 +303,7 @@ export function createApplication(
     composer,
     transcript,
     surfaces,
-    workspacePaths,
+    fileReferences: host.fileReferences,
     clipboardImage,
     showReasoning: config.showReasoning,
     maxToolOutputLines: config.maxToolOutputLines,

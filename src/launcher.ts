@@ -80,7 +80,6 @@ export interface LauncherOptions {
   ensureProfile?: () => Promise<number>
   seedExamples?: (home: string) => number | Promise<number>
   resolveDshBin?: () => string
-  resolveRgBin?: () => Promise<string>
   nodeVersion?: string
   packageVersion?: string
   platform?: NodeJS.Platform
@@ -252,7 +251,7 @@ export async function main(args: readonly string[], options: LauncherOptions = {
     ))
 
     if (invocation.kind === 'doctor') {
-      const report = await diagnose({
+      const report = diagnose({
         cwd,
         env,
         nodeVersion: options.nodeVersion ?? process.versions.node,
@@ -262,7 +261,6 @@ export async function main(args: readonly string[], options: LauncherOptions = {
         profileDirectory,
         profileConfigured: profileUsesPlugin(profileDirectory, pluginDirectory),
         resolveDshBin,
-        resolveRgBin: options.resolveRgBin ?? (async () => (await import('@vscode/ripgrep')).rgPath),
       })
       stdout.write(formatDoctorReport(report, invocation.json))
       return report.ok ? 0 : 1

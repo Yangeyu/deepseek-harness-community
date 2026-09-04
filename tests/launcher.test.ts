@@ -275,7 +275,6 @@ test('doctor reports profile state without initializing it', async () => {
     ensureProfile: async () => { setupCalls += 1; return 0 },
     seedExamples: async () => { seedCalls += 1; return 0 },
     resolveDshBin: () => join(process.cwd(), 'package.json'),
-    resolveRgBin: async () => process.execPath,
     platform: 'linux',
   })
 

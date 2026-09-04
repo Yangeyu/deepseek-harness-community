@@ -8,7 +8,7 @@ state.
 
 ```text
 Harness Host
-  session log · projections · LLM · attachments · commands · tools · persistence
+  session log · projections · LLM · attachments · file references · commands · tools · persistence
       │
       ├── Bailian provider (endpoint · credentials · common request policy · model capabilities)
       ├── Vision fallback (route policy · proxy analysis · evidence admission)
@@ -475,9 +475,11 @@ component references while the Session-owned implementations are replaced.
   epoch to feature processes and rejects writes after retirement.
 - `TuiHostPorts` is the application composition boundary. `HarnessSessionTransport`
   maps the upstream Session Controller once into history follow, control,
-  commands, paging, and model catalog operations. `HarnessInteractionSource`
-  maps scoped Approval and Question waterfalls directly; no Remote response
-  channel or second interaction state source exists.
+  commands, paging, and model catalog operations. `HarnessFileReferenceSource`
+  resolves that same Session to its Agent and delegates discovery to the
+  profile's `ctx.fileReferences`; `HarnessInteractionSource` maps scoped
+  Approval and Question waterfalls directly. No Remote response channel,
+  second interaction state source, or TUI-owned filesystem index exists.
 - `SessionFeatureCoordinator` swaps Composer, Interaction, Skills, Task,
   Trajectory, and Transcript together through stable shell Hosts. It implements
   the same prepare/activate/rollback protocol as `SessionWorkspace` rather than
@@ -493,13 +495,16 @@ component references while the Session-owned implementations are replaced.
   effective agent-scoped `ctx.commands` descriptors. Help and autocomplete read
   the same descriptor list, while a narrow application port executes resolved
   Host commands and supports bare-invocation UI decorations.
-- `ComposerAutocompleteProvider` keeps slash completion delegated to `pi-tui`
-  while owning workspace `@path` discovery through one abortable path-source
-  port. It inserts a visible workspace-relative reference; the system-prompt
-  contract tells the Agent to resolve and inspect that path instead of copying
-  hidden file contents into the durable user message. Raster references use
-  native `read_image` on image-capable routes or proxy-backed `inspect_image`
-  when the active model is text-only.
+- `ComposerAutocompleteProvider` gates `pi-tui`'s combined provider to Slash
+  completion only, uses the shared `dsh-file-reference` token grammar, and maps
+  candidates from its consumer-owned `FileReferenceSource` port into Editor
+  rows. Bare-path and alternate `@` grammar never fall through to `pi-tui`'s
+  filesystem discovery. The mounted `dsh-file-reference-local` provider alone
+  owns host-filesystem traversal, ranking, bounds, caching, invalidation, and
+  matching model guidance. A selection remains ordinary workspace-relative
+  prompt text; neither the TUI nor the provider reads file contents into the
+  durable message. Raster references use native `read_image` on image-capable
+  routes, or proxy-backed `inspect_image` when the active model is text-only.
 - `ComposerEditorFrame` is the presentation boundary around `pi-tui`'s Editor.
   It places autocomplete above the bottom-anchored input frame and keeps image
   references inside that frame, so changing candidate count cannot move the

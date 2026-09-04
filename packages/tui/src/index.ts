@@ -7,6 +7,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
+import type {} from '@deepseek-ai/dsh-file-reference'
 import type {} from '@vascent/deepseek-harness-web'
 import type { CommandDescriptor } from '@deepseek-ai/dsh-commands'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -31,9 +32,10 @@ import {
   renderCliHelp,
 } from './application/cli.ts'
 import { formatSessionList } from './modules/session-center/model.ts'
-import { settingsPermissionDefaultGateway } from './infrastructure/harness/permission-default.ts'
+import { HarnessFileReferenceSource } from './infrastructure/harness/file-references.ts'
 import { HarnessGoalPort } from './infrastructure/harness/goal.ts'
 import { HarnessInteractionSource } from './infrastructure/harness/interactions.ts'
+import { settingsPermissionDefaultGateway } from './infrastructure/harness/permission-default.ts'
 import { HarnessSessionTransport } from './infrastructure/harness/session-transport.ts'
 import { harnessSkillCatalogSource } from './infrastructure/harness/skills.ts'
 
@@ -76,6 +78,7 @@ export const name = 'community-tui'
 /** Host services required by the in-process terminal composition root. */
 export const inject = [
   'sessionController',
+  'fileReferences',
   'sessionSkillCatalog',
   'goals',
   'tools',
@@ -152,6 +155,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
   const host: TuiHostPorts = {
     sessions: sessionTransport,
     interactions: new HarnessInteractionSource(ctx),
+    fileReferences: new HarnessFileReferenceSource(ctx.sessionController, ctx.fileReferences),
     skills: harnessSkillCatalogSource(ctx.sessionSkillCatalog),
     goals: session => new HarnessGoalPort(ctx.sessionController, ctx.goals, session),
   }
