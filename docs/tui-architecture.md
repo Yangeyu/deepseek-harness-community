@@ -800,6 +800,46 @@ history rather than competing with this canonical contract.
   imports, single construction and placement owners, the raw-key boundary,
   and one concrete render request site.
 
+### Memory session policy and learning
+
+- Memory contributes stable usage guidance through `systemPrompt.section`;
+  durable snapshots carry file content. Relevant remembered preferences apply
+  when compatible with current instructions; a snapshot does not replace the
+  current task or grant authority to change roles or permissions.
+- Memory owns session switches in `<memory-root>/sessions/<sha256-session-id>.json`.
+  Each file contains the complete `useMemories` / `generateMemories` selection;
+  reads use the file directly and updates serialize through the existing file
+  store before atomic replacement. Missing files use deployment defaults;
+  unreadable or malformed files fail explicitly. Restoring the same session id
+  restores its selection. New ids, including forks, use deployment defaults.
+- The selected rc1 Session append API cannot mark downstream events `ignorable`,
+  and persistence refuses unknown required events. Memory policy therefore
+  belongs to the community Host service's files. Session-log export alone does
+  not include it, and Rewind of conversation or memory content does not change
+  the user's current session switches.
+- `policy()` and `setPolicy()` are asynchronous. The TUI sends a partial change
+  and displays the acknowledged result or pending state. After a failed change,
+  it reads the current Host policy and displays it alongside the operation error.
+  If that read also fails, switches become unknown and cannot be toggled until
+  the dialog is reopened with a readable policy. The TUI owns no persistence or
+  optimistic replacement of the saved value.
+- Each source session owns one serial learning queue and cancellation scope.
+  Disabling learning cancels its waiting and active work and waits for child
+  disposal before acknowledging the change. Re-enabling admits future
+  candidates; canceled candidates remain canceled. Source-agent disposal and
+  Memory-service shutdown retire their owned work.
+- Child-disposal failures propagate to callers waiting on learning or a disable
+  and publish error activity. A failed drain does not undo the already-persisted
+  disabled policy; it must not be acknowledged as successful cleanup.
+- A learning child's creation signal ends at factory publication. Memory owns
+  cancellation while waiting for the child and disposes the handle to stop and
+  drain the real Agent loop. Temporary children use the maintenance policy
+  while their source attribution is registered; they create no policy files.
+- Memory tools forward cancellation to the file-mutation queue. Cancellation
+  prevents entry into a queued logical write or forget; an admitted mutation
+  finishes and publishes its source-attributed result before child disposal
+  completes. Cancellation does not undo committed memory content.
+
 ### Following architecture work
 
 - Add Session Query-backed cross-session search and parent/child lineage views.

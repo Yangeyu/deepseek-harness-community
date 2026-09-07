@@ -41,10 +41,10 @@ describe('MemoryDialog', () => {
 
     expect(dialog.render(100).join('\n')).toContain('Use memories in this session  on')
     dialog.handleAction('surface.confirm')
-    expect(policy).toHaveBeenLastCalledWith({ useMemories: false, generateMemories: true })
+    expect(policy).toHaveBeenLastCalledWith({ useMemories: false })
     dialog.handleAction('surface.next')
     dialog.handleAction('surface.confirm')
-    expect(policy).toHaveBeenLastCalledWith({ useMemories: false, generateMemories: false })
+    expect(policy).toHaveBeenLastCalledWith({ generateMemories: false })
 
     dialog.handleAction('surface.next')
     dialog.handleAction('surface.confirm')

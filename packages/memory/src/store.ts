@@ -1,4 +1,4 @@
-/** Markdown file storage for global and project-scoped agent memory. */
+/** File storage for memory documents and per-session policy. */
 
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -23,6 +23,11 @@ export type MemoryScope = 'global' | 'project'
 
 /** One supported topic file below a scope's compact MEMORY.md index. */
 export type MemoryTopic = (typeof MEMORY_TOPICS)[number]
+
+export interface MemorySessionPolicy {
+  readonly useMemories: boolean
+  readonly generateMemories: boolean
+}
 
 /** Project identity and local storage directory resolved from one working directory. */
 export interface MemoryProject {
@@ -223,6 +228,36 @@ export class MemoryFileStore {
     }
   }
 
+  async sessionPolicy(sessionId: string): Promise<MemorySessionPolicy | undefined> {
+    const path = this.policyPath(sessionId)
+    const content = await readableFile(path, 1024)
+    if (content === null) return undefined
+    const value: unknown = JSON.parse(content)
+    if (value === null || typeof value !== 'object'
+      || !('useMemories' in value) || typeof value.useMemories !== 'boolean'
+      || !('generateMemories' in value) || typeof value.generateMemories !== 'boolean') {
+      throw new Error(`invalid memory session policy: ${path}`)
+    }
+    return { useMemories: value.useMemories, generateMemories: value.generateMemories }
+  }
+
+  updateSessionPolicy(
+    sessionId: string,
+    patch: Partial<MemorySessionPolicy>,
+    defaults: MemorySessionPolicy,
+  ): Promise<MemorySessionPolicy> {
+    const path = this.policyPath(sessionId)
+    return this.enqueue(path, async () => {
+      const current = await this.sessionPolicy(sessionId) ?? defaults
+      const next = {
+        useMemories: patch.useMemories ?? current.useMemories,
+        generateMemories: patch.generateMemories ?? current.generateMemories,
+      }
+      await atomicWrite(path, `${JSON.stringify(next)}\n`)
+      return next
+    })
+  }
+
   /** Resolve a stable project directory, sharing identity across clones with the same origin URL. */
   async project(cwd: string): Promise<MemoryProject> {
     const gitRoot = await runGit(cwd, ['rev-parse', '--show-toplevel'])
@@ -285,7 +320,7 @@ export class MemoryFileStore {
   }
 
   /** Append one deduplicated memory and return the exact reversible file mutation. */
-  async write(input: MemoryWriteInput): Promise<MemoryStoreMutation> {
+  async write(input: MemoryWriteInput, signal?: AbortSignal): Promise<MemoryStoreMutation> {
     assertTopic(input.topic)
     const summary = this.cleanText('summary', input.summary, this.options.maxSummaryChars)
     const details = input.details === undefined
@@ -297,6 +332,7 @@ export class MemoryFileStore {
     const project = await this.project(input.cwd)
     const directory = input.scope === 'global' ? join(this.root, 'global') : project.directory
     return this.enqueue(directory, async () => {
+      signal?.throwIfAborted()
       const indexPath = this.pathFor(project, input.scope)
       const beforeIndex = await readableFile(indexPath, this.options.maxDocumentBytes)
       const link = input.topic === undefined ? summary : `${summary} ([${input.topic}](${input.topic}.md))`
@@ -333,12 +369,13 @@ export class MemoryFileStore {
   }
 
   /** Remove one exact remembered summary from its index and optional topic. */
-  async forget(input: MemoryForgetInput): Promise<MemoryStoreMutation> {
+  async forget(input: MemoryForgetInput, signal?: AbortSignal): Promise<MemoryStoreMutation> {
     assertTopic(input.topic)
     const summary = this.cleanText('summary', input.summary, this.options.maxSummaryChars)
     const project = await this.project(input.cwd)
     const directory = input.scope === 'global' ? join(this.root, 'global') : project.directory
     return this.enqueue(directory, async () => {
+      signal?.throwIfAborted()
       const paths = [
         this.pathFor(project, input.scope),
         ...input.topic === undefined ? [] : [this.pathFor(project, input.scope, input.topic)],
@@ -419,6 +456,11 @@ export class MemoryFileStore {
   private isOwnedPath(path: string): boolean {
     const absolute = resolve(path)
     return absolute === path && absolute.startsWith(`${this.root}${sep}`)
+  }
+
+  private policyPath(sessionId: string): string {
+    const key = createHash('sha256').update(sessionId).digest('hex')
+    return join(this.root, 'sessions', `${key}.json`)
   }
 
   private enqueue<T>(key: string, operation: () => Promise<T>): Promise<T> {

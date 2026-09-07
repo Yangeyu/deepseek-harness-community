@@ -70,6 +70,7 @@
     "lint": "oxlint --deny-warnings src scripts tests tsdown.config.ts && pnpm --filter './packages/*' run lint",
     "typecheck": "tsc --noEmit && pnpm --filter './packages/*' run typecheck",
     "test": "vitest run tests/launcher.test.ts tests/release.test.ts && pnpm --filter './packages/*' run test",
+    "test:memory:e2e": "pnpm run build && node scripts/memory-e2e.mjs --live",
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
     "dev": "pnpm run build && node bin/dscode-dev.js",
     "release": "gh workflow run release.yml --ref main",

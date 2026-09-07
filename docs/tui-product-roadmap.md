@@ -130,6 +130,20 @@ and matching Git tags are the release identity.
 - Remove whole-worktree inference, tool-name parsing, duplicated checkpoint
   state, compatibility bridges, and TUI-owned Git restore code after cutover.
 
+### Current — Reliability
+
+- Completed: persist Memory session switches, cancel and drain learning when
+  disabled, and acknowledge policy changes only after the Host operation settles.
+- Completed: opt-in real-model Memory acceptance for cross-process recall,
+  policy controls, update/forget, background learning, and active cancellation
+  through `pnpm test:memory:e2e`.
+- Verify Rewind recovery with process-interruption fault injection before
+  selecting any additional durable transaction mechanism.
+- Establish long-session time and memory baselines with fixed histories and
+  replay-equivalence checks before changing raw-event retention.
+- Extend real Host and terminal acceptance beyond startup/exit to a small set
+  of session resume, cancellation, and recovery workflows.
+
 ### Next — Session Center
 
 The current foundation already exposes `/resume` through the shared Surface
@@ -149,6 +163,15 @@ search, management, and temporal-navigation capabilities below remain planned.
   marker and branch-discard confirmation when a new message is sent from the
   past.
 
+### Planned — Review and Handoff
+
+- Add a workspace-wide `/changes` review surface with file navigation, aggregate
+  line counts, full diffs, and test results.
+- Produce a copyable task handoff containing changed files, validation, open
+  risks, session id, and resume command.
+- Export bounded conversation and trajectory diagnostics for issue reports
+  without exposing secrets or uncontrolled raw payloads.
+
 ### Planned — Parallel Execution Console
 
 - Add a parent/child Agent tree with status, depth, task label, elapsed time,
@@ -159,15 +182,6 @@ search, management, and temporal-navigation capabilities below remain planned.
   continuable subagents.
 - Keep ownership and authorization in the Host; the terminal is a client of
   subagent and job capabilities.
-
-### Planned — Review and Handoff
-
-- Add a workspace-wide `/changes` review surface with file navigation, aggregate
-  line counts, full diffs, and test results.
-- Produce a copyable task handoff containing changed files, validation, open
-  risks, session id, and resume command.
-- Export bounded conversation and trajectory diagnostics for issue reports
-  without exposing secrets or uncontrolled raw payloads.
 
 ### Later — Capability Inventory and Remote Work
 

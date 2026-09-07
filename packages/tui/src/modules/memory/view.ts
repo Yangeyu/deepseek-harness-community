@@ -11,28 +11,38 @@ import type {
   SurfaceInputTarget,
 } from '../../presentation/primitives/surface-input.ts'
 
+export interface MemoryPolicyState {
+  readonly value: MemorySessionPolicy | undefined
+  readonly saving: boolean
+  readonly error?: string
+}
+
 /** Composer-anchored memory policy and Markdown document browser. */
 export class MemoryDialog implements SurfaceInputTarget {
   readonly inputContext = 'memory' as const
   private index = 0
   private document: MemoryDocument | undefined
   private documentOffset = 0
-  private policy: MemorySessionPolicy
+  private policy: MemoryPolicyState
   private readonly documents: MemoryDocument[]
 
   constructor(
     private readonly overview: MemoryOverview,
     private readonly visibleRows: () => number,
     private readonly theme: TuiTheme,
-    private readonly onPolicy: (policy: MemorySessionPolicy) => void,
+    private readonly onPolicy: (patch: Partial<MemorySessionPolicy>) => void,
     private readonly onCancel: () => void,
   ) {
-    this.policy = overview.policy
+    this.policy = { value: overview.policy, saving: false }
     const byPath = new Map<string, MemoryDocument>()
     for (const document of [overview.projectMemory, overview.global, ...overview.documents]) {
       byPath.set(document.path, document)
     }
     this.documents = [...byPath.values()]
+  }
+
+  setPolicy(state: MemoryPolicyState): void {
+    this.policy = state
   }
 
   handleAction(action: SurfaceInputAction): void {
@@ -52,14 +62,10 @@ export class MemoryDialog implements SurfaceInputTarget {
     if (action === 'surface.previous') return void (this.index = Math.max(0, this.index - 1))
     if (action === 'surface.next') return void (this.index = Math.min(this.documents.length + 1, this.index + 1))
     if (action === 'surface.confirm' || action === 'surface.toggle') {
-      if (this.index === 0) {
-        this.policy = { ...this.policy, useMemories: !this.policy.useMemories }
-        this.onPolicy(this.policy)
-        return
-      }
-      if (this.index === 1) {
-        this.policy = { ...this.policy, generateMemories: !this.policy.generateMemories }
-        this.onPolicy(this.policy)
+      if (this.index < 2) {
+        if (this.policy.saving || this.policy.value === undefined) return
+        const key = this.index === 0 ? 'useMemories' : 'generateMemories'
+        this.onPolicy({ [key]: !this.policy.value[key] })
         return
       }
       this.document = this.documents[this.index - 2]
@@ -80,10 +86,15 @@ export class MemoryDialog implements SurfaceInputTarget {
       this.theme.bold('Memories'),
       this.theme.dim(`Project · ${this.overview.project.id}`),
       '',
-      this.toggleLine(0, 'Use memories in this session', this.policy.useMemories),
-      this.toggleLine(1, 'Learn from this session', this.policy.generateMemories),
+      this.toggleLine(0, 'Use memories in this session', this.policy.value?.useMemories),
+      this.toggleLine(1, 'Learn from this session', this.policy.value?.generateMemories),
       '',
     ]
+    if (this.policy.saving) lines.push(this.theme.dim('Saving memory policy…'), '')
+    if (this.policy.value === undefined) lines.push(this.theme.dim('Close and reopen Memories to reload the current settings.'), '')
+    if (this.policy.error !== undefined) {
+      lines.push(...wrapTextWithAnsi(this.theme.error(sanitizeTerminalText(this.policy.error)), width), '')
+    }
     for (const [offset, document] of this.documents.entries()) {
       const index = offset + 2
       const cursor = index === this.index ? this.theme.accent('›') : ' '
@@ -121,10 +132,11 @@ export class MemoryDialog implements SurfaceInputTarget {
     ]
   }
 
-  private toggleLine(index: number, label: string, enabled: boolean): string {
+  private toggleLine(index: number, label: string, enabled: boolean | undefined): string {
     const cursor = this.index === index ? this.theme.accent('›') : ' '
     const name = this.index === index ? this.theme.bold(label) : label
-    return `${cursor} ${name}  ${enabled ? this.theme.success('on') : this.theme.dim('off')}`
+    const status = enabled === true ? this.theme.success('on') : this.theme.dim(enabled === false ? 'off' : 'unknown')
+    return `${cursor} ${name}  ${status}`
   }
 
   private moveDocument(offset: number): void {

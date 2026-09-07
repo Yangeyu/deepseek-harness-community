@@ -39,6 +39,20 @@ afterEach(async () => {
 })
 
 describe('MemoryFileStore', () => {
+  it('cancels pending writes and forgets before they enter the file mutation queue', async () => {
+    const { cwd, store } = await fixture()
+    await store.write({ cwd, scope: 'project', summary: 'Preserve existing memory.' })
+    const before = await store.read(cwd, 'project')
+    const controller = new AbortController()
+    const written = store.write({ cwd, scope: 'project', summary: 'Canceled update.' }, controller.signal)
+    const forgotten = store.forget({ cwd, scope: 'project', summary: 'Preserve existing memory.' }, controller.signal)
+    controller.abort(new Error('learning canceled'))
+
+    await expect(written).rejects.toThrow('learning canceled')
+    await expect(forgotten).rejects.toThrow('learning canceled')
+    expect((await store.read(cwd, 'project')).content).toBe(before.content)
+  })
+
   it('writes deduplicated Markdown indexes and topic detail files', async () => {
     const { cwd, store } = await fixture()
     const first = await store.write({

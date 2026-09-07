@@ -69,6 +69,7 @@ function memoryService(overrides: Partial<TuiMemoryPort> = {}): TuiMemoryPort {
     onActivity: () => () => {},
     overview: async () => { throw new Error('no test Memory overview') },
     setPolicy: () => { throw new Error('no test Memory policy') },
+    policy: () => { throw new Error('no test Memory policy') },
     ...overrides,
   }
 }

@@ -259,6 +259,7 @@ export function createApplication(
     visibleRows: () => terminal.rows,
     theme,
     onActivity: () => { shellStatus.refresh() },
+    invalidate: () => { invalidateTerminal() },
     scope: memoryScope,
   })
   configuration = new ConfigurationProcess({
