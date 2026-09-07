@@ -45,25 +45,7 @@ export const BAILIAN_SETTINGS_NAMESPACE = 'llm-bailian'
 
 export function apply(ctx: Context, config: Config): void {
   let current = () => config
-  let lastRaw: Config | undefined
-  let lastGood: ResolvedBailianConfig | undefined
-  const options = (): ResolvedBailianConfig => {
-    const raw = current()
-    if (raw === lastRaw && lastGood !== undefined) return lastGood
-    try {
-      const next = resolveBailianConfig(raw)
-      lastRaw = raw
-      lastGood = next
-      return next
-    } catch (error: unknown) {
-      if (lastGood === undefined) throw error
-      lastRaw = raw
-      ctx.logger.error('llm-bailian: keeping the last good configuration after an invalid settings section')
-      ctx.logger.error(error)
-      return lastGood
-    }
-  }
-  options()
+  let snapshot = resolveBailianConfig(config)
 
   const resolveApiKey = async (snapshot: ResolvedBailianConfig): Promise<string> => {
     const credentials = ctx.get('credentials')
@@ -83,7 +65,7 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   const adapter = new BailianAdapter({
-    options,
+    options: () => snapshot,
     resolveApiKey,
     resolveAttachments: () => ctx.get('attachments'),
   })
@@ -94,18 +76,16 @@ export function apply(ctx: Context, config: Config): void {
     settingsPath: [],
   }])
   const registration = ctx.llm.registerAdapter([BAILIAN_PROVIDER_ID], adapter)
-  let registeredPolicy = options().retryPolicy
-  const refreshRegistration = (): void => {
-    const policy = options().retryPolicy
-    if (deepEqualJson(policy, registeredPolicy)) return
-    registration.replace([BAILIAN_PROVIDER_ID])
-    registeredPolicy = policy
-  }
   ctx.inject(['settings'], (settingsCtx) => {
     settingsCtx.settings.installSection(ctx, BAILIAN_SETTINGS_NAMESPACE, Config, config, {
       validate: assertBailianConfig,
       setSource: source => { current = source },
-      onChange: refreshRegistration,
+      onChange: () => {
+        const next = resolveBailianConfig(current())
+        const policyChanged = !deepEqualJson(next.retryPolicy, snapshot.retryPolicy)
+        snapshot = next
+        if (policyChanged) registration.replace([BAILIAN_PROVIDER_ID])
+      },
     })
   })
 }

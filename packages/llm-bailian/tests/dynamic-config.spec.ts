@@ -28,7 +28,7 @@ function model(name?: string): BailianModelConfig {
   }
 }
 
-async function boot(): Promise<Context> {
+async function boot() {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-bailian-settings-'))
   const ctx = new Context()
   cleanups.push(async () => {
@@ -36,12 +36,12 @@ async function boot(): Promise<Context> {
     await rm(directory, { recursive: true, force: true })
   })
   await ctx.plugin(LlmRuntime)
-  await ctx.plugin(FileSettingsProvider, { path: join(directory, 'settings.yaml'), watch: false })
+  const settings = await ctx.plugin(FileSettingsProvider, { path: join(directory, 'settings.yaml'), watch: false })
   await ctx.plugin(Bailian, {
     baseURL: 'http://127.0.0.1:1',
     models: { base: model('Composition Base') },
   })
-  return ctx
+  return { ctx, settings }
 }
 
 afterEach(async () => {
@@ -50,7 +50,7 @@ afterEach(async () => {
 
 describe('Bailian dynamic settings', () => {
   it('applies model additions and retry policy changes without restarting the Provider', async () => {
-    const ctx = await boot()
+    const { ctx } = await boot()
     const observed: string[][] = []
     ctx.on('llm/adapters-updated', () => {
       observed.push(ctx.llm.listProviders().map(provider => provider.id))
@@ -88,7 +88,7 @@ describe('Bailian dynamic settings', () => {
   })
 
   it('rejects a resolver-invalid update atomically and keeps the last-good snapshot', async () => {
-    const ctx = await boot()
+    const { ctx } = await boot()
 
     await expect(ctx.settings.update(NS, {
       baseURL: 'https://rejected.example.invalid/v1',
@@ -104,5 +104,24 @@ describe('Bailian dynamic settings', () => {
       name: 'Composition Base',
       inputModalities: ['text'],
     }])
+  })
+
+  it('restores composition configuration when optional settings detach', async () => {
+    const { ctx, settings } = await boot()
+    const originalPolicy = ctx.llm.providerRetryPolicy('bailian')
+    await ctx.settings.update(NS, {
+      models: { added: model('Settings Model') },
+      retryPolicy: { mode: 'always' },
+    })
+
+    await settings.dispose()
+
+    await expect(ctx.llm.listModels('bailian')).resolves.toEqual([{
+      provider: 'bailian',
+      id: 'base',
+      name: 'Composition Base',
+      inputModalities: ['text'],
+    }])
+    expect(ctx.llm.providerRetryPolicy('bailian')).toEqual(originalPolicy)
   })
 })

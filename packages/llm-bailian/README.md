@@ -60,7 +60,9 @@ combination. Unsupported efforts fail before a request is sent. This keeps
 Qwen thinking toggles, DeepSeek reasoning levels, and future Bailian model
 dialects data-driven.
 
-The transport appends `/chat/completions` to `baseURL`, sends Harness
-attribution headers, resolves durable image attachments into data URLs, and
-maps provider reasoning, text, tool-call, usage, error, timeout, and cancellation
-events into the standard `StreamChunk` contract.
+The adapter binds a configuration snapshot and translates Harness requests,
+including durable image attachments. The transport appends `/chat/completions`
+to `baseURL`, sends attribution headers, and owns the network lifecycle.
+Response translation maps the provider wire protocol into `StreamChunk`.
+Ownership and lifecycle contracts are defined in
+[`docs/tui-architecture.md`](../../docs/tui-architecture.md).

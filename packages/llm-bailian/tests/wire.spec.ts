@@ -1,13 +1,15 @@
 import { createServer, type IncomingHttpHeaders, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import {
   AttachmentId,
   type AttachmentStore,
   type ImageAttachmentRef,
   type ImageRequestPolicy,
 } from '@deepseek-ai/dsh-attachment'
-import { createAssistantMessage, createToolResultMessage, createUserMessage, ReasoningEffortId, type StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { BlockAssembler, createAssistantMessage, createToolResultMessage, createUserMessage, ReasoningEffortId, type StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
 import {
   BailianAdapter,
   BAILIAN_PROVIDER_ID,
@@ -24,6 +26,7 @@ interface CapturedRequest {
 }
 
 const servers: Server[] = []
+const contexts: Context[] = []
 
 type Reply = (response: ServerResponse) => void
 
@@ -37,10 +40,10 @@ function writeSse(response: ServerResponse, payloads: readonly (string | object)
 
 const successfulReply: Reply = response => {
   writeSse(response, [
-    { choices: [{ delta: { reasoning_content: 'think' }, finish_reason: null }] },
-    { choices: [{ delta: { content: 'ok' }, finish_reason: null }] },
+    { choices: [{ index: 0, delta: { reasoning_content: 'think' }, finish_reason: null }] },
+    { choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }] },
     {
-      choices: [{ delta: {}, finish_reason: 'stop' }],
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
       usage: { prompt_tokens: 3, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 1 } },
     },
     '[DONE]',
@@ -82,6 +85,7 @@ function qwenModel(): BailianModelConfig {
 }
 
 afterEach(async () => {
+  for (const ctx of contexts.splice(0)) await ctx.fiber.dispose()
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => {
     server.closeAllConnections()
     server.close(error => { if (error === undefined) resolve(); else reject(error) })
@@ -133,13 +137,13 @@ function user(text: string) {
 }
 
 function attachmentStore(
-  data: (ref: ImageAttachmentRef) => Uint8Array,
+  data: (ref: ImageAttachmentRef) => Uint8Array | Promise<Uint8Array>,
   observed?: (policy: ImageRequestPolicy) => void,
 ): AttachmentStore {
   return {
     readImageRequest: async (ref: ImageAttachmentRef, policy: ImageRequestPolicy) => {
       observed?.(policy)
-      const bytes = data(ref)
+      const bytes = await data(ref)
       return {
         variantId: `variant:${String(ref.attachmentId)}`,
         attachment: ref,
@@ -307,6 +311,7 @@ describe('Bailian wire contract', () => {
       writeSse(response, [
         {
           choices: [{
+            index: 0,
             delta: {
               tool_calls: [
                 { index: 0, id: 'call-a', function: { name: 'first', arguments: '{"value"' } },
@@ -315,10 +320,10 @@ describe('Bailian wire contract', () => {
             },
           }],
         },
-        { choices: [{ delta: { tool_calls: [{ index: 0, id: '', function: { arguments: ':1}' } }] } }] },
-        { choices: [{ delta: { tool_calls: [{ index: 1, id: '', function: { arguments: '{}' } }] } }] },
+        { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: '', function: { arguments: ':1}' } }] } }] },
+        { choices: [{ index: 0, delta: { tool_calls: [{ index: 1, id: '', function: { arguments: '{}' } }] } }] },
         {
-          choices: [{ delta: {}, finish_reason: 'tool_calls' }],
+          choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
           usage: { prompt_tokens: 8, completion_tokens: 4 },
         },
         '[DONE]',
@@ -356,13 +361,33 @@ describe('Bailian wire contract', () => {
     expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
   })
 
-  it('buffers tool arguments until a non-empty id arrives and rejects a permanently missing id', async () => {
+  it('selects choice zero across reordered and interleaved response candidates', async () => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests, response => writeSse(response, [
+      { choices: [
+        { index: 1, delta: { content: 'discard', tool_calls: [{ index: 0, id: 'other', function: { name: 'write', arguments: '{}' } }] } },
+        { index: 0, delta: { content: 'selected', tool_calls: [{ index: 0, id: 'chosen', function: { name: 'read', arguments: '{"path":' } }] } },
+      ] },
+      { choices: [{ index: 1, delta: { content: 'discard too' }, finish_reason: 'length' }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"README.md"}' } }] }, finish_reason: 'tool_calls' }] },
+      { choices: [], usage: { prompt_tokens: 8, completion_tokens: 4 }, extra_metadata: 'allowed' },
+      '[DONE]',
+    ])), { custom: deepseekModel() })
+    const chunks = await consume(client.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('read')] }))
+    expect(chunks.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block)).toEqual([
+      { type: 'text', text: 'selected' },
+      { type: 'tool-call', id: 'chosen', name: 'read', arguments: '{"path":"README.md"}' },
+    ])
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+  })
+
+  it('buffers tool arguments until a non-empty id arrives', async () => {
     const requests: CapturedRequest[] = []
     const delayed = adapter(await endpoint(requests, response => {
       writeSse(response, [
-        { choices: [{ delta: { tool_calls: [{ index: 0, id: '', function: { name: 'read', arguments: '{"path"' } }] } }] },
-        { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call-delayed', function: { arguments: ':"README.md"}' } }] } }] },
-        { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+        { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: '', function: { name: 'read', arguments: '{"path"' } }] } }] },
+        { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call-delayed', function: { arguments: ':"README.md"}' } }] } }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
         '[DONE]',
       ])
     }), { custom: deepseekModel() })
@@ -379,20 +404,70 @@ describe('Bailian wire contract', () => {
       name: 'read',
       argumentsDelta: '{"path":"README.md"}',
     }])
+  })
 
-    const missingRequests: CapturedRequest[] = []
-    const missing = adapter(await endpoint(missingRequests, response => {
+  it.each(['id', 'name'] as const)('rejects conflicting tool %s with durable provider diagnostics', async (field) => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests, response => {
+      response.setHeader('x-request-id', 'stream-request-123')
       writeSse(response, [
-        { choices: [{ delta: { tool_calls: [{ index: 0, id: '', function: { name: 'read', arguments: '{}' } }] } }] },
-        { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+        { choices: [{ index: 0, delta: { tool_calls: [{ index: 4, id: 'call-a', function: { name: 'read', arguments: '{"path":' } }] } }] },
+        { choices: [{ index: 0, delta: { tool_calls: [{
+          index: 4,
+          ...field === 'id' ? { id: 'call-b' } : {},
+          function: { ...field === 'name' ? { name: 'write' } : {}, arguments: '"private-path"}' },
+        }] } }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
         '[DONE]',
       ])
     }), { custom: deepseekModel() })
-    await expect(consume(missing.stream({
-      provider: BAILIAN_PROVIDER_ID,
-      model: 'custom',
-      messages: [user('read')],
-    }))).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(LlmRuntime)
+    ctx.llm.registerAdapter([BAILIAN_PROVIDER_ID], client)
+    const chunks = await consume(ctx.llm.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('read')] }))
+    expect(chunks.at(-1)).toMatchObject({
+      type: 'finish',
+      reason: { kind: 'error', failure: {
+        code: 'MALFORMED_RESPONSE',
+        message: expect.stringContaining(`choice 0 tool index 4 changed ${field}`),
+        status: 200,
+        requestId: 'stream-request-123',
+      } },
+    })
+    expect(chunks.filter(chunk => chunk.type === 'block-end')).toEqual([])
+    expect(JSON.stringify(chunks.at(-1))).not.toContain('private-path')
+  })
+
+  it.each([
+    { id: '', function: { name: 'read', arguments: '{}' } },
+    { id: 'call-b', function: { arguments: '{}' } },
+  ])('requires complete tool identities before finalizing the response', async (incomplete) => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests, response => writeSse(response, [
+      { choices: [{ index: 0, delta: { tool_calls: [
+        { index: 0, id: 'call-a', function: { name: 'read', arguments: '{}' } },
+        { index: 1, ...incomplete },
+      ] }, finish_reason: 'tool_calls' }] },
+      '[DONE]',
+    ])), { custom: deepseekModel() })
+    const chunks: StreamChunk[] = []
+    await expect((async () => {
+      for await (const chunk of client.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('read')] })) chunks.push(chunk)
+    })()).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+    expect(chunks.filter(chunk => chunk.type === 'block-end')).toEqual([])
+  })
+
+  it('lets the Harness discard incomplete tool calls at the token limit', async () => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests, response => writeSse(response, [
+      { choices: [{ index: 0, delta: { content: 'partial answer', tool_calls: [{ index: 0, id: '', function: { arguments: '{' } }] }, finish_reason: 'length' }] },
+      '[DONE]',
+    ])), { custom: deepseekModel() })
+    const assembler = new BlockAssembler()
+    for await (const chunk of client.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('read')] })) assembler.push(chunk)
+    expect(assembler.finish).toEqual({ kind: 'max-tokens' })
+    expect(assembler.blocks()).toEqual([{ type: 'text', text: 'partial answer' }])
   })
 
   it('retains HTTP retry and request metadata in provider failures', async () => {
@@ -424,8 +499,14 @@ describe('Bailian wire contract', () => {
 
   it.each([
     ['malformed JSON', (response: ServerResponse) => writeSse(response, ['{bad json']) , 'MALFORMED_RESPONSE'],
+    ['null JSON', (response: ServerResponse) => writeSse(response, ['null', '[DONE]']), 'MALFORMED_RESPONSE'],
+    ['missing choice index', (response: ServerResponse) => writeSse(response, [{ choices: [{ delta: { content: 'answer' } }] }, '[DONE]']), 'MALFORMED_RESPONSE'],
+    ['non-string tool arguments', (response: ServerResponse) => writeSse(response, [
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call-a', function: { name: 'read', arguments: {} } }] } }] },
+      '[DONE]',
+    ]), 'MALFORMED_RESPONSE'],
     ['missing DONE', (response: ServerResponse) => writeSse(response, [
-      { choices: [{ delta: { content: 'partial' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { content: 'partial' }, finish_reason: null }] },
     ]), 'STREAM_CLOSED'],
   ] as const)('classifies %s stream failures', async (_label, reply, code) => {
     const requests: CapturedRequest[] = []
@@ -441,7 +522,7 @@ describe('Bailian wire contract', () => {
     const cancelledRequests: CapturedRequest[] = []
     const controller = new AbortController()
     const cancelled = adapter(await endpoint(cancelledRequests, response => {
-      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.writeHead(200, { 'content-type': 'text/event-stream', 'x-request-id': 'cancelled-request' })
       response.flushHeaders()
       setTimeout(() => controller.abort('test cancellation'), 10)
     }), { custom: deepseekModel() })
@@ -450,18 +531,115 @@ describe('Bailian wire contract', () => {
       model: 'custom',
       messages: [user('cancel')],
       signal: controller.signal,
-    }))).rejects.toMatchObject({ code: 'ABORTED' })
+    }))).rejects.toMatchObject({
+      code: 'ABORTED',
+      failure: { status: 200, requestId: 'cancelled-request' },
+    })
 
     const timedOutRequests: CapturedRequest[] = []
     const timedOut = adapter(await endpoint(timedOutRequests, response => {
-      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.writeHead(200, { 'content-type': 'text/event-stream', 'x-request-id': 'idle-request' })
       response.flushHeaders()
     }), { custom: deepseekModel() }, undefined, 20)
     await expect(consume(timedOut.stream({
       provider: BAILIAN_PROVIDER_ID,
       model: 'custom',
       messages: [user('timeout')],
-    }))).rejects.toMatchObject({ code: 'TIMEOUT' })
+    }))).rejects.toMatchObject({
+      code: 'TIMEOUT',
+      failure: { status: 200, requestId: 'idle-request' },
+    })
+  })
+
+  it('keeps local attachment preparation outside the network idle timeout', async () => {
+    const requests: CapturedRequest[] = []
+    const attachments = attachmentStore(async () => {
+      await delay(150)
+      return Uint8Array.of(1)
+    })
+    const client = adapter(await endpoint(requests), { custom: qwenModel() }, attachments, 100)
+    const chunks = await consume(client.stream({
+      provider: BAILIAN_PROVIDER_ID,
+      model: 'custom',
+      messages: [createUserMessage({
+        content: [{
+          type: 'image',
+          attachment: {
+            attachmentId: AttachmentId('image-1'),
+            mediaType: 'image/png',
+            bytes: 1,
+            width: 1,
+            height: 1,
+          },
+        }],
+        source: { kind: 'user' },
+      })],
+    }))
+
+    expect(requests).toHaveLength(1)
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+  })
+
+  it.each([
+    ['comments', ': heartbeat\n\n'],
+    ['data without content deltas', 'data: {"choices":[]}\n\n'],
+  ])('counts SSE %s as transport progress', async (_label, activity) => {
+    const requests: CapturedRequest[] = []
+    const client = adapter(await endpoint(requests, response => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.flushHeaders()
+      let remaining = 6
+      const timer = setInterval(() => {
+        response.write(activity)
+        if (--remaining > 0) return
+        clearInterval(timer)
+        response.end('data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+      }, 25)
+      response.once('close', () => clearInterval(timer))
+    }), { custom: deepseekModel() }, undefined, 100)
+
+    const chunks = await consume(client.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('hello')] }))
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+  })
+
+  it('retains response metadata when the connection fails during streaming', async () => {
+    const requests: CapturedRequest[] = []
+    let disconnect: () => void
+    const client = adapter(await endpoint(requests, response => {
+      disconnect = () => response.destroy()
+      response.setHeader('x-request-id', 'broken-request')
+      writeSse(response, [{ choices: [{ index: 0, delta: { content: 'partial' } }] }], false)
+    }), { custom: deepseekModel() })
+
+    const read = async () => {
+      for await (const chunk of client.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('hello')] })) {
+        if (chunk.type === 'text-delta') disconnect()
+      }
+    }
+    await expect(read()).rejects.toMatchObject({
+      code: 'TRANSPORT',
+      failure: { status: 200, requestId: 'broken-request' },
+    })
+  })
+
+  it('allows consumer pauses and releases the connection on early return', async () => {
+    const requests: CapturedRequest[] = []
+    let closed = false
+    const disconnected = Promise.withResolvers<void>()
+    const client = adapter(await endpoint(requests, response => {
+      response.once('close', () => {
+        closed = true
+        disconnected.resolve()
+      })
+      writeSse(response, [{ choices: [{ index: 0, delta: { content: 'partial' } }] }], false)
+    }), { custom: deepseekModel() }, undefined, 100)
+
+    for await (const _chunk of client.stream({ provider: BAILIAN_PROVIDER_ID, model: 'custom', messages: [user('hello')] })) {
+      await delay(150)
+      expect(closed).toBe(false)
+      break
+    }
+    await disconnected.promise
   })
 
   it('serializes multiple tool results with images in correct order', async () => {

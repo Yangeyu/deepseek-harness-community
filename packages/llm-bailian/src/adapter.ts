@@ -9,7 +9,6 @@ import type {
   ResolvedRetryPolicy,
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import {
   BAILIAN_DISPLAY_NAME,
   BAILIAN_PROVIDER_ID,
@@ -19,8 +18,6 @@ import {
 import { modelInfo, resolvedModelInfo } from './model.ts'
 import { serializeRequest } from './request.ts'
 import { streamBailianResponse } from './transport.ts'
-
-const STREAM_IDLE_TIMEOUT_CODE = 'LLM_STREAM_IDLE_TIMEOUT'
 
 export interface BailianAdapterOptions {
   options: () => ResolvedBailianConfig
@@ -86,56 +83,17 @@ export class BailianAdapter extends LlmAdapter {
     options: GenerateOptions,
     config: ResolvedBailianConfig,
   ): AsyncIterable<StreamChunk> {
+    options.signal?.throwIfAborted()
     const model = this.model(config, options.provider, options.model)
+    const body = await serializeRequest(options, model, this.config.resolveAttachments?.())
     const apiKey = await this.config.resolveApiKey(config)
-    const consumer = new AbortController()
-    const upstream = options.signal === undefined
-      ? consumer.signal
-      : AbortSignal.any([options.signal, consumer.signal])
-    using watchdog = idleWatchdog(upstream, config.streamIdleTimeoutMs, STREAM_IDLE_TIMEOUT_CODE)
-    const iterator = this.request(options, model, config, apiKey, watchdog.signal, () => {
-      watchdog.pulse()
-    })[Symbol.asyncIterator]()
-    let exhausted = false
-    try {
-      while (true) {
-        const result = await watchdog.next(iterator)
-        if (result.done) {
-          exhausted = true
-          return
-        }
-        yield result.value
-      }
-    } catch (error: unknown) {
-      if (timeoutOf(watchdog.signal, STREAM_IDLE_TIMEOUT_CODE) !== undefined) {
-        throw new LlmError(`Bailian stream idle timeout after ${String(config.streamIdleTimeoutMs)}ms`, 'TIMEOUT', {
-          cause: error,
-        })
-      }
-      if (options.signal?.aborted) {
-        throw new LlmError('Bailian request aborted by caller', 'ABORTED', { cause: error })
-      }
-      if (error instanceof LlmError) throw error
-      throw new LlmError(`Bailian API stream from ${config.baseURL} failed`, 'TRANSPORT', { cause: error })
-    } finally {
-      consumer.abort('Bailian stream consumer stopped')
-      if (!exhausted && iterator.return !== undefined) {
-        try {
-          await iterator.return()
-        } catch {}
-      }
-    }
-  }
-
-  private async * request(
-    options: GenerateOptions,
-    model: ResolvedBailianModel,
-    config: ResolvedBailianConfig,
-    apiKey: string,
-    signal: AbortSignal,
-    onComment: () => void,
-  ): AsyncIterable<StreamChunk> {
-    const body = await serializeRequest(options, model, this.config.resolveAttachments?.(), signal)
-    yield* streamBailianResponse({ config, apiKey, body, signal, onComment })
+    options.signal?.throwIfAborted()
+    yield* streamBailianResponse({
+      baseURL: config.baseURL,
+      streamIdleTimeoutMs: config.streamIdleTimeoutMs,
+      apiKey,
+      body,
+      ...options.signal === undefined ? {} : { signal: options.signal },
+    })
   }
 }

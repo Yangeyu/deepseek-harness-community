@@ -555,12 +555,22 @@ component references while the Session-owned implementations are replaced.
   human Prompt plus a source-attributed evidence message during `pre-step`.
   There is no process-local staging Map, expiry, or discard protocol. Delete
   this adapter when upstream admission can atomically accept multiple messages.
-- `BailianAdapter` binds resolved model metadata and request dispatch through
+- Bailian composition resolves one configuration snapshot after each accepted
+  settings change; Settings owns validation and last-good fallback.
+  `BailianAdapter` binds resolved model metadata and request dispatch through
   `prepareCall`, so a live settings change cannot combine one generation's
   capabilities with another generation's endpoint or credential reference.
   Image-capable routes own a pixel/byte request policy and consume deterministic
   attachment request versions rather than replaying stored normalized bytes
-  directly.
+  directly. Request translation emits adjacent tool results before their image
+  carriers. Transport owns HTTP/SSE lifetime, demand-scoped network idle timing,
+  cancellation, and failure metadata; local request preparation and consumer
+  pauses are outside that timer. SSE comments and data both count as progress.
+  Response translation validates wire payloads, selects `choice.index = 0`,
+  and assembles tool arguments by wire index with stable IDs and names before
+  successful finalization. It owns `[DONE]`; Harness owns message assembly,
+  tool argument validation, dispatch, and request recovery. Wire semantics follow the
+  [DashScope API reference](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions).
 - `CommunityWebService` registers one stable policy provider into the official
   `ctx.web` search seam. A capability-local registry owns provider execution,
   display metadata, priority, and secret-free readiness; both `auto` routing
