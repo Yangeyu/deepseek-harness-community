@@ -4,7 +4,7 @@ import type {
   SessionProjectionBaseline as HarnessProjectionBaseline,
   SessionWireEvent,
 } from '@deepseek-ai/dsh-api-session-controller/types'
-import { decodeStorageRecord } from '@deepseek-ai/dsh-session/chunk-rows'
+import { snapshotSessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { ToolDefinition, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import type { HistoryEntry, SessionId } from '../../runtime/session/contracts.ts'
@@ -46,20 +46,12 @@ interface ToolCallArguments {
 }
 
 function eventFromWire(event: SessionWireEvent): SessionEvent {
-  return decodeStorageRecord(event)[0]!
+  // The in-process Controller owns validation; restore its erased wire types here.
+  return snapshotSessionEvent(event as unknown as SessionEvent)
 }
 
 function eventsFromRecords(records: readonly SessionHistoryRecord[]): SessionEvent[] {
-  return records.flatMap((record) => {
-    if (record.type === 'event') return [eventFromWire(record.event)]
-    const packed = record.event
-    return decodeStorageRecord({
-      type: packed.type.slice('chunkrow/'.length),
-      seq0: packed.seq,
-      time0: packed.time,
-      data: packed.data,
-    })
-  })
+  return records.map(record => eventFromWire(record.event))
 }
 
 function projectionBaseline(value: HarnessProjectionBaseline): SessionProjectionBaseline {
@@ -138,6 +130,7 @@ export class HarnessSessionTransport implements SessionTransport {
     for await (const frame of this.options.controller.follow({
       address: { kind: 'session', sessionId },
       maxMessages,
+      assistantStream: true,
     }, signal)) {
       if (frame.type === 'snapshot') {
         const events = eventsFromRecords(frame.records)
@@ -146,6 +139,7 @@ export class HarnessSessionTransport implements SessionTransport {
         yield {
           type: 'snapshot',
           cursor: frame.cursor,
+          assistantStream: frame.assistantStream,
           page: this.presentPage(
             sessionId,
             events,
@@ -153,6 +147,10 @@ export class HarnessSessionTransport implements SessionTransport {
             projectionBaseline(frame.projections),
           ),
         }
+        continue
+      }
+      if (frame.type === 'assistant-stream') {
+        yield frame
         continue
       }
       const event = eventFromWire(frame.event)

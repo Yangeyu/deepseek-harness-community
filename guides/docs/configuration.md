@@ -10,6 +10,15 @@ dscode（DeepSeek Harness Community 终端）配置的单一事实源。本文�
 - 程序化查看：`dscode config show`（launcher 转发 profile 的 dumped 配置）、`dscode config default`（默认值）。
 - 凭证规则：settings 文件只存**环境变量名引用**（值形如 `tavilyApiKeyEnv: TAVILY_API_KEY`）；密钥本体在环境变量或 `~/.dsh/.credentials.yaml`。任何情况下不得把密钥值写回 settings.yaml 或其它文件。
 
+### DeepSeek 模型目录
+
+打开 `/model` 会重新读取 Host 目录，不会自动切换当前模型。
+DeepSeek 的模型目录和能力由上游 provider 及 `llm-deepseek.models` 设置提供，
+刷新不会请求远端 `/models`。上游默认目录随依赖版本更新；也可以通过设置显式指定模型目录。
+当前运行时包含 **DeepSeek-V41-Flash**，路由是 `deepseek-official/deepseek-flash`。
+更新依赖后需重启；仓库开发使用 `npm run dev`，全局安装的 `dscode` 使用其自身的依赖版本。
+新版运行时会将打开的旧会话迁移到 V3；迁移后不能用旧版运行时读取该会话。
+
 ## 1. 各段 schema 与语义
 
 ### `agent-default-model:` — 会话默认模型

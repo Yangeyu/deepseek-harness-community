@@ -49,14 +49,15 @@ export class AttachmentRail implements SurfaceInputTarget {
       return index === this.index ? this.theme.bold(card) : card
     })
     const overflow = this.drafts.length > visible.length
-      ? `+${String(this.drafts.length - visible.length)} images · `
+      ? `+${String(this.drafts.length - visible.length)} images`
       : ''
     const error = this.drafts.find(draft => draft.error !== undefined)?.error
     return [
       truncateToWidth(`${this.theme.accent('Image')}  ${cards.join('   ')}`, Math.max(1, width)),
-      truncateToWidth(error === undefined
-        ? this.theme.dim(`${overflow}Alt+A manage · Ctrl+V paste · Alt+Backspace remove latest`)
-        : this.theme.warning(sanitizeTerminalText(error)), Math.max(1, width)),
+      ...error === undefined && overflow === '' ? [] : [truncateToWidth(
+        error === undefined ? this.theme.dim(overflow) : this.theme.warning(sanitizeTerminalText(error)),
+        Math.max(1, width),
+      )],
     ]
   }
 }

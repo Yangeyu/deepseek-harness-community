@@ -14,7 +14,6 @@ import {
   type TrajectoryKind,
   type TrajectoryRecord,
 } from './records.ts'
-import { appendedHistoryEntries } from '../../runtime/session/event-window.ts'
 import { formatDuration } from '../../presentation/primitives/duration.ts'
 import { statusVisual } from '../../presentation/primitives/status-visual.ts'
 import { executionStatus } from '../../runtime/execution/projection/index.ts'
@@ -237,13 +236,9 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
   /** Rebuild from the latest live event window while preserving the selected semantic record. */
   setState(state: Readonly<RuntimeSessionSnapshot>): void {
     const sessionChanged = state.sessionId !== this.state.sessionId
-    const appended = sessionChanged
-      ? undefined
-      : appendedHistoryEntries(this.state.events, state.events)
     if (!sessionChanged
       && state.execution === this.state.execution
-      && appended !== undefined
-      && appended.every(entry => entry.event.type === 'assistant/chunk')) {
+      && state.events === this.state.events) {
       this.state = state
       return
     }

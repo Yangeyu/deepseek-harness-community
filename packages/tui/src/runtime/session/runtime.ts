@@ -27,6 +27,8 @@ import type {
   SessionRunState,
 } from './snapshot.ts'
 import type { SessionHistoryPage, SessionProjectionBaseline } from './history-page.ts'
+import { AssistantStream } from './assistant-stream.ts'
+import type { SessionAssistantStreamBaseline, SessionAssistantStreamFrame } from '@deepseek-ai/dsh-api-session-controller/types'
 
 export type AppendEventResult = 'appended' | 'duplicate' | 'gap' | 'retired'
 
@@ -71,6 +73,7 @@ export function emptyRuntimeSessionSnapshot(
 
 /** Owns all mutable read-model state and asynchronous work for one Session epoch. */
 export class SessionRuntime {
+  private readonly assistantStream = new AssistantStream()
   private readonly projector = new ExecutionProjector()
   private readonly submissions = new SubmissionTracker()
   private readonly store: AtomicSnapshotStore<RuntimeSessionSnapshot>
@@ -197,13 +200,18 @@ export class SessionRuntime {
     this.publishSubmissions()
   }
 
-  hydrate(page: SessionHistoryPage, cursor: number): void {
+  acceptAssistantFrame(frame: SessionAssistantStreamFrame): void {
+    this.update(data => ({ ...data, assistant: this.assistantStream.accept(frame) }))
+  }
+
+  hydrate(page: SessionHistoryPage, cursor: number, baseline?: SessionAssistantStreamBaseline): void {
     if (!this.active) return
     this.followCursor = cursor
     this.submissions.observeEvents(page.events)
     this.update(data => ({
       ...data,
       events: [...page.events],
+      assistant: this.assistantStream.replace(baseline),
       historyHasMore: page.hasMore,
       pendingSubmissions: this.submissions.snapshot,
       projections: page.projections === undefined
@@ -238,6 +246,7 @@ export class SessionRuntime {
     this.update(data => ({
       ...data,
       events: [...data.events, entry],
+      assistant: this.assistantStream.settle(entry.event),
       pendingSubmissions: this.submissions.snapshot,
       error: undefined,
     }))
@@ -296,6 +305,7 @@ export class SessionRuntime {
         sessionId: String(this.sessionId),
         epoch: this.epoch,
         entries: data.events,
+        assistant: data.assistant,
         sessionRunning: data.runState !== 'idle',
         runtimeActivities: runtimeActivities(data.pendingSubmissions),
       }),

@@ -1,3 +1,4 @@
+import { expandAssistantStream } from '@deepseek-ai/dsh-llm'
 import type { HistoryEntry } from '../../session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type {} from '@vascent/deepseek-harness-vision'
@@ -20,10 +21,6 @@ function eventBoundary(entry: HistoryEntry): ExecutionBoundary {
 
 function parentBoundary(entry: HistoryEntry): ExecutionBoundary {
   return { seq: entry.event.seq, time: entry.event.time, source: 'parent' }
-}
-
-function textFromContent(content: readonly { type: string; text?: string }[], type: 'text' | 'reasoning'): string {
-  return content.filter(block => block.type === type).map(block => block.text ?? '').join('')
 }
 
 function toolResultFailed(entry: HistoryEntry): boolean {
@@ -136,29 +133,20 @@ export function applyExecutionEntry(entry: HistoryEntry, reducer: ExecutionReduc
       )
       return
     }
-    case 'assistant/chunk': {
-      const key = thoughtExecutionKey(event.data.turn, event.data.step)
-      const parentKey = stepExecutionKey(event.data.turn, event.data.step)
-      if (event.data.chunk.type === 'reasoning-delta' && event.data.chunk.text !== '') {
-        declareStepParent(reducer, event.data.turn, event.data.step)
-        reducer.start(key, 'thought', parentKey, at)
-      } else if (event.data.chunk.type === 'text-delta' && event.data.chunk.text !== '' && reducer.has(key)) {
-        reducer.settle(key, 'thought', parentKey, 'completed', at)
-      }
-      return
-    }
     case 'assistant/message': {
       if (event.surfaceOp !== 'append') return
-      const reasoning = textFromContent(event.data.message.content, 'reasoning')
-      const answer = textFromContent(event.data.message.content, 'text')
       const key = thoughtExecutionKey(event.data.turn, event.data.step)
       const parentKey = stepExecutionKey(event.data.turn, event.data.step)
-      if (reasoning !== '') {
+      const members = expandAssistantStream(event.data.stream)
+      const firstReasoning = members.find(member => member.chunk.type === 'reasoning-delta' && member.chunk.text !== '')
+      const hasReasoning = firstReasoning !== undefined || event.data.message.content.some(block => block.type === 'reasoning' && block.text !== '')
+      if (hasReasoning) {
         declareStepParent(reducer, event.data.turn, event.data.step)
-        reducer.start(key, 'thought', parentKey, at)
-      }
-      if ((reasoning !== '' || answer !== '') && reducer.has(key)) {
-        reducer.settle(key, 'thought', parentKey, 'completed', at)
+        reducer.start(key, 'thought', parentKey, { ...at, time: firstReasoning?.time ?? event.time })
+        const firstText = members.find(member => member.chunk.type === 'text-delta' && member.chunk.text !== '')
+        reducer.settle(key, 'thought', parentKey,
+          event.data.interrupted === true ? 'interrupted' : 'completed',
+          { ...at, time: firstText?.time ?? event.time })
       }
       return
     }

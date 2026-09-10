@@ -122,6 +122,7 @@ describe('trajectory records', () => {
         time: 1_175,
         surfaceOp: 'append',
         data: {
+          stream: [],
           turn: 1,
           step: 1,
           message: {
@@ -190,6 +191,7 @@ describe('trajectory records', () => {
         time: 2_500,
         surfaceOp: 'append',
         data: {
+          stream: [],
           turn: 1,
           step: 1,
           message: {
@@ -219,6 +221,7 @@ describe('trajectory records', () => {
         time: 1_200,
         surfaceOp: 'append',
         data: {
+          stream: [],
           turn: 1,
           step: 1,
           message: {

@@ -89,6 +89,10 @@ callback cannot reach the terminal; device-code login supports remote terminals.
 `/connect` currently offers the Codex subscription connection. `/model` selects a
 model independently; the provider resolves and validates credentials when called.
 
+Opening `/model` refreshes the Host catalog without changing the current
+selection. DeepSeek's catalog and model capabilities come from the upstream
+provider and its settings; refreshing does not query DeepSeek's `/models` API.
+
 `/usage` reads the selected provider's subscription quotas on demand. For
 `openai-codex`, it shows remaining percentages and local reset times for every
 reported window, including separate model quotas such as Spark. Window lengths

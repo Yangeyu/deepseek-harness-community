@@ -172,8 +172,10 @@ export class ConfigurationProcess {
   async openModelSelector(): Promise<void> {
     if (this.options.surfaces.active) return
     const session = this.options.session.captureSession()
-    const models = await this.loadModelDirectory()
+    const catalog = await this.options.models.refresh()
+    const models = modelDirectorySnapshot(catalog, this.options.session.current.projections)
     if (this.options.surfaces.active || !this.options.scope.active || !session.active) return
+    if (models === undefined) throw new Error('Model state is unavailable for the active session.')
     let surface!: ConfigurationSurfaceHandle
     const close = (): void => { surface.close() }
     const dialog = new ModelDialog(
@@ -205,7 +207,7 @@ export class ConfigurationProcess {
   }
 
   async cycleReasoningEffort(): Promise<void> {
-    const models = await this.loadModelDirectory()
+    const models = await this.currentModelDirectory()
     const current = models.current
     const model = models.groups.find(group => group.id === current.provider)
       ?.models.find(candidate => candidate.id === current.model)
@@ -297,7 +299,7 @@ export class ConfigurationProcess {
 
   async selectReasoningEffort(reasoningEffort: string | undefined): Promise<void> {
     const session = this.options.session.captureSession()
-    const models = await this.loadModelDirectory()
+    const models = await this.currentModelDirectory()
     const current = models.current
     await this.selectModel({
       provider: current.provider,
@@ -331,7 +333,7 @@ export class ConfigurationProcess {
     )
   }
 
-  private async loadModelDirectory(): Promise<ModelDirectorySnapshot> {
+  private async currentModelDirectory(): Promise<ModelDirectorySnapshot> {
     const before = this.options.session.current
     const catalog = before.modelCatalog ?? await this.options.models.refresh()
     const state = this.options.session.current

@@ -14,7 +14,6 @@ import {
   visionExecutionKey,
   type ExecutionAggregate,
   type ExecutionNode,
-  type ExecutionSnapshot,
 } from '../../runtime/execution/projection/index.ts'
 import { promptTextFromContent } from '../../runtime/execution/prompt-text.ts'
 import { displayUnknown, sanitizeTerminalLine, sanitizeTerminalText } from '../../presentation/primitives/text.ts'
@@ -228,131 +227,14 @@ export function groupTranscriptActivity(
   return grouped
 }
 
-function runtimeTail(item: TranscriptItem): boolean {
-  if (item.kind === 'prompt') return item.key.startsWith('queue:') || item.key.startsWith('pending:')
-  if (item.kind === 'text') return item.key.startsWith('session:')
-  return item.kind === 'activity' && item.items.some(child => child.execution.durability === 'ephemeral')
-}
-
-function insertBeforeRuntimeTail(items: TranscriptItem[], item: TranscriptItem): TranscriptItem[] {
-  const index = items.findIndex(runtimeTail)
-  const next = [...items]
-  next.splice(index < 0 ? next.length : index, 0, item)
-  return next
-}
-
-function refreshThought(
-  items: TranscriptItem[],
-  key: string,
-  execution: ExecutionSnapshot,
-  appendText?: string,
-): { items: TranscriptItem[]; found: boolean } {
-  const node = execution.get(key)
-  if (node === undefined) return { items, found: false }
-  const index = items.findIndex(item => item.kind === 'activity' && item.items.some(child => child.key === key))
-  if (index < 0) return { items, found: false }
-  const activity = items[index]
-  if (activity?.kind !== 'activity') return { items, found: false }
-  const children = activity.items.map(child => child.key === key && child.kind === 'thinking'
-    ? { ...child, text: `${child.text}${appendText ?? ''}`, execution: node }
-    : child)
-  const next = [...items]
-  next[index] = { ...activity, items: children, execution: aggregateExecution(children.map(child => child.execution)) }
-  return { items: next, found: true }
-}
-
-function appendThinking(
-  items: TranscriptItem[],
-  thinking: TranscriptThinkingItem,
-): TranscriptItem[] {
-  const tailIndex = items.findIndex(runtimeTail)
-  const insertion = tailIndex < 0 ? items.length : tailIndex
-  const previous = items[insertion - 1]
-  if (previous?.kind !== 'activity') {
-    return insertBeforeRuntimeTail(items, {
-      kind: 'activity',
-      key: `activity:${thinking.key}`,
-      items: [thinking],
-      execution: aggregateExecution([thinking.execution]),
-    })
-  }
-  const children = [...previous.items, thinking]
-  const next = [...items]
-  next[insertion - 1] = {
-    ...previous,
-    items: children,
-    execution: aggregateExecution(children.map(child => child.execution)),
-  }
-  return next
-}
-
-/** Increment the live transcript tail without replaying the durable event window. */
-export function appendTranscriptChunks(
-  current: TranscriptItem[],
-  entries: readonly HistoryEntry[],
-  execution: ExecutionSnapshot,
-  showReasoning: boolean,
-): TranscriptItem[] | undefined {
-  if (!entries.every(entry => entry.event.type === 'assistant/chunk')) return undefined
-  let items = current
-  for (const entry of entries) {
-    if (entry.event.type !== 'assistant/chunk') return undefined
-    const event = entry.event
-    const chunk = event.data.chunk
-    const step = contentStepKey(event.data.turn, event.data.step)
-    const thoughtKey = String(thoughtExecutionKey(event.data.turn, event.data.step))
-    if (chunk.type === 'reasoning-delta' && chunk.text !== '') {
-      if (!showReasoning) continue
-      const refreshed = refreshThought(items, thoughtKey, execution, chunk.text)
-      if (refreshed.found) {
-        items = refreshed.items
-        continue
-      }
-      const node = execution.get(thoughtKey)
-      if (node !== undefined) {
-        items = appendThinking(items, { kind: 'thinking', key: thoughtKey, text: chunk.text, execution: node })
-      }
-      continue
-    }
-    if (chunk.type !== 'text-delta' || chunk.text === '') continue
-    items = refreshThought(items, thoughtKey, execution).items
-    const textKey = `assistant:${step}:text`
-    const textIndex = items.findIndex(item => item.kind === 'text' && item.key === textKey)
-    if (textIndex < 0) {
-      items = insertBeforeRuntimeTail(items, {
-        kind: 'text', key: textKey, body: chunk.text, markdown: true,
-      })
-      continue
-    }
-    const text = items[textIndex]
-    if (text?.kind !== 'text') continue
-    const next = [...items]
-    next[textIndex] = { ...text, body: `${text.body ?? ''}${chunk.text}` }
-    items = next
-  }
-  return items
-}
-
-/** Rebuild the visible transcript projection from the current session state. */
-export function buildTranscriptItems(
+/** Project durable history only; live output and pending work are composed separately. */
+export function buildTranscriptHistory(
   state: Readonly<RuntimeSessionSnapshot>,
   showReasoning: boolean,
   showDetails: boolean,
   maxToolOutputLines: number,
-): TranscriptItem[] {
+): UngroupedTranscriptItem[] {
   const items: UngroupedTranscriptItem[] = []
-  const finalSteps = new Set<string>()
-  for (const entry of state.events) {
-    const event = entry.event
-    if (event.type === 'assistant/message') finalSteps.add(contentStepKey(event.data.turn, event.data.step))
-  }
-
-  const partials = new Map<string, {
-    textIndex: number | undefined
-    thinkingIndex: number | undefined
-    text: string
-    reasoning: string
-  }>()
   for (const entry of state.events) {
     const event = entry.event
     switch (event.type) {
@@ -401,53 +283,6 @@ export function buildTranscriptItems(
             body: text,
             dim: true,
           })
-        }
-        break
-      }
-      case 'assistant/chunk': {
-        const key = contentStepKey(event.data.turn, event.data.step)
-        if (finalSteps.has(key)) break
-        const chunk = event.data.chunk
-        if (chunk.type !== 'text-delta' && chunk.type !== 'reasoning-delta') break
-        let partial = partials.get(key)
-        if (partial === undefined) {
-          partial = {
-            textIndex: undefined,
-            thinkingIndex: undefined,
-            text: '',
-            reasoning: '',
-          }
-          partials.set(key, partial)
-        }
-        if (chunk.type === 'reasoning-delta') {
-          if (!showReasoning) break
-          partial.reasoning += chunk.text
-          const execution = state.execution.get(thoughtExecutionKey(event.data.turn, event.data.step))
-          if (execution === undefined) break
-          const thinking: TranscriptThinkingItem = {
-            kind: 'thinking',
-            key: String(execution.key),
-            text: partial.reasoning,
-            execution,
-          }
-          if (partial.thinkingIndex === undefined) {
-            partial.thinkingIndex = items.length
-            items.push(thinking)
-          } else {
-            items[partial.thinkingIndex] = thinking
-          }
-          break
-        }
-        partial.text += chunk.text
-        if (partial.textIndex === undefined) {
-          partial.textIndex = items.length
-          items.push({ kind: 'text', key: `assistant:${key}:text` })
-        }
-        items[partial.textIndex] = {
-          kind: 'text',
-          key: `assistant:${key}:text`,
-          body: partial.text,
-          markdown: true,
         }
         break
       }
@@ -578,6 +413,32 @@ export function buildTranscriptItems(
         break
       default:
         break
+    }
+  }
+
+  return items
+}
+
+/** Compose a reusable history projection with the current live tail. */
+export function buildTranscriptItems(
+  state: Readonly<RuntimeSessionSnapshot>,
+  showReasoning: boolean,
+  showDetails: boolean,
+  maxToolOutputLines: number,
+  history = buildTranscriptHistory(state, showReasoning, showDetails, maxToolOutputLines),
+): TranscriptItem[] {
+  const items = [...history]
+
+  if (state.assistant !== undefined) {
+    const assistant = state.assistant
+    const reasoning = reasoningText(assistant.content)
+    const execution = state.execution.get(thoughtExecutionKey(assistant.turn, assistant.step))
+    if (showReasoning && reasoning !== '' && execution !== undefined) {
+      items.push({ kind: 'thinking', key: String(execution.key), text: reasoning, execution })
+    }
+    const text = messageText(assistant.content, false)
+    if (text !== '') {
+      items.push({ kind: 'text', key: `assistant:${contentStepKey(assistant.turn, assistant.step)}:text`, body: text, markdown: true })
     }
   }
 

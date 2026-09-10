@@ -25,6 +25,9 @@ describe('AttachmentRail', () => {
     expect(lines.every(line => line.length <= 80)).toBe(true)
     expect(lines[1]).toContain('+2 images')
     expect(lines.join('\n')).toContain('…')
+
+    rail.setDrafts([railDraft(1)])
+    expect(rail.render(80)).toHaveLength(1)
   })
 
   it('supports h/l selection, Delete removal, and Escape return', () => {

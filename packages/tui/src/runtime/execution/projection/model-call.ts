@@ -11,7 +11,8 @@ import type { ExecutionKey } from './types.ts'
 type DerivedMessage = NonNullable<ReturnType<typeof deriveEventMessage>>
 
 export interface ModelRequestBoundary {
-  readonly seq: number
+  /** Inclusive end of the durable request inputs. */
+  readonly throughSeq: number
   readonly header: EpochHeader | undefined
 }
 
@@ -25,7 +26,6 @@ export interface StepModelCall {
 
 export type ModelRequest = EpochHeader['config'] & {
   readonly messages: readonly DerivedMessage[]
-  readonly system?: string
   readonly tools?: EpochHeader['tools']
 }
 
@@ -48,36 +48,27 @@ export class StepModelCallAccumulator {
     switch (event.type) {
       case 'turn/start':
       case 'turn/end':
+      case 'step/end':
         this.activeStep = undefined
         return
       case 'step/start':
         this.activeStep = this.call(event.data.turn, event.data.step)
-        return
-      case 'step/end':
-        this.call(event.data.turn, event.data.step)
-        this.activeStep = undefined
-        return
+        break
       case 'request/header':
         this.header = event.data.header
-        if (this.activeStep !== undefined) {
-          this.activeStep.request = { seq: event.seq, header: this.header }
-        }
+        break
+      case 'system/message':
+      case 'user/message':
+      case 'tool/result':
+        break
+      case 'assistant/message':
+        if (event.surfaceOp === 'append') this.call(event.data.turn, event.data.step).responseSeq = event.seq
         return
-      case 'request/context':
-        if (this.activeStep !== undefined) this.captureRequest(this.activeStep, event.seq)
-        return
-      case 'assistant/chunk':
-        this.captureRequest(this.call(event.data.turn, event.data.step), event.seq)
-        return
-      case 'assistant/message': {
-        if (event.surfaceOp !== 'append') return
-        const call = this.call(event.data.turn, event.data.step)
-        this.captureRequest(call, event.seq)
-        call.responseSeq ??= event.seq
-        return
-      }
       default:
         return
+    }
+    if (this.activeStep !== undefined && this.activeStep.responseSeq === undefined) {
+      this.activeStep.request = { throughSeq: event.seq, header: this.header }
     }
   }
 
@@ -94,9 +85,6 @@ export class StepModelCallAccumulator {
     return created
   }
 
-  private captureRequest(call: MutableModelCall, seq: number): void {
-    call.request ??= { seq, header: this.header }
-  }
 }
 
 /** Rebuild the model-visible request only when its detail is inspected. */
@@ -105,10 +93,10 @@ export function resolveModelRequest(
   boundary: ModelRequestBoundary | undefined,
 ): ModelRequest | undefined {
   if (boundary?.header === undefined || entries[0]?.event.seq !== 0) return undefined
-  const boundaryIndex = entries.findIndex(entry => entry.event.seq === boundary.seq)
+  const boundaryIndex = entries.findIndex(entry => entry.event.seq === boundary.throughSeq)
   if (boundaryIndex < 0) return undefined
 
-  const events = entries.slice(0, boundaryIndex).map(entry => entry.event)
+  const events = entries.slice(0, boundaryIndex + 1).map(entry => entry.event)
   const bySeq = new Map<number, SessionEvent>(events.map(event => [event.seq, event]))
   const surface = new SurfaceManager(events)
   const messages = surface.nodes.flatMap(seq => {
@@ -121,7 +109,6 @@ export function resolveModelRequest(
   return {
     ...header.config,
     messages,
-    ...header.system === undefined ? {} : { system: header.system },
     ...header.tools === undefined ? {} : { tools: header.tools },
   }
 }

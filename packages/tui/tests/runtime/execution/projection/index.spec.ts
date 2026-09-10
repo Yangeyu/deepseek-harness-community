@@ -154,6 +154,7 @@ describe('execution projection', () => {
           time: 140,
           surfaceOp: 'append',
           data: {
+            stream: [],
             turn: 1,
             step: 1,
             message: {
@@ -169,10 +170,8 @@ describe('execution projection', () => {
       { event: { type: 'step/start', seq: 6, time: 160, data: { turn: 1, step: 2 } } },
       {
         event: {
-          type: 'assistant/chunk',
-          seq: 7,
-          time: 170,
-          data: { turn: 1, step: 2, chunk: { type: 'text-delta', index: 0, text: 'Again.' } },
+          type: 'request/header', seq: 7, time: 170,
+          data: { reason: 'resume', header: { config: { provider: 'deepseek', model: 'chat' } } },
         },
       },
       {
@@ -182,6 +181,7 @@ describe('execution projection', () => {
           time: 180,
           surfaceOp: 'append',
           data: {
+            stream: [],
             turn: 1,
             step: 2,
             message: {
@@ -197,7 +197,7 @@ describe('execution projection', () => {
     ])
 
     const call = snapshot.modelCall(stepExecutionKey(1, 1))
-    expect(call).toMatchObject({ request: { seq: 3 }, responseSeq: 4 })
+    expect(call).toMatchObject({ request: { throughSeq: 3 }, responseSeq: 4 })
     expect(snapshot.modelRequest(stepExecutionKey(1, 1))).toMatchObject({
       provider: 'deepseek',
       model: 'chat',
@@ -207,7 +207,7 @@ describe('execution projection', () => {
 
     const nextKey = stepExecutionKey(1, 2)
     expect(snapshot.modelCall(nextKey)).toMatchObject({
-      request: { seq: 7, header: { config: { provider: 'deepseek', model: 'chat' } } },
+      request: { throughSeq: 7, header: { config: { provider: 'deepseek', model: 'chat' } } },
       responseSeq: 8,
     })
     expect(snapshot.modelRequest(nextKey)?.messages).toMatchObject([
@@ -216,50 +216,21 @@ describe('execution projection', () => {
     ])
   })
 
-  it('settles Thought as soon as non-empty answer text starts', () => {
+  it('restores Thought timing from the committed compact stream', () => {
     const snapshot = build([
       { event: { type: 'step/start', seq: 0, time: 100, data: { turn: 1, step: 2 } } },
-      { event: { type: 'assistant/chunk', seq: 1, time: 110, data: { turn: 1, step: 2, chunk: { type: 'reasoning-delta', index: 0, text: 'reason' } } } },
-      { event: { type: 'assistant/chunk', seq: 2, time: 130, data: { turn: 1, step: 2, chunk: { type: 'text-delta', index: 1, text: 'answer' } } } },
+      { event: { type: 'assistant/message', seq: 1, time: 150, surfaceOp: 'append', data: {
+        turn: 1, step: 2, message: { content: [{ type: 'reasoning', text: 'reason' }, { type: 'text', text: 'answer' }] },
+        stream: [
+          { type: 'reasoning-chunks', time0: 110, index: 0, dt: [], texts: ['reason'] },
+          { type: 'text-chunks', time0: 130, index: 1, dt: [], texts: ['answer'] },
+        ],
+      } } },
     ])
-
-    const thought = snapshot.get(thoughtExecutionKey(1, 2))
-    expect(thought === undefined ? undefined : executionStatus(thought)).toBe('completed')
-    expect(thought === undefined ? undefined : executionStartedAt(thought)).toBe(110)
-    expect(thought === undefined ? undefined : executionEndedAt(thought)).toBe(130)
-  })
-
-  it('reuses execution semantics for inert stream deltas and rebuilds at boundaries', () => {
-    const projection = new ExecutionProjector()
-    const history = entries([
-      { event: { type: 'step/start', seq: 0, time: 100, data: { turn: 1, step: 2 } } },
-      { event: { type: 'assistant/chunk', seq: 1, time: 110, data: { turn: 1, step: 2, chunk: { type: 'reasoning-delta', index: 0, text: 'one' } } } },
-    ])
-    const input = (current: HistoryEntry[]) => ({
-      sessionId: 'session-test', epoch: 4, entries: current, sessionRunning: true,
-    })
-    const started = projection.project(input(history))
-    const continuedHistory = [...history, ...entries([
-      { event: { type: 'assistant/chunk', seq: 2, time: 120, data: { turn: 1, step: 2, chunk: { type: 'reasoning-delta', index: 0, text: 'two' } } } },
-    ])]
-    const continued = projection.project(input(continuedHistory))
-    expect(continued).toBe(started)
-
-    const answeredHistory = [...continuedHistory, ...entries([
-      { event: { type: 'assistant/chunk', seq: 3, time: 130, data: { turn: 1, step: 2, chunk: { type: 'text-delta', index: 1, text: 'answer' } } } },
-    ])]
-    const answered = projection.project(input(answeredHistory))
-    expect(answered).not.toBe(continued)
-    expect(executionStatus(answered.get(thoughtExecutionKey(1, 2))!)).toBe('completed')
-
-    const completedHistory = [...answeredHistory, ...entries([
-      { event: { type: 'assistant/chunk', seq: 4, time: 140, data: { turn: 1, step: 2, chunk: { type: 'text-delta', index: 1, text: ' more' } } } },
-    ])]
-    const completed = projection.project(input(completedHistory))
-    expect(completed).toBe(answered)
-    const rebuilt = buildExecutionSnapshot(input(completedHistory))
-    expect(completed.ordered()).toEqual(rebuilt.ordered())
-    expect(completed.diagnostics()).toEqual(rebuilt.diagnostics())
+    const thought = snapshot.get(thoughtExecutionKey(1, 2))!
+    expect(executionStatus(thought)).toBe('completed')
+    expect(executionStartedAt(thought)).toBe(110)
+    expect(executionEndedAt(thought)).toBe(130)
   })
 
   it('applies only the accepted suffix at a semantic boundary', () => {
@@ -291,8 +262,10 @@ describe('execution projection', () => {
     const history = entries([
       { event: { type: 'turn/start', seq: 0, time: 100, data: { turn: 1 } } },
       { event: { type: 'step/start', seq: 1, time: 110, data: { turn: 1, step: 1 } } },
-      { event: { type: 'assistant/chunk', seq: 2, time: 120, data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'reason' } } } },
-      { event: { type: 'assistant/chunk', seq: 3, time: 130, data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 1, text: 'answer' } } } },
+      { event: { type: 'assistant/message', seq: 2, time: 130, surfaceOp: 'append', data: {
+        turn: 1, step: 1, message: { content: [{ type: 'reasoning', text: 'reason' }, { type: 'text', text: 'answer' }] },
+        stream: [{ type: 'reasoning-chunks', time0: 120, index: 0, dt: [], texts: ['reason'] }, { type: 'text-chunks', time0: 130, index: 1, dt: [], texts: ['answer'] }],
+      } } },
       { event: { type: 'tool/call', seq: 4, time: 140, data: { turn: 1, step: 1, callId: 'partitioned', name: 'read', arguments: '{}' } } },
       {
         event: {
@@ -369,13 +342,11 @@ describe('execution projection', () => {
     const snapshot = build([
       { event: { type: 'turn/start', seq: 0, time: 100, data: { turn: 1 } } },
       { event: { type: 'step/start', seq: 1, time: 110, data: { turn: 1, step: 1 } } },
-      { event: { type: 'assistant/chunk', seq: 2, time: 120, data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'reason' } } } },
       { event: { type: 'tool/call', seq: 3, time: 125, data: { turn: 1, step: 1, callId: 'lost', name: 'read', arguments: '{}' } } },
       { event: { type: 'step/end', seq: 4, time: 140, data: { turn: 1, step: 1 } } },
       { event: { type: 'turn/end', seq: 5, time: 150, data: { turn: 1, reason: { kind: 'completed' } } } },
     ])
 
-    expect(executionStatus(snapshot.get(thoughtExecutionKey(1, 1))!)).toBe('completed')
     expect(executionStatus(snapshot.get(toolExecutionKey('lost'))!)).toBe('interrupted')
     expect(snapshot.diagnostics().map(issue => issue.code)).toContain('tool-result-missing')
   })
@@ -383,16 +354,12 @@ describe('execution projection', () => {
   it('materializes a structural step when a paged window starts at child activity', () => {
     const snapshot = build([
       { event: { type: 'turn/start', seq: 0, time: 100, data: { turn: 1 } } },
-      { event: { type: 'assistant/chunk', seq: 1, time: 110, data: { turn: 1, step: 2, chunk: { type: 'reasoning-delta', index: 0, text: 'reason' } } } },
       { event: { type: 'tool/call', seq: 2, time: 120, data: { turn: 1, step: 2, callId: 'paged', name: 'read', arguments: '{}' } } },
       { event: { type: 'turn/end', seq: 3, time: 150, data: { turn: 1, reason: { kind: 'error', error: { message: 'stopped' } } } } },
     ])
 
     expect(executionStatus(snapshot.get(stepExecutionKey(1, 2))!)).toBe('failed')
-    expect(executionStatus(snapshot.get(thoughtExecutionKey(1, 2))!)).toBe('failed')
     expect(executionStatus(snapshot.get(toolExecutionKey('paged'))!)).toBe('failed')
-    expect(executionStartedAt(snapshot.get(thoughtExecutionKey(1, 2))!)).toBe(110)
-    expect(executionEndedAt(snapshot.get(thoughtExecutionKey(1, 2))!)).toBe(150)
   })
 
   it('keeps known terminal evidence when the start lies outside the window', () => {
@@ -468,6 +435,7 @@ describe('execution projection', () => {
         time: 100,
         surfaceOp: 'replace',
         data: {
+          stream: [],
           turn: 1,
           step: 1,
           message: {

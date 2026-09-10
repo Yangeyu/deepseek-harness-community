@@ -1,5 +1,5 @@
 import { applyExecutionEntry } from './definitions.ts'
-import { visionExecutionKey } from './keys.ts'
+import { visionExecutionKey, thoughtExecutionKey, stepExecutionKey } from './keys.ts'
 import { StepModelCallAccumulator } from './model-call.ts'
 import { ExecutionReducer } from './reducer.ts'
 import { ImmutableExecutionSnapshot } from './snapshot.ts'
@@ -28,6 +28,15 @@ export function materializeExecutionSnapshot(
   input: ExecutionBuildInput,
 ): ExecutionSnapshot {
   const reducer = accumulator.executions.fork()
+  const assistant = input.assistant
+  if (assistant?.reasoningStartedAt !== undefined) {
+    const key = thoughtExecutionKey(assistant.turn, assistant.step)
+    const parent = stepExecutionKey(assistant.turn, assistant.step)
+    reducer.start(key, 'thought', parent, { time: assistant.reasoningStartedAt, source: 'runtime' }, 'ephemeral')
+    if (assistant.reasoningEndedAt !== undefined) {
+      reducer.settle(key, 'thought', parent, 'completed', { time: assistant.reasoningEndedAt, source: 'runtime' })
+    }
+  }
   if (!input.sessionRunning) {
     for (const node of reducer.openNodes()) {
       reducer.settle(

@@ -1,24 +1,10 @@
 import { createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { packChunkRuns, type StorageRecord } from '@deepseek-ai/dsh-session/chunk-rows'
 import { describe, expect, it, vi } from 'vitest'
 import { HarnessSessionTransport } from '../../../src/infrastructure/harness/session-transport.ts'
 
-function historyRecord(record: StorageRecord) {
-  if (record.type !== 'text-chunks'
-    && record.type !== 'reasoning-chunks'
-    && record.type !== 'tool-call-chunks') {
-    return { type: 'event', event: record } as never
-  }
-  return {
-    type: 'chunks',
-    event: {
-      type: `chunkrow/${record.type}`,
-      seq: record.seq0,
-      time: record.time0,
-      data: record.data,
-    },
-  } as never
+function historyRecord(event: unknown) {
+  return { type: 'event', event } as never
 }
 
 function transportFor(records: ReturnType<typeof historyRecord>[], definition: object) {
@@ -45,13 +31,6 @@ describe('HarnessSessionTransport', () => {
       name: 'read_file',
       arguments: '{"path":"a.txt"}',
     })
-    for (const text of ['a', 'b', 'c']) {
-      session.append('assistant/chunk', {
-        turn: 1,
-        step: 1,
-        chunk: { type: 'text-delta', index: 0, text },
-      })
-    }
     const result = session.append('tool/result', {
       turn: 1,
       step: 1,
@@ -64,7 +43,7 @@ describe('HarnessSessionTransport', () => {
     }, { surfaceOp: 'append' })
     const presentCall = vi.fn(() => ({ card: 'generic', title: 'Read a.txt', kind: 'read' }))
     const presentResult = vi.fn(() => ({ card: 'generic', title: 'Read a.txt', kind: 'read' }))
-    const records = packChunkRuns(session.snapshotEvents()).map(historyRecord)
+    const records = session.snapshotEvents().map(historyRecord)
     const transport = transportFor(records, { presentCall, presentResult })
     const signal = new AbortController().signal
 
@@ -76,9 +55,6 @@ describe('HarnessSessionTransport', () => {
 
     expect(loaded.events.map(entry => entry.event.type)).toEqual([
       'tool/call',
-      'assistant/chunk',
-      'assistant/chunk',
-      'assistant/chunk',
       'tool/result',
     ])
     expect(loaded.events.flatMap(entry => entry.view === undefined ? [] : [entry.view])).toEqual([

@@ -21,16 +21,7 @@ describe('TrajectoryView', () => {
     )
     const internals = view as unknown as { records: readonly unknown[] }
     const records = internals.records
-    const chunk = {
-      event: {
-        type: 'assistant/chunk',
-        seq: 6,
-        time: 1_800,
-        data: { turn: 1, step: 2, chunk: { type: 'text-delta', index: 0, text: 'live' } },
-      },
-    } as RuntimeSessionSnapshot['events'][number]
-
-    view.setState({ ...initial, events: [...initial.events, chunk] })
+    view.setState({ ...initial, assistant: { turn: 1, step: 2, content: [{ type: 'text', text: 'live' }] } })
 
     expect(internals.records).toBe(records)
   })
@@ -43,6 +34,7 @@ describe('TrajectoryView', () => {
         time: 1_700,
         surfaceOp: 'append',
         data: {
+          stream: [],
           turn: 1,
           step: 1,
           message: {
@@ -53,7 +45,7 @@ describe('TrajectoryView', () => {
           },
         },
       },
-    } as RuntimeSessionSnapshot['events'][number]
+    } as unknown as RuntimeSessionSnapshot['events'][number]
     const view = new TrajectoryView(
       state([...toolEvents(true), assistant]),
       () => 8,
@@ -95,7 +87,7 @@ describe('TrajectoryView', () => {
           content: [{ type: 'text', text }],
         },
       },
-    } as RuntimeSessionSnapshot['events'][number])
+    } as unknown as RuntimeSessionSnapshot['events'][number])
     const longText = Array.from({ length: 40 }, (_, index) => `detail line ${String(index + 1)}`).join('\n')
     const view = new TrajectoryView(
       state([user(0, 'message-a', 'First short input'), user(1, 'message-b', longText), user(2, 'message-c', 'Last short input')]),
@@ -204,10 +196,10 @@ describe('TrajectoryView', () => {
         time: 1_800,
         data: {
           id: '5ff5203a-bb2b-4e5d-96d2-24801be72c-long-approval-identifier',
-          decision: 'approved',
+          outcome: 'allowed-once',
         },
       },
-    } as RuntimeSessionSnapshot['events'][number]
+    } as unknown as RuntimeSessionSnapshot['events'][number]
     const view = new TrajectoryView(
       state([...toolEvents(true), approval]),
       () => 10,
@@ -353,6 +345,7 @@ describe('TrajectoryView', () => {
         time: 2_500,
         surfaceOp: 'append',
         data: {
+          stream: [],
           turn: 1,
           step: 1,
           message: {
@@ -399,6 +392,7 @@ describe('TrajectoryView', () => {
         time: 1_700,
         surfaceOp: 'append',
         data: {
+          stream: [],
           turn: 1,
           step: 1,
           message: {
@@ -409,7 +403,7 @@ describe('TrajectoryView', () => {
           },
         },
       },
-    } as RuntimeSessionSnapshot['events'][number]
+    } as unknown as RuntimeSessionSnapshot['events'][number]
 
     view.setState(state([...toolEvents(true), assistant]))
 

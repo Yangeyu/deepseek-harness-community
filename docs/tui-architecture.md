@@ -137,11 +137,13 @@ feature, not repository tooling configuration.
 
 The root `@vascent/dsh-tui` package is the only published artifact. All
 component workspaces are private implementation units and deliberately declare
-no versions or registry metadata. The archive contains the private
-`packages/tui` Bundle directory that the launcher links into the profile. The
-root and Bundle manifests preserve separate launcher and Cordis Bundle
-dependency identities inside one archive; the profile's local link reuses the
-already installed distribution and performs no second registry install. The
+no versions or registry metadata. The TUI build generates a runtime manifest in
+`packages/tui/dist` with the root release version, relative entry points, and the
+Bundle patch. Development and installed launchers both link this versioned
+directory into the profile. The source manifest is not shipped. The profile's
+local link reuses the already installed distribution and performs no second
+registry install. Active Loader packages therefore have the name and version
+required by DeepSeek's request-extension inventory. The
 root's DeepSeek dependencies are limited to external references in the built
 launcher and bundle, services named by `cordis.patch.yml`, and host packages
 required by the coordinated runtime graph. Workspace development dependencies
@@ -172,25 +174,40 @@ runtime closure.
 
 ## Upstream DSH alignment and community extension ownership
 
-The selected upstream train is `@deepseek-ai/dsh@0.1.2-rc.1`, corresponding to
-the official `dsh-v0.1.2-rc.1` tag. This upgrade is a hard cutover: source,
-manifests, patch rows, tests, and built artifacts contain no compatibility
-alias or fallback to `dsh-host-apiproxy`, its storage services, or its Session
-projection cache.
+The selected upstream train is `@deepseek-ai/dsh@0.1.5-rc.1`, corresponding to
+the official `dsh-v0.1.5-rc.1` tag. The workspace catalog selects one exact version
+for every direct DSH dependency; the lockfile resolves the matching peer graph.
 
-| Community component | Decision after rc1 | Single remaining responsibility |
-|---|---|---|
-| TUI | Replace the removed ApiProxy/RPC/Mux integration with direct `SessionController` ports and Cordis Approval/Question waterfalls. | Session follow owns history/events; the control stream owns queue/projection baselines; `api-session/status` owns live run state. |
-| Bailian | Keep and update; do not replace with the generic upstream adapter until DashScope request, reasoning, image-budget, and SSE parity is proven. | Bailian owns only its provider route, model capabilities, request translation, and response translation. |
-| Memory | Keep and update; rc1 has no equivalent project-memory service. | Files are Memory's durable facts; live conversation reads use `Session.snapshotEvents()` directly and prompt placement comes from the system-prompt registry. |
-| Vision | Keep and update; native multimodal admission does not replace text-model proxy analysis. | Official Attachment/Host code owns image storage and native admission; Vision owns route policy, proxy inference, and attributed evidence only. |
-| Web | Keep the community provider layer, while reducing it around upstream ownership. | Official `ctx.web` and Web tools own the model-facing search/fetch contract and safe HTTP fetch; community code owns Tavily adapters, live provider selection, readiness, and extraction. |
+Session V3 keeps `system/message` on the model-visible surface and stores each
+Assistant attempt as one `assistant/message` or `assistant/attempt` settlement
+with its compact timed stream. The TUI opts into Controller `assistant-stream`
+frames for live output. `SessionRuntime` owns that process-local presentation for
+one Session epoch, uses the upstream `BlockAssembler`, restores the follow
+opening baseline, and retires the presentation at settlement or abandonment.
+These frames never enter the durable event window or advance its sequence cursor.
+Thought timing on replay comes from the settlement's compact stream.
+`AssistantStream` owns matching and retiring live attempts on durable settlement
+and terminal frames. Model request boundaries are inclusive cuts of durable
+request inputs, folded once for both live inspection and replay. Transcript
+caches its durable history projection separately from live output and pending
+work; text deltas and animation ticks reuse that history projection.
 
-Four obsolete catalog rows are removed with the old TUI path:
-`dsh-session-projection-cache`, `dsh-storage`, `dsh-storage-domain`, and
-`dsh-storage-json`. Background Jobs are not projected into a placeholder TUI
-state: they remain an unavailable v0.2 capability until a real feature owner
-and view consume the upstream control frames.
+The Controller requires the official Connection registry and file-upload service.
+The community bundle mounts both; without a Web server the Connection registry
+provides no HTTP listener. The TUI continues to call the Controller in-process.
+
+| Community component | Responsibility |
+|---|---|
+| TUI | Session follow owns durable history and live Assistant presentation; control owns queue/projection baselines; `api-session/status` owns run state. |
+| Bailian | Provider capabilities and DashScope request/response translation. |
+| Memory | Durable Markdown facts, direct Session reads, and persona-prefix registration for its learning Agent. |
+| Vision | Native/proxy routing and attributed evidence; official Attachment services own image storage. |
+| Web | Tavily adapters and settings-backed provider selection; official Web tools own search/fetch contracts. |
+
+Upstream owns migration of older sessions to V3. Opening an existing session with
+this runtime can migrate it; the older runtime cannot read the migrated format.
+Upgrade validation uses an isolated `DSH_HOME`. Development remains build-and-run
+with manual restart via `npm run dev`.
 
 The archive includes only executable JavaScript, public declarations, the
 Bundle manifest and patch, launcher examples, and user documentation. Source
@@ -628,6 +645,11 @@ component references while the Session-owned implementations are replaced.
   routes and the deployment default; the `modelSelection` Session projection is
   the only current/pending selection fact. A selection command writes only to
   the Host, and the visible TUI changes only after that projection advances.
+- Opening `/model` and selecting a named model read the Host catalog again.
+  The Session snapshot is display state, not a freshness policy.
+  The upstream DeepSeek provider owns connection settings, credentials, model
+  metadata, request preparation and transport. Its catalog comes from built-in
+  defaults or explicit settings; TUI refresh does not add remote discovery.
 - Each Session feature set owns a fresh `SkillCatalog`; its local request version
   rejects stale refreshes within that epoch. `SlashCatalog` merges effective
   Skill rows with Commands while preserving dispatch semantics.

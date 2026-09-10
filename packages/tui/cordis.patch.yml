@@ -4,7 +4,7 @@
 
 - id: system-prompt
   config:
-    persona: >-
+    personaPrefix: >-
       You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
 
 - id: hmr
@@ -129,7 +129,13 @@
     - id: directory-picker
       name: '@deepseek-ai/dsh-host-directory-picker-browse'
 
-    # The v0.1.2 Session Controller is the in-process Host boundary. The TUI
+    - id: client-connection
+      name: '@deepseek-ai/dsh-client-connection'
+
+    - id: client-file-upload
+      name: '@deepseek-ai/dsh-client-file-upload'
+
+    # The Session Controller is the in-process Host boundary. The TUI
     # adapts it to consumer-owned ports; browser Connection/Remote state is not
     # duplicated inside this terminal process.
     - id: session-controller

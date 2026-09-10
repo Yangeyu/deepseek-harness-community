@@ -134,7 +134,7 @@ export function profileUsesPlugin(profileDirectory: string, pluginDirectory: str
   }
 }
 
-/** Activate the canonical private Bundle for this installation. */
+/** Activate the versioned runtime Bundle for this installation. */
 export async function ensureProfilePlugin(
   profileDirectory: string,
   pluginDirectory: string,
@@ -216,7 +216,7 @@ export async function main(args: readonly string[], options: LauncherOptions = {
     }
 
     const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
-    const pluginDirectory = join(repositoryRoot, 'packages', 'tui')
+    const pluginDirectory = join(repositoryRoot, 'packages', 'tui', 'dist')
     const profile = resolveTuiProfile(env)
     const home = resolveDshHome(env)
     const profileDirectory = join(home, 'profiles', profile)

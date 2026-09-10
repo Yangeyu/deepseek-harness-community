@@ -1,3 +1,4 @@
+import type { AssistantPresentation } from '../../session/assistant-stream.ts'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { HistoryEntry } from '../../session/contracts.ts'
 import type { ModelRequest, StepModelCall } from './model-call.ts'
@@ -93,6 +94,7 @@ export interface RuntimeVisionActivity {
 export type RuntimeExecutionActivity = RuntimeVisionActivity
 
 export interface ExecutionBuildInput {
+  readonly assistant?: AssistantPresentation | undefined
   readonly sessionId: string | undefined
   readonly epoch: number
   readonly entries: readonly HistoryEntry[]

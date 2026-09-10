@@ -1,3 +1,4 @@
+import type { AssistantPresentation } from './assistant-stream.ts'
 import type {
   HistoryEntry,
   ModelCatalog,
@@ -22,6 +23,7 @@ export type SessionRunState = 'idle' | 'running' | 'interrupting'
 
 /** One atomic renderer-facing value for the visible Session workspace. */
 export interface RuntimeSessionSnapshot {
+  readonly assistant?: AssistantPresentation | undefined
   readonly binding: SessionBindingState<SessionId>
   readonly sessionId: SessionId | undefined
   readonly cwd: string

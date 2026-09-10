@@ -432,7 +432,7 @@ export class SessionManager {
           if (!this.workspace.owns(runtime)) return
           runtime.setConnection('events', 'online', undefined)
           if (frame.type === 'snapshot') {
-            runtime.hydrate(frame.page, frame.cursor)
+            runtime.hydrate(frame.page, frame.cursor, frame.assistantStream)
             snapshotSeen = true
             if (!opened) {
               opened = true
@@ -441,6 +441,10 @@ export class SessionManager {
             continue
           }
           if (!snapshotSeen) throw new Error('Session follow stream emitted an event before its snapshot')
+          if (frame.type === 'assistant-stream') {
+            runtime.acceptAssistantFrame(frame.frame)
+            continue
+          }
           if (runtime.appendEvent(frame.entry) === 'gap') {
             throw new Error('Session follow stream contained a sequence gap')
           }

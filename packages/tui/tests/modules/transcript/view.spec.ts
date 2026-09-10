@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import * as transcriptModel from '../../../src/modules/transcript/model.ts'
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
 import type {
   HistoryEntry,
@@ -15,6 +16,7 @@ function state(
   events: readonly HistoryEntry[],
   running = false,
   pendingSubmissions: RuntimeSessionSnapshot['pendingSubmissions'] = [],
+  assistant?: RuntimeSessionSnapshot['assistant'],
 ): RuntimeSessionSnapshot {
   return {
     binding: { phase: 'active', sessionId: 'session-test' as SessionSummary['sessionId'], epoch: 0 },
@@ -23,6 +25,7 @@ function state(
     runState: running ? 'running' : 'idle',
     connection: { events: 'online', control: 'online' },
     events,
+    assistant,
     historyHasMore: false,
     queue: [],
     pendingSubmissions,
@@ -30,6 +33,7 @@ function state(
       sessionId: 'session-test',
       epoch: 0,
       entries: events,
+      assistant,
       sessionRunning: running,
       runtimeActivities: pendingSubmissions.flatMap((submission) => {
         const activity = submission.activity
@@ -50,6 +54,25 @@ function entry(value: unknown): HistoryEntry {
 }
 
 describe('TranscriptComponent', () => {
+  it('updates live text without rebuilding unchanged history, and refreshes prepended history', () => {
+    const projectHistory = vi.spyOn(transcriptModel, 'buildTranscriptHistory')
+    try {
+      const initial = state([], true, [], { turn: 1, step: 1, content: [{ type: 'text', text: 'live' }] })
+      const transcript = new TranscriptComponent(initial, createTheme(false), true, 8)
+      transcript.render(80)
+      projectHistory.mockClear()
+      transcript.setState({ ...initial, assistant: { turn: 1, step: 1, content: [{ type: 'text', text: 'live continuation' }] } })
+      expect(transcript.render(80).join('\n')).toContain('live continuation')
+      expect(projectHistory).not.toHaveBeenCalled()
+      const older = entry({ event: { type: 'user/message', seq: 0, time: 1, surfaceOp: 'append',
+        data: { id: 'older', source: { kind: 'user' }, content: [{ type: 'text', text: 'Earlier prompt' }] },
+      } })
+      transcript.setState(state([older], true, [], initial.assistant))
+      expect(transcript.render(80).join('\n')).toContain('Earlier prompt')
+      expect(projectHistory).toHaveBeenCalledOnce()
+    } finally { projectHistory.mockRestore() }
+  })
+
   it('keeps durable user input visible when execution metadata is unavailable', () => {
     const events = [entry({
       event: {
@@ -161,16 +184,8 @@ describe('TranscriptComponent', () => {
     expect(output).toContain(theme.imageReference('[Image #1]'))
   })
 
-  it('renders the final assistant message instead of its superseded stream chunks', () => {
+  it('renders the committed assistant message', () => {
     const transcript = new TranscriptComponent(state([
-      entry({
-        event: {
-          type: 'assistant/chunk',
-          seq: 0,
-          time: 1,
-          data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'partial' } },
-        },
-      }),
       entry({
         event: {
           type: 'assistant/message',
@@ -178,6 +193,7 @@ describe('TranscriptComponent', () => {
           time: 2,
           surfaceOp: 'append',
           data: {
+            stream: [],
             turn: 1,
             step: 1,
             message: {
@@ -198,24 +214,10 @@ describe('TranscriptComponent', () => {
   })
 
   it('settles the Thought indicator while answer text is still streaming', () => {
-    const transcript = new TranscriptComponent(state([
-      entry({
-        event: {
-          type: 'assistant/chunk',
-          seq: 0,
-          time: 1_000,
-          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'reasoning' } },
-        },
-      }),
-      entry({
-        event: {
-          type: 'assistant/chunk',
-          seq: 1,
-          time: 1_250,
-          data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 1, text: 'streaming answer' } },
-        },
-      }),
-    ], true), createTheme(false), true, 8)
+    const transcript = new TranscriptComponent(state([], true, [], {
+      turn: 1, step: 1, reasoningStartedAt: 1_000, reasoningEndedAt: 1_250,
+      content: [{ type: 'reasoning', text: 'reasoning' }, { type: 'text', text: 'streaming answer' }],
+    }), createTheme(false), true, 8)
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› Worked for 250ms · 1 thought')
@@ -236,6 +238,7 @@ describe('TranscriptComponent', () => {
           time: 1,
           surfaceOp: 'append',
           data: {
+            stream: [],
             turn: 1,
             step: 1,
             message: {
@@ -269,6 +272,7 @@ describe('TranscriptComponent', () => {
         time: 1,
         surfaceOp: 'append',
         data: {
+          stream: [],
           turn: 1,
           step: 1,
           message: {
@@ -310,6 +314,7 @@ describe('TranscriptComponent', () => {
           time: 1,
           surfaceOp: 'append',
           data: {
+            stream: [],
             turn: 1,
             step: 1,
             message: {
@@ -339,6 +344,7 @@ describe('TranscriptComponent', () => {
           time: 1,
           surfaceOp: 'append',
           data: {
+            stream: [],
             turn: 1,
             step: 1,
             message: {
@@ -409,17 +415,16 @@ describe('TranscriptComponent', () => {
     transcript.setState(state([
       entry({
         event: {
-          type: 'assistant/chunk',
-          seq: 1,
-          time: 1_100,
-          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'earlier reasoning' } },
+          type: 'assistant/message', surfaceOp: 'append',
+          seq: 1, time: 1_100,
+          data: { turn: 1, step: 1, stream: [], message: { content: [{ type: 'reasoning', text: 'earlier reasoning' }] } },
         },
       }),
       tool,
     ], true))
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(expanded).toContain('⌄ Working · 1 thought · 1 tool')
-    expect(expanded).toContain('├─ › ◦ Thinking…')
+    expect(expanded).toContain('├─ › • Thought')
     expect(expanded).toContain('└─ › ◦ Read project')
   })
 
@@ -520,16 +525,11 @@ describe('TranscriptComponent', () => {
   })
 
   it('follows streaming thinking until the user scrolls upward', () => {
-    const reasoningChunk = (seq: number, text: string): HistoryEntry => entry({
-      event: {
-        type: 'assistant/chunk',
-        seq,
-        time: seq + 1,
-        data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text } },
-      },
+    const live = (count: number) => state([], true, [], {
+      turn: 1, step: 1, reasoningStartedAt: 1,
+      content: [{ type: 'reasoning', text: Array.from({ length: count }, (_, index) => `- stream ${index + 1}\n`).join('') }],
     })
-    const events = Array.from({ length: 5 }, (_, index) => reasoningChunk(index, `- stream ${index + 1}\n`))
-    const transcript = new TranscriptComponent(state(events, true), createTheme(false), true, 8, 3)
+    const transcript = new TranscriptComponent(live(5), createTheme(false), true, 8, 3)
 
     expect(transcript.render(80).join('\n')).toContain('› Working · 1 thought · Thinking…')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
@@ -540,7 +540,7 @@ describe('TranscriptComponent', () => {
     expect(following).not.toContain('stream 1')
 
     expect(transcript.handlePointer(2, 'wheel-up')).toBe(true)
-    transcript.setState(state([...events, reasoningChunk(5, '- stream 6\n')], true))
+    transcript.setState(live(6))
     const paused = transcript.render(80).join('\n')
     expect(paused).toContain('stream 2')
     expect(paused).not.toContain('stream 6')
@@ -550,10 +550,9 @@ describe('TranscriptComponent', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
-          type: 'assistant/chunk',
-          seq: 0,
-          time: 1_000,
-          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'unfinished reasoning' } },
+          type: 'assistant/message', surfaceOp: 'append',
+          seq: 0, time: 1_250,
+          data: { turn: 1, step: 1, interrupted: true, stream: [{ type: 'reasoning-chunks', time0: 1_000, index: 0, dt: [], texts: ['unfinished reasoning'] }], message: { content: [{ type: 'reasoning', text: 'unfinished reasoning' }] } },
         },
       }),
       entry({
@@ -586,14 +585,13 @@ describe('TranscriptComponent', () => {
     expect(expanded).toContain('└─ › ! Search project')
   })
 
-  it('keeps failed unfinished thinking collapsed while the terminal error remains visible', () => {
+  it('keeps interrupted thinking collapsed while the terminal error remains visible', () => {
     const transcript = new TranscriptComponent(state([
       entry({
         event: {
-          type: 'assistant/chunk',
-          seq: 0,
-          time: 2_000,
-          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'diagnostic reasoning' } },
+          type: 'assistant/message', surfaceOp: 'append',
+          seq: 0, time: 2_300,
+          data: { turn: 1, step: 1, interrupted: true, stream: [{ type: 'reasoning-chunks', time0: 2_000, index: 0, dt: [], texts: ['diagnostic reasoning'] }], message: { content: [{ type: 'reasoning', text: 'diagnostic reasoning' }] } },
         },
       }),
       entry({
@@ -607,19 +605,19 @@ describe('TranscriptComponent', () => {
     ]), createTheme(false), true, 8)
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(collapsed).toContain('› Failed after 300ms · 1 thought · Thought failed')
+    expect(collapsed).toContain('› Interrupted after 300ms · 1 thought · Thought interrupted')
     expect(collapsed).not.toContain('diagnostic reasoning')
     expect(collapsed).toContain('model disconnected')
 
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const activityExpanded = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(activityExpanded).toContain('⌄ Failed after 300ms · 1 thought · Thought failed')
-    expect(activityExpanded).toContain('└─ › × Thought failed')
+    expect(activityExpanded).toContain('⌄ Interrupted after 300ms · 1 thought · Thought interrupted')
+    expect(activityExpanded).toContain('└─ › ! Thought interrupted')
     expect(activityExpanded).not.toContain('diagnostic reasoning')
 
     expect(transcript.handlePointer(1, 'click')).toBe(true)
     const thoughtExpanded = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(thoughtExpanded).toContain('└─ ⌄ × Thought failed')
+    expect(thoughtExpanded).toContain('└─ ⌄ ! Thought interrupted')
     expect(thoughtExpanded).toContain('diagnostic reasoning')
   })
 
@@ -632,6 +630,7 @@ describe('TranscriptComponent', () => {
           time: 1,
           surfaceOp: 'append',
           data: {
+            stream: [],
             turn: 1,
             step: 1,
             message: {

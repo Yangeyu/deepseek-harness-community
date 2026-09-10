@@ -253,8 +253,6 @@ export function buildTrajectoryRecords(
     if (schemaSnapshot !== undefined) schemas = schemaSnapshot
 
     switch (event.type) {
-      case 'assistant/chunk':
-        break
       case 'turn/end': {
         const node = execution.get(turnExecutionKey(event.data.turn))
         if (node?.state.phase !== 'settled' || node.state.started !== undefined) break

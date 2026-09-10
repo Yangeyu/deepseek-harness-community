@@ -13,7 +13,7 @@ function setup() {
   const catalog: ModelCatalog = { default: { provider: 'deepseek', model: 'chat' }, routableProviders: ['openai-codex'], groups: [{ id: 'openai-codex', name: 'ChatGPT', models: [{ id: 'gpt-test', name: 'Test' }] }], failures: [] }
   const select = vi.fn(async () => {})
   const refresh = vi.fn(async () => catalog)
-  const open = vi.fn(() => ({ close: () => true }))
+  const open = vi.fn<ConstructorParameters<typeof ConfigurationProcess>[0]['surfaces']['open']>(() => ({ close: () => true }))
   const process = new ConfigurationProcess({
     scope, theme: createTheme(false), tui: new TuiMainScreen({ columns: 80, rows: 24 } as Terminal),
     session: {
@@ -34,6 +34,18 @@ function setup() {
 }
 
 describe('model selection', () => {
+  it('refreshes the picker even when the session already has a catalog', async () => {
+    const test = setup()
+    const updated: ModelCatalog = { ...test.catalog, groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [{ id: 'new-model', name: 'New model' }] }] }
+    test.refresh.mockResolvedValue(updated)
+    await test.process.openModelSelector()
+    expect(test.refresh).toHaveBeenCalledOnce()
+    const dialog = test.open.mock.calls[0]?.[0] as unknown as { component: { render(width: number): string[] } }
+    expect(dialog.component.render(100).join('\n')).toContain('New model')
+    expect(test.select).not.toHaveBeenCalled()
+    await test.scope.dispose()
+  })
+
   it('selects a named model from the catalog', async () => {
     const test = setup()
     await test.process.selectNamedModel('openai-codex/gpt-test')

@@ -10,7 +10,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { PERSONA_SECTION } from '@deepseek-ai/dsh-system-prompt'
+import { PERSONA_PREFIX_SECTION } from '@deepseek-ai/dsh-system-prompt'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
   MemoryFileStore,
@@ -707,8 +707,8 @@ export class ProjectMemoryService extends Service {
           childCtx.tools.presentAs('native')
           childCtx.tools.restrict({ allow: ['memory_read', 'memory_write', 'memory_forget'] })
           childCtx.systemPrompt.section({
-            name: PERSONA_SECTION,
-            order: childCtx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA'),
+            name: PERSONA_PREFIX_SECTION,
+            order: childCtx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX'),
             text: 'You are a quiet memory maintenance agent. Extract only durable, user-supported memory and use the provided memory tools. Reconcile new facts with the existing memory before recording: prefer updating or replacing entries over duplicating or contradicting them. Do not perform project work or answer the original user.',
           })
         },

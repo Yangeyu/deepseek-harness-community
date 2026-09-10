@@ -1,4 +1,6 @@
 import type {
+  SessionAssistantStreamBaseline,
+  SessionAssistantStreamFrame,
   ModelCatalog,
   SessionProjectionValue,
 } from '@deepseek-ai/dsh-api-session-controller/types'
@@ -14,8 +16,10 @@ import type { SessionHistoryPage, SessionProjectionBaseline } from './history-pa
 import type { SessionId } from './snapshot.ts'
 
 export type SessionFollowFrame =
+  | { readonly type: 'assistant-stream'; readonly frame: SessionAssistantStreamFrame }
   | {
       readonly type: 'snapshot'
+      readonly assistantStream?: SessionAssistantStreamBaseline | undefined
       readonly cursor: number
       readonly page: SessionHistoryPage
     }

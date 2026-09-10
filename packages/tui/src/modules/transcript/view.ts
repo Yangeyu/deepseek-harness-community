@@ -7,7 +7,6 @@ import {
   type Component,
 } from '@earendil-works/pi-tui'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
-import { appendedHistoryEntries } from '../../runtime/session/event-window.ts'
 import type { DiffLineStarts } from './diff-location.ts'
 import {
   buildDiffDisplay,
@@ -16,8 +15,9 @@ import {
   type DiffDisplayLine,
 } from './diff.ts'
 import {
-  appendTranscriptChunks,
+  buildTranscriptHistory,
   buildTranscriptItems,
+  type UngroupedTranscriptItem,
   type TranscriptActivityGroup,
   type TranscriptDiffItem,
   type TranscriptItem,
@@ -87,10 +87,6 @@ const DISCLOSURE_EXPANDED = '⌄'
 const EMPTY_DIFF_STARTS: readonly (number | undefined)[] = []
 const LARGE_DIFF_LINES = 200
 
-function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
-  return left.length === right.length && left.every((item, index) => item === right[index])
-}
-
 function padToWidth(value: string, width: number): string {
   const clipped = truncateToWidth(value, width, '…', true)
   return `${clipped}${' '.repeat(Math.max(0, width - visibleWidth(clipped)))}`
@@ -106,6 +102,7 @@ export class TranscriptComponent implements Component {
   private readonly pausedThinking = new Set<string>()
   private readonly thinkingOffsets = new Map<string, number>()
   private readonly thinkingMaxOffsets = new Map<string, number>()
+  private historyItems: UngroupedTranscriptItem[] | undefined
   private items: TranscriptItem[] | undefined
   private renderedLineCount = 0
   private renderedDocument: { width: number; lines: string[] } | undefined
@@ -133,22 +130,13 @@ export class TranscriptComponent implements Component {
   setState(state: Readonly<RuntimeSessionSnapshot>): void {
     const previous = this.state
     const sessionChanged = state.sessionId !== previous.sessionId
-    const appended = sessionChanged
-      ? undefined
-      : appendedHistoryEntries(previous.events, state.events)
-    const incrementalItems = this.items === undefined
-      || appended === undefined
-      || !sameItems(previous.queue, state.queue)
-      || !sameItems(previous.pendingSubmissions, state.pendingSubmissions)
-      || state.notice !== previous.notice
-      || state.error !== previous.error
-      ? undefined
-      : appendTranscriptChunks(this.items, appended, state.execution, this.showReasoning)
-    const contentChanged = sessionChanged
+    const historyChanged = sessionChanged
       || state.events !== previous.events
+      || state.execution !== previous.execution
+    const contentChanged = historyChanged
+      || state.assistant !== previous.assistant
       || state.queue !== previous.queue
       || state.pendingSubmissions !== previous.pendingSubmissions
-      || state.execution !== previous.execution
       || state.notice !== previous.notice
       || state.error !== previous.error
     if (sessionChanged) {
@@ -164,19 +152,14 @@ export class TranscriptComponent implements Component {
       this.diffBlocks.clear()
     }
     this.state = state
-    if (incrementalItems !== undefined && appended !== undefined && appended.length > 0) {
-      if (incrementalItems !== this.items) {
-        this.items = incrementalItems
-        this.invalidate()
-      }
-    } else if (contentChanged) {
-      this.invalidateContent()
-    }
+    if (historyChanged) this.historyItems = undefined
+    if (contentChanged) this.invalidateContent()
   }
 
   setDetails(show: boolean): void {
     if (show === this.showDetails) return
     this.showDetails = show
+    this.historyItems = undefined
     this.disclosure.clearOverrides()
     this.pausedThinking.clear()
     this.invalidateContent()
@@ -248,8 +231,11 @@ export class TranscriptComponent implements Component {
     const safeWidth = Math.max(1, width)
     if (this.renderedDocument?.width === safeWidth) return this.renderedDocument.lines
     const lines: string[] = []
-    const items = this.items ??= buildTranscriptItems(
+    const history = this.historyItems ??= buildTranscriptHistory(
       this.state, this.showReasoning, this.showDetails, this.maxToolOutputLines,
+    )
+    const items = this.items ??= buildTranscriptItems(
+      this.state, this.showReasoning, this.showDetails, this.maxToolOutputLines, history,
     )
     const activeTextBlocks = new Set<string>()
     const activePromptBlocks = new Set<string>()

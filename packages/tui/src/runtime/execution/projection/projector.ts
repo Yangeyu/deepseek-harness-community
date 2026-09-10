@@ -1,11 +1,9 @@
-import type { HistoryEntry } from '../../session/contracts.ts'
 import { appendedHistoryEntries } from '../../session/event-window.ts'
 import {
   type ExecutionAccumulator,
   materializeExecutionSnapshot,
   replayExecutionEntries,
 } from './accumulator.ts'
-import { stepExecutionKey, thoughtExecutionKey } from './keys.ts'
 import type {
   ExecutionBuildInput,
   ExecutionSnapshot,
@@ -24,21 +22,6 @@ function sameRuntimeActivities(
       && candidate.analysisId === activity.analysisId
       && candidate.startedAt === activity.startedAt
   })
-}
-
-function chunkChangesExecution(entry: HistoryEntry, snapshot: ExecutionSnapshot): boolean {
-  if (entry.event.type !== 'assistant/chunk') return true
-  const stepKey = stepExecutionKey(entry.event.data.turn, entry.event.data.step)
-  if (snapshot.modelCall(stepKey)?.request === undefined) return true
-  const chunk = entry.event.data.chunk
-  const node = snapshot.get(thoughtExecutionKey(entry.event.data.turn, entry.event.data.step))
-  if (chunk.type === 'reasoning-delta' && chunk.text !== '') {
-    return node === undefined || node.state.phase === 'settled'
-  }
-  if (chunk.type === 'text-delta' && chunk.text !== '') {
-    return node !== undefined && node.state.phase !== 'settled'
-  }
-  return false
 }
 
 /** Incrementally fold append-only history and rebuild only on structural window changes. */
@@ -62,7 +45,11 @@ export class ExecutionProjector {
       && input.sessionRunning === previous.sessionRunning
       && sameRuntimeActivities(input.runtimeActivities, previous.runtimeActivities)
       && appended !== undefined
-      && appended.every(entry => !chunkChangesExecution(entry, current))
+      && appended.length === 0
+      && input.assistant?.turn === previous.assistant?.turn
+      && input.assistant?.step === previous.assistant?.step
+      && input.assistant?.reasoningStartedAt === previous.assistant?.reasoningStartedAt
+      && input.assistant?.reasoningEndedAt === previous.assistant?.reasoningEndedAt
 
     if (appended === undefined || this.accumulator === undefined) {
       this.accumulator = replayExecutionEntries(input)

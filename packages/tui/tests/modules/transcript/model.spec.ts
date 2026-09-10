@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import type { HistoryEntry, SessionSummary } from '../../../src/runtime/session/contracts.ts'
 import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manager.ts'
 import {
-  appendTranscriptChunks,
   buildTranscriptItems,
   groupTranscriptActivity,
   type TranscriptDiffItem,
@@ -40,10 +39,6 @@ function state(events: HistoryEntry[], running = false): RuntimeSessionSnapshot 
     notice: undefined,
     error: undefined,
   }
-}
-
-function entry(value: unknown): HistoryEntry {
-  return value as HistoryEntry
 }
 
 function thinking(
@@ -178,67 +173,15 @@ describe('groupTranscriptActivity', () => {
 })
 
 describe('buildTranscriptItems', () => {
-  it('increments the streaming tail with full-rebuild parity', () => {
-    const first = entry({
-      event: {
-        type: 'assistant/chunk',
-        seq: 0,
-        time: 1,
-        data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'one' } },
-      },
-    })
-    const second = entry({
-      event: {
-        type: 'assistant/chunk',
-        seq: 1,
-        time: 2,
-        data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: ' two' } },
-      },
-    })
-    const answer = entry({
-      event: {
-        type: 'assistant/chunk',
-        seq: 2,
-        time: 3,
-        data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 1, text: 'answer' } },
-      },
-    })
-    const initialState = state([first], true)
-    const initial = buildTranscriptItems(initialState, true, false, 8)
-    const reasoningState = state([first, second], true)
-    const reasoning = appendTranscriptChunks(initial, [second], reasoningState.execution, true)
-    expect(reasoning).toEqual(buildTranscriptItems(reasoningState, true, false, 8))
-
-    const answerState = state([first, second, answer], true)
-    const answered = appendTranscriptChunks(reasoning!, [answer], answerState.execution, true)
-    expect(answered).toEqual(buildTranscriptItems(answerState, true, false, 8))
-
-    const hiddenInitial = buildTranscriptItems(initialState, false, false, 8)
-    const hiddenReasoning = appendTranscriptChunks(hiddenInitial, [second], reasoningState.execution, false)
-    expect(hiddenReasoning).toEqual(buildTranscriptItems(reasoningState, false, false, 8))
-    const hiddenAnswer = appendTranscriptChunks(hiddenReasoning!, [answer], answerState.execution, false)
-    expect(hiddenAnswer).toEqual(buildTranscriptItems(answerState, false, false, 8))
-  })
-
   it('completes streaming thinking when answer text starts in the same step', () => {
-    const items = buildTranscriptItems(state([
-      entry({
-        event: {
-          type: 'assistant/chunk',
-          seq: 0,
-          time: 1_000,
-          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'reasoning' } },
-        },
-      }),
-      entry({
-        event: {
-          type: 'assistant/chunk',
-          seq: 1,
-          time: 1_250,
-          data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 1, text: 'streaming answer' } },
-        },
-      }),
-    ], true), true, false, 8)
+    const assistant = {
+      turn: 1, step: 1, reasoningStartedAt: 1_000, reasoningEndedAt: 1_250,
+      content: [{ type: 'reasoning' as const, text: 'reasoning' }, { type: 'text' as const, text: 'streaming answer' }],
+    }
+    const live = state([], true)
+    const items = buildTranscriptItems({ ...live, assistant, execution: buildExecutionSnapshot({
+      sessionId: 'session-test', epoch: 0, entries: [], sessionRunning: true, assistant,
+    }) }, true, false, 8)
 
     expect(items).toEqual([
       expect.objectContaining({

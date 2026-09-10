@@ -6,7 +6,7 @@ packages:
 # `catalog:dsh`, and `pnpm pack` writes the concrete version into the artifact.
 catalogs:
   dsh:
-    '@deepseek-ai/dsh': &dsh-runtime-version 0.1.2-rc.1
+    '@deepseek-ai/dsh': &dsh-runtime-version 0.1.5-rc.1
     '@deepseek-ai/dsh-agent': *dsh-runtime-version
     '@deepseek-ai/dsh-anonymous-user-id': *dsh-runtime-version
     '@deepseek-ai/dsh-api-session-controller': *dsh-runtime-version
@@ -17,6 +17,8 @@ catalogs:
     '@deepseek-ai/dsh-bash-local': *dsh-runtime-version
     '@deepseek-ai/dsh-code-runtime-worker-thread': *dsh-runtime-version
     '@deepseek-ai/dsh-code-runtime': *dsh-runtime-version
+    '@deepseek-ai/dsh-client-connection': *dsh-runtime-version
+    '@deepseek-ai/dsh-client-file-upload': *dsh-runtime-version
     '@deepseek-ai/dsh-commands': *dsh-runtime-version
     '@deepseek-ai/dsh-compaction': *dsh-runtime-version
     '@deepseek-ai/dsh-cordis-host-runner': *dsh-runtime-version
@@ -30,6 +32,7 @@ catalogs:
     '@deepseek-ai/dsh-launch-environment': *dsh-runtime-version
     '@deepseek-ai/dsh-llm': *dsh-runtime-version
     '@deepseek-ai/dsh-jobs': *dsh-runtime-version
+    '@deepseek-ai/dsh-message-feedback': *dsh-runtime-version
     '@deepseek-ai/dsh-output-retention': *dsh-runtime-version
     '@deepseek-ai/dsh-permission-presets': *dsh-runtime-version
     '@deepseek-ai/dsh-plan-mode': *dsh-runtime-version
@@ -59,6 +62,10 @@ catalogs:
     '@deepseek-ai/dsh-web-search-deepseek': *dsh-runtime-version
     '@deepseek-ai/dsh-workflow': *dsh-runtime-version
     '@deepseek-ai/dsh-workspace': *dsh-runtime-version
+    '@deepseek-ai/dsh-hook-protocol': *dsh-runtime-version
+    '@deepseek-ai/dsh-sdk-protocol': *dsh-runtime-version
+    '@deepseek-ai/dsh-util-time': *dsh-runtime-version
+    '@deepseek-ai/dsh-util-workspace-path': *dsh-runtime-version
 
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true

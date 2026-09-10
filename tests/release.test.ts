@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { test } from 'vitest'
 import { parse } from 'yaml'
 
@@ -64,6 +64,14 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
   }
   const tui = JSON.parse(await readFile('packages/tui/package.json', 'utf8')) as PackageManifest
   assert.equal(tui.dsh?.bundle?.patch, './cordis.patch.yml')
+  const runtime = JSON.parse(await readFile('packages/tui/dist/package.json', 'utf8')) as PackageManifest
+  assert.equal(runtime.name, tui.name)
+  assert.equal(runtime.version, root.version)
+  assert.equal(runtime.private, true)
+  for (const target of Object.values(runtime.exports ?? {})) {
+    await access(`packages/tui/dist/${typeof target === 'string' ? target : target.default}`)
+  }
+  assert.equal(await readFile('packages/tui/dist/cordis.patch.yml', 'utf8'), await readFile('packages/tui/cordis.patch.yml', 'utf8'))
 })
 
 test('uses the official pi-tui package without dependency patches', async () => {
