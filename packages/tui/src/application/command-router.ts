@@ -24,7 +24,7 @@ export interface CommandRouterSkillsPort {
 }
 
 export interface CommandActivity {
-  readonly line: string
+  readonly label: string
   readonly startedAt: number
 }
 
@@ -38,14 +38,15 @@ export interface CommandRouterOptions {
   readonly now?: () => number
 }
 
-/** Owns Slash resolution, Host-command activity, and Session-scoped discovery. */
+/** Owns Slash resolution, command activity, and Session-scoped discovery. */
 export class CommandRouter {
-  private hostActivity: CommandActivity | undefined
+  private readonly activities = new Set<CommandActivity>()
   private readonly now: () => number
 
   constructor(private readonly options: CommandRouterOptions) {
     this.now = options.now ?? Date.now
     options.scope.own(options.directory)
+    options.scope.onDispose(() => { this.activities.clear() })
     options.scope.onDispose(options.directory.subscribe(() => {
       options.refreshAutocomplete()
     }))
@@ -54,7 +55,8 @@ export class CommandRouter {
   }
 
   get activity(): Readonly<CommandActivity> | undefined {
-    return this.hostActivity
+    // Show the latest pending command, returning to older work when the latest completes.
+    return [...this.activities].at(-1)
   }
 
   get candidates(): readonly SlashCandidate[] {
@@ -76,9 +78,10 @@ export class CommandRouter {
   async dispatch(text: string): Promise<boolean> {
     this.bindSession(this.options.session.current)
     const name = text.replace(/^\//u, '').trim().split(/\s+/u)[0] ?? ''
-    const optimistic = this.options.directory.isHostCommand(name)
-    if (optimistic) {
-      this.hostActivity = { line: `/${name.toLowerCase()}`, startedAt: this.now() }
+    const label = this.options.directory.activityLabel(name)
+    const activity = label === undefined ? undefined : { label, startedAt: this.now() }
+    if (activity !== undefined) {
+      this.activities.add(activity)
       this.options.onActivity()
     }
     try {
@@ -96,8 +99,8 @@ export class CommandRouter {
       }
       return false
     } finally {
-      if (optimistic) {
-        this.hostActivity = undefined
+      if (activity !== undefined) {
+        this.activities.delete(activity)
         if (this.options.scope.active) this.options.onActivity()
       }
     }

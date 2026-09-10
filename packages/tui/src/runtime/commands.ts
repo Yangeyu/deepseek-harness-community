@@ -12,6 +12,8 @@ export interface TerminalCommandDescriptor {
 /** TUI-owned command with aliases and a local interaction handler. */
 export interface TerminalCommandDefinition extends TerminalCommandDescriptor {
   aliases?: readonly string[]
+  /** Opt into status-bar activity while the handler is pending; interaction surfaces omit this. */
+  activityLabel?: string
   handler(argument: string): void | Promise<void>
 }
 
@@ -110,10 +112,12 @@ export class TerminalCommandDirectory {
     return () => { this.listeners.delete(listener) }
   }
 
-  /** Whether a resolution name executes through the Host source rather than a local handler. */
-  isHostCommand(name: string): boolean {
+  /** Execution feedback follows the effective command, including local aliases and Host shadowing. */
+  activityLabel(name: string): string | undefined {
     const normalized = name.toLowerCase()
-    return !this.localByName.has(normalized) && this.host.some(candidate => candidate.name === normalized)
+    const local = this.localByName.get(normalized)
+    if (local !== undefined) return local.activityLabel
+    return this.host.some(candidate => candidate.name === normalized) ? `Running /${normalized}` : undefined
   }
 
   /** Refresh the agent-scoped Host view when the active session changes. */

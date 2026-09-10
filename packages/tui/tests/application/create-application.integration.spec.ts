@@ -13,6 +13,7 @@ import {
 import type { TuiRuntime } from '../../src/application/contracts.ts'
 import type { TuiHostPorts } from '../../src/application/host-ports.ts'
 import type { RewindPlan, RewindPort } from '../../src/modules/rewind/index.ts'
+import type { ProviderUsage, ProviderUsagePort } from '../../src/modules/usage/contracts.ts'
 import { resolveConfig } from '../../src/application/config.ts'
 import type { RuntimeSessionSnapshot } from '../../src/runtime/session/manager.ts'
 import type { SessionId } from '../../src/runtime/session/snapshot.ts'
@@ -189,6 +190,17 @@ function application(
   })
 }
 
+function usageApplication(read: ProviderUsagePort['read']): TestApplication {
+  const app = application(undefined, undefined, undefined, undefined, { usage: { read } })
+  const state = { ...app.session.current, connection: { events: 'online', control: 'online' }, modelCatalog: {
+    default: { provider: 'openai-codex', model: 'gpt-test' }, routableProviders: ['openai-codex'], groups: [], failures: [],
+  } } satisfies RuntimeSessionSnapshot
+  vi.spyOn(app.session, 'current', 'get').mockReturnValue(state)
+  vi.spyOn(app.session, 'captureSession').mockReturnValue({ sessionId: 'session-usage' as SessionId, epoch: 1, active: true, commitModelCatalog: () => true })
+  app.render(state)
+  return app
+}
+
 function visionFixture(): VisionGateway {
   return {
     config: {
@@ -216,32 +228,85 @@ afterEach(() => {
 })
 
 describe('createApplication integration', () => {
-  it('routes /usage to the selected provider and displays quotas without a model request', async () => {
-    const read = vi.fn(async () => ({ provider: 'openai-codex', checkedAt: 0, groups: [
-      { label: 'Codex', windows: [{ durationSeconds: 604800, usedPercent: 45 }] },
-    ] }))
-    const app = application(undefined, undefined, undefined, undefined, { usage: { read } })
-    const state = { ...app.session.current, modelCatalog: {
-      default: { provider: 'openai-codex', model: 'gpt-test' }, routableProviders: ['openai-codex'], groups: [], failures: [],
-    } }
-    vi.spyOn(app.session, 'current', 'get').mockReturnValue(state)
-    vi.spyOn(app.session, 'captureSession').mockReturnValue({ sessionId: 'session-usage' as SessionId, epoch: 1, active: true, commitModelCatalog: () => true })
+  it('spins while /usage reads the selected provider and displays quotas without a model request', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const result = Promise.withResolvers<ProviderUsage>()
+    const read = vi.fn(() => result.promise)
+    const app = usageApplication(read)
     const notice = vi.spyOn(app.session, 'notice')
     const prompt = vi.spyOn(app.session, 'prompt')
-    await app.composer.submit('/usage')
+
+    const pending = app.composer.submit('/usage')
+    await vi.waitFor(() => {
+      expect(stripTerminalSequences(app.status.render(80).join('\n'))).toContain('Checking subscription usage (0s)')
+    })
     expect(read).toHaveBeenCalledExactlyOnceWith('openai-codex', expect.any(AbortSignal))
+    vi.advanceTimersByTime(160)
+    expect(stripTerminalSequences(app.status.render(80).join('\n'))).toContain('✢ Checking subscription usage')
+    vi.advanceTimersByTime(160)
+    expect(stripTerminalSequences(app.status.render(80).join('\n'))).toContain('✳ Checking subscription usage')
+
+    result.resolve({ provider: 'openai-codex', checkedAt: 0, groups: [
+      { label: 'Codex', windows: [{ durationSeconds: 604800, usedPercent: 45 }] },
+    ] })
+    await pending
+    expect(stripTerminalSequences(app.status.render(80).join('\n'))).toContain('Ready')
     expect(notice).toHaveBeenCalledWith(expect.stringContaining('Weekly: 55% left'))
     expect(prompt).not.toHaveBeenCalled()
+    await app.dispose()
+  })
+
+  it('clears /usage loading and reports a failed quota request', async () => {
+    const result = Promise.withResolvers<ProviderUsage>()
+    const read = vi.fn(() => result.promise)
+    const app = usageApplication(read)
+    const notice = vi.spyOn(app.session, 'notice')
+
+    const pending = app.composer.submit('/usage')
+    await vi.waitFor(() => {
+      expect(app.status.render(80).join('\n')).toContain('Checking subscription usage')
+    })
+    result.reject(new Error('Usage request failed'))
+    await pending
+
+    expect(app.status.render(80).join('\n')).toContain('Ready')
+    expect(notice).toHaveBeenCalledWith('Usage request failed')
+    await app.dispose()
+  })
+
+  it.each([0, 1])('keeps /usage loading until both requests finish when request %i completes first', async first => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const results = [Promise.withResolvers<ProviderUsage>(), Promise.withResolvers<ProviderUsage>()]
+    const read = vi.fn()
+      .mockReturnValueOnce(results[0]!.promise)
+      .mockReturnValueOnce(results[1]!.promise)
+    const app = usageApplication(read)
+    const pending = [app.composer.submit('/usage')]
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+
+    vi.setSystemTime(3_000)
+    pending.push(app.composer.submit('/usage'))
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+    expect(app.status.render(80).join('\n')).toContain('Checking subscription usage (0s)')
+
+    vi.setSystemTime(5_000)
+    results[first]!.resolve({ provider: 'openai-codex', checkedAt: 0, groups: [] })
+    await pending[first]
+    const remaining = 1 - first
+    expect(app.status.render(80).join('\n')).toContain(`Checking subscription usage (${first === 0 ? '2s' : '4s'})`)
+
+    results[remaining]!.resolve({ provider: 'openai-codex', checkedAt: 0, groups: [] })
+    await pending[remaining]
+    expect(app.status.render(80).join('\n')).toContain('Ready')
     await app.dispose()
   })
 
   it.each(['success', 'failure'] as const)('discards a quota %s after the originating session retires', async outcome => {
     const result = Promise.withResolvers<{ provider: string; checkedAt: number; groups: [] }>()
     const read = vi.fn(() => result.promise)
-    const app = application(undefined, undefined, undefined, undefined, { usage: { read } })
-    vi.spyOn(app.session, 'current', 'get').mockReturnValue({ ...app.session.current, modelCatalog: {
-      default: { provider: 'openai-codex', model: 'gpt-test' }, routableProviders: ['openai-codex'], groups: [], failures: [],
-    } })
+    const app = usageApplication(read)
     const captured = { sessionId: 'session-usage' as SessionId, epoch: 1, active: true, commitModelCatalog: () => true }
     vi.spyOn(app.session, 'captureSession').mockReturnValue(captured)
     const notice = vi.spyOn(app.session, 'notice')
@@ -1114,18 +1179,18 @@ describe('createApplication integration', () => {
     expect(stripTerminalSequences(internals.status.render(80).join('\n'))).toContain('Ready')
   })
 
-  it('keeps local commands out of the Host command working wait', async () => {
+  it('opens a local menu without command loading', async () => {
     const app = application()
-    const internals = app
-    const state = { ...internals.session.current, connection: { events: 'online', control: 'online' } } satisfies RuntimeSessionSnapshot
-    vi.spyOn(internals.session, 'current', 'get').mockReturnValue(state)
-    vi.spyOn(internals.session, 'notice').mockImplementation(() => {})
+    const state = { ...app.session.current, connection: { events: 'online', control: 'online' } } satisfies RuntimeSessionSnapshot
+    vi.spyOn(app.session, 'current', 'get').mockReturnValue(state)
     app.render(state)
 
-    await internals.composer.submit('/help')
-    const status = stripTerminalSequences(internals.status.render(80).join('\n'))
-    expect(status).toContain('Ready')
-    expect(status).not.toContain('Running')
+    const pending = app.composer.submit('/config')
+    await Promise.resolve()
+    expect(app.configuration.activeConfigView).toBeDefined()
+    expect(stripTerminalSequences(app.status.render(80).join('\n'))).toContain('Ready')
+    await pending
+    await app.dispose()
   })
 
   it('restarts fallback elapsed time for each optimistic activity', () => {

@@ -81,8 +81,15 @@ usage endpoint and pi-ai grant format. It calls pi-ai's public OAuth refresh met
 inside the Host's `modifyRecord` lock, shared with model requests. The TUI receives
 only quota groups, window lengths, used percentages and reset timestamps. Queries
 are command-scoped and on demand; retired Session results are discarded. No quota
-cache or background polling is maintained. The adapter currently relies on the
-Codex backend usage protocol and the installed pi-ai credential representation.
+cache or background polling is maintained. `/usage` opts into command activity via
+its local definition's `activityLabel`. The command router tracks pending executions
+and exposes the most recently started pending label and start time to the existing
+status-bar spinner; completion removes only that execution, revealing earlier
+pending work when needed. Host commands use the same activity path; local commands
+without a label keep their existing interaction surfaces. Activity is not model
+execution and does not imply Esc cancellation or animate transcript rows.
+The adapter currently relies on the Codex backend usage protocol and the installed
+pi-ai credential representation.
 
 All model requests continue through the existing Session Controller, Harness Agent
 and LLM adapter. There is no secondary executor, terminal, transcript or session

@@ -42,7 +42,7 @@ function fixture() {
       return () => { composerListeners.delete(listener) }
     },
   }
-  let command: { line: string; startedAt: number } | undefined
+  let command: { label: string; startedAt: number } | undefined
   let memory: { state: 'idle' | 'learning' } = { state: 'idle' }
   let now = 1_000
   const invalidate = vi.fn()
@@ -139,7 +139,7 @@ describe('ShellStatusProcess', () => {
   it('owns and retires the activity animation clock', async () => {
     vi.useFakeTimers()
     const test = fixture()
-    test.setCommand({ line: '/compact', startedAt: 1_000 })
+    test.setCommand({ label: 'Running /compact', startedAt: 1_000 })
     test.process.start()
     expect(stripTerminalSequences(test.process.status.render(120).join('\n'))).toContain('Running /compact (0s)')
 

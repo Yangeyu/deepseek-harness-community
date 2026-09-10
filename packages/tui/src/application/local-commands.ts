@@ -33,6 +33,7 @@ export function createLocalCommands(actions: LocalCommandActions): TerminalComma
   }], ...actions.showUsage === undefined ? [] : [{
     name: 'usage',
     description: 'Show subscription quota and reset times for the current provider',
+    activityLabel: 'Checking subscription usage',
     handler: () => actions.showUsage!(),
   }], {
     name: 'help',

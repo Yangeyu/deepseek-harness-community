@@ -21,7 +21,7 @@ export interface ShellStatusComposerPort {
 }
 
 export interface ShellCommandActivity {
-  readonly line: string
+  readonly label: string
   readonly startedAt: number
 }
 

@@ -59,6 +59,31 @@ describe('TerminalCommandDirectory', () => {
     directory.dispose()
   })
 
+  it('resolves activity labels from the effective command, respecting local aliases and shadowing', () => {
+    const host = hostSource([
+      { name: 'compact', description: 'Compact context' },
+      { name: 'status', description: 'Host status' },
+    ])
+    const directory = new TerminalCommandDirectory([{
+      name: 'usage',
+      aliases: ['quota'],
+      description: 'Check quota',
+      activityLabel: 'Checking subscription usage',
+      handler: vi.fn(),
+    }, {
+      name: 'status',
+      description: 'Terminal status',
+      handler: vi.fn(),
+    }], host.source)
+    directory.setSession('session-command' as SessionSummary['sessionId'])
+
+    expect(directory.activityLabel('QUOTA')).toBe('Checking subscription usage')
+    expect(directory.activityLabel('compact')).toBe('Running /compact')
+    expect(directory.activityLabel('status')).toBeUndefined()
+    expect(directory.activityLabel('unknown')).toBeUndefined()
+    directory.dispose()
+  })
+
   it('dispatches local aliases and leaves unknown commands unresolved', async () => {
     const trajectory = vi.fn()
     const directory = new TerminalCommandDirectory([{

@@ -142,7 +142,7 @@ export class ShellStatusProcess {
       const label = activity?.kind === 'vision'
         ? `Vision · Analyzing ${String(activity.imageCount)} image${activity.imageCount === 1 ? '' : 's'}`
         : activity === undefined && commandActivity !== undefined
-          ? `Running ${commandActivity.line}`
+          ? commandActivity.label
           : 'Working'
       const interruption = this.options.interruption(state)
       const interruptHint = interruption.target === undefined
