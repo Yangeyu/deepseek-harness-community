@@ -78,7 +78,8 @@
     "@deepseek-ai/dsh-tools": "catalog:dsh",
     "@deepseek-ai/dsh-util-values": "catalog:dsh",
     "@deepseek-ai/dsh-web": "catalog:dsh",
-    "@deepseek-ai/dsh-web-search-deepseek": "catalog:dsh"
+    "@deepseek-ai/dsh-web-search-deepseek": "catalog:dsh",
+    "@deepseek-ai/dsh-authorization": "catalog:dsh"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -131,6 +132,9 @@
     },
     "@deepseek-ai/dsh-web-search-deepseek": {
       "optional": true
+    },
+    "@deepseek-ai/dsh-authorization": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -158,6 +162,7 @@
     "oxlint": "1.76.0",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "@deepseek-ai/dsh-authorization": "catalog:dsh"
   }
 }

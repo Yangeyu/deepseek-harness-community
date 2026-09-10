@@ -8,6 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-file-reference'
+import type {} from '@deepseek-ai/dsh-authorization'
 import type {} from '@vascent/deepseek-harness-web'
 import type { CommandDescriptor } from '@deepseek-ai/dsh-commands'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -38,6 +39,7 @@ import { HarnessInteractionSource } from './infrastructure/harness/interactions.
 import { settingsPermissionDefaultGateway } from './infrastructure/harness/permission-default.ts'
 import { HarnessSessionTransport } from './infrastructure/harness/session-transport.ts'
 import { harnessSkillCatalogSource } from './infrastructure/harness/skills.ts'
+import { harnessProviderAuthentication } from './infrastructure/harness/authentication.ts'
 
 export { Config, resolveConfig }
 export type { TuiConfig, TuiRuntime }
@@ -88,6 +90,7 @@ export const inject = [
   'communityWeb',
   'memory',
   'settings',
+  'authorization',
   'vision',
 ]
 
@@ -206,6 +209,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
     ctx.memory,
     {
       commandSource,
+      authentication: harnessProviderAuthentication(ctx.authorization),
       vision: ctx.vision,
       web: ctx.communityWeb,
       permissionDefault: settingsPermissionDefaultGateway(ctx.settings),

@@ -65,6 +65,30 @@ does not configure the TUI profile. `config` and `plugin` explicitly delegate
 their work to the underlying `dsh` profile manager.
 All three version aliases print the root package version as `dscode <version>`.
 
+## ChatGPT subscription models
+
+Run `npm run dev` locally, then `/connect` → **OpenAI Codex** to sign in with
+your ChatGPT subscription. Choose browser or device-code login, complete the
+provider's authorization instructions, and select an `openai-codex` model in
+`/model`.
+`/connect openai-codex` signs in again when you need to change accounts.
+
+This is direct model inference through Harness's existing pi-ai provider. Harness
+continues to own the agent loop, tools, permissions, Memory, Rewind and session
+history. No Codex CLI or App Server is launched. OAuth tokens and refresh remain
+with the upstream provider and Host credential store; the terminal only handles
+login instructions and input. API-key OpenAI and ChatGPT subscriptions are distinct
+provider routes. Model availability remains account-dependent. This is a third-party
+compatibility integration; official OAuth application authorization for dscode has
+not been established.
+
+Credentials persist in the DSH credential store, so a Codex CLI login is not
+automatically imported. Esc cancels an authorization attempt without changing
+the selected model. Browser login supports pasting the redirect URL when the
+callback cannot reach the terminal; device-code login supports remote terminals.
+`/connect` currently offers the Codex subscription connection. `/model` selects a
+model independently; the provider resolves and validates credentials when called.
+
 ## Packages
 
 - [`@vascent/dsh-tui`](package.json) is the only published npm package. It

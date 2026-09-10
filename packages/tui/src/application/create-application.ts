@@ -25,6 +25,9 @@ import type {
   WebConfigurationPort,
 } from '../modules/configuration/contracts.ts'
 import { ConfigurationProcess } from '../modules/configuration/process.ts'
+import { AuthenticationProcess } from '../modules/authentication/process.ts'
+import type { ProviderAuthenticationPort } from '../modules/authentication/contracts.ts'
+import { openAuthorizationUrl } from '../infrastructure/terminal/open-url.ts'
 import { InteractionHost } from '../modules/interaction/host.ts'
 import type { MemoryPort } from '../modules/memory/contracts.ts'
 import { MemoryProcess } from '../modules/memory/process.ts'
@@ -58,6 +61,7 @@ export type TuiMemoryPort = MemoryPort
 export type WebGateway = WebConfigurationPort
 
 export interface TuiApplicationDependencies {
+  authentication?: ProviderAuthenticationPort
   commandSource?: HostCommandSource
   vision?: VisionGateway
   web?: WebGateway
@@ -172,6 +176,10 @@ export function createApplication(
       selectModel: model => model === undefined
         ? configuration.openModelSelector()
         : configuration.selectNamedModel(model),
+      ...dependencies.authentication === undefined ? {} : { connectProvider: async (provider?: string) => {
+        const connected = await authentication!.connect(provider)
+        if (lifecycle.scope.active) session.notice(connected ? 'Provider connected. Use /model to select a model.' : 'Sign-in cancelled.')
+      } },
       attach: path => composer.attachPath(path).then(() => undefined),
       pasteImage: () => composer.pasteImage(),
       toggleDetails: () => { configuration.setDetails(!configuration.details) },
@@ -261,6 +269,12 @@ export function createApplication(
     onActivity: () => { shellStatus.refresh() },
     invalidate: () => { invalidateTerminal() },
     scope: memoryScope,
+  })
+  const authentication = dependencies.authentication === undefined ? undefined : new AuthenticationProcess({
+    port: dependencies.authentication, surfaces, tui, theme,
+    scope: lifecycle.scope.fork('authentication'),
+    invalidate: () => { invalidateTerminal() },
+    openUrl: openAuthorizationUrl,
   })
   configuration = new ConfigurationProcess({
     session,

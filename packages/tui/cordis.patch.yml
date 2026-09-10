@@ -10,6 +10,14 @@
 - id: hmr
   disabled: true
 
+# Subscription inference is a Harness model route. pi-ai owns OAuth and refresh.
+- id: llm-pi-ai
+  config:
+    providers:
+      openai-codex:
+        displayName: OpenAI (ChatGPT subscription)
+        transport: sse
+
 - id: tools
   config:
     # yaml-language-server-disable Unresolved tag
@@ -23,6 +31,9 @@
     fetchProvider: http
 
 - insert:
+    - id: authorization
+      name: '@deepseek-ai/dsh-authorization'
+
     - id: code-runtime
       name: '@deepseek-ai/dsh-code-runtime-worker-thread'
 

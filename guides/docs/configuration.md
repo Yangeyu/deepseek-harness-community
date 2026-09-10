@@ -65,3 +65,25 @@ dscode（DeepSeek Harness Community 终端）配置的单一事实源。本文�
 - 用 edit/write 修改 `settings.yaml`：热生效，会话可感知。
 - 单次覆盖用 `--patch <file>`（launcher 的 profile 叠加层）或 profile 级 `~/.dsh/profiles/tui/cordis.patch.yml`。
 - 凭证改动只引导用户设置环境变量（shell profile 或 `.env`），不代写密钥。
+
+## 5. ChatGPT 订阅模型
+
+在 dscode 中执行 `/connect`，选择 **OpenAI Codex**，再选择浏览器登录或设备码登录。
+按提示完成 ChatGPT 授权后，在 `/model` 选择 **OpenAI (ChatGPT subscription)** 下的模型。
+`/model` 只选择模型；需要登录或重新授权时使用 `/connect`。Esc 取消登录不会更换模型。
+
+```sh
+# 仓库开发验证
+npm run dev
+```
+
+`/connect openai-codex` 可以重新授权或更换账号。登录结果存入 Harness 的凭据库，
+后续请求由已有的 `dsh-llm-pi-ai` 负责读取、刷新和使用；模型路由是
+`openai-codex/<model-id>`。模型目录来自 pi-ai，账号实际可用性以请求结果为准。
+普通 OpenAI API Key 走独立的 `openai` 路由。
+`/connect` 目前只提供 Codex 订阅连接。凭据的解析、校验和刷新由 provider 在请求时处理。
+这是第三方兼容接入，尚未确认 dscode 已取得 OpenAI 官方 OAuth 应用授权。
+
+这里是 Harness 直接调用模型：Agent 循环、工具、权限、Memory、Rewind 和会话历史
+仍由 Harness 管理，无需安装或启动 Codex CLI/App Server。已有 Codex CLI 登录不会
+自动导入。浏览器回调不可达时可按提示粘贴回调 URL，远程终端也可选设备码登录。

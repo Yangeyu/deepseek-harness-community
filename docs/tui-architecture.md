@@ -51,6 +51,36 @@ events are adapted once in `infrastructure/harness` to the ports owned by the
 runtime and feature consumers. It does not instantiate the browser Remote
 client, emulate an HTTP/RPC carrier, or retain the removed ApiProxy/Mux path.
 
+## Provider authorization
+
+The community bundle mounts `dsh-authorization` and enables the existing
+`llm-pi-ai` `openai-codex` model route. The route uses request-scoped SSE;
+retained WebSocket sessions require provider-owned lifecycle cleanup. The upstream
+adapter owns subscription OAuth, credential refresh, serialization and stream translation. The
+Host credential store remains the single durable owner of grant records.
+
+`infrastructure/harness/authentication` declares the bundle's exposed subscription
+connections and resolves their keys and methods against the Host authorization
+catalog. The bundled connection is `openai-codex`; adding a provider to the
+upstream catalog alone does not expose a login entry.
+
+`modules/authentication` owns `/connect`'s connection selector and authorization
+surface, and returns the attempt's result. The application routes `/connect`
+directly to this feature. Login uses `ctx.authorization.begin`; browser
+instructions, input and prompt withdrawal follow its interaction contract.
+Account authorization is application-scoped; disposal and Esc cancel the attempt.
+
+`modules/configuration` owns model selection through `/model`. Selection captures
+the existing Session effect scope before async catalog work and rejects results
+after that epoch retires. It operates independently of login. Providers own
+credential resolution, validation and refresh when serving model requests.
+
+All model requests continue through the existing Session Controller, Harness Agent
+and LLM adapter. There is no secondary executor, terminal, transcript or session
+store. Adding a connection requires an explicit supported declaration alongside
+the provider's Host flow and model route. Secret-input methods are not exposed by this
+OAuth-only surface; such a prompt fails explicitly rather than displaying a secret.
+
 ## Source layout
 
 ```text

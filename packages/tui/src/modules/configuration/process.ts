@@ -7,6 +7,7 @@ import type { TuiTheme } from '../../presentation/primitives/theme.ts'
 import { sanitizeTerminalText } from '../../presentation/primitives/text.ts'
 import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
+import type { SessionEffectScope, SessionEffectScopeSource } from '../../runtime/session/effect-scope.ts'
 import { ScopedEffectRunner } from '../../runtime/dispatch/effect-runner.ts'
 import { configurationSnapshot, modelDirectorySnapshot } from './model.ts'
 import type { ConfigurationSnapshot } from './model.ts'
@@ -21,7 +22,7 @@ import { ConfigView, type ConfigEntryStage } from './view/config-view.ts'
 import { VisionConfigView } from './view/vision-view.ts'
 import { WebConfigView } from './view/web-view.ts'
 
-export interface ConfigurationSessionPort {
+export interface ConfigurationSessionPort extends SessionEffectScopeSource {
   readonly current: Readonly<RuntimeSessionSnapshot>
   subscribe(listener: (snapshot: Readonly<RuntimeSessionSnapshot>) => void): () => void
   notice(message: string): void
@@ -170,8 +171,9 @@ export class ConfigurationProcess {
 
   async openModelSelector(): Promise<void> {
     if (this.options.surfaces.active) return
+    const session = this.options.session.captureSession()
     const models = await this.loadModelDirectory()
-    if (this.options.surfaces.active || !this.options.scope.active) return
+    if (this.options.surfaces.active || !this.options.scope.active || !session.active) return
     let surface!: ConfigurationSurfaceHandle
     const close = (): void => { surface.close() }
     const dialog = new ModelDialog(
@@ -180,7 +182,7 @@ export class ConfigurationProcess {
       this.options.theme,
       selected => {
         close()
-        void this.run(() => this.selectModel(selected))
+        void this.run(() => this.selectModel(selected, session))
       },
       close,
     )
@@ -188,6 +190,7 @@ export class ConfigurationProcess {
   }
 
   async selectNamedModel(name: string, reasoningEffort?: string): Promise<void> {
+    const session = this.options.session.captureSession()
     const catalog = await this.options.models.refresh()
     const matches = catalog.groups.flatMap(group => group.models
       .filter(model => `${group.id}/${model.id}` === name || model.id === name)
@@ -198,7 +201,7 @@ export class ConfigurationProcess {
     await this.selectModel({
       ...matches[0] as ModelSelection,
       ...reasoningEffort === undefined ? {} : { reasoningEffort },
-    })
+    }, session)
   }
 
   async cycleReasoningEffort(): Promise<void> {
@@ -293,16 +296,18 @@ export class ConfigurationProcess {
   }
 
   async selectReasoningEffort(reasoningEffort: string | undefined): Promise<void> {
+    const session = this.options.session.captureSession()
     const models = await this.loadModelDirectory()
     const current = models.current
     await this.selectModel({
       provider: current.provider,
       model: current.model,
       ...reasoningEffort === undefined ? {} : { reasoningEffort },
-    })
+    }, session)
   }
 
-  private async selectModel(selection: ModelSelection): Promise<void> {
+  private async selectModel(selection: ModelSelection, session: SessionEffectScope): Promise<void> {
+    if (!this.options.scope.active || !session.active) throw new Error('Session changed; model selection cancelled.')
     if (this.options.imageSubmissionBusy()) {
       throw new Error('Wait for Vision analysis to finish before changing models.')
     }

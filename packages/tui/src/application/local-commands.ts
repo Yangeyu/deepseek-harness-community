@@ -9,6 +9,7 @@ export interface LocalCommandActions {
   create(): Promise<void>
   resume(argument?: string): Promise<void>
   selectModel(argument?: string): Promise<void>
+  connectProvider?(argument?: string): Promise<void>
   attach(path: string): Promise<void>
   pasteImage(): Promise<void>
   toggleDetails(): void
@@ -23,7 +24,12 @@ export interface LocalCommandActions {
 
 /** Static local command catalog; every handler delegates to one owning feature. */
 export function createLocalCommands(actions: LocalCommandActions): TerminalCommandDefinition[] {
-  return [{
+  return [...actions.connectProvider === undefined ? [] : [{
+    name: 'connect',
+    description: 'Sign in to a model provider with a subscription account',
+    argumentHint: '[provider]',
+    handler: (argument: string) => actions.connectProvider!(argument === '' ? undefined : argument),
+  }], {
     name: 'help',
     description: 'Show terminal and Harness commands',
     handler: () => { actions.notice(actions.helpText()) },
