@@ -15,6 +15,7 @@ import type { TuiHostPorts } from '../../src/application/host-ports.ts'
 import type { RewindPlan, RewindPort } from '../../src/modules/rewind/index.ts'
 import { resolveConfig } from '../../src/application/config.ts'
 import type { RuntimeSessionSnapshot } from '../../src/runtime/session/manager.ts'
+import type { SessionId } from '../../src/runtime/session/snapshot.ts'
 import type { HostCommandSource, HostCommandResult } from '../../src/runtime/commands.ts'
 import type { VisionGateway } from '../../src/modules/composer/attachments/coordinator.ts'
 import type { NewAttachmentDraft } from '../../src/modules/composer/attachments/drafts.ts'
@@ -215,6 +216,45 @@ afterEach(() => {
 })
 
 describe('createApplication integration', () => {
+  it('routes /usage to the selected provider and displays quotas without a model request', async () => {
+    const read = vi.fn(async () => ({ provider: 'openai-codex', checkedAt: 0, groups: [
+      { label: 'Codex', windows: [{ durationSeconds: 604800, usedPercent: 45 }] },
+    ] }))
+    const app = application(undefined, undefined, undefined, undefined, { usage: { read } })
+    const state = { ...app.session.current, modelCatalog: {
+      default: { provider: 'openai-codex', model: 'gpt-test' }, routableProviders: ['openai-codex'], groups: [], failures: [],
+    } }
+    vi.spyOn(app.session, 'current', 'get').mockReturnValue(state)
+    vi.spyOn(app.session, 'captureSession').mockReturnValue({ sessionId: 'session-usage' as SessionId, epoch: 1, active: true, commitModelCatalog: () => true })
+    const notice = vi.spyOn(app.session, 'notice')
+    const prompt = vi.spyOn(app.session, 'prompt')
+    await app.composer.submit('/usage')
+    expect(read).toHaveBeenCalledExactlyOnceWith('openai-codex', expect.any(AbortSignal))
+    expect(notice).toHaveBeenCalledWith(expect.stringContaining('Weekly: 55% left'))
+    expect(prompt).not.toHaveBeenCalled()
+    await app.dispose()
+  })
+
+  it.each(['success', 'failure'] as const)('discards a quota %s after the originating session retires', async outcome => {
+    const result = Promise.withResolvers<{ provider: string; checkedAt: number; groups: [] }>()
+    const read = vi.fn(() => result.promise)
+    const app = application(undefined, undefined, undefined, undefined, { usage: { read } })
+    vi.spyOn(app.session, 'current', 'get').mockReturnValue({ ...app.session.current, modelCatalog: {
+      default: { provider: 'openai-codex', model: 'gpt-test' }, routableProviders: ['openai-codex'], groups: [], failures: [],
+    } })
+    const captured = { sessionId: 'session-usage' as SessionId, epoch: 1, active: true, commitModelCatalog: () => true }
+    vi.spyOn(app.session, 'captureSession').mockReturnValue(captured)
+    const notice = vi.spyOn(app.session, 'notice')
+    const pending = app.composer.submit('/usage')
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+    captured.active = false
+    if (outcome === 'success') result.resolve({ provider: 'openai-codex', checkedAt: 0, groups: [] })
+    else result.reject(new Error('Usage request failed'))
+    await pending
+    expect(notice).not.toHaveBeenCalled()
+    await app.dispose()
+  })
+
   it('clears an idle draft before Ctrl+C exits an empty composer', async () => {
     const exit = vi.fn()
     const app = application(undefined, undefined, { exit })

@@ -10,6 +10,7 @@ export interface LocalCommandActions {
   resume(argument?: string): Promise<void>
   selectModel(argument?: string): Promise<void>
   connectProvider?(argument?: string): Promise<void>
+  showUsage?(): Promise<void>
   attach(path: string): Promise<void>
   pasteImage(): Promise<void>
   toggleDetails(): void
@@ -29,6 +30,10 @@ export function createLocalCommands(actions: LocalCommandActions): TerminalComma
     description: 'Sign in to a model provider with a subscription account',
     argumentHint: '[provider]',
     handler: (argument: string) => actions.connectProvider!(argument === '' ? undefined : argument),
+  }], ...actions.showUsage === undefined ? [] : [{
+    name: 'usage',
+    description: 'Show subscription quota and reset times for the current provider',
+    handler: () => actions.showUsage!(),
   }], {
     name: 'help',
     description: 'Show terminal and Harness commands',

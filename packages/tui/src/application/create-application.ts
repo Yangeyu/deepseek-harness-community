@@ -27,6 +27,9 @@ import type {
 import { ConfigurationProcess } from '../modules/configuration/process.ts'
 import { AuthenticationProcess } from '../modules/authentication/process.ts'
 import type { ProviderAuthenticationPort } from '../modules/authentication/contracts.ts'
+import type { ProviderUsagePort } from '../modules/usage/contracts.ts'
+import { formatUsage } from '../modules/usage/format.ts'
+import { selectedModel } from '../runtime/session/model-selection.ts'
 import { openAuthorizationUrl } from '../infrastructure/terminal/open-url.ts'
 import { InteractionHost } from '../modules/interaction/host.ts'
 import type { MemoryPort } from '../modules/memory/contracts.ts'
@@ -62,6 +65,7 @@ export type WebGateway = WebConfigurationPort
 
 export interface TuiApplicationDependencies {
   authentication?: ProviderAuthenticationPort
+  usage?: ProviderUsagePort
   commandSource?: HostCommandSource
   vision?: VisionGateway
   web?: WebGateway
@@ -179,6 +183,19 @@ export function createApplication(
       ...dependencies.authentication === undefined ? {} : { connectProvider: async (provider?: string) => {
         const connected = await authentication!.connect(provider)
         if (lifecycle.scope.active) session.notice(connected ? 'Provider connected. Use /model to select a model.' : 'Sign-in cancelled.')
+      } },
+      ...dependencies.usage === undefined ? {} : { showUsage: async () => {
+        const captured = session.captureSession()
+        const provider = selectedModel(session.current.modelCatalog, session.current.projections)?.provider
+        if (provider === undefined) throw new Error('Select a model with /model before checking usage.')
+        let message: string
+        try {
+          const usage = await dependencies.usage!.read(provider, commandScope.signal)
+          message = usage === undefined ? `Subscription usage is not available for ${provider}.` : formatUsage(usage)
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error)
+        }
+        if (commandScope.active && captured.active) session.notice(message)
       } },
       attach: path => composer.attachPath(path).then(() => undefined),
       pasteImage: () => composer.pasteImage(),

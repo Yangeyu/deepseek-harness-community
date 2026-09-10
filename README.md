@@ -89,6 +89,13 @@ callback cannot reach the terminal; device-code login supports remote terminals.
 `/connect` currently offers the Codex subscription connection. `/model` selects a
 model independently; the provider resolves and validates credentials when called.
 
+`/usage` reads the selected provider's subscription quotas on demand. For
+`openai-codex`, it shows remaining percentages and local reset times for every
+reported window, including separate model quotas such as Spark. Window lengths
+come from the server; an absent 5-hour or weekly window is not inferred. This is
+account-wide quota, separate from the current session's token statistics. Other
+providers currently report that subscription usage is unavailable.
+
 ## Packages
 
 - [`@vascent/dsh-tui`](package.json) is the only published npm package. It

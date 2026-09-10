@@ -40,6 +40,7 @@ import { settingsPermissionDefaultGateway } from './infrastructure/harness/permi
 import { HarnessSessionTransport } from './infrastructure/harness/session-transport.ts'
 import { harnessSkillCatalogSource } from './infrastructure/harness/skills.ts'
 import { harnessProviderAuthentication } from './infrastructure/harness/authentication.ts'
+import { harnessSubscriptionUsage } from './infrastructure/harness/subscription-usage.ts'
 
 export { Config, resolveConfig }
 export type { TuiConfig, TuiRuntime }
@@ -91,6 +92,7 @@ export const inject = [
   'memory',
   'settings',
   'authorization',
+  'credentials',
   'vision',
 ]
 
@@ -210,6 +212,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
     {
       commandSource,
       authentication: harnessProviderAuthentication(ctx.authorization),
+      usage: harnessSubscriptionUsage(ctx.credentials),
       vision: ctx.vision,
       web: ctx.communityWeb,
       permissionDefault: settingsPermissionDefaultGateway(ctx.settings),

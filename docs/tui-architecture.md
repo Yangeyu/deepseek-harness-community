@@ -75,6 +75,15 @@ the existing Session effect scope before async catalog work and rejects results
 after that epoch retires. It operates independently of login. Providers own
 credential resolution, validation and refresh when serving model requests.
 
+`/usage` reads account quotas for the selected provider through `ProviderUsagePort`.
+The Codex companion adapter in `infrastructure/harness/subscription-usage` owns the
+usage endpoint and pi-ai grant format. It calls pi-ai's public OAuth refresh method
+inside the Host's `modifyRecord` lock, shared with model requests. The TUI receives
+only quota groups, window lengths, used percentages and reset timestamps. Queries
+are command-scoped and on demand; retired Session results are discarded. No quota
+cache or background polling is maintained. The adapter currently relies on the
+Codex backend usage protocol and the installed pi-ai credential representation.
+
 All model requests continue through the existing Session Controller, Harness Agent
 and LLM adapter. There is no secondary executor, terminal, transcript or session
 store. Adding a connection requires an explicit supported declaration alongside

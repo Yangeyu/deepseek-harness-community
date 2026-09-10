@@ -81,6 +81,10 @@ npm run dev
 后续请求由已有的 `dsh-llm-pi-ai` 负责读取、刷新和使用；模型路由是
 `openai-codex/<model-id>`。模型目录来自 pi-ai，账号实际可用性以请求结果为准。
 普通 OpenAI API Key 走独立的 `openai` 路由。
+`/usage` 查询当前 provider 的订阅额度，显示剩余百分比和本地时区的重置时间。
+目前支持 `openai-codex`，包含服务端返回的主额度和 Spark 等独立额度组；
+5 小时、每周等窗口按实际返回展示，缺失的窗口不推算。这是账号额度，并非本会话 token 统计。
+查询按命令触发，不会后台轮询；未登录时提示使用 `/connect openai-codex`。
 `/connect` 目前只提供 Codex 订阅连接。凭据的解析、校验和刷新由 provider 在请求时处理。
 这是第三方兼容接入，尚未确认 dscode 已取得 OpenAI 官方 OAuth 应用授权。
 

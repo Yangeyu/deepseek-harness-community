@@ -2,8 +2,9 @@ import type { AuthorizationService } from '@deepseek-ai/dsh-authorization'
 import type { ProviderAuthenticationPort } from '../../modules/authentication/contracts.ts'
 
 /** Subscription connections exposed by this bundle. */
+export const codexConnection = { provider: 'openai-codex', key: 'llm-pi-ai/openai-codex', method: 'oauth' } as const
 const connections: Readonly<Record<string, { key: string; method: string }>> = {
-  'openai-codex': { key: 'llm-pi-ai/openai-codex', method: 'oauth' },
+  [codexConnection.provider]: codexConnection,
 }
 
 /** Adapt declared connections through the Host authorization catalog. */
