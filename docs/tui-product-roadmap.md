@@ -146,7 +146,7 @@ and matching Git tags are the release identity.
 
 ### 实施中 — 长历史渲染与 Request 检索
 
-详细设计及验收门槛见 [TUI 长历史渲染与 Request 检索优化规划](tui-rendering-request-inspection-design.md)。`feat/tui-request-inspection` 首批 Trace 身份、缓存优化与 Request 浏览搜索已接入：正文按真实来源组织，Metadata 默认折叠；Tools 按规范顺序列名称/摘要，单个工具的 Description、Parameters schema、Other attributes 按需展开。`/` 在底部输入，保留正文；确认与 n/N 在同一目录或显式 JSON 中定位、高亮，Esc 清除搜索后再返回。选择与视口滚动分离，完整 `pnpm check` 通过；性能及真实终端门槛尚未全部验收。搜索保留字段计数并可取消地重扫单个命中，首次文本净化/冷定位仍有同步线性成本。P2 Markdown 完整窗口化受公开排版接口缺口约束，尚未实现；P3 仍为规划。未合并、未发布，阶段不绑定发布版本。
+详细设计及验收门槛见 [TUI 长历史渲染与 Request 检索优化规划](tui-rendering-request-inspection-design.md)。`feat/tui-request-inspection` 首批 Trace 身份、缓存优化与 Request 浏览搜索已接入：正文按真实来源组织，Metadata 默认折叠；Tools 按规范顺序列名称/摘要，单个工具的 Description、Parameters schema、Other attributes 按需展开。`/` 在底部输入，保留正文；确认与 n/N 在同一目录或显式 JSON 中定位、高亮，Esc 清除搜索后再返回。选择与视口滚动分离，完整 `pnpm check` 通过；性能及真实终端门槛尚未全部验收。搜索保留字段计数并可取消地重扫单个命中，首次文本净化/冷定位仍有同步线性成本。P2 Markdown 完整窗口化受公开排版接口缺口约束，尚未实现；P3 仍为规划。首批增量已合入 main，纳入 v0.1.30 发布范围；80×24、140×24 的 Request 组件 PTY 主流程冒烟通过，不替代完整应用与性能矩阵验收。后续阶段不绑定发布版本。
 
 - P0：Trace 各布局固定展示当前 Session ID，窄屏完整值可查看；建立性能基线，缓存当前 Request 准备结果，消除热滚动的重复序列化与排版，收敛静态 Trace 指标计算。
 - P1：结构化 Request 目录、Tools 分层披露、自然换行正文、全字段原地搜索/命中跳转，以及缺历史时每次显式加载一页、Esc 停止本视图等待的流程。
