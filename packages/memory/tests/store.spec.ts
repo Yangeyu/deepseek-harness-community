@@ -46,10 +46,13 @@ describe('MemoryFileStore', () => {
     const controller = new AbortController()
     const written = store.write({ cwd, scope: 'project', summary: 'Canceled update.' }, controller.signal)
     const forgotten = store.forget({ cwd, scope: 'project', summary: 'Preserve existing memory.' }, controller.signal)
+    const canceled = Promise.all([
+      expect(written).rejects.toThrow('learning canceled'),
+      expect(forgotten).rejects.toThrow('learning canceled'),
+    ])
     controller.abort(new Error('learning canceled'))
 
-    await expect(written).rejects.toThrow('learning canceled')
-    await expect(forgotten).rejects.toThrow('learning canceled')
+    await canceled
     expect((await store.read(cwd, 'project')).content).toBe(before.content)
   })
 
