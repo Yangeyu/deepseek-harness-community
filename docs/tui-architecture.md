@@ -181,9 +181,8 @@ runtime closure.
 
 ## Upstream DSH alignment and community extension ownership
 
-The selected upstream train is `@deepseek-ai/dsh@0.1.5-rc.1`, corresponding to
-the official `dsh-v0.1.5-rc.1` tag. The workspace catalog selects one exact version
-for every direct DSH dependency; the lockfile resolves the matching peer graph.
+当前统一使用 `@deepseek-ai/dsh@0.1.5-rc.2`。工作区 catalog 是唯一版本来源，
+直接 DSH 依赖共享同一精确版本，lockfile 解析对应的传递依赖与 peer 图。
 
 Session V3 keeps `system/message` on the model-visible surface and stores each
 Assistant attempt as one `assistant/message` or `assistant/attempt` settlement
