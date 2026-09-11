@@ -181,9 +181,8 @@ runtime closure.
 
 ## Upstream DSH alignment and community extension ownership
 
-The selected upstream train is `@deepseek-ai/dsh@0.1.5-rc.1`, corresponding to
-the official `dsh-v0.1.5-rc.1` tag. The workspace catalog selects one exact version
-for every direct DSH dependency; the lockfile resolves the matching peer graph.
+当前统一使用 `@deepseek-ai/dsh@0.1.5-rc.2`。工作区 catalog 是唯一版本来源，
+直接 DSH 依赖共享同一精确版本，lockfile 解析对应的传递依赖与 peer 图。
 
 Session V3 keeps `system/message` on the model-visible surface and stores each
 Assistant attempt as one `assistant/message` or `assistant/attempt` settlement
@@ -867,6 +866,33 @@ history rather than competing with this canonical contract.
   Presentation defaults safe and mergeable code plans to code-and-conversation,
   defaults blocked or code-empty plans to conversation-only, and lists exact
   paths before confirmation.
+- Rewind 恢复已提交的对话，不恢复历史时点的待执行 inbox。通用 fork 的历史前缀
+  可能包含入队事件，却不包含后来的出队事件，不能直接当作 rewind 的执行语义。
+  社区 Host 的 `modules/rewind/adapters/fork` 独占这个策略，composition root 将
+  `HostRewindFork.fork` 注入 Session transport；TUI 只调用和切换，不持有第二份队列。
+- Host rewind 通过公开 `sessionQuery.observeSession` 读取并释放观察租约，要求精确的
+  已完成 `turn/end` 锚点，保留到下一次 `turn/start` 之前的对话与轮间配置事实。
+  委托 Agent 不可借此转换成普通根会话；普通分支保留 cwd、父会话血缘和当前 preset，
+  但不复制运行时所有权或审批能力。原会话的日志与队列保持不变。
+- 创建使用官方 `agents.create({ seed, inheritedEventCount, setup })`。`setup` 最先调用
+  公开 `agent.inbox.clear()`，以新分支自己的取消事件退役所有继承待执行项，再挂载
+  当前 preset；新 preset 与 `agent/session-start` 注入的新上下文必须保留。官方工厂
+  验证、持久化 seed 和 setup 后缀，再发布 Session/Agent。首次观察新分支时旧队列
+  已清除，重新载入也不会复活；不删改历史事件，不做发布后清队列或界面隐藏补偿。
+- 模型绑定不复制官方 Controller 的私有实现，也不另装一套 `installModelSelection`。
+  rewind 分支仍通过官方 Controller 的 `prompt`/`selectModel` 驱动；它在第一次唤醒
+  前恢复 pending selection、request header 或默认模型，并安装自己的唯一绑定。
+  setup 只做组合，不驱动 Agent；任意插件绕开 Controller 提前驱动不属于此入口契约。
+- 创建/setup 失败不向 TUI 返回可打开分支，已有 RewindTransaction 补偿文件阶段。
+  原子保证针对继承 inbox 的初始化，不扩大为所有 Host 资源的总事务：工作区关联
+  公开 API 要求分支已经存在，因此仍在发布后执行。关联失败会释放未采用的 live
+  Agent 并显式报错，但不伪称已有持久分支和通知被抹去。
+- 不修改 `node_modules`、不使用依赖 patch、运行时 monkey-patch 或私有子路径导入。
+  使用的 Host 服务显式声明依赖，仍跟随统一 DSH catalog；未来上游提供对应 fork
+  策略时只替换 Host adapter，Session kernel、TUI 与 rewind 事务不新增兼容分支。
+- 回归测试使用真实 AgentLoop、Controller、Session/投影与临时 JSONL 存储，覆盖首次
+  发布、关闭后冷读重放、源会话不变、新 preset 上下文保留、setup 失败不发布、模型
+  选择及新提示只执行一次；query/preset 端口用可控夹具，不访问用户会话或外部模型。
 - New and resumed Sessions expose checkpoints directly from their logs, whether
   or not they own the code lineage. Another session replaces effect ownership
   only on its first attributed edit. Code restore moves a durable cursor and

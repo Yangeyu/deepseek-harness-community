@@ -41,6 +41,8 @@
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-agent-default-model": "catalog:dsh",
+    "@deepseek-ai/dsh-agent-presets": "catalog:dsh",
     "@deepseek-ai/dsh-api-session-controller": "catalog:dsh",
     "@deepseek-ai/dsh-code-runtime-worker-thread": "catalog:dsh",
     "@deepseek-ai/dsh-commands": "catalog:dsh",
@@ -52,6 +54,7 @@
     "@deepseek-ai/dsh-host-directory-picker-browse": "catalog:dsh",
     "@deepseek-ai/dsh-permission-presets": "catalog:dsh",
     "@deepseek-ai/dsh-plan-mode": "catalog:dsh",
+    "@deepseek-ai/dsh-session-query": "catalog:dsh",
     "@deepseek-ai/dsh-session-stats": "catalog:dsh",
     "@deepseek-ai/dsh-workspace": "catalog:dsh",
     "@deepseek-ai/schemastery": "^3.18.2",
@@ -149,6 +152,7 @@
     "@deepseek-ai/dsh-file-reference": "catalog:dsh",
     "@deepseek-ai/dsh-fs": "catalog:dsh",
     "@deepseek-ai/dsh-launch-environment": "catalog:dsh",
+    "@deepseek-ai/dsh-session-persistence": "catalog:dsh",
     "@deepseek-ai/dsh-session-projection": "catalog:dsh",
     "@deepseek-ai/dsh-session-title": "catalog:dsh",
     "@deepseek-ai/dsh-settings": "catalog:dsh",
