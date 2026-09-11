@@ -21,7 +21,6 @@ type SessionControllerPort = Pick<SessionController,
   | 'control'
   | 'create'
   | 'follow'
-  | 'fork'
   | 'list'
   | 'modelCatalog'
   | 'openWorkspacePath'
@@ -33,6 +32,7 @@ type SessionControllerPort = Pick<SessionController,
 export interface HarnessSessionTransportOptions {
   readonly cwd: string
   readonly controller: SessionControllerPort
+  readonly forkSession: SessionTransport['forkSession']
   readonly tools: Pick<ToolRuntime, 'get'>
   readonly toolScope: (sessionId: SessionId) => Parameters<ToolRuntime['get']>[1]
   readonly onStatus: SessionTransport['onStatus']
@@ -61,7 +61,7 @@ function projectionBaseline(value: HarnessProjectionBaseline): SessionProjection
   }
 }
 
-/** Direct in-process adapter for the upstream Session Controller contract. */
+/** Adapt Controller operations and the composed Host rewind creator to the Session kernel. */
 export class HarnessSessionTransport implements SessionTransport {
   constructor(private readonly options: HarnessSessionTransportOptions) {}
 
@@ -78,7 +78,7 @@ export class HarnessSessionTransport implements SessionTransport {
   }
 
   forkSession(request: Parameters<SessionTransport['forkSession']>[0]) {
-    return this.options.controller.fork(request)
+    return this.options.forkSession(request)
   }
 
   async page(

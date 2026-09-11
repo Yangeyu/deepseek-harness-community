@@ -8,6 +8,8 @@ catalogs:
   dsh:
     '@deepseek-ai/dsh': &dsh-runtime-version 0.1.5-rc.1
     '@deepseek-ai/dsh-agent': *dsh-runtime-version
+    '@deepseek-ai/dsh-agent-default-model': *dsh-runtime-version
+    '@deepseek-ai/dsh-agent-presets': *dsh-runtime-version
     '@deepseek-ai/dsh-anonymous-user-id': *dsh-runtime-version
     '@deepseek-ai/dsh-api-session-controller': *dsh-runtime-version
     '@deepseek-ai/dsh-attachment': *dsh-runtime-version

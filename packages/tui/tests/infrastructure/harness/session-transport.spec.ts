@@ -12,6 +12,7 @@ function transportFor(records: ReturnType<typeof historyRecord>[], definition: o
   return new HarnessSessionTransport({
     cwd: '/workspace',
     controller: { page } as never,
+    forkSession: async () => { throw new Error('This history fixture does not fork.') },
     tools: { get: vi.fn(() => definition) } as never,
     toolScope: () => undefined as never,
     onStatus: () => () => {},

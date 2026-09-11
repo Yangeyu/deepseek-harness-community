@@ -20,6 +20,7 @@ import {
   installRewindPromptAdapter,
   FileRewindRepository,
   HostRewindConversationHistory,
+  HostRewindFork,
   LocalWorkspaceRewind,
   MemoryRewindParticipant,
   RewindService,
@@ -66,8 +67,6 @@ export type { ApprovalPrompt, QuestionPrompt } from './runtime/session/interacti
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    /** Loader settlement barrier supplied by dsh profile boot. */
-    loader?: { await(): Promise<void> }
     /** Application command line supplied by the dsh launcher. */
     cmdlineArgs?: { get(): readonly string[] }
     /** Bounded process exit supplied by the dsh launcher. */
@@ -81,6 +80,9 @@ export const name = 'community-tui'
 /** Host services required by the in-process terminal composition root. */
 export const inject = [
   'sessionController',
+  'sessionQuery',
+  'agentDefaultModel',
+  'workspaceRegistry',
   'fileReferences',
   'sessionSkillCatalog',
   'goals',
@@ -148,9 +150,11 @@ export function apply(ctx: Context, config: TuiConfig): void {
     return
   }
   const resolved = resolveConfig(invocation.config)
+  const rewindFork = new HostRewindFork(ctx)
   const sessionTransport = new HarnessSessionTransport({
     cwd: resolved.cwd,
     controller: ctx.sessionController,
+    forkSession: request => rewindFork.fork(request),
     tools: ctx.tools,
     toolScope: sessionId => ctx.agents.get(sessionId),
     onStatus: listener => ctx.on('api-session/status', listener),
