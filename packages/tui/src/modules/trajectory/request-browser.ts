@@ -174,7 +174,6 @@ export class RequestBrowser implements Component {
     this.editorError = ''
     const input = new Input()
     input.focused = true
-    input.setValue(kind === 'search' ? this.inspection.search.query : '')
     input.onSubmit = () => this.submitEditor()
     input.onEscape = () => { this.handleAction('surface.back') }
     this.editor = { kind, input }
