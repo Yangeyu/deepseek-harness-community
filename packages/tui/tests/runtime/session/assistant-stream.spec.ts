@@ -56,7 +56,12 @@ describe('Session assistant presentation', () => {
     const prompt = session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Question' }] }), { surfaceOp: 'append' })
     value.hydrate({ events: session.snapshotEvents().map(event => ({ event })), hasMore: false }, prompt.seq)
     value.acceptAssistantFrame({ type: 'start', attemptId, revision: 1, startedAfterSeq: prompt.seq, turn: 1, step: 1 })
-    const request = value.current.execution.modelRequest(stepExecutionKey(1, 1))
+    const readRequest = (current: SessionRuntime) => {
+      const document = current.current.execution.requestDocument(stepExecutionKey(1, 1))
+      expect(document.status).toBe('available')
+      return document.status === 'available' ? document.read().request : undefined
+    }
+    const request = readRequest(value)
     expect(request).toMatchObject({
       provider: 'test', model: 'test', messages: [
         { role: 'system', content: [{ type: 'text', text: 'System instructions' }] },
@@ -68,10 +73,10 @@ describe('Session assistant presentation', () => {
       message: createAssistantMessage({ source: { provider: 'test', model: 'test' }, content: [{ type: 'text', text: 'Answer' }] }),
     }, { surfaceOp: 'append' })
     value.appendEvent({ event: response })
-    expect(value.current.execution.modelRequest(stepExecutionKey(1, 1))).toEqual(request)
+    expect(readRequest(value)).toEqual(request)
     const restored = runtime()
     restored.hydrate({ events: session.snapshotEvents().map(event => ({ event })), hasMore: false }, response.seq)
-    expect(restored.current.execution.modelRequest(stepExecutionKey(1, 1))).toEqual(request)
+    expect(readRequest(restored)).toEqual(request)
     await restored.dispose()
     await value.dispose()
   })

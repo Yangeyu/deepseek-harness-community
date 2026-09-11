@@ -198,7 +198,10 @@ describe('execution projection', () => {
 
     const call = snapshot.modelCall(stepExecutionKey(1, 1))
     expect(call).toMatchObject({ request: { throughSeq: 3 }, responseSeq: 4 })
-    expect(snapshot.modelRequest(stepExecutionKey(1, 1))).toMatchObject({
+    const request = snapshot.requestDocument(stepExecutionKey(1, 1))
+    expect(request.status).toBe('available')
+    if (request.status !== 'available') throw new Error('Expected request inputs')
+    expect(request.read().request).toMatchObject({
       provider: 'deepseek',
       model: 'chat',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Inspect the trace' }] }],
@@ -210,7 +213,10 @@ describe('execution projection', () => {
       request: { throughSeq: 7, header: { config: { provider: 'deepseek', model: 'chat' } } },
       responseSeq: 8,
     })
-    expect(snapshot.modelRequest(nextKey)?.messages).toMatchObject([
+    const nextRequest = snapshot.requestDocument(nextKey)
+    expect(nextRequest.status).toBe('available')
+    if (nextRequest.status !== 'available') throw new Error('Expected next request inputs')
+    expect(nextRequest.read().request.messages).toMatchObject([
       { role: 'user', content: [{ type: 'text', text: 'Inspect the trace' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
     ])
@@ -292,7 +298,16 @@ describe('execution projection', () => {
       nodes: snapshot.ordered(),
       modelCalls: snapshot.ordered()
         .filter(node => node.kind === 'step')
-        .map(node => snapshot.modelCall(node.key)),
+        .map(node => {
+          const call = snapshot.modelCall(node.key)
+          return {
+            ...call,
+            request: call?.request === undefined ? undefined : {
+              throughSeq: call.request.throughSeq,
+              header: call.request.header,
+            },
+          }
+        }),
       active: snapshot.active(),
       diagnostics: snapshot.diagnostics(),
     })

@@ -327,18 +327,28 @@ describe('SessionManager', () => {
     expect(manager.current.events).toEqual([])
   })
 
-  it('pages older history against the immutable opening cursor', async () => {
+  it('shares an in-flight history page and advances its cursor only after settlement', async () => {
     const transport = new FakeSessionTransport()
     transport.histories.set('session-1', { events: [turnStart(5)], hasMore: true })
-    transport.pageResult = { events: [turnStart(1)], hasMore: false }
+    const pending = Promise.withResolvers<SessionHistoryPage>()
+    vi.spyOn(transport, 'page').mockImplementationOnce(request => {
+      transport.pageRequests.push(request)
+      return pending.promise
+    })
     const { manager } = await startFixture(transport)
-
+    const first = manager.loadEarlierHistory()
+    const shared = manager.loadEarlierHistory()
+    expect(transport.pageRequests).toHaveLength(1)
+    pending.resolve({ events: [turnStart(1)], hasMore: true })
+    await expect(Promise.all([first, shared])).resolves.toEqual([true, true])
+    transport.pageResult = { events: [turnStart(0)], hasMore: false }
     await expect(manager.loadEarlierHistory()).resolves.toBe(true)
 
-    expect(transport.pageRequests).toEqual([{
-      sessionId: sessionId('session-1'), throughSeq: 5, beforeSeq: 5, maxMessages: 200,
-    }])
-    expect(manager.current.events.map(entry => entry.event.seq)).toEqual([1, 5])
+    expect(transport.pageRequests).toEqual([
+      { sessionId: sessionId('session-1'), throughSeq: 5, beforeSeq: 5, maxMessages: 200 },
+      { sessionId: sessionId('session-1'), throughSeq: 5, beforeSeq: 1, maxMessages: 200 },
+    ])
+    expect(manager.current.events.map(entry => entry.event.seq)).toEqual([0, 1, 5])
     expect(manager.current.historyHasMore).toBe(false)
   })
 

@@ -12,7 +12,7 @@ export function sanitizeTerminalLine(value: string): string {
   return sanitizeTerminalText(value).replaceAll(/\s+/gu, ' ').trim()
 }
 
-/** Render an unknown value as bounded, terminal-safe text. */
+/** Serialize an unknown value as terminal-safe text; callers own size and viewport budgets. */
 export function displayUnknown(value: unknown): string {
   if (typeof value === 'string') return sanitizeTerminalText(value)
   try {

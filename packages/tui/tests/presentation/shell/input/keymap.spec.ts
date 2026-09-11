@@ -84,15 +84,41 @@ describe('keymap', () => {
     expect(keymap('2', approval)).toEqual({ kind: 'action', action: 'surface.select-2' })
   })
 
+  it('opens Trace identity without stealing text input or existing navigation', () => {
+    const trace = { ...idle, surfaceActive: true, surfaceInput: 'trajectory' as const }
+    expect(keymap('s', trace)).toEqual({ kind: 'action', action: 'surface.session-info' })
+    expect(keymap('j', trace)).toEqual({ kind: 'action', action: 'surface.next' })
+    expect(keymap('J', trace)).toEqual({ kind: 'action', action: 'surface.detail-next' })
+    expect(keymap('s', { ...trace, surfaceInput: 'text-input' })).toEqual({ kind: 'unmatched' })
+  })
+
+  it('routes Request commands without stealing query characters or ledger g/j/k', () => {
+    const trace = { ...idle, surfaceActive: true, surfaceInput: 'trajectory' as const }
+    const request = { ...trace, surfaceInput: 'request' as const }
+    expect(keymap('g', trace)).toEqual({ kind: 'action', action: 'surface.first' })
+    expect(keymap('g', request)).toEqual({ kind: 'action', action: 'surface.request-jump' })
+    for (const [raw, action] of [
+      ['/', 'surface.search'], ['n', 'surface.search-next'], ['N', 'surface.search-previous'],
+      ['\u001b[110;2u', 'surface.search-previous'], ['c', 'surface.search-case'],
+      ['v', 'surface.request-format'],
+      ['[', 'surface.section-previous'], [']', 'surface.section-next'],
+      ['j', 'surface.next'], ['J', 'surface.detail-next'], ['s', 'surface.session-info'],
+    ] as const) {
+      expect(keymap(raw, request)).toEqual({ kind: 'action', action })
+      expect(keymap(raw, { ...request, surfaceInput: 'text-input' })).toEqual({ kind: 'unmatched' })
+    }
+    expect(keymap('\t', request)).toEqual({ kind: 'action', action: 'surface.tab-next' })
+  })
+
   it('has no equal-priority conflict in any reachable Surface context', () => {
     const contexts = [
       'approval', 'choice', 'memory', 'menu', 'model-menu', 'multi-select',
-      'rewind-confirm', 'rewind-point', 'skills', 'text-input', 'trajectory', 'web-menu',
+      'request', 'rewind-confirm', 'rewind-point', 'skills', 'text-input', 'trajectory', 'web-menu',
     ] as const
     const inputs = [
       '\u001b', '\u0003', '\t', '\u001b[Z', '\u001b[A', '\u001b[B',
       '\u001b[C', '\u001b[D', '\u001b[5~', '\u001b[6~', '\r', ' ',
-      'g', 'G', 'h', 'j', 'J', 'k', 'K', 'l', 'r', 'R', '1', '9',
+      'g', 'G', 'h', 'j', 'J', 'k', 'K', 'l', 'r', 'R', 's', '1', '9', '/', 'n', 'N', 'c', 'v', '[', ']',
     ]
     for (const surfaceInput of contexts) {
       for (const raw of inputs) {

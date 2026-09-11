@@ -13,6 +13,7 @@ export class ImmutableExecutionSnapshot implements ExecutionSnapshot {
   private readonly bySeq: ReadonlyMap<number, HistoryEntry>
   private readonly modelCalls: ReadonlyMap<ExecutionKey, StepModelCall>
   private readonly activeNodes: readonly ExecutionNode[]
+  private readonly firstMissingSeq: number
 
   constructor(
     readonly sessionId: string | undefined,
@@ -31,7 +32,14 @@ export class ImmutableExecutionSnapshot implements ExecutionSnapshot {
       children.set(node.parentKey, siblings)
     }
     this.byParent = new Map([...children].map(([key, value]) => [key, Object.freeze(value)]))
-    this.bySeq = new Map(entries.map(entry => [entry.event.seq, entry]))
+    const bySeq = new Map<number, HistoryEntry>()
+    let firstMissingSeq = 0
+    for (const entry of entries) {
+      bySeq.set(entry.event.seq, entry)
+      if (entry.event.seq === firstMissingSeq) firstMissingSeq += 1
+    }
+    this.bySeq = bySeq
+    this.firstMissingSeq = firstMissingSeq
     this.modelCalls = new Map(calls.map(call => [call.key, call]))
     this.activeNodes = Object.freeze(nodes.filter(node => node.state.phase !== 'settled'))
   }
@@ -64,7 +72,12 @@ export class ImmutableExecutionSnapshot implements ExecutionSnapshot {
     return this.modelCalls.get(key as ExecutionKey)
   }
 
-  modelRequest(key: ExecutionKey | string) {
-    return resolveModelRequest(this.entries, this.modelCall(key)?.request)
+  requestDocument(key: ExecutionKey | string) {
+    return resolveModelRequest(this.entries, this.modelCall(key)?.request, {
+      sessionId: this.sessionId,
+      epoch: this.epoch,
+      stepKey: key as ExecutionKey,
+    }, this.firstMissingSeq)
   }
+
 }

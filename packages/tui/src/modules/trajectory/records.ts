@@ -2,6 +2,7 @@ import type { HistoryEntry } from '../../runtime/session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type {} from '@vascent/deepseek-harness-vision'
 import { displayUnknown, sanitizeTerminalLine } from '../../presentation/primitives/text.ts'
+import { messageLabel } from './message-label.ts'
 import {
   commandExecutionKey,
   executionStatus,
@@ -16,6 +17,7 @@ import {
   type ExecutionStatus,
   type ExecutionNode,
   type ExecutionSnapshot,
+  type ModelRequestAvailability,
 } from '../../runtime/execution/projection/index.ts'
 
 export type TrajectoryKind = 'turn' | 'step' | 'user' | 'thinking' | 'assistant' | 'tool' | 'command' | 'vision' | 'context' | 'event'
@@ -37,7 +39,7 @@ interface TrajectoryRecordBase {
   summary: string
   detail?: string
   payload?: unknown
-  modelRequest?: () => unknown
+  requestDocument?: ModelRequestAvailability
   result?: unknown
   schema?: unknown
 }
@@ -214,15 +216,13 @@ function executionRecord(
 function stepModelDetails(
   node: ExecutionNode,
   execution: ExecutionSnapshot,
-): Pick<TrajectoryRecordBase, 'modelRequest' | 'result' | 'schema'> {
+): Pick<TrajectoryRecordBase, 'requestDocument' | 'result' | 'schema'> {
   const call = execution.modelCall(node.key)
   const event = execution.entry(call?.responseSeq)?.event
   const result = event?.type === 'assistant/message' ? event.data : undefined
   const schema = call?.request?.header?.tools
-  let request: unknown
   return {
-    modelRequest: () => request ??= execution.modelRequest(node.key)
-      ?? 'Model request unavailable in the loaded Session history.',
+    requestDocument: execution.requestDocument(node.key),
     ...result === undefined ? {} : { result },
     ...schema === undefined ? {} : { schema },
   }
@@ -379,8 +379,7 @@ export function buildTrajectoryRecords(
             type: event.type,
             seq: event.seq,
             ...at,
-            title: 'User input',
-            summary: oneLine(detail),
+            ...messageLabel(event.data),
             detail,
             payload: event.data,
           }
@@ -391,12 +390,11 @@ export function buildTrajectoryRecords(
         }
         records.push({
           key: `event:${String(event.seq)}`,
-          kind: 'user',
+          kind: 'context',
           type: event.type,
           seq: event.seq,
           ...at,
-          title: 'Context input',
-          summary: oneLine(detail),
+          ...messageLabel(event.data),
           detail,
           tone: 'info',
           occurredAt: event.time,

@@ -70,6 +70,7 @@ export class TrajectoryProcess {
       () => { void this.run(() => this.options.session.cancel()) },
       () => { this.close() },
       this.options.invalidate,
+      this.options.scope.fork('trajectory-view'),
     )
     this.view = view
     this.surface = this.options.surfaces.open({ placement: 'workspace', component: view })
@@ -78,6 +79,7 @@ export class TrajectoryProcess {
   private close(): void {
     this.surface?.close()
     this.surface = undefined
+    void this.view?.dispose()
     this.view = undefined
   }
 

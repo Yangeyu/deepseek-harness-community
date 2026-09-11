@@ -81,6 +81,7 @@ export class SessionManager {
   private readonly workspace: SessionWorkspace
   private readonly interactionListeners = new Set<SessionInteractionListener>()
   private readonly pendingInteractions = new Map<string, PendingHostInteraction>()
+  private readonly historyPages = new WeakMap<SessionRuntime, Promise<boolean>>()
   private started = false
 
   constructor(
@@ -165,6 +166,18 @@ export class SessionManager {
   /** Prepend one older, message-aligned history page without disturbing live tail events. */
   async loadEarlierHistory(): Promise<boolean> {
     const runtime = this.requireRuntime()
+    const pending = this.historyPages.get(runtime)
+    if (pending !== undefined) return pending
+    const task = this.readEarlierPage(runtime)
+    this.historyPages.set(runtime, task)
+    try {
+      return await task
+    } finally {
+      this.historyPages.delete(runtime)
+    }
+  }
+
+  private async readEarlierPage(runtime: SessionRuntime): Promise<boolean> {
     const beforeSeq = runtime.current.events.at(0)?.event.seq
     const throughSeq = runtime.historyCursor
     if (!runtime.current.historyHasMore || beforeSeq === undefined || throughSeq === undefined) return false

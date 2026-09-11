@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { compactCheckpointSource } from '@deepseek-ai/dsh-compaction/checkpoint'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manager.ts'
 import {
@@ -45,6 +48,31 @@ describe('trajectory records', () => {
     expect(buildTrajectoryRecords(entries, execution)).toEqual([
       expect.objectContaining({ kind: 'user', tone: 'info', detail: 'Retain me' }),
     ])
+  })
+
+  it('distinguishes injected context from human input without moving events between Turns', () => {
+    const session = Session.create(SessionId('context-labels'))
+    session.append('user/message', createUserMessage({
+      source: compactCheckpointSource('compact-1' as Parameters<typeof compactCheckpointSource>[0]),
+      content: [{ type: 'text', text: 'Previous work' }],
+    }), { surfaceOp: 'append' })
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('user/message', createUserMessage({
+      source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }],
+    }), { surfaceOp: 'append' })
+    session.append('user/message', createUserMessage({
+      source: { kind: 'plugin', plugin: 'workspace', form: 'instructions' },
+      content: [{ type: 'text', text: 'Project conventions' }],
+    }), { surfaceOp: 'append' })
+    const messages = records(session.snapshotEvents().map(event => ({ event }))).filter(record => record.type === 'user/message')
+    expect(messages.map(record => [record.kind, record.title, record.summary])).toEqual([
+      ['context', 'Compaction checkpoint', 'Previous work'],
+      ['user', 'User input', 'hi'],
+      ['context', 'Workspace instructions · workspace', 'Project conventions'],
+    ])
+    expect(trajectoryParentKey(messages[0]!)).toBeUndefined()
+    expect(trajectoryParentKey(messages[2]!)).toBe('step:1:1')
   })
 
   it('turns a supported Vision evidence message into a timed trace record after the user input', () => {
@@ -153,7 +181,9 @@ describe('trajectory records', () => {
       result: { message: { role: 'assistant' }, usage: { inputTokens: 10, outputTokens: 2 } },
       schema: [{ name: 'bash' }],
     })
-    expect(result[1]?.modelRequest?.()).toMatchObject({
+    const request = result[1]?.requestDocument
+    expect(request?.status).toBe('available')
+    expect(request?.status === 'available' ? request.read().request : undefined).toMatchObject({
       provider: 'deepseek',
       model: 'chat',
       messages: [],

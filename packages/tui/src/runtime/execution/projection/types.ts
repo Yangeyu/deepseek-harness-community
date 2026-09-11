@@ -1,7 +1,7 @@
 import type { AssistantPresentation } from '../../session/assistant-stream.ts'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { HistoryEntry } from '../../session/contracts.ts'
-import type { ModelRequest, StepModelCall } from './model-call.ts'
+import type { ModelRequestAvailability, StepModelCall } from './model-call.ts'
 
 declare const executionKeyBrand: unique symbol
 
@@ -82,7 +82,8 @@ export interface ExecutionSnapshot {
   diagnostics(): readonly ExecutionDiagnostic[]
   entry(seq: number | undefined): HistoryEntry | undefined
   modelCall(key: ExecutionKey | string): StepModelCall | undefined
-  modelRequest(key: ExecutionKey | string): ModelRequest | undefined
+  /** Cheap descriptor; consumers own only their current document's read result. */
+  requestDocument(key: ExecutionKey | string): ModelRequestAvailability
 }
 
 export interface RuntimeVisionActivity {

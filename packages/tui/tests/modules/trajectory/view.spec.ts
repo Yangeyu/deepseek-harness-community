@@ -1,4 +1,6 @@
 import { Text, visibleWidth } from '@earendil-works/pi-tui'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { describe, expect, it, vi } from 'vitest'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manager.ts'
@@ -8,6 +10,118 @@ import { TrajectoryView } from '../../../src/modules/trajectory/view.ts'
 import { state, timedTraceEvents, toolEvents } from './fixtures.ts'
 
 describe('TrajectoryView', () => {
+  it.each([80, 140])('identifies the inspected Session in ledger and detail at width %i', width => {
+    const snapshot = state(toolEvents(true))
+    const close = vi.fn()
+    const view = new TrajectoryView(snapshot, () => 20, createTheme(false), async () => false, vi.fn(), close, vi.fn())
+    expect(view.render(width).join('\n')).toContain(`Session ${snapshot.sessionId}`)
+    view.handleAction('surface.confirm')
+    view.handleAction('surface.tab-next')
+    const detail = view.render(width)
+    expect(detail.join('\n')).toContain(`Session ${snapshot.sessionId}`)
+
+    view.handleAction('surface.session-info')
+    expect(view.render(width).join('\n')).toContain('Session identity')
+    expect(view.render(width).join('\n')).toContain(snapshot.sessionId)
+    view.handleAction('surface.back')
+    expect(view.render(width)).toEqual(detail)
+    expect(close).not.toHaveBeenCalled()
+  })
+
+  it('reveals the full Session ID from a clipped identity row and retires old identity on switch', () => {
+    const id = 'session-1234567890-abcdefghijklmnopqrstuvwxyz-9876543210' as NonNullable<RuntimeSessionSnapshot['sessionId']>
+    const view = new TrajectoryView(state(toolEvents(true), { sessionId: id }), () => 12, createTheme(false), async () => false, vi.fn(), vi.fn(), vi.fn())
+    const header = view.render(28)[0] ?? ''
+    expect(header).toContain('Session ')
+    expect(header).toContain('…')
+    expect(view.handlePointer({ kind: 'click', row: 0, column: 2 })).toBe(true)
+    expect(view.render(28).slice(1).join('')).toContain(id)
+    view.setState(state(toolEvents(true)))
+    expect(view.render(80).join('\n')).toContain('Session session-trajectory')
+    expect(view.render(80).join('\n')).not.toContain(id)
+    view.setState(state([], { sessionId: undefined }))
+    expect(view.render(80).join('\n')).toContain('Session unavailable')
+  })
+
+  it('prepares once, serializes only explicit JSON, and reuses it across viewport changes', async () => {
+    const session = Session.create(SessionId('request-render'))
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('request/header', { reason: 'initial', header: { config: { provider: 'test', model: 'test' } } })
+    session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'large request '.repeat(1_000) }] }), { surfaceOp: 'append' })
+    const snapshot = state(session.snapshotEvents().map(event => ({ event })))
+    const descriptor = snapshot.execution.requestDocument('step:1:1')
+    expect(descriptor.status).toBe('available')
+    if (descriptor.status !== 'available') return
+    const document = descriptor.read()
+    const read = vi.fn(() => document)
+    vi.spyOn(snapshot.execution, 'requestDocument').mockReturnValue({ ...descriptor, read })
+    const stringify = vi.spyOn(JSON, 'stringify')
+    const view = new TrajectoryView(snapshot, () => 16, createTheme(false), async () => false, vi.fn(), vi.fn(), vi.fn())
+    try {
+      view.handleAction('surface.first')
+      view.handleAction('surface.confirm')
+      view.handleAction('surface.tab-next')
+      expect(view.render(100).join('\n')).toContain('Preparing canonical Request')
+      await vi.waitFor(() => { expect(view.requestPhase).toBe('ready') })
+      expect(view.render(100).join('\n')).toContain('Structure')
+      expect(stringify.mock.calls.filter(([value]) => value === document.request)).toHaveLength(0)
+      view.handleAction('surface.request-format')
+      expect(view.render(100).join('\n')).toContain('provider')
+      for (let index = 0; index < 20; index += 1) {
+        view.handleAction('surface.next')
+        view.render(index < 10 ? 100 : 80)
+      }
+      const position = view.render(80)
+      view.handleAction('surface.tab-next')
+      expect(view.inputContext).toBe('trajectory')
+      view.render(80)
+      view.handleAction('surface.tab-previous')
+      expect(view.render(80)).toEqual(position)
+      expect(read).toHaveBeenCalledOnce()
+      expect(stringify.mock.calls.filter(([value]) => value === document.request)).toHaveLength(1)
+    } finally {
+      stringify.mockRestore()
+      await view.dispose()
+    }
+  })
+
+  it('routes Request search text without stealing ledger selection or J/K semantics', async () => {
+    const session = Session.create(SessionId('request-focus'))
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('request/header', { reason: 'initial', header: { config: { provider: 'test', model: 'test' } } })
+    session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'needle ns' }] }), { surfaceOp: 'append' })
+    session.append('step/start', { turn: 1, step: 2 })
+    const view = new TrajectoryView(state(session.snapshotEvents().map(event => ({ event }))), () => 24, createTheme(false), async () => false, vi.fn(), vi.fn(), vi.fn())
+    try {
+      view.handleAction('surface.first')
+      view.render(140)
+      view.handleAction('surface.confirm')
+      view.handleAction('surface.tab-next')
+      await vi.waitFor(() => { expect(view.requestPhase).toBe('ready') })
+      view.render(140)
+      view.handleAction('surface.back')
+      expect(view.inputContext).toBe('trajectory')
+      const selected = view.snapshot.selectedKey
+      view.handleAction('surface.detail-next')
+      expect(view.snapshot.selectedKey).toBe(selected)
+      view.handleAction('surface.search')
+      expect(view.inputContext).toBe('text-input')
+      view.handleInput('needle ns')
+      expect(view.render(140).join('\n')).toContain('needle ns')
+      expect(view.snapshot.selectedKey).toBe(selected)
+      view.handleInput('\r')
+      await vi.waitFor(() => { expect(view.render(140).join('\n')).toContain('1/1 hits') })
+      expect(view.inputContext).toBe('request')
+      view.handleAction('surface.back')
+      view.handleAction('surface.back')
+      expect(view.inputContext).toBe('trajectory')
+      view.handleAction('surface.next')
+      expect(view.snapshot.selectedKey).not.toBe(selected)
+    } finally {
+      await view.dispose()
+    }
+  })
+
   it('keeps its semantic record projection stable across inert stream deltas', () => {
     const initial = state(toolEvents(true), { runState: 'running' })
     const view = new TrajectoryView(

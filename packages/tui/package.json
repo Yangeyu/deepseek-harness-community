@@ -44,6 +44,7 @@
     "@deepseek-ai/dsh-api-session-controller": "catalog:dsh",
     "@deepseek-ai/dsh-code-runtime-worker-thread": "catalog:dsh",
     "@deepseek-ai/dsh-commands": "catalog:dsh",
+    "@deepseek-ai/dsh-compaction": "catalog:dsh",
     "@deepseek-ai/dsh-cordis-host-runner": "catalog:dsh",
     "@deepseek-ai/dsh-file-reference-local": "catalog:dsh",
     "@deepseek-ai/dsh-goal": "catalog:dsh",

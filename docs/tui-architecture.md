@@ -662,9 +662,9 @@ component references while the Session-owned implementations are replaced.
   Skill rows with Commands while preserving dispatch semantics.
 - `SkillAuthoringCoordinator` keeps file creation, editor handoff, validation,
   and effective-catalog settlement outside presentation components.
-- `TrajectoryModel` indexes execution parent keys once per event snapshot and
-  computes offsets, durations, parent share, sibling bottlenecks, and the global
-  bottleneck in linear time.
+- `TrajectoryModel` 每次记录快照变化时以 O(n) 建立静态计时、父级和瓶颈索引；
+  稳定快照的 measure 为 O(1)，时钟刷新只更新活动节点及受影响的 share/赢家。
+  返回值是同一可变的同步 render read-model，不可当作历史帧快照持有。
 - `runtime/execution/projection` is the only module that projects accepted Prompt
   boundaries, pairs execution facts, and enforces transition legality. It
   exposes one immutable snapshot for Turn, Prompt, Step, Thought, Tool,
@@ -698,8 +698,41 @@ component references while the Session-owned implementations are replaced.
   and Summary consistently. One ledger-row painter owns focus for every record
   kind, and the shared focus theme preserves its background across nested ANSI
   styles and truncation resets.
-- In the split Trajectory surface, Shift+J/K scroll the overflowing detail
-  panel while j/k keep stepping the ledger selection.
+- Trace 三种布局保留 Session 身份栏，`s`/点击查看完整 ID，Esc 返回原阅读位置。
+  Ledger 焦点下 j/k 仍选择执行记录，Shift+J/K 只滚动右侧详情。Request 在 Detail
+  焦点下，目录 ↑/↓、j/k 选择标题或披露项，选中离屏才滚动跟随；J/K 与滚轮只滚正文。
+  展开/收起保留目标屏幕位置，JSON 中上下键滚动，Tab/左右仍切外层详情页。
+  消息展开即原地读正文；Metadata 默认折叠，包含全部未作为正文展示的字段，
+  包括真实 role/source、文本块 type 与工具调用 name，使用相对字段名展示。
+- Tools 保持 canonical 顺序，展开根目录先显示各工具名称与短摘要；单个工具及其
+  Description、Parameters schema、Other attributes 各自默认折叠，按需展开完整值。
+  展示工具列表不遍历 schema；工具名称直接关联原始字段，命中高亮绘制在名称标题上。
+- Request 的 `/` 输入位于底部，保留当前目录或显式 `v` JSON 的正文窗口；输入字符
+  透传给 Input。结构搜索覆盖当前完整 Request 原始字段值，不受披露状态影响；JSON
+  搜索覆盖完整序列化文本。确认与 n/N 循环选中一处命中，自动展开所属层级并在同一
+  目录/JSON 中定位和高亮，`c` 切换大小写。Esc 先取消输入或清除查询与高亮，保留
+  正文锚点；再退出 JSON 到目录或沿外层返回路径退出。`g` 跳转最新输入、checkpoint
+  或原消息序号，`[`/`]` 跳目录标题。
+- `message-label` 依据正式 source.kind/form 统一 Trace 与 Request 的身份标题；只有
+  人类输入标为 USER，普通注入记录标为 CONTEXT，既有 Vision 执行记录保持独立。
+  未声明 form 的来源显示 `Context · producer`，不使用插件名称映射表或正文关键词猜身份。
+  Request 折叠标题追加有界短摘要，展开后不重复摘要；真实 role/source 保留在 Metadata
+  与 JSON 中。此展示分类不改变实际请求角色、消息顺序或事件 Turn/Step 归属。
+- `requestDocument(key)` 暴露规范请求的可用性、修订和真实消息来源，不是 HTTP 抓包。
+  `RequestBrowser`/`RequestInspection` 只拥有当前 Step 的目录、文本窗口与可取消查询；
+  同 Step 切 Tab 暂停任务并保留有效阅读锚点，切 Step/epoch/Session 或关闭时释放。
+  搜索按字段分块进行，索引仅保留有命中字段的引用和计数；`match(ordinal, signal)`
+  跳过已计数字段，可取消地重扫目标字段并返回单个命中，不保留全部命中位置。
+  JSON 仅显式进入时完整序列化，当前冷序列化仍同步。
+- `TextDocument` 共用纯文本窗口、原始 UTF-16 偏移定位和高亮绘制：每 128 视觉行
+  一个稀疏 checkpoint，预读 32 行、缓冲预算 64 Ki 字符（屏幕必需行另计），仅缓存
+  两个原文到安全文本的范围边界。高亮只重绘相交可见行，不建立全源逐字符映射。
+  首次文本净化、新边界的前缀转换与冷定位仍同步且随前缀线性增长；宽度变化重建
+  视觉索引，尚未保证精确原文锚点。源字符串与稀疏索引也并非恒定内存；这些能力
+  不代表 Transcript 或巨型 Markdown 单块已经窗口化。
+- `SessionManager.loadEarlierHistory` 复用每个 runtime 的单个在途页。Request 中 Enter
+  显式加载一页，Esc 停止该视图等待，已飞页仍归 Session 所有；不取消模型 turn，
+  不自动补载全部历史。既有 epoch/ownership 检查继续阻止旧 Session 页污染新 Session。
 - `modules/rewind/contracts` is independent of Cordis, Memory, Node, and pi-tui.
   The injected `RewindConversationHistory` rebuilds Prompt checkpoints from the
   active Session log. `modules/rewind/domain` owns only the bounded

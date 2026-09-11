@@ -4,8 +4,12 @@ import {
   wrapTextWithAnsi,
 } from '@earendil-works/pi-tui'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
-import { displayUnknown, sanitizeTerminalText } from '../../presentation/primitives/text.ts'
+import { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
+import type { ModelRequestAvailability } from '../../runtime/execution/projection/model-call.ts'
+import { RequestBrowser } from './request-browser.ts'
+import { displayUnknown, sanitizeTerminalLine, sanitizeTerminalText } from '../../presentation/primitives/text.ts'
 import type { TuiTheme } from '../../presentation/primitives/theme.ts'
+import { TextDocument } from '../../presentation/primitives/text-document.ts'
 import { TrajectoryModel, type TrajectoryMetrics } from './model.ts'
 import {
   buildTrajectoryRecords,
@@ -19,6 +23,7 @@ import { statusVisual } from '../../presentation/primitives/status-visual.ts'
 import { executionStatus } from '../../runtime/execution/projection/index.ts'
 import type {
   SurfaceInputAction,
+  SurfaceInputContext,
   SurfaceInputTarget,
   SurfacePointerAction,
   SurfacePointerTarget,
@@ -50,6 +55,7 @@ interface TrajectoryRecordPresentation {
 type TrajectoryClickTarget =
   | { readonly kind: 'record'; readonly index: number }
   | { readonly kind: 'tab'; readonly index: number }
+  | { readonly kind: 'session' }
 
 interface TrajectoryClickHit {
   readonly row: number
@@ -59,8 +65,8 @@ interface TrajectoryClickHit {
 }
 
 /** Keep record identity ordering consistent across the ledger and detail pane. */
-function recordPresentation(record: TrajectoryRecord): TrajectoryRecordPresentation {
-  const description = (record.detail ?? record.summary).split('\n')
+function recordPresentation(record: TrajectoryRecord, includeSummary = false): TrajectoryRecordPresentation {
+  const description = includeSummary ? (record.detail ?? record.summary).split('\n') : []
   if (record.toolName === undefined) {
     return {
       heading: record.title,
@@ -68,8 +74,11 @@ function recordPresentation(record: TrajectoryRecord): TrajectoryRecordPresentat
       summary: [record.title, ...description],
     }
   }
-  const operation = (record.detail ?? record.title).split('\n')
-  const operationDiffers = operation.length > 1 || operation[0] !== record.toolName
+  const operationText = record.detail ?? record.title
+  const lineBreak = operationText.indexOf('\n')
+  const firstLine = lineBreak < 0 ? operationText : operationText.slice(0, lineBreak)
+  const operation = includeSummary ? operationText.split('\n') : [firstLine]
+  const operationDiffers = lineBreak >= 0 || firstLine !== record.toolName
   return {
     heading: operationDiffers ? `${record.toolName} · ${operation[0] ?? record.title}` : record.toolName,
     ledger: `${record.toolName} · ${record.summary}`,
@@ -87,7 +96,7 @@ function tabValue(record: TrajectoryRecord, tab: TrajectoryTab, metrics: Traject
   const timing = trajectoryTiming(record)
   switch (tab) {
     case 'summary': {
-      const presentation = recordPresentation(record)
+      const presentation = recordPresentation(record, true)
       return [
         `Status       ${timing.status}`,
         `Duration     ${metrics.durationMs === undefined ? 'Not measured' : formatDuration(metrics.durationMs, 'detail')}`,
@@ -109,15 +118,15 @@ function tabValue(record: TrajectoryRecord, tab: TrajectoryTab, metrics: Traject
       ]
     }
     case 'payload': {
-      const payload = record.kind === 'step' ? record.modelRequest?.() : record.payload
-      return payload === undefined ? ['No input recorded for this item.'] : displayUnknown(payload).split('\n')
+      const payload = record.payload
+      return payload === undefined ? ['No input recorded for this item.'] : [displayUnknown(payload)]
     }
     case 'result':
       return record.result === undefined
         ? [record.kind === 'step' ? 'No model response recorded for this Step.' : 'No result recorded for this event.']
-        : displayUnknown(record.result).split('\n')
+        : [displayUnknown(record.result)]
     case 'schema':
-      return record.schema === undefined ? ['Schema unavailable for this event.'] : displayUnknown(record.schema).split('\n')
+      return record.schema === undefined ? ['Schema unavailable for this event.'] : [displayUnknown(record.schema)]
     case 'timing': {
       const end = timing.completedAt
       return [
@@ -183,16 +192,31 @@ function recordGlyph(record: TrajectoryRecord, theme: TuiTheme): string {
 
 /** Full-screen, keyboard-first execution ledger and event detail surface. */
 export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget {
-  readonly inputContext = 'trajectory' as const
+  private requestBrowser: RequestBrowser | undefined
+  private requestActive = false
+  private requestAvailability: ModelRequestAvailability | undefined
+  private requestOwner: { sessionId: string | undefined; epoch: number; key: string } | undefined
+  private requestPanel: { top: number; left: number; width: number; height: number } | undefined
   private state: Readonly<RuntimeSessionSnapshot>
   private records: TrajectoryRecord[]
   private model: TrajectoryModel<TrajectoryRecord>
   private index: number
   private mode: 'list' | 'detail' = 'list'
+  private sessionInfoOpen = false
+  private sessionInfoOffset = 0
+  private sessionInfoMaxOffset = 0
+  private sessionInfoPageRows = 1
   private tabIndex = 0
   private detailOffset = 0
   private detailPageRows = 1
   private detailMaxOffset = 0
+  private detailDocument: {
+    key: string
+    tab: TrajectoryTab
+    source: unknown
+    metrics: string
+    document: TextDocument
+  } | undefined
   private listPageRows = 1
   private followTail = true
   private loadingEarlier = false
@@ -203,6 +227,9 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
   private readonly clickHits: TrajectoryClickHit[] = []
   private readonly collapsedTurns = new Set<number>()
   private readonly collapsedSteps = new Set<string>()
+  private visibleIndexes: number[] | undefined
+  private readonly visiblePositions = new Map<number, number>()
+  private latestTurn: TrajectoryRecord | undefined
 
   constructor(
     state: Readonly<RuntimeSessionSnapshot>,
@@ -212,11 +239,34 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
     private readonly onInterrupt: () => void,
     private readonly onCancel: () => void,
     private readonly onChange: () => void,
+    private readonly scope = new LifecycleScope('trajectory-view'),
   ) {
     this.state = state
     this.records = buildTrajectoryRecords(state.events, state.execution)
+    this.latestTurn = this.records.findLast(record => record.kind === 'turn')
+    this.visibleIndexes = undefined
     this.model = new TrajectoryModel(this.records, trajectoryTiming, trajectoryParentKey)
     this.index = Math.max(0, this.records.length - 1)
+  }
+
+  get inputContext(): SurfaceInputContext {
+    return !this.sessionInfoOpen && this.mode === 'detail' && this.requestActive && this.requestBrowser !== undefined
+      ? this.requestBrowser.inputContext : 'trajectory'
+  }
+
+  get requestPhase() { return this.requestBrowser?.phase }
+
+  handleInput(raw: string): void {
+    if (this.inputContext === 'text-input') this.requestBrowser?.handleInput(raw)
+  }
+
+  dispose(): Promise<void> {
+    this.requestActive = false
+    this.requestBrowser = undefined
+    this.requestAvailability = undefined
+    this.requestOwner = undefined
+    this.detailDocument = undefined
+    return this.scope.dispose()
   }
 
   get snapshot(): {
@@ -245,8 +295,13 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
     const selectedKey = this.records[this.index]?.key
     this.state = state
     this.records = buildTrajectoryRecords(state.events, state.execution)
+    this.latestTurn = this.records.findLast(record => record.kind === 'turn')
+    this.visibleIndexes = undefined
     this.model = new TrajectoryModel(this.records, trajectoryTiming, trajectoryParentKey)
     if (sessionChanged) {
+      this.sessionInfoOpen = false
+      this.sessionInfoOffset = 0
+      this.detailDocument = undefined
       this.mode = 'list'
       this.followTail = true
       this.tabIndex = 0
@@ -260,12 +315,46 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
     this.index = this.followTail || preserved === -1
       ? Math.max(0, this.records.length - 1)
       : preserved
+    this.syncRequest()
   }
 
   handleAction(action: SurfaceInputAction): void {
+    try {
+      const requestAction = action === 'surface.search' || action === 'surface.search-next'
+        || action === 'surface.search-previous' || action === 'surface.search-case'
+        || action === 'surface.request-format'
+        || action === 'surface.request-jump' || action === 'surface.section-next' || action === 'surface.section-previous'
+      const detailScroll = this.splitLayout && (action === 'surface.detail-next' || action === 'surface.detail-previous')
+      if (!this.sessionInfoOpen && this.requestActive && this.requestBrowser !== undefined && (this.mode === 'detail' || requestAction || detailScroll)) {
+        if (requestAction) {
+          this.mode = 'detail'
+          this.followTail = false
+        }
+        if (this.requestBrowser.handleAction(action)) return
+      }
+      this.handleNavigation(action)
+    } finally {
+      this.syncRequest()
+    }
+  }
+
+  private handleNavigation(action: SurfaceInputAction): void {
     if (action === 'surface.interrupt-or-cancel') {
       if (this.state.runState !== 'idle') this.onInterrupt()
       else this.onCancel()
+      return
+    }
+    if (action === 'surface.session-info') {
+      this.sessionInfoOpen = !this.sessionInfoOpen
+      this.sessionInfoOffset = 0
+      return
+    }
+    if (this.sessionInfoOpen) {
+      if (action === 'surface.back' || action === 'surface.cancel') this.sessionInfoOpen = false
+      if (action === 'surface.previous' || action === 'surface.detail-previous') this.scrollSessionInfo(-1)
+      if (action === 'surface.next' || action === 'surface.detail-next') this.scrollSessionInfo(1)
+      if (action === 'surface.page-previous') this.scrollSessionInfo(-this.sessionInfoPageRows)
+      if (action === 'surface.page-next') this.scrollSessionInfo(this.sessionInfoPageRows)
       return
     }
     if (this.mode === 'detail') {
@@ -357,6 +446,42 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
   }
 
   handlePointer(action: SurfacePointerAction): boolean {
+    try {
+      const panel = this.requestPanel
+      if (!this.sessionInfoOpen && panel !== undefined && this.requestBrowser !== undefined
+        && action.row >= panel.top && action.row < panel.top + panel.height
+        && action.column >= panel.left && action.column < panel.left + panel.width) {
+        const consumed = this.requestBrowser.handlePointer({ ...action, row: action.row - panel.top, column: action.column - panel.left })
+        if (consumed) {
+          if (action.kind === 'click') {
+            this.mode = 'detail'
+            this.followTail = false
+          }
+          return true
+        }
+      }
+      if (action.kind === 'click' && action.column < this.executionColumnEnd && this.requestBrowser?.inputContext === 'text-input') {
+        this.requestBrowser.handleAction('surface.back')
+      }
+      return this.handleNavigationPointer(action)
+    } finally {
+      this.syncRequest()
+    }
+  }
+
+  private handleNavigationPointer(action: SurfacePointerAction): boolean {
+    if (this.sessionInfoOpen) {
+      if (action.kind !== 'wheel') return false
+      const previous = this.sessionInfoOffset
+      this.scrollSessionInfo(action.direction)
+      return previous !== this.sessionInfoOffset
+    }
+    if (action.kind === 'click' && this.clickHits.some(hit => hit.target.kind === 'session'
+      && hit.row === action.row && action.column >= hit.columnStart && action.column < hit.columnEnd)) {
+      this.sessionInfoOpen = true
+      this.sessionInfoOffset = 0
+      return true
+    }
     const region = action.column < this.executionColumnEnd
       ? 'execution'
       : this.detailColumnStart !== undefined && action.column >= this.detailColumnStart
@@ -398,12 +523,15 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
   invalidate(): void {}
 
   render(width: number): string[] {
+    if (this.sessionInfoOpen) return this.renderSessionInfo(Math.max(1, width))
     const now = Date.now()
     const { metrics, bottleneck } = this.model.measure(now)
     this.clickHits.splice(0)
     this.executionColumnEnd = 0
     this.detailColumnStart = undefined
+    this.requestPanel = undefined
     this.splitLayout = width >= SPLIT_MIN_WIDTH && this.records[this.index] !== undefined
+    this.syncRequest()
     if (this.splitLayout) return this.renderSplit(width, metrics, bottleneck)
     return this.mode === 'detail'
       ? this.renderDetail(width, metrics)
@@ -446,7 +574,7 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
     const height = Math.max(1, this.visibleRows())
     const header = this.renderOverviewHeader(width, metrics, bottleneck)
     const footerText = this.mode === 'detail'
-      ? 'Detail focus · j/k scroll · Tab/←/→ section · Esc events'
+      ? `Detail focus · ${this.requestActive ? '' : 'j/k scroll · '}Tab/←/→ section · Esc events`
       : 'Ledger focus · j/k select · J/K scroll detail · h/l fold · Enter/Tab inspect · Esc chat'
     const footer = [truncateToWidth(this.theme.dim(footerText), width)]
     const available = Math.max(0, height - header.length - footer.length)
@@ -526,18 +654,27 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
       truncateToWidth(this.theme.bold(this.theme.accent(`Trajectory · ${recordPresentation(record).heading}`)), width),
       truncateToWidth(this.theme.dim(`${kindLabel(record.kind)} · ${location}`), width),
       truncateToWidth(tabs, width),
-      '',
+      this.renderSessionHeader(width, rowOffset + 3),
     ]
     const available = Math.max(0, height - header.length - 1)
     this.detailPageRows = Math.max(1, available)
+    if (available === 0) return this.fit(header, height)
     const tab = TABS[this.tabIndex]?.id ?? 'summary'
-    const content = wrapped(tabValue(record, tab, metrics), width)
-    this.detailMaxOffset = Math.max(0, content.length - available)
-    this.detailOffset = Math.max(0, Math.min(this.detailMaxOffset, this.detailOffset))
-    const body = content.slice(this.detailOffset, this.detailOffset + available)
-    const range = content.length <= available
+    if (this.requestActive && this.requestBrowser !== undefined) {
+      this.requestPanel = { top: rowOffset + header.length, left: columnOffset, width, height: available }
+      const body = this.requestBrowser.render(width, available)
+      const footer = truncateToWidth(this.theme.dim('Tab/←/→ section · Esc events · s Session'), width)
+      return this.fit([...header, ...body, ...Array<string>(Math.max(0, available - body.length)).fill(''), footer], height)
+    }
+    const content = this.detailText(record, tab, metrics).read(width, this.detailOffset, available)
+    this.detailOffset = content.top
+    this.detailMaxOffset = content.totalRows === undefined
+      ? content.top + Math.max(1, available)
+      : Math.max(0, content.totalRows - available)
+    const body = content.lines
+    const range = content.totalRows !== undefined && content.totalRows <= available
       ? ''
-      : ` · ${String(this.detailOffset + 1)}-${String(Math.min(content.length, this.detailOffset + available))}/${String(content.length)}`
+      : ` · ${String(content.top + 1)}-${String(content.top + body.length)}/${content.totalRows === undefined ? '…' : String(content.totalRows)}`
     const controls = split && this.mode === 'list'
       ? 'Enter/Tab focus details'
       : 'Tab/←/→ section · j/k scroll · Esc events'
@@ -547,12 +684,58 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
     return this.fit([...header, ...body, ...Array<string>(Math.max(0, available - body.length)).fill(''), ...footer], height)
   }
 
+  private syncRequest(): void {
+    if (!this.scope.active) return
+    const record = this.records[this.index]
+    const wasActive = this.requestActive
+    this.requestActive = (this.mode === 'detail' || this.splitLayout)
+      && TABS[this.tabIndex]?.id === 'payload' && record?.kind === 'step'
+    const availability = record?.kind === 'step' ? record.requestDocument : undefined
+    if (availability === undefined || record === undefined) {
+      void this.requestBrowser?.dispose()
+      this.requestBrowser = undefined
+      this.requestAvailability = undefined
+      this.requestOwner = undefined
+      this.requestPanel = undefined
+      return
+    }
+    const owner = this.requestOwner
+    if (owner?.sessionId !== this.state.sessionId || owner?.epoch !== this.state.execution.epoch || owner?.key !== record.key) {
+      void this.requestBrowser?.dispose()
+      this.requestBrowser = undefined
+      this.requestAvailability = undefined
+      this.requestOwner = { sessionId: this.state.sessionId, epoch: this.state.execution.epoch, key: record.key }
+    }
+    if (!this.requestActive) {
+      this.requestPanel = undefined
+      if (wasActive) this.requestBrowser?.suspend()
+      return
+    }
+    this.requestBrowser ??= new RequestBrowser(this.theme, this.scope, this.onChange, this.onLoadEarlier)
+    if (this.requestAvailability === availability && this.requestBrowser.phase !== 'empty') return
+    this.requestAvailability = availability
+    this.detailDocument = undefined
+    void this.requestBrowser.open(availability)
+  }
+
+  private detailText(record: TrajectoryRecord, tab: TrajectoryTab, metrics: TrajectoryMetrics): TextDocument {
+    const source = tab === 'payload' ? record.payload : tab === 'result' ? record.result : tab === 'schema' ? record.schema : record
+    const timing = tab === 'summary' || tab === 'timing'
+      ? `${metrics.durationMs}:${metrics.shareOfParent}:${metrics.offsetMs}:${metrics.slowest}`
+      : ''
+    const cached = this.detailDocument
+    if (cached?.key === record.key && cached.tab === tab && cached.source === source && cached.metrics === timing) return cached.document
+    const document = new TextDocument(tabValue(record, tab, metrics).join('\n'))
+    this.detailDocument = { key: record.key, tab, source, metrics: timing, document }
+    return document
+  }
+
   private renderOverviewHeader(
     width: number,
     metrics: ReadonlyMap<string, TrajectoryMetrics>,
     bottleneck: TrajectoryRecord | undefined,
   ): string[] {
-    const activeTurn = this.records.filter(record => record.kind === 'turn').at(-1)
+    const activeTurn = this.latestTurn
     const total = activeTurn === undefined ? undefined : metrics.get(activeTurn.key)?.durationMs
     const visibleCount = this.visibleRecordIndexes().length
     const recordCount = visibleCount === this.records.length
@@ -574,10 +757,47 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
           : ` · ${(bottleneckMetrics.shareOfParent * 100).toFixed(1)}% of ${bottleneckMetrics.parentTitle ?? 'parent'}`
       }`
     return [
+      this.renderSessionHeader(width, 0),
       truncateToWidth(this.theme.bold(this.theme.accent(title)), width),
       truncateToWidth(bottleneck === undefined ? this.theme.dim(bottleneckLine) : this.theme.warning(bottleneckLine), width),
-      this.theme.dim('─'.repeat(Math.max(0, width))),
     ]
+  }
+
+  private renderSessionHeader(width: number, row: number): string {
+    const prefix = 'Session '
+    const suffix = ' · s info'
+    const id = sanitizeTerminalLine(this.state.sessionId ?? 'unavailable')
+    const available = Math.max(1, width - visibleWidth(prefix + suffix))
+    const characters = Array.from(id)
+    const label = visibleWidth(id) <= available ? id : [
+      truncateToWidth(id, Math.max(0, Math.ceil((available - 1) / 2)), ''),
+      '…',
+      truncateToWidth(characters.slice(-Math.max(0, Math.floor((available - 1) / 2))).join(''), Math.max(0, Math.floor((available - 1) / 2)), ''),
+    ].join('')
+    this.clickHits.push({ row, columnStart: 0, columnEnd: width, target: { kind: 'session' } })
+    return truncateToWidth(this.theme.accent(`${prefix}${label}${suffix}`), width)
+  }
+
+  private renderSessionInfo(width: number): string[] {
+    const height = Math.max(1, this.visibleRows())
+    const header = truncateToWidth(this.theme.bold(this.theme.accent('Session identity')), width)
+    const content = wrapped([
+      this.state.sessionId ?? 'Session unavailable',
+      '',
+      'The Session currently inspected by this Trace.',
+    ], width)
+    this.sessionInfoPageRows = Math.max(1, height - 2)
+    this.sessionInfoMaxOffset = Math.max(0, content.length - this.sessionInfoPageRows)
+    this.scrollSessionInfo(0)
+    return this.fit([
+      header,
+      ...content.slice(this.sessionInfoOffset, this.sessionInfoOffset + this.sessionInfoPageRows),
+      truncateToWidth(this.theme.dim('j/k scroll · Esc return'), width),
+    ], height)
+  }
+
+  private scrollSessionInfo(offset: number): void {
+    this.sessionInfoOffset = Math.max(0, Math.min(this.sessionInfoMaxOffset, this.sessionInfoOffset + offset))
   }
 
   private renderColumnHeader(width: number): string {
@@ -598,7 +818,7 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
   ): string[] {
     this.listPageRows = Math.max(1, available)
     const visibleIndexes = this.visibleRecordIndexes()
-    const selectedPosition = Math.max(0, visibleIndexes.indexOf(this.index))
+    const selectedPosition = this.visiblePositions.get(this.index) ?? 0
     const maximumStart = Math.max(0, visibleIndexes.length - available)
     const start = Math.max(0, Math.min(maximumStart, selectedPosition - Math.floor(available / 2)))
     const visible = visibleIndexes.slice(start, start + available)
@@ -708,6 +928,7 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
   }
 
   private visibleRecordIndexes(): number[] {
+    if (this.visibleIndexes !== undefined) return this.visibleIndexes
     const indexes: number[] = []
     for (const [index, record] of this.records.entries()) {
       if (record.kind === 'turn') {
@@ -724,10 +945,14 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
         && this.collapsedSteps.has(stepKey(record.turn, record.step))) continue
       indexes.push(index)
     }
+    this.visiblePositions.clear()
+    for (const [position, index] of indexes.entries()) this.visiblePositions.set(index, position)
+    this.visibleIndexes = indexes
     return indexes
   }
 
   private collapseSelected(): void {
+    this.visibleIndexes = undefined
     const record = this.records[this.index]
     if (record?.kind === 'turn' && record.turn !== undefined) {
       this.collapsedTurns.add(record.turn)
@@ -743,6 +968,7 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
   }
 
   private expandSelected(): void {
+    this.visibleIndexes = undefined
     const record = this.records[this.index]
     if (record?.kind === 'turn' && record.turn !== undefined) {
       this.collapsedTurns.delete(record.turn)
@@ -754,7 +980,7 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
 
   private move(offset: number): void {
     const visible = this.visibleRecordIndexes()
-    const position = Math.max(0, visible.indexOf(this.index))
+    const position = this.visiblePositions.get(this.index) ?? 0
     const target = Math.max(0, Math.min(visible.length - 1, position + offset))
     this.index = visible[target] ?? this.index
     this.followTail = this.index === this.records.length - 1
@@ -784,7 +1010,7 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
   }
 
   private async loadEarlier(): Promise<void> {
-    if (!this.state.historyHasMore || this.loadingEarlier) return
+    if (!this.scope.active || !this.state.historyHasMore || this.loadingEarlier) return
     this.loadingEarlier = true
     this.loadError = undefined
     this.followTail = false
@@ -792,10 +1018,10 @@ export class TrajectoryView implements SurfaceInputTarget, SurfacePointerTarget 
     try {
       await this.onLoadEarlier()
     } catch (error: unknown) {
-      this.loadError = error instanceof Error ? error.message : String(error)
+      if (this.scope.active) this.loadError = error instanceof Error ? error.message : String(error)
     } finally {
       this.loadingEarlier = false
-      this.onChange()
+      if (this.scope.active) this.onChange()
     }
   }
 

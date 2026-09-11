@@ -85,10 +85,11 @@ function binding(
 }
 
 function surfaceBindings(
-  context: SurfaceInputContext,
+  context: SurfaceInputContext | readonly SurfaceInputContext[],
   entries: ReadonlyArray<readonly [TerminalKey, SurfaceInputAction]>,
 ): KeymapBinding[] {
-  return entries.map(([key, action]) => binding(action, key, onSurface(context), SURFACE_PRIORITY))
+  const available = onSurface(...typeof context === 'string' ? [context] : context)
+  return entries.map(([key, action]) => binding(action, key, available, SURFACE_PRIORITY))
 }
 
 const MENU_BINDINGS = (context: SurfaceInputContext): KeymapBinding[] => surfaceBindings(context, [
@@ -246,7 +247,15 @@ const KEYMAP_BINDINGS: readonly KeymapBinding[] = [
     ['right', 'surface.expand'],
     ['enter', 'surface.confirm'],
   ]),
-  ...surfaceBindings('trajectory', [
+  ...surfaceBindings(['trajectory', 'request'], [
+    ['s', 'surface.session-info'],
+    ['/', 'surface.search'],
+    ['n', 'surface.search-next'],
+    ['N', 'surface.search-previous'],
+    ['c', 'surface.search-case'],
+    ['v', 'surface.request-format'],
+    ['[', 'surface.section-previous'],
+    [']', 'surface.section-next'],
     ['ctrl-c', 'surface.interrupt-or-cancel'],
     ['escape', 'surface.back'],
     ['tab', 'surface.tab-next'],
@@ -263,12 +272,13 @@ const KEYMAP_BINDINGS: readonly KeymapBinding[] = [
     ['page-down', 'surface.page-next'],
     ['h', 'surface.collapse'],
     ['l', 'surface.expand'],
-    ['g', 'surface.first'],
     ['G', 'surface.last'],
     ['ctrl-u', 'surface.half-page-previous'],
     ['ctrl-d', 'surface.half-page-next'],
     ['enter', 'surface.confirm'],
   ]),
+  ...surfaceBindings('trajectory', [['g', 'surface.first']]),
+  ...surfaceBindings('request', [['g', 'surface.request-jump']]),
 ]
 
 /** Resolve one normalized gesture with explicit priority and conflict detection. */

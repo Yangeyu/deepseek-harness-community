@@ -14,6 +14,8 @@ export interface ModelRequestBoundary {
   /** Inclusive end of the durable request inputs. */
   readonly throughSeq: number
   readonly header: EpochHeader | undefined
+  /** Process-local input revision. Replay replaces it; unrelated appends do not. */
+  readonly version: symbol
 }
 
 export interface StepModelCall {
@@ -28,6 +30,48 @@ export type ModelRequest = EpochHeader['config'] & {
   readonly messages: readonly DerivedMessage[]
   readonly tools?: EpochHeader['tools']
 }
+
+export interface ModelRequestIdentity {
+  readonly sessionId: string | undefined
+  readonly epoch: number
+  readonly stepKey: ExecutionKey
+  readonly throughSeq: number
+}
+
+/** One entry per canonical message, in exactly the same order as request.messages. */
+export interface ModelRequestMessageProvenance {
+  readonly seq: number
+  readonly messageId: DerivedMessage['id']
+  readonly source: DerivedMessage['source']
+  readonly surfaceOp: SessionEvent['surfaceOp']
+  readonly sourceEventSeqs: readonly number[] | undefined
+}
+
+export interface ModelRequestDocument {
+  /** Harness canonical input, not a captured provider HTTP payload. */
+  readonly request: ModelRequest
+  readonly provenance: readonly ModelRequestMessageProvenance[]
+}
+
+export type ModelRequestAvailability =
+  | {
+    readonly status: 'available'
+    readonly identity: ModelRequestIdentity
+    /** Compare with === only, scoped to identity; never persist this token. */
+    readonly version: symbol
+    /** Replays the canonical Surface on demand; neither descriptor nor runtime caches the result. */
+    read(): ModelRequestDocument
+  }
+  | {
+    readonly status: 'missing-history'
+    readonly requiredFromSeq: 0
+    readonly throughSeq: number
+    readonly firstMissingSeq: number
+  }
+  | {
+    readonly status: 'missing-request'
+    readonly reason: 'boundary' | 'header'
+  }
 
 interface MutableModelCall {
   readonly key: ExecutionKey
@@ -68,7 +112,7 @@ export class StepModelCallAccumulator {
         return
     }
     if (this.activeStep !== undefined && this.activeStep.responseSeq === undefined) {
-      this.activeStep.request = { throughSeq: event.seq, header: this.header }
+      this.activeStep.request = { throughSeq: event.seq, header: this.header, version: Symbol() }
     }
   }
 
@@ -87,28 +131,61 @@ export class StepModelCallAccumulator {
 
 }
 
-/** Rebuild the model-visible request only when its detail is inspected. */
+/**
+ * O(1) availability read against a snapshot's validated contiguous prefix.
+ * The closure retains only the immutable input log and header, not the snapshot graph.
+ * Versions follow ExecutionProjector's immutable append/replay contract, not content hashing.
+ */
 export function resolveModelRequest(
   entries: readonly HistoryEntry[],
   boundary: ModelRequestBoundary | undefined,
-): ModelRequest | undefined {
-  if (boundary?.header === undefined || entries[0]?.event.seq !== 0) return undefined
-  const boundaryIndex = entries.findIndex(entry => entry.event.seq === boundary.throughSeq)
-  if (boundaryIndex < 0) return undefined
-
-  const events = entries.slice(0, boundaryIndex + 1).map(entry => entry.event)
-  const bySeq = new Map<number, SessionEvent>(events.map(event => [event.seq, event]))
-  const surface = new SurfaceManager(events)
-  const messages = surface.nodes.flatMap(seq => {
-    const event = bySeq.get(seq)
-    if (event === undefined) return []
-    const message = deriveEventMessage(event)
-    return message === null ? [] : [message]
-  })
-  const header = boundary.header
+  identity: Omit<ModelRequestIdentity, 'throughSeq'>,
+  firstMissingSeq: number,
+): ModelRequestAvailability {
+  if (boundary === undefined) return { status: 'missing-request', reason: 'boundary' }
+  const { throughSeq, header, version } = boundary
+  if (firstMissingSeq <= throughSeq) {
+    return { status: 'missing-history', requiredFromSeq: 0, throughSeq, firstMissingSeq }
+  }
+  if (header === undefined) return { status: 'missing-request', reason: 'header' }
   return {
-    ...header.config,
-    messages,
-    ...header.tools === undefined ? {} : { tools: header.tools },
+    status: 'available',
+    identity: { ...identity, throughSeq },
+    version,
+    read: () => rebuildModelRequest(entries, throughSeq, header),
+  }
+}
+
+/** The only canonical reconstruction path, shared by every Request consumer. */
+function rebuildModelRequest(
+  entries: readonly HistoryEntry[],
+  throughSeq: number,
+  header: EpochHeader,
+): ModelRequestDocument {
+  // Availability guarantees the complete contiguous prefix, so seq is its exact index.
+  const events = entries.slice(0, throughSeq + 1).map(entry => entry.event)
+  const surface = new SurfaceManager(events)
+  const messages: DerivedMessage[] = []
+  const provenance: ModelRequestMessageProvenance[] = []
+  for (const seq of surface.nodes) {
+    const event = events[seq]!
+    const message = deriveEventMessage(event)
+    if (message === null) continue
+    messages.push(message)
+    provenance.push({
+      seq: event.seq,
+      messageId: message.id,
+      source: message.source,
+      surfaceOp: event.surfaceOp,
+      sourceEventSeqs: event.sourceEventSeqs,
+    })
+  }
+  return {
+    request: {
+      ...header.config,
+      messages,
+      ...header.tools === undefined ? {} : { tools: header.tools },
+    },
+    provenance,
   }
 }
