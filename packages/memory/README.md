@@ -92,21 +92,48 @@ pnpm install --frozen-lockfile
 pnpm run check
 ```
 
-For opt-in acceptance against the real configured Bailian model, export its
-credential reference and run `pnpm test:memory:e2e` from the repository root.
-The runner reads `agent-default-model` and `llm-bailian` from the user settings,
-using the repository's provider composition as defaults. It makes at most 36
-model calls per run, with 2,000 output tokens per foreground request and the
-normal 900-token maintenance limit. Model calls may incur provider charges.
+Two opt-in real-model suites share the same isolated Agent runner:
 
-Each scenario starts a fresh Host process with isolated workspace and Memory
-directories. Cases cover explicit remembering, cross-process recall, user
-overrides, disabled-use controls and policy restoration, update/forget including
-topic files, automatic background learning, and disabling an active learner.
-Requests, provider responses, tool events, mutations and results are saved under
-ignored `artifacts/memory-e2e-*/`; credentials are excluded and temporary Memory
-files are removed. This exercises the real Agent loop and provider, but does
-not drive the terminal UI or resume persisted conversation history.
+- `pnpm test:memory:e2e`: lifecycle acceptance (36 model calls maximum): explicit remembering, cross-process recall, current overrides, policy restoration, update/forget, background learning and cancellation.
+- `pnpm test:memory:quality`: learning-to-reuse comparisons (64 model calls maximum): historical corrections, configuration decisions, temporary exceptions, irrelevant memory and stale validation clues. The model first writes memory from historical feedback; fresh processes then answer identical tasks with and without memory access. The no-memory arm may honestly report unknown history. Evaluation copies stay read-only; a separate learning-enabled branch checks that a temporary exception does not persist.
+
+Both read `agent-default-model` from user settings and use the existing public
+Bailian or `dsh-llm-pi-ai` adapter. Bailian keeps the repository's provider defaults;
+pi-ai uses the selected provider's configured profile or catalog defaults. Run
+`node scripts/memory-e2e.mjs --preflight` after building to check route registration
+without a model call or credential loading. It does not validate authentication.
+For environment-backed API keys, export the configured reference before running.
+Live execution uses the normal credential provider internally: OAuth refresh or
+legacy credential-format migration may update the authentication store, but
+settings and real Memory directories are not modified. No credentials are copied
+into scenario specs or artifacts.
+
+Model calls may incur charges. Foreground requests set `maxTokens: 2000`, and
+maintenance retains its 900-token setting. Adapter retries are disabled for the
+run; each worker has a 150-second turn deadline and a 180-second process timeout.
+The caps count canonical `llm/stream` attempts, not every HTTP/OAuth request or
+exact provider charges. A crashed worker without a readable result marks the
+report's request count incomplete. Canonical LLM requests/usage, assistant responses, tool events, mutations and
+scores are saved under ignored `artifacts/memory-{e2e,quality}-*/`. The runner does
+not intercept HTTP or authentication responses. Temporary Memory files are removed.
+
+To revise grading without more model calls, run
+`node scripts/memory-e2e.mjs --rescore artifacts/memory-quality-<run>/report.json`.
+Keep the worker JSON files beside that report. Rescoring requires successful
+worker evidence and unchanged history/task prompts; it writes a separate
+`report-rubric-<version>.json`, preserving the original failure report. It does
+not validate a changed Memory implementation; that needs a new live run.
+
+`generateMemories: false` disables background learning, not foreground memory
+tools. Background-only lifecycle tests restrict the main agent's tool access
+at runtime instead of assuming it always obeys a natural-language no-tools request.
+
+The quality corpus reconstructs two confirmed project-preference summaries and
+adds synthetic controls; it is not a raw production-history replay. Small-sample
+structured-field scores test specific behaviors, not overall answer quality.
+These suites exercise the real Agent loop and provider, but do not drive the
+terminal UI or resume persisted conversation history. See the
+[quality evaluation contract](../../docs/tui-architecture.md#memory-质量回放).
 
 The workspace builds ESM runtime and declarations into ignored `dist/` output.
 The release pipeline verifies and embeds that runtime in the public

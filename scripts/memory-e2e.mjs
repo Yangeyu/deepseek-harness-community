@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -11,6 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import SettingsProvider from '@deepseek-ai/dsh-settings'
 import { Config as BailianConfig, apply as applyBailian } from '../packages/llm-bailian/dist/index.js'
 import Memory from '../packages/memory/dist/index.js'
+import { runQuality } from './memory-quality.mjs'
 
 const filename = fileURLToPath(import.meta.url)
 const repository = resolve(dirname(filename), '..')
@@ -20,6 +21,8 @@ const base = createRequire(createRequire(require.resolve('@deepseek-ai/dsh/packa
 const loopEntry = base.resolve('@deepseek-ai/dsh-agent-loop')
 const loopRequire = createRequire(loopEntry)
 const runtime = async name => import(pathToFileURL(loopRequire.resolve(`@deepseek-ai/${name}`)).href)
+const basePlugin = async name => import(pathToFileURL(base.resolve(`@deepseek-ai/${name}`)).href)
+const readYaml = async path => parseDocument(await readFile(path, 'utf8'), { logLevel: 'silent' }).toJS()
 const readJson = async path => JSON.parse(await readFile(path, 'utf8'))
 const writeJson = (path, value) => writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
 const textOf = message => (message.content ?? []).filter(block => block.type === 'text').map(block => block.text).join('\n')
@@ -36,20 +39,45 @@ class SettingsSnapshot extends SettingsProvider {
 }
 
 async function configuration() {
-  const readYaml = async path => parseDocument(await readFile(path, 'utf8'), { logLevel: 'silent' }).toJS()
-  const patch = await readYaml(join(repository, 'packages/tui/cordis.patch.yml'))
-  const composition = patch.flatMap(row => row.insert ?? []).find(row => row.id === 'llm-bailian').config
-  const settingsPath = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'settings.yaml')
-  const document = await readYaml(settingsPath)
-  const route = document['agent-default-model']
-  assert.equal(route?.provider, 'bailian', 'This live acceptance runner requires a configured Bailian route')
+  const credentialHome = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  const document = await readYaml(join(credentialHome, 'settings.yaml'))
+  const selected = document['agent-default-model']
+  assert.ok(selected?.provider && selected?.model, 'Configure an agent-default-model before live evaluation')
+  // Only routing metadata crosses into scenario files, never provider headers or credentials.
+  const route = { provider: selected.provider, model: selected.model, ...selected.reasoningEffort === undefined ? {} : { reasoningEffort: selected.reasoningEffort } }
+  return { route, credentialHome }
+}
+
+async function configureModel(ctx, config, authenticate = true) {
+  const document = await readYaml(join(config.credentialHome, 'settings.yaml'))
+  if (authenticate) {
+    const { default: LocalCredentials } = await basePlugin('dsh-credentials-local')
+    await ctx.plugin(LocalCredentials, { dshHome: config.credentialHome, watch: false })
+  }
+  const retryPolicy = { mode: 'normal', maxRetries: 0 }
+  if (config.route.provider === 'bailian') {
+    const patch = await readYaml(join(repository, 'packages/tui/cordis.patch.yml'))
+    const composition = patch.flatMap(row => row.insert ?? []).find(row => row.id === 'llm-bailian').config
+    const settings = new SettingsSnapshot(ctx, { 'llm-bailian': { ...document['llm-bailian'], retryPolicy } })
+    const resolved = settings.register('llm-bailian', BailianConfig, { base: composition }).get()
+    applyBailian(ctx, { ...resolved, retryPolicy })
+  } else {
+    const piAi = await basePlugin('dsh-llm-pi-ai')
+    const profile = document['llm-pi-ai']?.providers?.[config.route.provider] ?? {}
+    piAi.apply(ctx, piAi.Config({ providers: { [config.route.provider]: { ...profile, retryPolicy } } }))
+  }
+}
+
+async function preflight() {
+  const config = await configuration()
+  const { default: LlmRuntime } = await runtime('dsh-llm')
   const ctx = new Context()
   try {
-    const settings = new SettingsSnapshot(ctx, { 'llm-bailian': document['llm-bailian'] ?? {} })
-    const config = settings.register('llm-bailian', BailianConfig, { base: composition }).get()
-    assert.ok(process.env[config.apiKeyEnv], `Export the configured credential reference ${config.apiKeyEnv}`)
-    assert.ok(config.models[route.model], 'The selected model must have declared capabilities')
-    return { route, bailian: config }
+    new LlmRuntime(ctx)
+    await configureModel(ctx, config, false)
+    // Inspect registered route metadata only; custom catalog discovery can make HTTP calls.
+    assert.ok(ctx.llm.listProviders().some(provider => provider.id === config.route.provider))
+    console.log(JSON.stringify({ route: config.route, providerRegistered: true, authentication: 'not checked', note: 'Live execution may refresh stored OAuth; no credential payload is recorded.' }))
   } finally {
     await ctx.fiber.dispose()
   }
@@ -57,31 +85,14 @@ async function configuration() {
 
 async function worker(specPath) {
   const spec = await readJson(specPath)
-  const [{ default: AgentLoop }, { default: AgentRegistry }, { default: ToolRuntime },
+  const [{ default: AgentLoop }, { default: AgentRegistry }, { default: ToolRuntime, defineTool },
     { default: SessionStore, SessionId }, { default: SessionProjectionRegistry },
     { default: SystemPrompt }, { default: LlmRuntime, createUserMessage }] = await Promise.all([
     import(pathToFileURL(loopEntry).href), runtime('dsh-agent'), runtime('dsh-tools'),
     runtime('dsh-session'), runtime('dsh-session-projection'), runtime('dsh-system-prompt'), runtime('dsh-llm'),
   ])
   const ctx = new Context()
-  const result = { name: spec.name, pid: process.pid, sessionId: spec.sessionId, requests: [], wire: [], events: [], mutations: [], activities: [], disposed: [], errors: [] }
-  const fetch = globalThis.fetch
-  const wireBodies = []
-  globalThis.fetch = async (...args) => {
-    const response = await fetch(...args)
-    const wire = { status: response.status }
-    result.wire.push(wire)
-    if (!response.ok || !response.body) return response
-    const captured = { wire, body: '' }
-    wireBodies.push(captured)
-    const decoder = new TextDecoder()
-    return new Response(response.body.pipeThrough(new TransformStream({
-      transform(chunk, controller) {
-        captured.body += decoder.decode(chunk, { stream: true })
-        controller.enqueue(chunk)
-      },
-    })), response)
-  }
+  const result = { name: spec.name, pid: process.pid, sessionId: spec.sessionId, requests: [], events: [], mutations: [], activities: [], disposed: [], errors: [] }
   let handle
   let timer
   let disabling
@@ -92,9 +103,24 @@ async function worker(specPath) {
     new SystemPrompt(ctx, {})
     new ToolRuntime(ctx)
     new LlmRuntime(ctx)
-    applyBailian(ctx, spec.bailian)
+    await configureModel(ctx, spec)
     new AgentLoop(ctx, { agents: [] })
     const memory = new Memory(ctx, { root: spec.memoryRoot, idleDelayMs: 0 })
+    if (spec.files && Object.keys(spec.files).length > 0) {
+      ctx.tools.register(defineTool({
+        name: 'read_project_file',
+        description: 'Read one supplied current project fixture; its content is authoritative over historical recollections.',
+        parameters: { path: { type: 'string', required: true, enum: Object.keys(spec.files) } },
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        execute: async ({ path }) => {
+          assert.ok(Object.hasOwn(spec.files, path), 'Only supplied fixture files are readable')
+          return readFile(join(spec.workspace, path), 'utf8')
+        },
+      }))
+    }
     memory.onMutation(mutation => result.mutations.push(mutation))
     memory.onActivity(activity => result.activities.push(activity))
     ctx.on('agent/disposed', ({ agent }) => result.disposed.push(String(agent.id)))
@@ -131,6 +157,9 @@ async function worker(specPath) {
     handle = await ctx.agents.create({
       sessionId: SessionId(spec.sessionId), meta: { cwd: spec.workspace },
       agentOptions: { ...spec.route, maxTokens: 2000 },
+      setup: agentCtx => {
+        if (spec.allowedTools) agentCtx.tools.restrict({ allow: spec.allowedTools })
+      },
     })
     const completed = (async () => {
       handle.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: spec.prompt }] }))
@@ -164,15 +193,6 @@ async function worker(specPath) {
       result.errors.push({ message: `Disposal failed: ${String(error)}` })
       process.exitCode = 1
     }
-    globalThis.fetch = fetch
-    for (const { wire, body } of wireBodies) {
-      const chunks = body.split('\n').slice(0, -1)
-        .filter(line => line.startsWith('data: ') && line.trim() !== 'data: [DONE]')
-        .map(line => JSON.parse(line.slice(6)))
-      const choices = chunks.flatMap(chunk => chunk.choices ?? []).filter(choice => choice.index === 0)
-      wire.text = choices.map(choice => choice.delta?.content ?? '').join('')
-      wire.finish = choices.findLast(choice => choice.finish_reason)?.finish_reason
-    }
     await writeJson(spec.resultPath, result)
   }
 }
@@ -200,37 +220,62 @@ function storedText(result) {
 async function run() {
   assert.ok(process.argv.includes('--live'), 'Use --live to opt into bounded, billable model calls')
   const config = await configuration()
-  const runId = `memory-e2e-${new Date().toISOString().replaceAll(':', '-')}`
+  const quality = process.argv.includes('--quality')
+  const requestLimit = quality ? 64 : 36
+  const runId = `memory-${quality ? 'quality' : 'e2e'}-${new Date().toISOString().replaceAll(':', '-')}`
   const artifactRoot = join(repository, 'artifacts', runId)
   const temporary = await mkdtemp(join(tmpdir(), 'dsh-memory-live-'))
   const workspace = join(temporary, 'workspace')
   await Promise.all([mkdir(artifactRoot, { recursive: true }), mkdir(workspace)])
-  const marker = `MEM-${randomUUID().slice(0, 12)}`
-  const updated = `MEM-${randomUUID().slice(0, 12)}`
-  const learned = `AUTO-${randomUUID().slice(0, 12)}`
-  const report = { runId, route: config.route, artifactRoot, marker, updated, learned, cases: [], requestCount: 0, passed: false }
-  const recallPrompt = '请为这个项目写一份极简发布说明：本次只修复了日期显示问题。直接输出发布说明，不调用工具。'
-  const scenario = async (name, prompt, { policy = { useMemories: true, generateMemories: false }, memory = 'explicit', sessionId = `${name}-${randomUUID()}`, disableDuringLearning = false } = {}) => {
-    assert.ok(report.requestCount < 36, 'Live run request budget exhausted')
+  const report = { runId, route: config.route, artifactRoot, requestLimit, cases: [], requestCount: 0, passed: false }
+  const scenario = async (name, prompt, { policy = { useMemories: true, generateMemories: false }, memory = 'explicit', sessionId = `${name}-${randomUUID()}`, disableDuringLearning = false, files, allowedTools } = {}) => {
+    assert.ok(report.requestCount < requestLimit, 'Live run request budget exhausted')
+    for (const [path, content] of Object.entries(files ?? {})) {
+      assert.equal(path, 'package.json', 'The quality suite only supplies a package.json fixture')
+      await writeFile(join(workspace, path), content)
+    }
     const spec = {
-      ...config, name, sessionId, workspace, memoryRoot: join(temporary, memory), prompt, policy, disableDuringLearning,
-      requestLimit: Math.min(7, 36 - report.requestCount), resultPath: join(artifactRoot, `${name}.json`),
+      ...config, name, sessionId, workspace, memoryRoot: join(temporary, memory), prompt, policy, disableDuringLearning, files, allowedTools,
+      requestLimit: Math.min(7, requestLimit - report.requestCount), resultPath: join(artifactRoot, `${name}.json`),
     }
     const specPath = join(temporary, 'scenario.json')
     await writeJson(specPath, spec)
     console.log(`Running ${name}`)
-    const code = await new Promise((resolveCode, reject) => {
+    const exit = await new Promise((resolveExit, reject) => {
       const child = spawn(process.execPath, [filename, '--worker', specPath], { stdio: 'inherit', timeout: 180_000 })
       child.on('error', reject)
-      child.on('close', resolveCode)
+      child.on('close', (code, signal) => resolveExit({ code, signal }))
     })
-    const result = await readJson(spec.resultPath)
+    let result
+    try {
+      result = await readJson(spec.resultPath)
+    } catch (error) {
+      report.requestCountIncomplete = true
+      report.cases.push({ name, sessionId, exit, requestCount: null, resultPath: spec.resultPath })
+      throw new Error(`${name}: worker result unavailable after ${JSON.stringify(exit)}; request count is incomplete`, { cause: error })
+    }
     report.requestCount += result.requests.length
-    report.cases.push({ name, pid: result.pid, sessionId, requestCount: result.requests.length, resultPath: spec.resultPath })
-    assert.equal(code, 0, `${name}: ${result.failure ?? JSON.stringify(result.errors)}`)
+    report.cases.push({ name, pid: result.pid, sessionId, exit, requestCount: result.requests.length, resultPath: spec.resultPath })
+    assert.equal(exit.code, 0, `${name}: ${result.failure ?? JSON.stringify(result.errors)} (${JSON.stringify(exit)})`)
     return result
   }
   try {
+    if (quality) {
+      report.quality = {}
+      await runQuality({
+        scenario, toolsCalled, report: report.quality,
+        copyMemory: (source, target) => cp(join(temporary, source), join(temporary, target), { recursive: true }),
+      })
+      assert.equal(new Set(report.cases.map(item => item.pid)).size, report.cases.length, 'Each quality scenario must boot a separate process')
+      assert.ok(report.quality.passed, 'Quality checks failed; inspect per-task checks, controls and source artifacts')
+      report.passed = true
+      return
+    }
+    const marker = `MEM-${randomUUID().slice(0, 12)}`
+    const updated = `MEM-${randomUUID().slice(0, 12)}`
+    const learned = `AUTO-${randomUUID().slice(0, 12)}`
+    Object.assign(report, { marker, updated, learned })
+    const recallPrompt = '请为这个项目写一份极简发布说明：本次只修复了日期显示问题。直接输出发布说明，不调用工具。'
     const remembered = await scenario('remember', `请记住这个项目的长期发布约定：每份发布说明的第一行必须单独写 ${marker}。请保存为项目记忆，以便后续新会话遵守。`)
     assert.ok(toolsCalled(remembered, remembered.sessionId).includes('memory_write'), 'The real main agent must execute memory_write')
     assert.ok(remembered.document.content.includes(marker), 'The tool must persist the rule')
@@ -255,11 +300,13 @@ async function run() {
     assert.ok(!storedText(forgotten).includes(updated) && !storedText(forgotten).includes(marker), 'Forgetting must remove index and topic content')
     checkRecall(await scenario('recall-after-forget', recallPrompt), updated, false)
     const backgroundPrompt = `纠正一下，以后这个项目每份发布说明的第一行都必须单独写 ${learned}，这是长期规则。本轮不要调用任何工具，只回复“收到”。`
-    const noLearning = await scenario('learning-disabled', backgroundPrompt, { memory: 'background-disabled' })
+    // Isolate background policy from foreground tool use in the runtime, not
+    // merely through the model's interpretation of "do not call tools".
+    const noLearning = await scenario('learning-disabled', backgroundPrompt, { memory: 'background-disabled', allowedTools: [] })
     assert.equal(noLearning.mutations.length, 0)
     assert.ok(noLearning.requests.every(request => request.sessionId === noLearning.sessionId))
     const background = await scenario('background-learning', backgroundPrompt, {
-      memory: 'background', policy: { useMemories: true, generateMemories: true },
+      memory: 'background', policy: { useMemories: true, generateMemories: true }, allowedTools: [],
     })
     assert.deepEqual(toolsCalled(background, background.sessionId), [], 'This case must be learned in the background')
     assert.ok(background.mutations.some(mutation => mutation.sourceSessionId === background.sessionId && mutation.sourceTurn === 1))
@@ -267,7 +314,7 @@ async function run() {
     assert.ok(background.document.content.includes(learned), 'Background learning must persist the rule')
     checkRecall(await scenario('recall-background', recallPrompt, { memory: 'background' }), learned, true)
     const canceled = await scenario('disable-active-learning', backgroundPrompt, {
-      memory: 'cancellation', policy: { useMemories: true, generateMemories: true }, disableDuringLearning: true,
+      memory: 'cancellation', policy: { useMemories: true, generateMemories: true }, disableDuringLearning: true, allowedTools: [],
     })
     assert.equal(canceled.childDisposedBeforeAcknowledgment, true)
     assert.equal(canceled.disabledPolicy.generateMemories, false)
@@ -285,5 +332,38 @@ async function run() {
   }
 }
 
-if (process.argv[2] === '--worker') await worker(process.argv[3])
+async function rescore(reportPath) {
+  const previous = await readJson(reportPath)
+  assert.ok(previous.quality, 'Rescoring requires a captured quality run')
+  const quality = {}
+  await runQuality({
+    report: quality, toolsCalled,
+    // The original workers already copied/read the corpora; their captured
+    // document digests and tool results remain the evidence, not new file writes.
+    copyMemory: async () => {},
+    scenario: async (name, prompt) => {
+      const captured = previous.cases.find(item => item.name === name)
+      assert.equal(captured?.exit?.code, 0, `Missing successful worker evidence: ${name}`)
+      const result = await readJson(join(dirname(resolve(reportPath)), `${name}.json`))
+      const users = result.requests[0].messages.filter(message => message.source?.kind === 'user').map(textOf)
+      assert.deepEqual(users, [prompt], 'Task/history changed; a new live run is required')
+      return result
+    },
+  })
+  const resultPath = join(dirname(resolve(reportPath)), `report-rubric-${String(quality.rubricVersion)}.json`)
+  await writeJson(resultPath, {
+    route: previous.route, sourceReport: resolve(reportPath), sourceRequestCount: previous.requestCount,
+    additionalModelCalls: 0, passed: quality.passed, quality,
+  })
+  console.log(JSON.stringify({ passed: quality.passed, additionalModelCalls: 0, resultPath }))
+  if (!quality.passed) process.exitCode = 1
+}
+
+if (process.argv[2] === '--worker') {
+  await worker(process.argv[3])
+  // This one-shot process owns SDK idle transports. Exit only after awaited
+  // Agent/Context disposal and artifact writes; cleanup failures retain exit 1.
+  process.exit(process.exitCode ?? 0)
+} else if (process.argv[2] === '--rescore') await rescore(process.argv[3])
+else if (process.argv.includes('--preflight')) await preflight()
 else await run()
