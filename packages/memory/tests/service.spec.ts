@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent, CreateAgentOptions, PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, SessionStore, type Session } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -38,6 +38,16 @@ async function memoryService(overrides: {
       ...overrides.config,
     }),
   }
+}
+
+function nextMemoryStep(ctx: Context, agent: Agent): Promise<PreStepDecision> {
+  return ctx.waterfall('agent/pre-step', {
+    agent,
+    messages: [],
+    turn: 1,
+    step: 1,
+    signal: new AbortController().signal,
+  }, () => Promise.resolve({ kind: 'enter', messages: [] }))
 }
 
 async function learningFixture(options: {
@@ -92,18 +102,33 @@ afterEach(async () => {
 })
 
 describe('ProjectMemoryService context projection', () => {
+  it('keeps project guidance discoverable under a crowded global index without loading topic detail', async () => {
+    const { ctx, cwd, service } = await memoryService({ config: { maxContextBytes: 512 } })
+    await service.write({ cwd, scope: 'global', summary: 'Presentation preferences.' })
+    const global = await service.read(cwd, 'global')
+    const index = '# Global memory\n\n' + Array.from({ length: 40 }, (_, i) => `- Presentation preference ${String(i)}: use gray borders.`).join('\n')
+    await writeFile(global.path, index)
+    await service.write({ cwd, scope: 'project', summary: 'Import images with a preview first.', topic: 'decisions', details: 'Supplier collisions require manual review.' })
+    const session = sessionFixture(ctx, 'memory-budget', cwd)
+    const decision = await nextMemoryStep(ctx, { id: session.id, session } as unknown as Agent)
+    if (decision.kind === 'reject') throw new Error('fixture unexpectedly rejected the step')
+    const block = decision.messages[0]?.content[0]
+    if (block?.type !== 'text') throw new Error('fixture did not receive a memory snapshot')
+
+    expect(block.text).toContain('Import images with a preview first. ([decisions](decisions.md))')
+    expect(block.text).toContain('memory_read({"scope":"global"})')
+    expect(block.text).not.toContain('Supplier collisions')
+    expect(Buffer.byteLength(block.text, 'utf8')).toBeLessThanOrEqual(512)
+    expect((await service.read(cwd, 'global')).content).toBe(index)
+    expect((await service.read(cwd, 'project', 'decisions')).content).toContain('Supplier collisions require manual review.')
+  })
+
   it('publishes changed snapshots once and clears them when session use is disabled', async () => {
     const { ctx, cwd, service } = await memoryService()
     await service.write({ cwd, scope: 'project', summary: 'Use focused checks.' })
     const session = sessionFixture(ctx, 'memory-session', cwd)
     const agent = { id: session.id, session } as unknown as Agent
-    const preStep = (): Promise<PreStepDecision> => ctx.waterfall('agent/pre-step', {
-      agent,
-      messages: [],
-      turn: 1,
-      step: 1,
-      signal: new AbortController().signal,
-    }, () => Promise.resolve({ kind: 'enter', messages: [] }))
+    const preStep = (): Promise<PreStepDecision> => nextMemoryStep(ctx, agent)
     const append = (decision: PreStepDecision): void => {
       if (decision.kind === 'reject') throw new Error('fixture unexpectedly rejected the step')
       const message = decision.messages.at(-1)
@@ -166,6 +191,26 @@ describe('ProjectMemoryService session policy', () => {
 })
 
 describe('ProjectMemoryService quiet learning', () => {
+  it('schedules learning from complete user evidence even after a long assistant reply', async () => {
+    const { service, session, followup } = await learningFixture({ config: { extractionMaxInputBytes: 512 } })
+    const correction = '  记住：以后先给结论再解释；但这次临时展开细节，不改变长期偏好。\n'
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      source: { kind: 'user' }, content: [{ type: 'text', text: correction }],
+    }), { surfaceOp: 'append' })
+    session.append('assistant/message', {
+      turn: 1, step: 1, stream: [],
+      message: createAssistantMessage({ source: { provider: 'test', model: 'test' }, content: [{ type: 'text', text: 'Detailed explanation. '.repeat(2_000) }] }),
+    }, { surfaceOp: 'append' })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await service.settle(String(session.id))
+
+    expect(followup).toHaveBeenCalledOnce()
+    const block = followup.mock.calls[0]?.[0].content.find(item => item.type === 'text')
+    if (block?.type !== 'text') throw new Error('fixture did not receive a learning prompt')
+    expect(JSON.parse(block.text.split('Conversation JSON: ')[1]!)).toEqual([{ role: 'user', text: correction }])
+  })
+
   it('instructs the maintenance agent to reconcile with existing memory before recording', async () => {
     const { service, session, followup, turn } = await learningFixture()
     turn(1)

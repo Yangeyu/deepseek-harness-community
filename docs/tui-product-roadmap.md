@@ -130,6 +130,13 @@ and matching Git tags are the release identity.
 - Remove whole-worktree inference, tool-name parsing, duplicated checkpoint
   state, compatibility bridges, and TUI-owned Git restore code after cutover.
 
+### Memory — 质量优先的增量
+
+- 已实现第一阶段：保留现有 Markdown/主题文件与三个工具，收敛简短索引和按需详情的使用指引；快照按完整条目分配全局/项目预算，省略内容保留明确的读取入口。
+- 学习输入优先保留完整用户证据，不再截断 JSON；助手长回复可省略，用户证据本身放不下则跳过后台学习。没有新增每回合模型调用，也不迁移真实记忆。
+- 回归覆盖索引拥挤、适用条件不被拆散、UTF-8 预算及长回复后的真实服务调度。总体回答质量仍需固定模型的真实历史对照，不能以写入数量或单元测试通过替代。
+- 后续先验证短索引是否足够，再决定是否开放语义命名文件及按文件更新；不预先引入向量库、知识图谱或高可靠存储框架。详见 [Memory 上下文与学习质量契约](tui-architecture.md#memory-上下文与学习质量)。
+
 ### Current — Reliability
 
 - Completed: persist Memory session switches, cancel and drain learning when

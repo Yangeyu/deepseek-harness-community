@@ -26,7 +26,7 @@ as a separate npm artifact.
     └── <sha256-session-id>.json
 ```
 
-`MEMORY.md` is the bounded cross-session index. Topic files hold optional detail and are read on demand through `memory_read`. No database is authoritative or required.
+`MEMORY.md` is the compact cross-session index. Keep summaries short and useful for deciding when a memory applies; put rationale and supporting user evidence in topic files, read on demand through `memory_read`. Prefer reusable corrections, preferences and non-obvious decisions over conversation logs or copies of current code and project instructions. No database is authoritative or required.
 
 Direct edits and file synchronization are supported because Markdown remains
 the source of truth. Only writes made through the plugin carry source-turn
@@ -39,8 +39,9 @@ Project identity uses the normalized Git `origin` URL when available, including 
 - `memory_write` handles explicit “remember this” requests and reusable corrections.
 - `memory_read` opens the index or a topic file.
 - `memory_forget` removes an exact summary.
-- Stable usage guidance is registered in the system prompt. Sessions receive durable, source-attributed file snapshots when effective global or project memory changes; disabling memory publishes an explicit replacement marker.
-- Candidate correction turns are processed after the parent Agent becomes idle. A short-lived subagent is limited to the three memory tools, so the auxiliary request and writes remain in Harness session logs.
+- Stable usage guidance is registered in the system prompt. Sessions receive durable, source-attributed index snapshots when effective global or project memory changes; disabling memory publishes an explicit replacement marker. Current requests override historical defaults; a temporary exception should not become a lasting preference.
+- Snapshots reserve space for both scopes and select complete index entries, not truncated strings. Omitted entries are identified with a scope-specific `memory_read` prompt; full indexes and topic files remain unchanged on disk. Structured documents that cannot safely be split are omitted as a whole when they do not fit.
+- Candidate correction turns are processed after the parent Agent becomes idle. Complete user messages take precedence over assistant messages within the extraction budget; a turn whose user evidence does not fit is skipped rather than partially remembered. The existing keyword gate is only a best-effort backstop, not a semantic classifier or a replacement for explicit main-agent memory tools. A short-lived subagent is limited to the three memory tools, so the auxiliary request and writes remain in Harness session logs.
 - Every write publishes an exact before/after mutation that clients can include
   in a source-attributed Rewind plan.
 - Clients can call `ctx.memory.settle(sessionId)` before preparing a cross-domain
@@ -68,6 +69,8 @@ Mount the package after the base bundle:
     minCandidateChars: 6
 ```
 
+`maxContextBytes` must be at least 256 bytes to fit scope labels, omission guidance and closed context markers. Its default remains 25,600 bytes; this is a ceiling, not a target index size. Keep the root index concise and read relevant detail on demand. `extractionMaxInputBytes` bounds the serialized conversation JSON, not the entire maintenance prompt.
+
 `extractionProvider` and `extractionModel` may be configured together to give maintenance sessions a dedicated route. When omitted, they use the parent Agent route.
 
 Session clients await `ctx.memory.setPolicy(sessionId, patch)` to persist memory
@@ -78,8 +81,8 @@ and publishes error activity; the disabled policy remains persisted. The TUI
 displays the acknowledged policy. After a failed operation it reads the current
 policy and shows it alongside the error; an unreadable policy is shown as unknown.
 
-Session policy ownership, recovery, and cancellation boundaries are defined in
-[the architecture contract](../../docs/tui-architecture.md#memory-session-policy-and-learning).
+The [context and learning quality contract](../../docs/tui-architecture.md#memory-上下文与学习质量) defines selection, evidence preservation and evaluation limits. Session policy ownership, recovery, and cancellation boundaries remain defined in
+[the session policy contract](../../docs/tui-architecture.md#memory-session-policy-and-learning).
 
 ## Develop
 
