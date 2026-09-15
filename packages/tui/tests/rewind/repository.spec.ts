@@ -56,18 +56,8 @@ function stored(workspaceRoot: string, options: {
           after,
           bytes: Buffer.byteLength(before) + Buffer.byteLength(after),
         }],
-        effects: [{
-          participantId: 'memory',
-          effectId: `effect-${sessionId}`,
-          sourceSessionId: sessionId,
-          sourceTurn: 1,
-        }],
       }],
     },
-    participants: [{
-      participantId: 'memory',
-      effects: [{ effectId: `effect-${sessionId}`, payload: { id: `effect-${sessionId}`, summary: 'remember secret' } }],
-    }],
   }
 }
 
@@ -84,7 +74,7 @@ describe('FileRewindRepository', () => {
     expect(() => new FileRewindRepository(root, { maxTimelineBytes: 2, maxGlobalBytes: 1 })).toThrow('cannot exceed')
   })
 
-  it('round-trips a timeline while keeping content and participant payloads out of the manifest', async () => {
+  it('round-trips a timeline while keeping file content out of the manifest', async () => {
     const root = await temporary('dsh-rewind-repository-')
     const workspaceRoot = await temporary('dsh-rewind-workspace-')
     const repository = new FileRewindRepository(root)
@@ -106,7 +96,6 @@ describe('FileRewindRepository', () => {
     expect(manifestName).toBeDefined()
     const manifest = await readFile(join(root, 'timelines', manifestName ?? ''), 'utf8')
     expect(manifest).not.toContain('before secret')
-    expect(manifest).not.toContain('remember secret')
     await expect(repository.load(workspaceRoot)).resolves.toMatchObject({ value })
     await repository.close()
   })
@@ -127,7 +116,7 @@ describe('FileRewindRepository', () => {
     await repository.close()
   })
 
-  it('quarantines a structurally valid manifest with mismatched participant ownership', async () => {
+  it('quarantines a structurally valid manifest with mismatched workspace mutation ownership', async () => {
     const root = await temporary('dsh-rewind-invalid-ownership-')
     const workspaceRoot = await temporary('dsh-rewind-workspace-')
     const warning = vi.fn()
@@ -136,11 +125,11 @@ describe('FileRewindRepository', () => {
     const manifestName = (await readdir(join(root, 'timelines')))[0]
     const manifestPath = join(root, 'timelines', manifestName ?? '')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
-      nodes: Array<{ effects: Array<{ sourceSessionId: string }> }>
+      nodes: Array<{ workspaceMutations: Array<{ sourceSessionId: string }> }>
     }
-    const effect = manifest.nodes[0]?.effects[0]
-    if (effect === undefined) throw new Error('fixture did not contain an effect')
-    effect.sourceSessionId = 'foreign-session'
+    const mutation = manifest.nodes[0]?.workspaceMutations[0]
+    if (mutation === undefined) throw new Error('fixture did not contain a workspace mutation')
+    mutation.sourceSessionId = 'foreign-session'
     await writeFile(manifestPath, JSON.stringify(manifest), 'utf8')
 
     await expect(repository.load(workspaceRoot)).resolves.toBeUndefined()
@@ -155,9 +144,9 @@ describe('FileRewindRepository', () => {
     const firstRoot = await temporary('dsh-rewind-first-')
     const secondRoot = await temporary('dsh-rewind-second-')
     const repository = new FileRewindRepository(root, {
-      maxObjectBytes: 100,
-      maxTimelineBytes: 100,
-      maxGlobalBytes: 100,
+      maxObjectBytes: 20,
+      maxTimelineBytes: 20,
+      maxGlobalBytes: 20,
     })
     await repository.save(stored(firstRoot, { before: 'before-1', after: 'after--1', updatedAt: 1 }), null)
     await repository.save(stored(secondRoot, { sessionId: 'second', before: 'before-2', after: 'after--2', updatedAt: 2 }), null)

@@ -85,9 +85,6 @@ export class RewindPointDialog implements SurfaceInputTarget {
         summary.imageCount === 0
           ? ''
           : this.theme.secondary(` · ${summary.imageCount} image${summary.imageCount === 1 ? '' : 's'}`),
-        ...summary.participants.map(participant => this.theme.secondary(
-          ` · ${participant.changes} ${participant.label.toLowerCase()} update${participant.changes === 1 ? '' : 's'}`,
-        )),
       ].join('')
       lines.push(truncateToWidth(
         `${cursor} ${selected ? this.theme.bold(prompt) : prompt}`,

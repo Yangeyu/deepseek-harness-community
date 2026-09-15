@@ -4,11 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { MemoryMutation } from '@vascent/deepseek-harness-memory'
 import {
   FileRewindRepository,
   LocalWorkspaceRewind,
-  MemoryRewindParticipant,
   type RewindPointInput,
   RewindService,
 } from '../../src/modules/rewind/index.ts'
@@ -26,13 +24,11 @@ async function temporary(name: string): Promise<string> {
 function service(
   storageRoot: string,
   conversation: TestRewindConversationHistory,
-  participant?: MemoryRewindParticipant,
 ): RewindService {
   const rewind = new RewindService(
     { history: 20 },
     conversation,
     new LocalWorkspaceRewind(),
-    participant === undefined ? [] : [participant],
     new FileRewindRepository(storageRoot),
   )
   histories.set(rewind, conversation)
@@ -156,42 +152,6 @@ describe('durable Rewind lifecycle', () => {
     await resumed.close()
   })
 
-  it('hydrates opaque Memory effects and restores them with the workspace after restart', async () => {
-    const storageRoot = await temporary('dsh-rewind-memory-storage-')
-    const workspaceRoot = await temporary('dsh-rewind-memory-workspace-')
-    const conversation = new TestRewindConversationHistory()
-    await writeFile(join(workspaceRoot, 'a.txt'), 'unchanged\n')
-    const firstMemory = new MemoryRewindParticipant({ settle: vi.fn(async () => {}), restore: vi.fn(async () => {}) })
-    const first = service(storageRoot, conversation, firstMemory)
-    await begin(first, workspaceRoot, 1)
-    const mutation: MemoryMutation = {
-      id: 'memory-1',
-      sourceSessionId: 'session',
-      sourceTurn: 1,
-      scope: 'project',
-      summary: 'remember the durable rule',
-      operation: 'write',
-      files: [],
-      createdAt: 1,
-    }
-    const effect = firstMemory.capture(mutation)
-    if (effect === undefined) throw new Error('fixture did not create a Memory effect')
-    first.recordEffect(effect)
-    await first.settle('session')
-    await first.close()
-
-    const restore = vi.fn(async () => {})
-    const resumedMemory = new MemoryRewindParticipant({ settle: vi.fn(async () => {}), restore })
-    const resumed = service(storageRoot, conversation, resumedMemory)
-    await resumed.activate('session', workspaceRoot)
-    const [point] = resumed.list('session')
-    const plan = await resumed.plan('session', point?.pointId ?? '')
-    await resumed.restore(plan)
-
-    expect(restore).toHaveBeenCalledWith(mutation, 'before')
-    await resumed.close()
-  })
-
   it('persists the fork owner and retains future nodes until the restored session starts a new turn', async () => {
     const storageRoot = await temporary('dsh-rewind-fork-storage-')
     const workspaceRoot = await temporary('dsh-rewind-fork-workspace-')
@@ -250,7 +210,6 @@ describe('durable Rewind lifecycle', () => {
       { history: 20, onPersistenceError: warning },
       conversation,
       new LocalWorkspaceRewind(),
-      [],
       new FileRewindRepository(storageRoot, {
         maxObjectBytes: 8,
         maxTimelineBytes: 128,
@@ -295,7 +254,6 @@ describe('durable Rewind lifecycle', () => {
       { history: 20, onPersistenceError: warning },
       conversation,
       new LocalWorkspaceRewind(),
-      [],
       new FileRewindRepository(storageRoot),
     )
     histories.set(stale, conversation)

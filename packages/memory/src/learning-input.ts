@@ -3,26 +3,23 @@ export interface LearningRow {
   readonly text: string
 }
 
+/** Drop optional assistant context from an input encoded by buildLearningInput. */
+export function userLearningInput(input: string): string {
+  const turn = JSON.parse(input) as { turn: number; messages: LearningRow[] }
+  return JSON.stringify({ ...turn, messages: turn.messages.filter(row => row.role === 'user') })
+}
+
+/** Encode a whole turn, falling back to its complete user evidence when needed. */
 export function buildLearningInput(
+  turn: number,
   rows: readonly LearningRow[],
   maxBytes: number,
-): { readonly userText: string; readonly transcript: string } | undefined {
+): string | undefined {
   const users = rows.filter(row => row.role === 'user' && row.text !== '')
   if (users.length === 0) return undefined
-  let bytes = Buffer.byteLength(JSON.stringify(users), 'utf8')
-  if (!(bytes <= maxBytes)) return undefined
+  const userTranscript = JSON.stringify({ turn, messages: users })
+  if (Buffer.byteLength(userTranscript, 'utf8') > maxBytes) return undefined
 
-  const selected = rows.filter(row => {
-    if (row.text === '') return false
-    if (row.role === 'user') return true
-    // Users already reserve a nonempty array; each assistant adds one comma.
-    const addedBytes = Buffer.byteLength(JSON.stringify(row), 'utf8') + 1
-    if (bytes + addedBytes > maxBytes) return false
-    bytes += addedBytes
-    return true
-  })
-  return {
-    userText: users.map(row => row.text).join('\n'),
-    transcript: JSON.stringify(selected),
-  }
+  const fullTranscript = JSON.stringify({ turn, messages: rows.filter(row => row.text !== '') })
+  return Buffer.byteLength(fullTranscript, 'utf8') <= maxBytes ? fullTranscript : userTranscript
 }

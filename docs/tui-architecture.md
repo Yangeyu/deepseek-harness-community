@@ -740,7 +740,7 @@ component references while the Session-owned implementations are replaced.
   sources and owns the active timeline Repository port, restore, and conversation
   compensation; and
   `modules/rewind/adapters` is the only layer that translates Prompt nodes, Host
-  filesystem events, Memory payloads, durable Harness-home files, or the local
+  filesystem events, durable Harness-home files, or the local
   workspace. Presentation consumes only the `RewindPort`, point summaries, and
   immutable plans. `RewindProcess` itself is application-scoped because its
   transaction crosses Session retirement and replacement.
@@ -838,13 +838,7 @@ history rather than competing with this canonical contract.
   identity, validates the canonical text-mutation contract, and attributes it
   through stable root-call, session, and turn identities without parsing tool
   names or presentation diffs.
-- `RewindJournal` retains only the Prompt identities needed to attribute
-  workspace facts and opaque participant references plus a cursor over one
-  active workspace effect lineage. It is not the source of visible checkpoints.
-  `RewindService` reads those from `HostRewindConversationHistory`, joins effect
-  metadata by stable Prompt identity, and builds `safe`,
-  `mergeable`, `conflict`, or `unsupported` plans through an injected workspace
-  backend; the pure planner preserves non-overlapping later edits.
+- `RewindJournal` 仅保留工作区变更归因所需的 Prompt 身份与一条活跃工作区 effect lineage 的游标，不是可见检查点的事实源。`RewindService` 从 `HostRewindConversationHistory` 读取检查点，按稳定 Prompt 身份关联工作区 effect 元数据，通过注入的 workspace backend 构建 `safe`、`mergeable`、`conflict` 或 `unsupported` 计划；纯 planner 保留不重叠的后续编辑。不保留通用 participant 抽象或非工作区参与者引用。
 - Local mutation identity comes from the observed filesystem target key rather
   than recomputing ownership from the Prompt workspace. The local adapter uses
   the Prompt workspace only to render relative in-workspace paths, preflights
@@ -856,16 +850,8 @@ history rather than competing with this canonical contract.
   optimistic revision checks, quarantines invalid state, applies byte budgets,
   and conditionally removes stale history if a newer snapshot cannot be
   committed.
-- Workspace and explicit participants form one optional reversible stage before
-  `RewindTransaction` optionally commits a conversation fork. One transaction
-  path supports code-and-conversation, conversation-only, and code-only restore.
-  Memory payloads remain in its adapter, and any failed later conversation phase
-  compensates completed code stages.
-  Composer restoration first verifies attachment references through the Host
-  store, then restores text and image drafts together after the fork succeeds.
-  Presentation defaults safe and mergeable code plans to code-and-conversation,
-  defaults blocked or code-empty plans to conversation-only, and lists exact
-  paths before confirmation.
+- 持久化统一使用 schema 4，仅保存工作区 lineage；不保留旧格式迁移、participant 识别或历史兼容分支。非当前格式按既有无效清单路径告警并隔离，不转换为新格式，也不能用于恢复旧工作区变更；不读取或改写长期记忆文件。
+- `RewindTransaction` 只组合可选的工作区可逆阶段与可选的 conversation fork，同一事务路径支持 code-and-conversation、conversation-only 与 code-only。后续会话阶段失败时补偿已完成的代码阶段，不包含长期记忆或其他领域。Composer 恢复先通过 Host store 验证附件引用，fork 成功后一起恢复文本和图片草稿；安全及可合并的代码计划默认 code-and-conversation，受阻或无代码计划默认 conversation-only，确认前列出精确路径。
 - Rewind 恢复已提交的对话，不恢复历史时点的待执行 inbox。通用 fork 的历史前缀
   可能包含入队事件，却不包含后来的出队事件，不能直接当作 rewind 的执行语义。
   社区 Host 的 `modules/rewind/adapters/fork` 独占这个策略，composition root 将
@@ -929,39 +915,43 @@ history rather than competing with this canonical contract.
 
 ### Memory 上下文与学习质量
 
-Memory 是尽力而为的会话辅助，不是会话流水账或代码事实的第二份权威存储。此阶段保留 `MEMORY.md` 与四个主题文件、三个 Memory 工具；不迁移真实记忆，不引入检索数据库或新的后台模型调用。
+Memory 的核心目标是利用用户反馈和过往知识沉淀提高 LLM 回答质量、减少重复纠正。它是尽力而为的会话辅助，不追求完整记录、高可靠存储或确定性、可复现的召回，也不是代码事实的第二份权威存储。保留 `MEMORY.md` 与四个主题文件、三个 Memory 工具；不为边缘召回问题引入检索数据库或每回合模型调用。关闭、遗忘与基本隐私保护仍是实际用户功能，不因尽力而为而失效。长期记忆不参与 Rewind：回退代码或会话不会改变已写入的长期记忆，错误或过时内容通过用户纠正、遗忘或直接编辑维护。本轮不迁移真实记忆，不改变现有文件组织。
 
 - `MEMORY.md` 作为简短索引：摘要包含可复用结论与必要的适用条件，主题详情保存理由和用户依据；优先用户纠正、稳定偏好、非显然决策及外部引用，不重复项目指令和可直接从代码获得的信息。一次性例外不成为长期默认值，当前请求优先于历史偏好。
-- 快照只投影索引，不自动读取主题正文，也不改写磁盘文件。相关详情由 Agent 按需 `memory_read`；代码相关的历史线索在应用前应核对当前文件。这些使用规则是模型指引，不是正确回答的硬保证。
+- 快照只投影索引，不自动读取主题正文，也不改写磁盘文件。相关详情由 Agent 按需 `memory_read`，索引已提供足够上下文时不强制再读；代码相关的历史线索在应用前应核对当前文件。这些使用规则是模型指引，不是正确回答的硬保证。
+- 普通自动索引 I/O 失败只发出警告，沿用上次快照继续主回合；policy 异常和 abort 仍严格传播。显式工具读取失败不伪装成空文档。
 - `maxContextBytes` 仍默认 25,600 字节，最小值为 256，以容纳两个 scope 的标题、省略提示与闭合标记；按最终 UTF-8 文本计量，包括转义和所有分隔符。容量是上限，不是应填满的目标。
 - 上下文先为项目保留一半可用预算，再给全局使用余量，最后项目回收空闲空间。每个 scope 按原顺序选择完整条目，跳过放不下的条目并继续考虑后面的短条；不宣称相关性排序、最新优先或最优填充。
 - 只有自包含的顶层 bullet 及其缩进续行可以独立选择，不裁剪半个链接或 `memory-context` 标记。除 store 标准索引标题外，手工索引若含顶层普通说明段落、额外标题或代码围栏，在需要裁剪时保守地整份省略，避免将条件引导段落与后续规则拆开；完整文档能放下时保留全文，仅净化结束标记、首尾空白和 CRLF 换行。这不是通用 Markdown 解析器，也不保证理解任意条目之间的语义依赖。
-- 部分快照明确标记被省略的 scope，并给出 `memory_read({"scope":"project"})` 或 global 的完整索引读取入口。全局内容不能消耗项目保留份额；省略内容仍留在原文件，不是遗忘操作。原有快照变更才发布、会话开关和来源归因机制不变。
-- 后台提取先为当前回合所有完整非空用户消息预留 JSON 编码后的字节预算，再按原时间顺序加入能完整放下的助手消息。返回的 JSON 始终合法，关键词候选判断使用完整用户文本，不再解析被截断的 JSON。
-- 用户消息本身超出 `extractionMaxInputBytes` 时跳过本次后台学习，不裁掉末尾否定、适用条件或丢弃某一条用户消息来凑预算。助手消息可整条省略；提取指引要求上下文不足时不推断持久事实。
-- 主 Agent 的显式记忆工具仍是确定请求的入口；后台关键词筛选仅作补漏，未扩充为每回合模型调用，也不保证所有隐含偏好都能被捕获。本阶段没有改变学习队列调度和取消边界。
+- 部分快照明确标记被省略的 scope，并给出 `memory_read({"scope":"project"})` 或 global 的完整索引读取入口。全局内容不能消耗项目保留份额；省略内容仍留在原文件，不是遗忘操作。索引快照仍仅在变更时发布，会话开关独立持久化。
+- 主 Agent 利用完整任务上下文，通过显式工具沉淀用户的明确纠正与已核实的非显然经验；后台只补漏有用户依据的反馈。两者都不猜测缺失上下文，不保存代码或项目指令副本，不把一次性例外升级成长期规则。
+- 后台移除关键词筛选与逐回合 Promise 串行队列。有显式路由时观察 `completed` 主回合，子 Agent 回合不进入批次；只有有效 policy 开启学习才进入空闲等待与模型提取，未开启的候选被丢弃。每个源 session 在内存中仅保留一个有界 pending 批次；主 Agent 持续空闲 `idleDelayMs` 后合并提取一次，新回合重置等待。
+- `extractionMaxInputBytes` 默认 32 KiB，按批次 JSON 计量，不包括整个维护提示词。单回合优先保留完整用户／助手文本，超限时只保留该回合全部完整用户消息，用户证据也放不下则跳过；合并批次超限时先将已有回合全部退为完整用户消息，仅用户证据仍超限才移除最旧整回合。不裁断用户证据、不拼装助手片段，已舍弃的助手上下文不另行缓存；缺失上下文的反馈应跳过，不为提高召回率猜测事实。
+- 后台学习使用显式专用 route、`maxTokens: 900`，单批最多 3 次 canonical `llm/stream`，沿用所选 provider 的默认推理设置，不新增 effort 配置；provider 内部重试不属于该计数，因此请求额度不保证总 token、HTTP 请求数或费用上限。失败或限额后不自动重试。
 
-`context.spec.ts` 与 `learning-input.spec.ts` 验证预算、条件完整性和用户证据；服务测试验证真实 pre-step 投影与长回复后的候选调度。它们不证明总体回答质量提升。真实 Agent 的特定行为对照由下述回放补充；只有短索引与现有主题文件确实不足时，再评估语义文件定位或检索演进。
+service/store 的 `write` 与 `forget` 返回表示文件是否改变的 `boolean`，Memory 不提供回退或跨域事务 API。批次中的回合分隔仅供理解上下文，不建立持久事实的原始回合归因。
 
-### Memory 质量回放
+- 后台不占用父 Agent 的 `runMaintenance`。同一尝试的取消作用域覆盖空闲等待、学习及子 Agent 释放；新前台回合开始时取消该尝试，前台不等待旧学习排空。尚在等待的 pending 继续合批并重新等待空闲；已取出执行的批次被取消后不重放。关闭学习、源退出及服务退出仍负责取消和释放，不增加持久队列或自动重试。
+- `memory_write` 支持可选 `replaces: { summary, topic? }`，一次工具调用在同一 scope 内更正旧条目；应提供旧条目的准确摘要及原有主题，普通遗忘才调用 `memory_forget`。不带 `replaces` 保持去重；带此字段可更新相同规范化摘要的详情、主题或索引链接。旧条目缺失仍可写新值，不自动扫描所有主题寻找旧内容。
+- 更正只进入一次现有目录写队列，先读取并校验所需文档及最终大小，再按新主题、最终索引、不同旧主题清理的顺序逐文件原子写入；索引直接替换为最终内容，不先落盘删除再等待模型补写。同一主题的替换在该文件内完成，不再次删除新值。取消或 I/O 失败仍可能部分更新、残留旧详情或链接暂不一致，不回滚。索引按完整摘要匹配，主题仍使用简易摘要／详情格式，不引入通用 Markdown 解析器。
 
-`pnpm test:memory:quality` 复用 `scripts/memory-e2e.mjs` 的公开 Agent/Session/Memory 调用链，不另造模型循环。`memory-quality-cases.mjs` 只定义历史输入、任务及评分，`memory-quality.mjs` 编排学习、冻结语料和对照；评分单测随 `pnpm check` 执行，真实模型调用必须显式运行 live 命令。
+已知取舍：配置了路由但关闭学习时，仍会先扫描当前回合、构造短暂候选，再异步检查 policy 丢弃，不产生后台模型调用；它不是按事件时刻精确冻结的收集门禁。模型是否正确使用更正参数仍依赖指引，三次额度也不保证所有学习任务完成；不为此扩大预算或新增恢复机制。
 
-- 历史输入由两项已确认项目偏好的脱敏摘要重建，分别是 session ID/cwd/title 的显示顺序与首次运行播种配置的决策；旧版本验证命令是明确标注的合成时效控制。不是直接回放完整生产日志，也不把人工预写的 Markdown 当作模型学习成果。
-- 先让真实主 Agent 对历史输入调用 `memory_write`，检查实际文件变更及源会话/回合归因。后续任务不与该学习会话共享聊天上下文；每个阶段均启动独立进程。
-- 相同任务、固定 provider/model/reasoning route，分别运行有记忆与无记忆两组。有记忆组允许 `memory_read`；无记忆组不注入索引且不能调用任何 Memory 工具。两组都关闭后台学习、不能修改语料，使用同一份模型生成的记忆副本，并以内容摘要核对冻结状态。
-- 验证历史约定复用、当前临时要求优先、无关记忆不混入回答，以及历史线索应服从当前文件。当前配置由两组均可调用的、仅允许读取预置 fixture 的 `read_project_file` 提供，并核对实际工具调用，不把模型自述“已检查”当证据。
-- 临时例外另外运行一条真正启用后台学习的分支：检查学习子请求确实发生、Markdown 未被修改，并在新进程中再次验证原长期默认值。只读对照组本身不能证明后台不会误写。
-- 评分针对可观察的结构化方案字段，将原始规则命中分数与该组可用证据下的 `expectedOutcomeSatisfied` 分开。未知历史时的合法 `null` 是诚实未知，包括“不知道旧命令是否仍能沿用”；但不能以缺少历史为由答错已提供的当前配置。不能因无记忆组无法复用私有历史就宣称其模型能力较差。无关任务显式要求不加入项目约定，只检查隔离，不自动裁判教学内容正确性或证明自然话题切换下的自主相关性选择。
-- 输出包含逐项评分、注入/可用工具/冻结语料等控制检查、调用次数、快照字节数、详情读取次数及原始 canonical LLM 使用量事件。当前文件证据必须有匹配调用 ID、非错误状态且正文与 fixture 一致的工具结果，不仅是模型尝试调用工具。格式错误与失败保留诊断，不把一次小样本通过解释为统计显著或总体回答质量提升。
-- `node scripts/memory-e2e.mjs --rescore <report.json>` 可复算已捕获的完整质量矩阵，不增加模型调用；核对每个 worker 成功退出与历史/任务原文一致，从同目录读取事件文件，输出独立的 `report-rubric-<version>.json`，保留原报告。它验证捕获证据而非重新执行 Memory；生产实现变化必须重新 live 验证。
-- 质量套件每次最多 64 次 canonical `llm/stream` 尝试，原生命周期套件仍为 36 次；单 worker 最多 7 次，provider 重试在评测中关闭。这不是所有 HTTP/OAuth 请求次数或费用保证。前台请求 `maxTokens: 2000`，后台沿用 900；单 worker 回合截止为 150 秒，进程超时为 180 秒。worker 完成 Agent/Context 清理和结果落盘后明确退出，避免原生组件残留的空闲句柄拖住一次性评测；这不代表已验证长期 Host 的资源释放。若进程崩溃且没有可读结果，报告标记 `requestCountIncomplete`，不把已回收次数当完整计数。无需增加生产环境每回合模型调用。
-- 模型路由来自现有 `agent-default-model`，复用公开 Bailian 或 `dsh-llm-pi-ai` 适配器。`--preflight` 只检查注册，不发模型请求或加载凭据；真实运行通过公开 `dsh-credentials-local` 使用认证。OAuth 正常刷新或旧凭据格式迁移可能写回认证存储，不改用户 settings 或真实 Memory。
-- 不记录全局 HTTP body，避免捕获认证响应；只记录公开 LLM/Agent 事件、工具结果和受控 fixture。忽略目录 `artifacts/memory-quality-*/` 保存详细证据；退出时清理临时工作区与记忆。该路径不覆盖真实 TUI、持久化聊天恢复或长期自然纠正的召回率。
+功能单测覆盖索引与用户证据的基本完整性、记忆读写更正／遗忘、会话开关和后台批次等实际行为。真实 Agent 循环配合脚本化响应验证新前台回合不等待已取消学习的排空，以及两次补读后第三次请求完成 `write(replaces)`、额度不影响前台；这类离线功能验证不代表模型自然使用参数的概率或回答质量，不用提示词关键字断言代替效果评价。
 
-本轮验收（2026-09-13 UTC，Memory 源码基线 `22c569f`，`openai-codex / gpt-6-astra / high`）：质量矩阵在 15 个独立进程中使用 22 次 canonical 调用，三份记忆均由模型真实写入；有记忆组恢复全部四项历史方案要求，无记忆组诚实未知。配置决策复用额外调用一次 `memory_read` 读取 `decisions`，有记忆快照为 261–342 字节。临时例外、未污染后的默认恢复、无关任务隔离与当前文件核对均通过。初版评分误将无记忆组对旧命令的合法未知判错，rubric 2 按相同原始请求/响应复评分通过，新增调用为 0；原失败报告保留于 `artifacts/memory-quality-2026-09-13T16-33-41.082Z/`。
+### Memory 质量观察
 
-原生命周期套件另以 24 次调用通过全部 13 个场景（`artifacts/memory-e2e-2026-09-13T16-51-16.832Z/`）。开发中另有 25 次调用用于发现 worker 退出、工具作用域及后台测试隔离问题，不计入质量结果；本轮共 71 次 canonical 调用。关闭 `generateMemories` 不禁止前台写入，后台专属场景现在通过 Agent-scoped 工具限制隔离主 Agent，而不依赖模型对“不调用工具”的自然语言服从。尚未验证完整生产历史、隐含纠正召回率、大量记忆下的自主检索、真实 TUI 和本轮 Bailian live 路由；现有短索引/主题文件在这些小样本中足够，没有据此推动语义文件迁移。
+以真实任务中的回答是否更贴合用户、少重复旧错误、能复用有用经验为判断依据，不把精确召回或固定字段命中当作回答质量。无需独立的模型评分、语料冻结、跨进程矩阵或报告重评分系统；旧评测框架及验收说明留在 git 历史中。
+
+在本次前台优先、批次裁剪和 `replaces` 修正前，已用 `bailian/qwen3.7-plus` 在临时项目、独立 Memory 根目录和真实 Agent 循环中完成一轮小样本观察，共 8 次 canonical 请求：无记忆时建议自动重试；自然纠正保存后，新会话改为单次尝试、由用户手动重试；明确标注的本地临时例外没有改写长期规则；后台在三次请求内完成旧规则替换。观察沿用 provider 默认推理设置，前台输出预算 1200、后台 900，后台等待缩为 0；后台输入为预置的已完成回合。这验证了样例中的偏好遵循与读写链路，不覆盖真实五分钟调度，也不是与旧实现的对照，不能据此宣称本轮重构提高了整体回答质量、学习覆盖率或计费效率；本次未采集到可用的 token／计费用量。
+
+需要观察效果时，在独立测试项目与隔离的 Memory 根目录中，用正常客户端进行少量自然交互：
+
+- 给出一条真实、脱敏的纠正（如 session 列表保留 ID 为主标签），新会话再请求相关方案，观察是否减少同类错误、保留适用条件和理由，而不是要求复述历史原句。
+- 提出一次临时例外或正式改口，观察本次回答是否服从当前需求，以及后续是否误用默认值。
+- 换一个自然话题，或让已有代码线索随项目变化过时，观察是否生搬记忆、是否结合当前文件作答，不提前在题面提示答案。
+
+必要时对同一实际任务关闭自动记忆注入进行人工比较；记录有用与误用的例子即可，不维护强制配对矩阵、总分或胜率门槛。生成/读取了记忆不等于回答更好；漏记一次也不自动成为新增机制的理由。先确认反复出现的实际问题，再决定是否值得增加代码。
 
 ### Memory session policy and learning
 
@@ -975,33 +965,21 @@ Memory 是尽力而为的会话辅助，不是会话流水账或代码事实的�
   store before atomic replacement. Missing files use deployment defaults;
   unreadable or malformed files fail explicitly. Restoring the same session id
   restores its selection. New ids, including forks, use deployment defaults.
-- The selected rc1 Session append API cannot mark downstream events `ignorable`,
-  and persistence refuses unknown required events. Memory policy therefore
-  belongs to the community Host service's files. Session-log export alone does
-  not include it, and Rewind of conversation or memory content does not change
-  the user's current session switches.
+- 当前 rc1 Session append API 不能将下游事件标记为 `ignorable`，持久化也拒绝未知 required 事件，因此 Memory policy 由社区 Host 服务文件持有，不包含在单独的 Session-log 导出中。回退代码或会话不改写长期记忆和已保存的会话开关。
 - `policy()` and `setPolicy()` are asynchronous. The TUI sends a partial change
   and displays the acknowledged result or pending state. After a failed change,
   it reads the current Host policy and displays it alongside the operation error.
   If that read also fails, switches become unknown and cannot be toggled until
   the dialog is reopened with a readable policy. The TUI owns no persistence or
   optimistic replacement of the saved value.
-- Each source session owns one serial learning queue and cancellation scope.
-  Disabling learning cancels its waiting and active work and waits for child
-  disposal before acknowledging the change. Re-enabling admits future
-  candidates; canceled candidates remain canceled. Source-agent disposal and
-  Memory-service shutdown retire their owned work.
+- 部署默认 `generateMemories: false`、`idleDelayMs: 300000`，移除 `minCandidateChars`。后台必须同时显式配置 `extractionProvider` 与 `extractionModel`，不回退到主 Agent route，也不默认选择或配置收费模型；不修改用户 `~/.dsh` 设置。
+- `MemoryOverview.learning` 是 required 字段，值为 `{ provider, model, idleDelayMs, maxRequests } | undefined`。缺少显式路由时为 `undefined`，有效 policy 返回 `generateMemories: false`，`setPolicy` 请求开启会明确报错；关闭及使用记忆仍正常。现有 Memories 对话框展示后台 route 和请求成本边界；未配置时提示两个配置字段并禁止学习 toggle，其他 controls 保留，不新增设置页。
+- 每个源 session 拥有一个 pending 批次及取消作用域，不持久化候选。关闭学习取消等待与活跃工作，等待子 Agent 释放后才确认；重新开启只接收未来回合，被取消的旧候选不恢复。源 Agent 退出与 Memory 服务退出同样取消其工作。
 - Child-disposal failures propagate to callers waiting on learning or a disable
   and publish error activity. A failed drain does not undo the already-persisted
   disabled policy; it must not be acknowledged as successful cleanup.
-- A learning child's creation signal ends at factory publication. Memory owns
-  cancellation while waiting for the child and disposes the handle to stop and
-  drain the real Agent loop. Temporary children use the maintenance policy
-  while their source attribution is registered; they create no policy files.
-- Memory tools forward cancellation to the file-mutation queue. Cancellation
-  prevents entry into a queued logical write or forget; an admitted mutation
-  finishes and publishes its source-attributed result before child disposal
-  completes. Cancellation does not undo committed memory content.
+- 学习子 Agent 的创建 signal 在 factory 发布时结束。Memory 负责等待期间的取消，并释放 handle 来停止和排空真实 Agent 循环；临时子 Agent 使用维护策略，不创建独立 policy 文件。
+- Memory 工具将取消传递到文件写入队列。取消阻止尚未开始的 write 或 forget；write 还在每个文件提交前检查取消，已经进入的单文件提交不回滚。释放子 Agent 会等待在途工具结束，但前台新回合不等待这个排空过程；它不是跨文件原子更正保证。
 
 ### Following architecture work
 

@@ -3,12 +3,10 @@ import { link, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   LocalWorkspaceRewind,
   RewindService,
-  type PreparedRewindParticipant,
-  type RewindParticipant,
   type RewindPointInput,
 } from '../../src/modules/rewind/index.ts'
 import { TestRewindConversationHistory } from './history-fixture.ts'
@@ -24,9 +22,9 @@ async function workspace(): Promise<string> {
   return root
 }
 
-function service(history = 10, participants: readonly RewindParticipant[] = []): RewindService {
+function service(history = 10): RewindService {
   const conversation = new TestRewindConversationHistory()
-  const rewind = new RewindService({ history }, conversation, new LocalWorkspaceRewind(), participants)
+  const rewind = new RewindService({ history }, conversation, new LocalWorkspaceRewind())
   histories.set(rewind, conversation)
   return rewind
 }
@@ -379,64 +377,6 @@ describe('RewindService', () => {
     await rewind.commit(plan, 'code-and-conversation', 'forked')
     expect(rewind.list('forked').map(summary => summary.turn)).toEqual([1, 2])
     expect(rewind.list('session').map(summary => summary.turn)).toEqual([2, 3, 4])
-  })
-
-  it('tracks opaque participant effects without importing their payload type', async () => {
-    const participant: RewindParticipant = {
-      id: 'memory',
-      label: 'Memory',
-      settle: vi.fn(async () => {}),
-      prepare: vi.fn(async (ids): Promise<PreparedRewindParticipant> => ({
-        impact: { id: 'memory', label: 'Memory', changes: ids.length, state: 'safe' },
-        apply: async () => async () => {},
-      })),
-      snapshot: vi.fn((ids: readonly string[]) => ids.map(effectId => ({ effectId, payload: { effectId } }))),
-      hydrate: vi.fn(),
-      release: vi.fn(),
-    }
-    const root = await workspace()
-    const rewind = service(10, [participant])
-    await begin(rewind, root, 1)
-    await begin(rewind, root, 2)
-    rewind.recordEffect({ participantId: 'memory', effectId: 'memory-1', sourceSessionId: 'session', sourceTurn: 1 })
-    rewind.recordEffect({ participantId: 'memory', effectId: 'memory-1', sourceSessionId: 'session', sourceTurn: 1 })
-    rewind.recordEffect({ participantId: 'memory', effectId: 'memory-2', sourceSessionId: 'session', sourceTurn: 2 })
-
-    const summaries = await list(rewind)
-    expect(summaries.map(summary => summary.participants[0]?.changes)).toEqual([1, 1])
-    const plan = await rewind.plan('session', summaries[0]?.pointId ?? '')
-    expect(plan.participants).toEqual([{ id: 'memory', label: 'Memory', changes: 2, state: 'safe' }])
-    expect(participant.prepare).toHaveBeenCalledWith(['memory-1', 'memory-2'], 'backward')
-    expect(participant.release).not.toHaveBeenCalled()
-  })
-
-  it('compensates workspace state when a later participant fails', async () => {
-    const participant: RewindParticipant = {
-      id: 'memory',
-      label: 'Memory',
-      settle: vi.fn(async () => {}),
-      prepare: vi.fn(async (): Promise<PreparedRewindParticipant> => ({
-        impact: { id: 'memory', label: 'Memory', changes: 1, state: 'safe' },
-        apply: async () => { throw new Error('memory restore failed') },
-      })),
-      snapshot: vi.fn((ids: readonly string[]) => ids.map(effectId => ({ effectId, payload: { effectId } }))),
-      hydrate: vi.fn(),
-      release: vi.fn(),
-    }
-    const root = await workspace()
-    const rewind = service(10, [participant])
-    await begin(rewind, root)
-    const before = 'one\ntwo\nthree\n'
-    const after = 'one\nAI\nthree\n'
-    await writeFile(join(root, 'a.txt'), after)
-    record(rewind, { root, before, after })
-    rewind.recordEffect({ participantId: 'memory', effectId: 'memory-1', sourceSessionId: 'session', sourceTurn: 1 })
-    const [summary] = await list(rewind)
-    const plan = await rewind.plan('session', summary?.pointId ?? '')
-
-    await expect(rewind.restore(plan)).rejects.toThrow('memory restore failed')
-
-    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe(after)
   })
 
   it('marks reversible content outside configured byte budgets as unsupported', async () => {

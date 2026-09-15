@@ -132,7 +132,7 @@ export class RewindProcess {
           ? 'Rewinding conversation…'
           : phase === 'opening'
             ? 'Reloading rewound session…'
-            : 'Rewind failed; restoring the current workspace and memory…')
+            : 'Rewind failed; restoring the current workspace…')
       })
       if (draft !== undefined) this.options.composer.restoreDraft(draft)
     } catch (error: unknown) {
@@ -200,7 +200,7 @@ export class RewindProcess {
     this.progress.setText([
       this.options.theme.bold('Rewind'),
       this.options.theme.accent(`✦ ${message}`),
-      this.options.theme.dim('Source-attributed workspace, Memory, and conversation state stay coordinated.'),
+      this.options.theme.dim('Source-attributed workspace and conversation state stay coordinated.'),
     ].join('\n'))
     this.showComponent(this.progress, null)
   }

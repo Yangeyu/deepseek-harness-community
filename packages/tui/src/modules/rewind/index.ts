@@ -9,17 +9,11 @@ export { LocalWorkspaceRewind } from './adapters/local-workspace.ts'
 export type {
   RewindRepositoryEntry,
   RewindRepository,
-  StoredRewindParticipant,
   StoredRewindTimeline,
 } from './application/repository.ts'
 export { RewindRepositoryConflictError } from './application/repository.ts'
-export {
-  MEMORY_REWIND_PARTICIPANT,
-  MemoryRewindParticipant,
-} from './adapters/memory.ts'
 export type {
   CanonicalWorkspaceMutation,
-  PreparedRewindParticipant,
   PreparedWorkspaceRewind,
   RewindApplicableState,
   RewindBlockedState,
@@ -28,15 +22,8 @@ export type {
   RewindCompensation,
   RewindConversationHistory,
   RewindConversationPort,
-  RewindDirection,
-  RewindEffectInput,
-  RewindEffectPayload,
-  RewindEffectReference,
-  RewindEffectSink,
   RewindFilePlan,
   RewindPointSink,
-  RewindParticipant,
-  RewindParticipantImpact,
   RewindPlan,
   RewindPlanState,
   RewindPointInput,

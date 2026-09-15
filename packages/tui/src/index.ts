@@ -22,7 +22,6 @@ import {
   HostRewindConversationHistory,
   HostRewindFork,
   LocalWorkspaceRewind,
-  MemoryRewindParticipant,
   RewindService,
 } from './modules/rewind/index.ts'
 import type { HostCommandSource } from './runtime/commands.ts'
@@ -49,7 +48,6 @@ export { TerminalCommandDirectory } from './runtime/commands.ts'
 export type {
   RewindAction,
   RewindFilePlan,
-  RewindParticipantImpact,
   RewindPlan,
   RewindPlanState,
   RewindPointSummary,
@@ -168,7 +166,6 @@ export function apply(ctx: Context, config: TuiConfig): void {
     skills: harnessSkillCatalogSource(ctx.sessionSkillCatalog),
     goals: session => new HarnessGoalPort(ctx.sessionController, ctx.goals, session),
   }
-  const memoryRewind = new MemoryRewindParticipant(ctx.memory)
   const rewindRepository = new FileRewindRepository(dshHomePath('rewind'), {
     onWarning: message => { ctx.logger.warn(message) },
   })
@@ -180,7 +177,6 @@ export function apply(ctx: Context, config: TuiConfig): void {
     },
     new HostRewindConversationHistory(ctx),
     new LocalWorkspaceRewind(),
-    [memoryRewind],
     rewindRepository,
   )
   installRewindPromptAdapter(
@@ -226,10 +222,6 @@ export function apply(ctx: Context, config: TuiConfig): void {
   )
   ctx.effect(() => {
     let active = true
-    const removeMemoryMutation = ctx.memory.onMutation(mutation => {
-      const effect = memoryRewind.capture(mutation)
-      if (effect !== undefined) rewind.recordEffect(effect)
-    })
     void (async () => {
       await ctx.get('loader')?.await()
       if (!active) return
@@ -241,12 +233,8 @@ export function apply(ctx: Context, config: TuiConfig): void {
     })
     return async () => {
       active = false
-      try {
-        await app.dispose()
-        await rewind.close()
-      } finally {
-        removeMemoryMutation()
-      }
+      await app.dispose()
+      await rewind.close()
     }
   })
 }

@@ -1,16 +1,8 @@
-import type { RewindEffectPayload } from '../contracts.ts'
 import type { RewindTimelineSnapshot } from '../domain/journal.ts'
-
-/** Opaque participant payloads stored beside one durable editing timeline. */
-export interface StoredRewindParticipant {
-  readonly participantId: string
-  readonly effects: readonly RewindEffectPayload[]
-}
 
 /** Repository value independent from its on-disk schema and content layout. */
 export interface StoredRewindTimeline {
   readonly timeline: RewindTimelineSnapshot
-  readonly participants: readonly StoredRewindParticipant[]
 }
 
 export interface RewindRepositoryEntry {

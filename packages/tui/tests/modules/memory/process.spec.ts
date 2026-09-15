@@ -21,6 +21,7 @@ const directories: string[] = []
 const overview: MemoryOverview = {
   project: { id: 'project', root: '/workspace', directory: '/memory/projects/project' },
   policy: { useMemories: true, generateMemories: true },
+  learning: { provider: 'test', model: 'memory-model', idleDelayMs: 300000, maxRequests: 3 },
   global: { scope: 'global', path: '/memory/global/MEMORY.md', content: '', bytes: 0, exists: false },
   projectMemory: { scope: 'project', path: '/memory/projects/project/MEMORY.md', content: '', bytes: 0, exists: false },
   documents: [],
@@ -98,7 +99,6 @@ describe('MemoryProcess policy updates', () => {
     const parent = {
       id: session.id, session, options: {}, status: 'idle',
       whenIdle: async () => {},
-      runMaintenance: (run: (signal: AbortSignal) => Promise<void>) => run(new AbortController().signal),
     } as unknown as Agent
     const started = Promise.withResolvers<void>()
     ctx.provide('agents', {
@@ -109,7 +109,13 @@ describe('MemoryProcess policy updates', () => {
         dispose: async () => { throw new Error('Learning child cleanup failed') },
       }),
     } as unknown as Context['agents'])
-    const memory = new ProjectMemoryService(ctx, { root: join(cwd, 'memories'), idleDelayMs: 0 })
+    const memory = new ProjectMemoryService(ctx, {
+      root: join(cwd, 'memories'),
+      generateMemories: true,
+      extractionProvider: 'test',
+      extractionModel: 'memory-model',
+      idleDelayMs: 0,
+    })
     const { dialog } = await fixture(memory, cwd)
     session.append('turn/start', { turn: 1 })
     session.append('user/message', createUserMessage({

@@ -6,9 +6,6 @@ export type RewindPlanState = 'safe' | 'mergeable' | 'conflict' | 'unsupported'
 export type RewindApplicableState = Extract<RewindPlanState, 'safe' | 'mergeable'>
 export type RewindBlockedState = Extract<RewindPlanState, 'conflict' | 'unsupported'>
 
-/** Direction along the retained editing timeline. */
-export type RewindDirection = 'backward' | 'forward'
-
 /** User-selected dimensions of one checkpoint restore. */
 export type RewindAction = 'code-and-conversation' | 'conversation-only' | 'code-only'
 
@@ -103,38 +100,6 @@ export interface RewindConversationHistory {
   list(sessionId: string): readonly RewindPointInput[]
 }
 
-/** Opaque participant effect attributed to one user turn. */
-export interface RewindEffectInput {
-  readonly participantId: string
-  readonly effectId: string
-  readonly sourceSessionId: string
-  readonly sourceTurn: number
-}
-
-export interface RewindEffectReference extends RewindEffectInput {}
-
-/** JSON-compatible participant payload kept opaque outside its adapter. */
-export interface RewindEffectPayload {
-  readonly effectId: string
-  readonly payload: unknown
-}
-
-/** Summary of one non-workspace participant in a point or plan. */
-export type RewindParticipantImpact =
-  | {
-    readonly id: string
-    readonly label: string
-    readonly changes: number
-    readonly state: RewindApplicableState
-  }
-  | {
-    readonly id: string
-    readonly label: string
-    readonly changes: number
-    readonly state: RewindBlockedState
-    readonly reason: string
-  }
-
 /** Lightweight row for one user-turn rewind boundary. */
 export interface RewindPointSummary {
   readonly pointId: string
@@ -145,7 +110,6 @@ export interface RewindPointSummary {
   readonly createdAt: number
   readonly workspaceFiles: number
   readonly unsupportedFiles: number
-  readonly participants: readonly RewindParticipantImpact[]
 }
 
 /** Planned effect on one source-attributed workspace file. */
@@ -175,7 +139,6 @@ export interface RewindPlan {
   readonly codeReason?: string
   readonly state: RewindPlanState
   readonly files: readonly RewindFilePlan[]
-  readonly participants: readonly RewindParticipantImpact[]
 }
 
 export type RewindCompensation = () => Promise<void>
@@ -201,11 +164,6 @@ export interface RewindWorkspaceSink {
   recordWorkspaceMutation(input: WorkspaceMutationInput): void
 }
 
-/** Intake used by an explicit non-workspace participant adapter. */
-export interface RewindEffectSink {
-  recordEffect(input: RewindEffectInput): void
-}
-
 export interface PreparedWorkspaceRewind {
   readonly state: RewindPlanState
   readonly files: readonly RewindFilePlan[]
@@ -219,24 +177,6 @@ export interface WorkspaceRewindBackend {
   canonicalizeMutation(input: WorkspaceMutationInput): CanonicalWorkspaceMutation
   /** Prepare all tracked local targets; workspaceRoot is used only for display. */
   prepare(workspaceRoot: string, mutations: readonly WorkspaceMutation[]): Promise<PreparedWorkspaceRewind>
-}
-
-export interface PreparedRewindParticipant {
-  readonly impact: RewindParticipantImpact
-  /** A rejection must leave the participant in its pre-call state. */
-  apply(): Promise<RewindCompensation>
-}
-
-/** Explicit side-effect participant; this is an internal contract, not a plugin registry. */
-export interface RewindParticipant {
-  readonly id: string
-  readonly label: string
-  settle(sessionId: string): Promise<void>
-  prepare(effectIds: readonly string[], direction: RewindDirection): Promise<PreparedRewindParticipant>
-  snapshot(effectIds: readonly string[]): readonly RewindEffectPayload[]
-  /** Validate the complete batch before changing adapter state. */
-  hydrate(payloads: readonly RewindEffectPayload[]): void
-  release(effectIds: readonly string[]): void
 }
 
 /** Conversation commit boundary used by the application transaction. */

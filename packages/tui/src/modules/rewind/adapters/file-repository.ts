@@ -11,11 +11,8 @@ import {
   stat,
 } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
-import { isJsonValue } from '@deepseek-ai/dsh-util-values'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type {
-  RewindEffectPayload,
-  RewindEffectReference,
   RewindPromptInput,
   WorkspaceMutation,
 } from '../contracts.ts'
@@ -23,12 +20,11 @@ import type { RewindPointSnapshot, RewindTimelineSnapshot } from '../domain/jour
 import type {
   RewindRepository,
   RewindRepositoryEntry,
-  StoredRewindParticipant,
   StoredRewindTimeline,
 } from '../application/repository.ts'
 import { RewindRepositoryConflictError } from '../application/repository.ts'
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 const HASH_PATTERN = /^[a-f0-9]{64}$/u
 const LOCK_STALE_MS = 30_000
@@ -46,23 +42,12 @@ type StoredWorkspaceMutation =
   }
   | Extract<WorkspaceMutation, { readonly kind: 'unsupported' }>
 
-interface StoredPoint extends Omit<RewindPointSnapshot, 'workspaceMutations' | 'effects'> {
+interface StoredPoint extends Omit<RewindPointSnapshot, 'workspaceMutations'> {
   readonly workspaceMutations: readonly StoredWorkspaceMutation[]
-  readonly effects: readonly RewindEffectReference[]
-}
-
-interface StoredParticipantEffect {
-  readonly effectId: string
-  readonly payload: ObjectReference
-}
-
-interface StoredParticipantManifest {
-  readonly participantId: string
-  readonly effects: readonly StoredParticipantEffect[]
 }
 
 interface TimelineManifest {
-  readonly schema: 3
+  readonly schema: 4
   readonly workspaceId: string
   readonly workspaceRoot: string
   readonly lineageId: string
@@ -70,7 +55,6 @@ interface TimelineManifest {
   readonly cursor: number
   readonly updatedAt: number
   readonly nodes: readonly StoredPoint[]
-  readonly participants: readonly StoredParticipantManifest[]
 }
 
 export interface FileRewindRepositoryOptions {
@@ -159,16 +143,6 @@ function promptInput(value: unknown): RewindPromptInput {
   }
 }
 
-function effectReference(value: unknown): RewindEffectReference {
-  const item = record(value, 'effect')
-  return {
-    participantId: string(item.participantId, 'effect.participantId'),
-    effectId: string(item.effectId, 'effect.effectId'),
-    sourceSessionId: string(item.sourceSessionId, 'effect.sourceSessionId'),
-    sourceTurn: integer(item.sourceTurn, 'effect.sourceTurn'),
-  }
-}
-
 function storedMutation(
   value: unknown,
 ): StoredWorkspaceMutation {
@@ -214,33 +188,13 @@ function storedPoint(value: unknown, workspaceRoot: string): StoredPoint {
     ...optionalPreviousTurnEndSeq(item.previousTurnEndSeq),
     workspaceMutations: array(item.workspaceMutations, 'point.workspaceMutations')
       .map(mutation => storedMutation(mutation)),
-    effects: array(item.effects, 'point.effects').map(effectReference),
   }
-}
-
-function participantManifest(value: unknown): StoredParticipantManifest {
-  const item = record(value, 'participant')
-  return {
-    participantId: string(item.participantId, 'participant.participantId'),
-    effects: array(item.effects, 'participant.effects').map((effect) => {
-      const stored = record(effect, 'participant effect')
-      return {
-        effectId: string(stored.effectId, 'participant effect.effectId'),
-        payload: objectReference(stored.payload, 'participant effect.payload'),
-      }
-    }),
-  }
-}
-
-function effectKey(participantId: string, effectId: string): string {
-  return `${participantId}\0${effectId}`
 }
 
 function validateManifestIntegrity(manifest: TimelineManifest): void {
   const pointIds = new Set<string>()
   const mutationIds = new Set<string>()
   const referencesByHash = new Map<string, number>()
-  const referencedEffects = new Set<string>()
   for (const point of manifest.nodes) {
     if (pointIds.has(point.id)) throw new Error('rewind manifest contains a duplicate point')
     pointIds.add(point.id)
@@ -267,30 +221,6 @@ function validateManifestIntegrity(manifest: TimelineManifest): void {
         if (mutation.bytes !== expectedBytes) throw new Error('rewind workspace mutation byte count is invalid')
       }
     }
-    for (const effect of point.effects) {
-      if (effect.sourceSessionId !== point.sessionId || effect.sourceTurn !== point.turn) {
-        throw new Error('rewind participant effect attribution does not match its point')
-      }
-      const key = effectKey(effect.participantId, effect.effectId)
-      if (referencedEffects.has(key)) throw new Error('rewind manifest contains a duplicate participant effect')
-      referencedEffects.add(key)
-    }
-  }
-
-  const participantIds = new Set<string>()
-  const payloadEffects = new Set<string>()
-  for (const participant of manifest.participants) {
-    if (participantIds.has(participant.participantId)) throw new Error('rewind manifest contains a duplicate participant')
-    participantIds.add(participant.participantId)
-    for (const effect of participant.effects) {
-      const key = effectKey(participant.participantId, effect.effectId)
-      if (payloadEffects.has(key)) throw new Error('rewind manifest contains a duplicate participant payload')
-      payloadEffects.add(key)
-    }
-  }
-  if (referencedEffects.size !== payloadEffects.size
-    || [...referencedEffects].some(key => !payloadEffects.has(key))) {
-    throw new Error('rewind participant references and payloads do not match')
   }
 
   for (const reference of references(manifest)) {
@@ -323,20 +253,16 @@ function parseManifest(value: unknown, expectedRoot?: string): TimelineManifest 
     cursor,
     updatedAt: integer(item.updatedAt, 'manifest.updatedAt'),
     nodes,
-    participants: array(item.participants, 'manifest.participants').map(participantManifest),
   }
   validateManifestIntegrity(manifest)
   return manifest
 }
 
 function references(manifest: TimelineManifest): ObjectReference[] {
-  return [
-    ...manifest.nodes.flatMap(point => point.workspaceMutations.flatMap((mutation) => {
-      if (mutation.kind === 'unsupported') return []
-      return [...mutation.before === null ? [] : [mutation.before], mutation.after]
-    })),
-    ...manifest.participants.flatMap(participant => participant.effects.map(effect => effect.payload)),
-  ]
+  return manifest.nodes.flatMap(point => point.workspaceMutations.flatMap((mutation) => {
+    if (mutation.kind === 'unsupported') return []
+    return [...mutation.before === null ? [] : [mutation.before], mutation.after]
+  }))
 }
 
 function uniqueReferences(manifest: TimelineManifest): Map<string, ObjectReference> {
@@ -404,7 +330,8 @@ export class FileRewindRepository implements RewindRepository {
       }
       try {
         const manifest = parseManifest(JSON.parse(source), workspaceRoot)
-        return { value: await this.materialize(manifest), revision: hash(source) }
+        const value = await this.materialize(manifest)
+        return { value, revision: hash(source) }
       } catch (error: unknown) {
         await this.quarantineLocked(path, error)
         return undefined
@@ -479,17 +406,7 @@ export class FileRewindRepository implements RewindRepository {
       nodes.push({
         ...point,
         workspaceMutations,
-        effects: point.effects.map(effect => ({ ...effect })),
       })
-    }
-    const participants: StoredParticipantManifest[] = []
-    for (const participant of value.participants) {
-      const effects: StoredParticipantEffect[] = []
-      for (const effect of participant.effects) {
-        if (!isJsonValue(effect.payload)) throw new Error(`Rewind participant "${participant.participantId}" returned a non-JSON payload`)
-        effects.push({ effectId: effect.effectId, payload: await this.writeObject(JSON.stringify(effect.payload)) })
-      }
-      participants.push({ participantId: participant.participantId, effects })
     }
     return {
       schema: SCHEMA_VERSION,
@@ -500,7 +417,6 @@ export class FileRewindRepository implements RewindRepository {
       cursor: value.timeline.cursor,
       updatedAt: value.timeline.updatedAt,
       nodes,
-      participants,
     }
   }
 
@@ -533,17 +449,7 @@ export class FileRewindRepository implements RewindRepository {
         }
         workspaceMutations.push({ ...mutation, before, after })
       }
-      nodes.push({ ...point, workspaceMutations, effects: point.effects.map(effect => ({ ...effect })) })
-    }
-    const participants: StoredRewindParticipant[] = []
-    for (const participant of manifest.participants) {
-      const effects: RewindEffectPayload[] = []
-      for (const effect of participant.effects) {
-        const payload: unknown = JSON.parse(await readObject(effect.payload))
-        if (!isJsonValue(payload)) throw new Error('durable Rewind participant payload is not JSON')
-        effects.push({ effectId: effect.effectId, payload })
-      }
-      participants.push({ participantId: participant.participantId, effects })
+      nodes.push({ ...point, workspaceMutations })
     }
     const timeline: RewindTimelineSnapshot = {
       lineageId: manifest.lineageId,
@@ -553,7 +459,7 @@ export class FileRewindRepository implements RewindRepository {
       updatedAt: manifest.updatedAt,
       nodes,
     }
-    return { timeline, participants }
+    return { timeline }
   }
 
   private async writeObject(content: string): Promise<ObjectReference> {

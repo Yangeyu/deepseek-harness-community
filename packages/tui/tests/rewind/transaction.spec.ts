@@ -12,7 +12,6 @@ function plan(): RewindPlan {
     codeScope: 'backward',
     state: 'safe',
     files: [],
-    participants: [],
   }
 }
 
@@ -30,7 +29,7 @@ function rewindPort(overrides: Partial<RewindPort> = {}): RewindPort {
 }
 
 describe('RewindTransaction', () => {
-  it('settles participants before listing points', async () => {
+  it('settles workspace ingestion before listing points', async () => {
     const rewind = rewindPort({ list: vi.fn(() => []) })
     const transaction = new RewindTransaction(rewind, { rewind: vi.fn(async () => 'forked') })
 

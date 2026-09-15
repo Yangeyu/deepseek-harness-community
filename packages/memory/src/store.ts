@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import {
   mkdir,
   readFile,
@@ -16,7 +16,6 @@ import {
 } from 'node:fs/promises'
 
 const MEMORY_TOPICS = ['preferences', 'conventions', 'decisions', 'debugging'] as const
-const TOPIC_PATTERN = /^[a-z][a-z0-9-]*$/u
 
 /** Stable memory scope selected by callers and model-facing tools. */
 export type MemoryScope = 'global' | 'project'
@@ -46,19 +45,6 @@ export interface MemoryDocument {
   readonly bytes: number
 }
 
-/** Before/after bytes for one reversible memory file write. */
-export interface MemoryFileMutation {
-  readonly path: string
-  readonly before: string | null
-  readonly after: string | null
-}
-
-/** One logical memory update, possibly touching an index and topic file. */
-export interface MemoryStoreMutation {
-  readonly files: readonly MemoryFileMutation[]
-  readonly changed: boolean
-}
-
 /** Input accepted by a deterministic Markdown memory write. */
 export interface MemoryWriteInput {
   readonly cwd: string
@@ -66,6 +52,10 @@ export interface MemoryWriteInput {
   readonly summary: string
   readonly topic?: MemoryTopic
   readonly details?: string
+  readonly replaces?: {
+    readonly summary: string
+    readonly topic?: MemoryTopic
+  }
 }
 
 /** Input accepted by deterministic removal of one remembered summary. */
@@ -176,31 +166,31 @@ function ensureTrailingNewline(value: string): string {
   return `${value.replaceAll(/\n+$/gu, '')}\n`
 }
 
-function appendUniqueBullet(content: string | null, title: string, bullet: string, key: string): string {
+function appendUniqueBullet(content: string | null, title: string, bullet: string, key: string, topic = false): string {
   const base = content === null || content.trim() === '' ? title : ensureTrailingNewline(content)
   const found = base.split('\n').some((line) => {
     if (!line.startsWith('- ')) return false
     const remembered = normalizedKey(line.slice(2).replace(/\s+\(\[[^\]]+\]\([^)]+\)\)$/u, ''))
-    return remembered === key || remembered.startsWith(`${key} — `)
+    return remembered === key || (topic && remembered.startsWith(`${key} — `))
   })
   return found ? base : `${base.endsWith('\n\n') ? base : `${base}\n`}- ${bullet}\n`
 }
 
-function removeBullet(content: string | null, summary: string): string | null {
+function removeBullet(content: string | null, summary: string, topic = false): string | null {
   if (content === null) return null
   const key = normalizedKey(summary)
   const lines = content.split('\n')
   const kept = lines.filter((line) => {
     if (!line.startsWith('- ')) return true
     const remembered = normalizedKey(line.slice(2).replace(/\s+\(\[[^\]]+\]\([^)]+\)\)$/u, ''))
-    return remembered !== key && !remembered.startsWith(`${key} — `)
+    return remembered !== key && !(topic && remembered.startsWith(`${key} — `))
   })
   return ensureTrailingNewline(kept.join('\n'))
 }
 
 function assertTopic(topic: string | undefined): asserts topic is MemoryTopic | undefined {
   if (topic === undefined) return
-  if (!TOPIC_PATTERN.test(topic) || !(MEMORY_TOPICS as readonly string[]).includes(topic)) {
+  if (!(MEMORY_TOPICS as readonly string[]).includes(topic)) {
     throw new Error(`unsupported memory topic "${topic}"`)
   }
 }
@@ -319,10 +309,14 @@ export class MemoryFileStore {
     return documents
   }
 
-  /** Append one deduplicated memory and return the exact reversible file mutation. */
-  async write(input: MemoryWriteInput, signal?: AbortSignal): Promise<MemoryStoreMutation> {
+  /** Append a deduplicated memory or explicitly replace one; return whether any document changed. */
+  async write(input: MemoryWriteInput, signal?: AbortSignal): Promise<boolean> {
     assertTopic(input.topic)
+    assertTopic(input.replaces?.topic)
     const summary = this.cleanText('summary', input.summary, this.options.maxSummaryChars)
+    const oldSummary = input.replaces === undefined
+      ? undefined
+      : this.cleanText('replaces.summary', input.replaces.summary, this.options.maxSummaryChars)
     const details = input.details === undefined
       ? undefined
       : this.cleanText('details', input.details, this.options.maxDetailsChars)
@@ -334,42 +328,53 @@ export class MemoryFileStore {
     return this.enqueue(directory, async () => {
       signal?.throwIfAborted()
       const indexPath = this.pathFor(project, input.scope)
+      const topicPath = input.topic === undefined ? undefined : this.pathFor(project, input.scope, input.topic)
+      const oldTopic = input.replaces?.topic
+      const oldTopicPath = oldTopic === undefined || oldTopic === input.topic
+        ? undefined
+        : this.pathFor(project, input.scope, oldTopic)
       const beforeIndex = await readableFile(indexPath, this.options.maxDocumentBytes)
+      const beforeTopic = topicPath === undefined ? null : await readableFile(topicPath, this.options.maxDocumentBytes)
+      const beforeOldTopic = oldTopicPath === undefined ? null : await readableFile(oldTopicPath, this.options.maxDocumentBytes)
+      const writes: { path: string; before: string | null; after: string }[] = []
+
+      let index = beforeIndex
+      if (oldSummary !== undefined) {
+        index = removeBullet(removeBullet(index, oldSummary), summary)
+      }
       const link = input.topic === undefined ? summary : `${summary} ([${input.topic}](${input.topic}.md))`
-      const afterIndex = appendUniqueBullet(
-        beforeIndex,
-        documentTitle(input.scope),
-        link,
-        normalizedKey(summary),
-      )
-      const mutations: MemoryFileMutation[] = []
-      if (afterIndex !== beforeIndex) {
-        this.assertDocumentSize(afterIndex)
-        await atomicWrite(indexPath, afterIndex)
-        mutations.push({ path: indexPath, before: beforeIndex, after: afterIndex })
-      }
-      if (input.topic !== undefined) {
-        const topicPath = this.pathFor(project, input.scope, input.topic)
-        const beforeTopic = await readableFile(topicPath, this.options.maxDocumentBytes)
-        const bullet = details === undefined ? summary : `${summary} — ${details}`
-        const afterTopic = appendUniqueBullet(
-          beforeTopic,
-          documentTitle(input.scope, input.topic),
-          bullet,
-          normalizedKey(summary),
-        )
-        if (afterTopic !== beforeTopic) {
-          this.assertDocumentSize(afterTopic)
-          await atomicWrite(topicPath, afterTopic)
-          mutations.push({ path: topicPath, before: beforeTopic, after: afterTopic })
+      const afterIndex = appendUniqueBullet(index, documentTitle(input.scope), link, normalizedKey(summary))
+      if (topicPath !== undefined) {
+        let topic = beforeTopic
+        if (oldSummary !== undefined) {
+          if (oldTopic === input.topic) topic = removeBullet(topic, oldSummary, true)
+          topic = removeBullet(topic, summary, true)
         }
+        const bullet = details === undefined ? summary : `${summary} — ${details}`
+        const after = appendUniqueBullet(topic, documentTitle(input.scope, input.topic), bullet, normalizedKey(summary), true)
+        writes.push({ path: topicPath, before: beforeTopic, after })
       }
-      return { files: mutations, changed: mutations.length > 0 }
+      writes.push({ path: indexPath, before: beforeIndex, after: afterIndex })
+      if (oldTopicPath !== undefined && beforeOldTopic !== null && oldSummary !== undefined) {
+        const after = removeBullet(beforeOldTopic, oldSummary, true)!
+        writes.push({ path: oldTopicPath, before: beforeOldTopic, after })
+      }
+      for (const { after } of writes) this.assertDocumentSize(after)
+
+      // Each file is atomic, not the whole replacement: failures leave completed writes in place.
+      let changed = false
+      for (const { path, before, after } of writes) {
+        if (after === before) continue
+        signal?.throwIfAborted()
+        await atomicWrite(path, after)
+        changed = true
+      }
+      return changed
     })
   }
 
   /** Remove one exact remembered summary from its index and optional topic. */
-  async forget(input: MemoryForgetInput, signal?: AbortSignal): Promise<MemoryStoreMutation> {
+  async forget(input: MemoryForgetInput, signal?: AbortSignal): Promise<boolean> {
     assertTopic(input.topic)
     const summary = this.cleanText('summary', input.summary, this.options.maxSummaryChars)
     const project = await this.project(input.cwd)
@@ -380,55 +385,16 @@ export class MemoryFileStore {
         this.pathFor(project, input.scope),
         ...input.topic === undefined ? [] : [this.pathFor(project, input.scope, input.topic)],
       ]
-      const mutations: MemoryFileMutation[] = []
+      let changed = false
       for (const path of paths) {
         const before = await readableFile(path, this.options.maxDocumentBytes)
-        const after = removeBullet(before, summary)
+        const after = removeBullet(before, summary, path !== paths[0])
         if (before === null || after === before) continue
         this.assertDocumentSize(after ?? '')
         await atomicWrite(path, after ?? '')
-        mutations.push({ path, before, after })
+        changed = true
       }
-      return { files: mutations, changed: mutations.length > 0 }
-    })
-  }
-
-  /** Apply an exact before/after mutation direction with stale-state protection. */
-  async restore(files: readonly MemoryFileMutation[], direction: 'before' | 'after'): Promise<void> {
-    const ordered = direction === 'before' ? [...files].reverse() : [...files]
-    if (ordered.length === 0) return
-    const directories = new Set(ordered.map(file => dirname(file.path)))
-    if (directories.size !== 1) throw new Error('memory mutation files must share one scope directory')
-    for (const file of ordered) {
-      if (!this.isOwnedPath(file.path)) throw new Error(`memory mutation path is outside the memory root: ${file.path}`)
-    }
-    await this.enqueue(dirname(ordered[0]?.path ?? this.root), async () => {
-      const expected = ordered.map(file => direction === 'before' ? file.after : file.before)
-      const replacement = ordered.map(file => direction === 'before' ? file.before : file.after)
-      const current = await Promise.all(ordered.map(file => readableFile(file.path, this.options.maxDocumentBytes)))
-      for (const [index, file] of ordered.entries()) {
-        if (current[index] !== expected[index]) {
-          throw new Error(`memory document changed after the rewind plan: ${file.path}`)
-        }
-      }
-      const applied: number[] = []
-      try {
-        for (const [index, file] of ordered.entries()) {
-          const content = replacement[index]
-          if (content === null) await rm(file.path, { force: true })
-          else if (content !== undefined) await atomicWrite(file.path, content)
-          applied.push(index)
-        }
-      } catch (error: unknown) {
-        for (const index of applied.reverse()) {
-          const file = ordered[index]
-          const content = current[index]
-          if (file === undefined) continue
-          if (content === null) await rm(file.path, { force: true })
-          else if (content !== undefined) await atomicWrite(file.path, content)
-        }
-        throw error
-      }
+      return changed
     })
   }
 
@@ -451,11 +417,6 @@ export class MemoryFileStore {
     if (bytes > this.options.maxDocumentBytes) {
       throw new Error(`memory: write would exceed maxDocumentBytes ${String(this.options.maxDocumentBytes)}`)
     }
-  }
-
-  private isOwnedPath(path: string): boolean {
-    const absolute = resolve(path)
-    return absolute === path && absolute.startsWith(`${this.root}${sep}`)
   }
 
   private policyPath(sessionId: string): string {

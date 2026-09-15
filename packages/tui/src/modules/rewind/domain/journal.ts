@@ -1,7 +1,5 @@
 import type {
   CanonicalWorkspaceMutation,
-  RewindEffectInput,
-  RewindEffectReference,
   RewindAction,
   RewindCodeScope,
   RewindPointInput,
@@ -27,7 +25,6 @@ interface RewindPoint {
   readonly previousTurnEndSeq?: number
   readonly createdAt: number
   readonly workspaceMutations: WorkspaceMutation[]
-  readonly effects: RewindEffectReference[]
 }
 
 interface RewindTimeline {
@@ -49,7 +46,6 @@ export interface RewindPointSnapshot {
   readonly previousTurnEndSeq?: number
   readonly createdAt: number
   readonly workspaceMutations: readonly WorkspaceMutation[]
-  readonly effects: readonly RewindEffectReference[]
 }
 
 /** Version-independent domain state persisted through a Repository adapter. */
@@ -69,30 +65,22 @@ export interface RewindEffectSelection {
   readonly lineageId?: string
   readonly workspaceRoot?: string
   readonly workspaceMutations: readonly WorkspaceMutation[]
-  readonly effects: readonly RewindEffectReference[]
 }
 
 export interface RewindJournalClaimResult {
   readonly changed: boolean
   readonly workspaceRoot: string
-  readonly released: readonly RewindEffectReference[]
 }
 
 export interface RewindJournalMutationResult {
   readonly recorded: boolean
   readonly workspaceRoot?: string
-  readonly released: readonly RewindEffectReference[]
 }
 
 export interface RewindJournalPointResult {
   readonly changed: boolean
   readonly durable: boolean
   readonly workspaceRoot: string
-  readonly released: readonly RewindEffectReference[]
-}
-
-function effectIds(points: readonly RewindPoint[]): RewindEffectReference[] {
-  return points.flatMap(point => point.effects)
 }
 
 function copyInput(input: RewindPromptInput): RewindPromptInput {
@@ -113,7 +101,6 @@ function snapshot(point: RewindPoint, sessionId = point.sessionId): RewindPointS
     createdAt: point.createdAt,
     ...point.previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq: point.previousTurnEndSeq },
     workspaceMutations: point.workspaceMutations.map(mutation => ({ ...mutation })),
-    effects: point.effects.map(effect => ({ ...effect })),
   }
 }
 
@@ -128,7 +115,6 @@ function mutablePoint(point: RewindPointSnapshot): RewindPoint {
     createdAt: point.createdAt,
     ...point.previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq: point.previousTurnEndSeq },
     workspaceMutations: point.workspaceMutations.map(mutation => ({ ...mutation })),
-    effects: point.effects.map(effect => ({ ...effect })),
   }
 }
 
@@ -143,7 +129,6 @@ function newPoint(input: RewindPointInput): RewindPoint {
     createdAt: input.createdAt,
     ...input.previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq: input.previousTurnEndSeq },
     workspaceMutations: [],
-    effects: [],
   }
 }
 
@@ -222,7 +207,7 @@ function enrichPoint(point: RewindPoint, input: RewindPointInput): boolean {
 /**
  * One active, bounded reversible-effect lineage per workspace. Prompt visibility
  * belongs to the Session log; this journal only indexes checkpoints needed to
- * attribute, restore, and branch code or participant effects.
+ * attribute, restore, and branch code effects.
  */
 export class RewindJournal {
   private readonly timelines = new Map<string, RewindTimeline>()
@@ -310,25 +295,25 @@ export class RewindJournal {
     if (timeline === undefined) {
       const created = this.timeline(input.sessionId, input.workspaceRoot, [input])
       this.timelines.set(input.workspaceRoot, created)
-      return { changed: true, durable: true, workspaceRoot: input.workspaceRoot, released: [] }
+      return { changed: true, durable: true, workspaceRoot: input.workspaceRoot }
     }
     if (timeline.ownerSessionId !== input.sessionId) {
-      return { changed: false, durable: false, workspaceRoot: input.workspaceRoot, released: [] }
+      return { changed: false, durable: false, workspaceRoot: input.workspaceRoot }
     }
     const retained = timeline.nodes.find(point => point.id === input.pointId)
     if (retained !== undefined) {
       const changed = retained.sessionId === input.sessionId && enrichPoint(retained, input)
       if (changed) timeline.updatedAt = Date.now()
-      return { changed, durable: true, workspaceRoot: input.workspaceRoot, released: [] }
+      return { changed, durable: true, workspaceRoot: input.workspaceRoot }
     }
     const applied = timeline.nodes.slice(0, timeline.cursor)
     const latestForSession = applied.filter(point => point.sessionId === input.sessionId).at(-1)
     if ((latestForSession?.turn ?? 0) > input.turn) {
-      return { changed: false, durable: true, workspaceRoot: input.workspaceRoot, released: [] }
+      return { changed: false, durable: true, workspaceRoot: input.workspaceRoot }
     }
-    const future = timeline.nodes.splice(timeline.cursor)
-    const released = [...effectIds(future), ...this.append(timeline, input)]
-    return { changed: true, durable: true, workspaceRoot: input.workspaceRoot, released }
+    timeline.nodes.splice(timeline.cursor)
+    this.append(timeline, input)
+    return { changed: true, durable: true, workspaceRoot: input.workspaceRoot }
   }
 
   /** Atomically make one Session's canonical checkpoints the active effect lineage. */
@@ -346,17 +331,14 @@ export class RewindJournal {
     const current = this.timelines.get(workspaceRoot)
     if (current?.ownerSessionId === sessionId) {
       let changed = false
-      const released: RewindEffectReference[] = []
       for (const point of ordered) {
         const recorded = this.recordPoint(point)
         changed = recorded.changed || changed
-        released.push(...recorded.released)
       }
-      return { changed, workspaceRoot, released }
+      return { changed, workspaceRoot }
     }
-    const released = current === undefined ? [] : effectIds(current.nodes)
     this.timelines.set(workspaceRoot, this.timeline(sessionId, workspaceRoot, ordered))
-    return { changed: true, workspaceRoot, released }
+    return { changed: true, workspaceRoot }
   }
 
   recordWorkspaceMutation(
@@ -365,7 +347,7 @@ export class RewindJournal {
   ): RewindJournalMutationResult {
     const point = this.pointFor(input.sessionId, input.turn)
     if (point === undefined || point.workspaceMutations.some(mutation => mutation.callId === input.callId)) {
-      return { recorded: false, released: [] }
+      return { recorded: false }
     }
     const common = {
       id: globalThis.crypto.randomUUID(),
@@ -380,7 +362,7 @@ export class RewindJournal {
     if (canonical.kind === 'unsupported') {
       point.workspaceMutations.push({ ...common, kind: 'unsupported', reason: canonical.reason })
       this.touch(point.workspaceRoot)
-      return { recorded: true, workspaceRoot: point.workspaceRoot, released: [] }
+      return { recorded: true, workspaceRoot: point.workspaceRoot }
     }
     const timeline = this.timelineForOwner(input.sessionId)
     const currentBytes = timeline === undefined ? 0 : this.timelineBytes(timeline)
@@ -401,19 +383,7 @@ export class RewindJournal {
       })
     }
     this.touch(point.workspaceRoot)
-    return { recorded: true, workspaceRoot: point.workspaceRoot, released: [] }
-  }
-
-  recordEffect(input: RewindEffectInput): RewindJournalMutationResult & { readonly status: 'recorded' | 'duplicate' | 'missing-point' } {
-    const retained = [...this.timelines.values()].some(timeline => timeline.nodes.some(candidate => candidate.effects.some(effect => (
-      effect.participantId === input.participantId && effect.effectId === input.effectId
-    ))))
-    if (retained) return { status: 'duplicate', recorded: false, released: [] }
-    const point = this.pointFor(input.sourceSessionId, input.sourceTurn)
-    if (point === undefined) return { status: 'missing-point', recorded: false, released: [] }
-    point.effects.push({ ...input })
-    this.touch(point.workspaceRoot)
-    return { status: 'recorded', recorded: true, workspaceRoot: point.workspaceRoot, released: [] }
+    return { recorded: true, workspaceRoot: point.workspaceRoot }
   }
 
   /** Active effect metadata used only to annotate canonical Session checkpoints. */
@@ -424,7 +394,7 @@ export class RewindJournal {
 
   selectEffects(sessionId: string, pointId: string): RewindEffectSelection {
     const timeline = this.timelineForOwner(sessionId)
-    if (timeline === undefined) return { codeScope: 'none', workspaceMutations: [], effects: [] }
+    if (timeline === undefined) return { codeScope: 'none', workspaceMutations: [] }
     const pointIndex = timeline.nodes.findIndex(candidate => candidate.id === pointId)
     if (pointIndex === -1) {
       return {
@@ -432,7 +402,6 @@ export class RewindJournal {
         lineageId: timeline.lineageId,
         workspaceRoot: timeline.workspaceRoot,
         workspaceMutations: [],
-        effects: [],
       }
     }
     if (pointIndex >= timeline.cursor) {
@@ -442,22 +411,19 @@ export class RewindJournal {
         lineageId: timeline.lineageId,
         workspaceRoot: timeline.workspaceRoot,
         workspaceMutations: [],
-        effects: [],
       }
     }
     const selected = timeline.nodes.slice(pointIndex, timeline.cursor)
     const workspaceMutations = selected
       .flatMap(candidate => candidate.workspaceMutations)
       .sort((left, right) => left.order - right.order)
-    const effects = selected.flatMap(candidate => candidate.effects)
-    if (workspaceMutations.length === 0 && effects.length === 0) {
+    if (workspaceMutations.length === 0) {
       return {
         codeScope: 'none',
-        codeReason: 'No source-attributed code or participant effects are retained for this checkpoint.',
+        codeReason: 'No source-attributed code effects are retained for this checkpoint.',
         lineageId: timeline.lineageId,
         workspaceRoot: timeline.workspaceRoot,
         workspaceMutations,
-        effects,
       }
     }
     return {
@@ -465,7 +431,6 @@ export class RewindJournal {
       lineageId: timeline.lineageId,
       workspaceRoot: timeline.workspaceRoot,
       workspaceMutations,
-      effects,
     }
   }
 
@@ -505,14 +470,6 @@ export class RewindJournal {
     return timeline.workspaceRoot
   }
 
-  allEffects(workspaceRoot: string): RewindEffectReference[] {
-    return effectIds(this.timelines.get(workspaceRoot)?.nodes ?? [])
-  }
-
-  ownerSessionIds(): string[] {
-    return [...new Set([...this.timelines.values()].map(timeline => timeline.ownerSessionId))]
-  }
-
   private timeline(
     ownerSessionId: string,
     workspaceRoot: string,
@@ -529,15 +486,14 @@ export class RewindJournal {
     }
   }
 
-  private append(timeline: RewindTimeline, input: RewindPointInput): RewindEffectReference[] {
+  private append(timeline: RewindTimeline, input: RewindPointInput): void {
     timeline.nodes.push(newPoint(input))
     timeline.cursor = timeline.nodes.length
     timeline.updatedAt = Date.now()
     const dropped = Math.max(0, timeline.nodes.length - this.limits.history)
-    if (dropped === 0) return []
-    const removed = timeline.nodes.splice(0, dropped)
+    if (dropped === 0) return
+    timeline.nodes.splice(0, dropped)
     timeline.cursor = Math.max(0, timeline.cursor - dropped)
-    return effectIds(removed)
   }
 
   private timelineForOwner(sessionId: string): RewindTimeline | undefined {

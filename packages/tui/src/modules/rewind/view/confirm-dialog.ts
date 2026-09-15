@@ -17,7 +17,7 @@ function relativeAge(time: number): string {
   return `${Math.floor(hours / 24)}d ago`
 }
 
-/** Confirmation for coordinated workspace, participant, and conversation rewind. */
+/** Confirmation for coordinated workspace and conversation rewind. */
 export class RewindDialog implements SurfaceInputTarget {
   readonly inputContext = 'rewind-confirm' as const
   private selected: number
@@ -80,10 +80,6 @@ export class RewindDialog implements SurfaceInputTarget {
     const impact = wrapTextWithAnsi(this.theme.dim(changed === 0
       ? 'No source-attributed files are included in this checkpoint.'
       : `${changed} source-attributed file${changed === 1 ? '' : 's'} ${changed === 1 ? 'is' : 'are'} included in this plan.`), width)
-    const participantImpact = this.plan.participants.flatMap(participant => wrapTextWithAnsi(
-      this.theme.dim(`${participant.changes} ${participant.label.toLowerCase()} update${participant.changes === 1 ? '' : 's'} will be reverted when code state is restored.`),
-      width,
-    ))
     const imageImpact = this.plan.input.attachments.length === 0
       ? []
       : [this.theme.dim(`${String(this.plan.input.attachments.length)} attached image${this.plan.input.attachments.length === 1 ? '' : 's'} will return to the Composer when conversation state is restored.`)]
@@ -98,7 +94,6 @@ export class RewindDialog implements SurfaceInputTarget {
       this.theme.dim('Restoring conversation state creates a fork; restoring code alone keeps this conversation.'),
       ...impact,
       ...imageImpact,
-      ...participantImpact,
       '',
     ]
     const blocked = this.plan.state === 'conflict' || this.plan.state === 'unsupported'
@@ -110,11 +105,6 @@ export class RewindDialog implements SurfaceInputTarget {
     if (this.plan.codeScope === 'forward-unavailable' || this.plan.codeScope === 'none') {
       body.push(...wrapTextWithAnsi(this.theme.warning(this.plan.codeReason
         ?? 'No reversible code state is retained for this checkpoint.'), width), '')
-    }
-    for (const participant of this.plan.participants) {
-      if (participant.state === 'conflict' || participant.state === 'unsupported') {
-        body.push(...wrapTextWithAnsi(this.theme.warning(`○ ${participant.label} — ${participant.reason}`), width))
-      }
     }
     for (const file of this.plan.files) {
       const marker = file.state === 'safe' ? '●' : file.state === 'mergeable' ? '◐' : '○'

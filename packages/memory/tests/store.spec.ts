@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { MemoryFileStore } from '../src/store.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MemoryFileStore, type MemoryWriteInput } from '../src/store.ts'
 
 const temporaryDirectories: string[] = []
 
@@ -11,7 +12,7 @@ function git(root: string, ...args: string[]): string {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim()
 }
 
-async function fixture(): Promise<{ cwd: string; memoryRoot: string; store: MemoryFileStore }> {
+async function fixture(): Promise<{ cwd: string; store: MemoryFileStore }> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-memory-test-'))
   temporaryDirectories.push(root)
   const cwd = join(root, 'project')
@@ -24,7 +25,6 @@ async function fixture(): Promise<{ cwd: string; memoryRoot: string; store: Memo
   git(cwd, '-c', 'user.name=Memory Test', '-c', 'user.email=memory@example.test', 'commit', '--quiet', '-m', 'fixture')
   return {
     cwd,
-    memoryRoot,
     store: new MemoryFileStore({
       root: memoryRoot,
       maxDocumentBytes: 32 * 1024,
@@ -70,16 +70,115 @@ describe('MemoryFileStore', () => {
       scope: 'project',
       summary: '  Preserve   unrelated user edits. ',
       topic: 'conventions',
-      details: 'Stage only files owned by the requested change.',
+      details: 'An ordinary duplicate must not replace the original detail.',
     })
 
-    expect(first.changed).toBe(true)
-    expect(first.files).toHaveLength(2)
-    expect(duplicate.changed).toBe(false)
+    expect(first).toBe(true)
+    expect(duplicate).toBe(false)
     const index = await store.read(cwd, 'project')
     const topic = await store.read(cwd, 'project', 'conventions')
     expect(index.content).toContain('- Preserve unrelated user edits. ([conventions](conventions.md))')
     expect(topic.content).toContain('- Preserve unrelated user edits. — Stage only files owned by the requested change.')
+  })
+
+  it('replaces an old memory and refreshes an existing target and its details', async () => {
+    const { cwd, store } = await fixture()
+    await store.write({ cwd, scope: 'project', summary: 'Old rule.', topic: 'preferences', details: 'Old detail.' })
+    await store.write({ cwd, scope: 'project', summary: 'New rule.', topic: 'conventions', details: 'Stale detail.' })
+    await store.write({ cwd, scope: 'project', summary: 'Keep this rule.', topic: 'preferences' })
+
+    expect(await store.write({
+      cwd, scope: 'project', summary: 'New rule.', topic: 'conventions', details: 'Corrected detail.',
+      replaces: { summary: 'Old rule.', topic: 'preferences' },
+    })).toBe(true)
+
+    expect((await store.read(cwd, 'project')).content.split('\n').filter(line => line.startsWith('- '))).toEqual([
+      '- Keep this rule. ([preferences](preferences.md))',
+      '- New rule. ([conventions](conventions.md))',
+    ])
+    expect((await store.read(cwd, 'project', 'conventions')).content).toBe('# Conventions memory\n\n- New rule. — Corrected detail.\n')
+    expect((await store.read(cwd, 'project', 'preferences')).content.split('\n').filter(line => line.startsWith('- '))).toEqual(['- Keep this rule.'])
+  })
+
+  it.each([
+    { name: 'updates same-key details', summary: '  KEEP   This Rule. ', topic: 'conventions' as const },
+    { name: 'moves a same-key memory', summary: 'Keep this rule.', topic: 'preferences' as const },
+    { name: 'removes a same-key topic link', summary: 'Keep this rule.', topic: undefined },
+    { name: 'extends a summary with a detail-like suffix', summary: 'Keep this rule. — suffix', topic: 'conventions' as const },
+  ])('$name', async ({ summary, topic }) => {
+    const { cwd, store } = await fixture()
+    await store.write({ cwd, scope: 'project', summary: 'Keep this rule.', topic: 'conventions', details: 'Old detail.' })
+    expect(await store.write({
+      cwd, scope: 'project', summary, ...topic === undefined ? {} : { topic }, details: 'New detail.',
+      replaces: { summary: 'Keep this rule.', topic: 'conventions' },
+    })).toBe(true)
+
+    const normalized = summary.trim().replaceAll(/\s+/gu, ' ')
+    const link = topic === undefined ? '' : ` ([${topic}](${topic}.md))`
+    expect((await store.read(cwd, 'project')).content).toBe(`# Project memory\n\n- ${normalized}${link}\n`)
+    if (topic !== undefined) {
+      expect((await store.read(cwd, 'project', topic)).content).toContain(`- ${normalized} — New detail.\n`)
+      expect((await store.read(cwd, 'project', topic)).content).not.toContain('Old detail.')
+    }
+    if (topic !== 'conventions') {
+      expect((await store.read(cwd, 'project', 'conventions')).content).toBe('# Conventions memory\n')
+    }
+  })
+
+  it('writes a replacement even when the old entry is missing', async () => {
+    const { cwd, store } = await fixture()
+    expect(await store.write({
+      cwd, scope: 'project', summary: 'Current rule.', replaces: { summary: 'Missing rule.', topic: 'preferences' },
+    })).toBe(true)
+    expect((await store.read(cwd, 'project')).content).toBe('# Project memory\n\n- Current rule.\n')
+  })
+
+  it('preserves existing documents when replacement validation fails', async () => {
+    const { cwd, store } = await fixture()
+    const input: MemoryWriteInput = {
+      cwd, scope: 'project', summary: 'New rule.', topic: 'decisions',
+      replaces: { summary: 'Old rule.', topic: 'conventions' },
+    }
+    await store.write({ cwd, scope: 'project', summary: 'Old rule.', topic: 'conventions', details: 'Keep this detail.' })
+    const before = await store.list(cwd)
+    const bounded = new MemoryFileStore({ root: store.root, maxDocumentBytes: 180, maxSummaryChars: 200, maxDetailsChars: 1_000 })
+    for (const invalid of [
+      { ...input, replaces: { summary: ' ' } },
+      { ...input, replaces: { summary: 'Old rule.', topic: 'invalid' as 'conventions' } },
+      { ...input, details: 'password = example-secret-value' },
+      { ...input, details: 'Large detail. '.repeat(30) },
+    ]) {
+      await expect(bounded.write(invalid)).rejects.toThrow()
+      expect(await store.list(cwd)).toEqual(before)
+    }
+  })
+
+  it('keeps completed new content on cancellation and allows subsequent queued writes', async () => {
+    const { cwd, store } = await fixture()
+    await store.write({ cwd, scope: 'project', summary: 'Old rule.', topic: 'conventions', details: 'Old detail.' })
+    await store.write({ cwd, scope: 'project', summary: 'Keep this rule.', topic: 'decisions' })
+    const beforeIndex = await store.read(cwd, 'project')
+    const beforeOld = await store.read(cwd, 'project', 'conventions')
+    const target = await store.read(cwd, 'project', 'decisions')
+    const controller = new AbortController()
+    const throwIfAborted = controller.signal.throwIfAborted.bind(controller.signal)
+    vi.spyOn(controller.signal, 'throwIfAborted').mockImplementation(() => {
+      if (readFileSync(target.path, 'utf8').includes('- New rule. — New detail.')) {
+        controller.abort(new Error('learning canceled after new content'))
+      }
+      throwIfAborted()
+    })
+
+    await expect(store.write({
+      cwd, scope: 'project', summary: 'New rule.', topic: 'decisions', details: 'New detail.',
+      replaces: { summary: 'Old rule.', topic: 'conventions' },
+    }, controller.signal)).rejects.toThrow('learning canceled after new content')
+
+    expect((await store.read(cwd, 'project', 'decisions')).content).toContain('- New rule. — New detail.')
+    expect((await store.read(cwd, 'project')).content).toBe(beforeIndex.content)
+    expect((await store.read(cwd, 'project', 'conventions')).content).toBe(beforeOld.content)
+    expect(await store.write({ cwd, scope: 'project', summary: 'Later rule.' })).toBe(true)
+    expect((await store.read(cwd, 'project')).content).toContain('- Later rule.')
   })
 
   it('isolates global and project memory and resolves a stable remote-backed project id', async () => {
@@ -128,57 +227,26 @@ describe('MemoryFileStore', () => {
     expect((await store.read(cwd, 'project')).content).toContain('Share local repository memory.')
   })
 
-  it('forgets an exact summary and can reverse and reapply the mutation', async () => {
+  it('forgets an exact summary and its linked details', async () => {
     const { cwd, store } = await fixture()
-    await store.write({ cwd, scope: 'project', summary: 'Run visual acceptance for every review.' })
-    const mutation = await store.forget({
-      cwd,
-      scope: 'project',
-      summary: 'Run visual acceptance for every review.',
-    })
+    const input = { cwd, scope: 'project' as const, summary: 'Run visual acceptance for every review.', topic: 'conventions' as const }
+    const longer = `${input.summary} — keep this separate summary`
+    await store.write({ cwd, scope: 'project', summary: longer })
+    await store.write({ ...input, details: 'Check the terminal rendering.' })
+    expect((await store.read(cwd, 'project')).content).toContain(`- ${input.summary} ([conventions](conventions.md))`)
 
-    expect(mutation.changed).toBe(true)
-    expect((await store.read(cwd, 'project')).content).not.toContain('Run visual acceptance')
-    await store.restore(mutation.files, 'before')
-    expect((await store.read(cwd, 'project')).content).toContain('Run visual acceptance')
-    await store.restore(mutation.files, 'after')
-    expect((await store.read(cwd, 'project')).content).not.toContain('Run visual acceptance')
+    expect(await store.forget(input)).toBe(true)
+    expect((await store.read(cwd, 'project')).content.trim()).toBe(`# Project memory\n\n- ${longer}`)
+    expect((await store.read(cwd, 'project', 'conventions')).content).not.toContain('Check the terminal rendering.')
   })
 
-  it('refuses secret-like values before creating memory files', async () => {
-    const { cwd, memoryRoot, store } = await fixture()
+  it('refuses secret-like memory content', async () => {
+    const { cwd, store } = await fixture()
     await expect(store.write({
       cwd,
       scope: 'project',
       summary: 'API key = sk-exampleexampleexampleexample',
     })).rejects.toThrow('credential or secret')
-    await expect(readFile(join(memoryRoot, 'global', 'MEMORY.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('rejects stale rewind restoration rather than overwriting a later write', async () => {
-    const { cwd, store } = await fixture()
-    const mutation = await store.write({ cwd, scope: 'project', summary: 'First rule.' })
-    await store.write({ cwd, scope: 'project', summary: 'Later rule.' })
-
-    await expect(store.restore(mutation.files, 'before')).rejects.toThrow('changed after the rewind plan')
-    expect((await store.read(cwd, 'project')).content).toContain('Later rule.')
-  })
-
-  it('preflights every file before reverting a multi-file memory update', async () => {
-    const { cwd, store } = await fixture()
-    const mutation = await store.write({
-      cwd,
-      scope: 'project',
-      summary: 'Use focused checks.',
-      topic: 'conventions',
-      details: 'Run only the checks that cover the changed surface.',
-    })
-    const index = mutation.files.find(file => file.path.endsWith('MEMORY.md'))
-    const topic = mutation.files.find(file => file.path.endsWith('conventions.md'))
-    if (index === undefined || topic === undefined) throw new Error('fixture did not create both memory files')
-    await writeFile(index.path, `${index.after ?? ''}- Later independent rule.\n`)
-
-    await expect(store.restore(mutation.files, 'before')).rejects.toThrow('changed after the rewind plan')
-    expect(await readFile(topic.path, 'utf8')).toBe(topic.after)
-  })
 })

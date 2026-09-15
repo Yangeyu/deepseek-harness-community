@@ -11,6 +11,7 @@ import { ProjectMemoryService, type Config, type MemoryActivity } from '../src/i
 
 const temporaryDirectories: string[] = []
 const contexts: Context[] = []
+const learningRoute = { extractionProvider: 'background', extractionModel: 'small-model' }
 
 function sessionFixture(ctx: Context, id: string, cwd: string): Session {
   return ctx.sessions.create(SessionId(id), { meta: { cwd } })
@@ -25,51 +26,43 @@ async function memoryService(overrides: {
   const ctx = new Context()
   contexts.push(ctx)
   new SessionStore(ctx)
-  ctx.provide('tools', { register: () => () => {} } as unknown as Context['tools'])
+  ctx.provide('tools', { register: () => () => {}, presentAs: () => {}, restrict: () => {} } as unknown as Context['tools'])
   ctx.provide('agents', overrides.agents ?? { get: () => undefined } as unknown as Context['agents'])
   new SystemPrompt(ctx, {})
   return {
     ctx,
     cwd: root,
-    service: new ProjectMemoryService(ctx, {
-      root: join(root, 'memories'),
-      useMemories: true,
-      generateMemories: false,
-      ...overrides.config,
-    }),
+    service: new ProjectMemoryService(ctx, { root: join(root, 'memories'), ...overrides.config }),
   }
 }
 
-function nextMemoryStep(ctx: Context, agent: Agent): Promise<PreStepDecision> {
+function nextMemoryStep(ctx: Context, agent: Agent, decision: PreStepDecision = { kind: 'enter', messages: [], startsRequestSeries: true }): Promise<PreStepDecision> {
   return ctx.waterfall('agent/pre-step', {
-    agent,
-    messages: [],
-    turn: 1,
-    step: 1,
-    signal: new AbortController().signal,
-  }, () => Promise.resolve({ kind: 'enter', messages: [] }))
+    agent, messages: [], turn: 1, step: 1, signal: new AbortController().signal,
+  }, () => Promise.resolve(decision))
 }
 
 async function learningFixture(options: {
   parentIdle?: () => Promise<void>
   childIdle?: () => Promise<void>
   disposeChild?: () => Promise<void>
-  maintenanceSignal?: AbortSignal
   config?: Partial<Config>
 } = {}) {
   const started = Promise.withResolvers<void>()
   const followup = vi.fn((_message: UserMessage) => { started.resolve() })
   const dispose = vi.fn(options.disposeChild ?? (async () => {}))
-  const create = vi.fn(async ({ sessionId }: CreateAgentOptions) => ({
-    agent: {
-      id: sessionId,
-      followup,
-      whenIdle: options.childIdle ?? (async () => {}),
-    } as unknown as Agent,
-    dispose,
-  }))
+  const create = vi.fn(async ({ sessionId, setup }: CreateAgentOptions) => {
+    const child = { id: sessionId, followup, whenIdle: options.childIdle ?? (async () => {}) } as unknown as Agent
+    // The fake factory has no agent-scoped prompt registry; exercise the shared LLM hooks.
+    await setup?.({
+      on: fixture.ctx.on.bind(fixture.ctx),
+      tools: fixture.ctx.tools,
+      systemPrompt: { section: () => {}, getSectionOrder: () => 0 },
+    } as unknown as Context, child)
+    return { agent: child, dispose }
+  })
   const fixture = await memoryService({
-    config: { generateMemories: true, idleDelayMs: 0, ...options.config },
+    config: { ...learningRoute, generateMemories: true, idleDelayMs: 0, ...options.config },
     agents: {
       get: () => agent,
       withInitiator: (_initiator: unknown, run: () => unknown) => run(),
@@ -78,22 +71,28 @@ async function learningFixture(options: {
   })
   const session = sessionFixture(fixture.ctx, 'memory-learning', fixture.cwd)
   const agent = {
-    id: session.id,
-    session,
-    status: 'idle',
-    options: {},
+    id: session.id, session, status: 'idle', options: { provider: 'foreground', model: 'large-model' },
     whenIdle: options.parentIdle ?? (async () => {}),
-    runMaintenance: async (run: (signal: AbortSignal) => Promise<void>) => run(options.maintenanceSignal ?? new AbortController().signal),
   } as unknown as Agent
-  const turn = (number: number): void => {
+  const turn = (number: number, text = `这个回答可以更简洁一些。Turn ${number}.`, reply?: string): void => {
     session.append('turn/start', { turn: number })
-    session.append('user/message', createUserMessage({
-      source: { kind: 'user' },
-      content: [{ type: 'text', text: `记住：以后提交前必须先跑 lint。Turn ${number}.` }],
-    }), { surfaceOp: 'append' })
+    session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] }), { surfaceOp: 'append' })
+    if (reply !== undefined) session.append('assistant/message', { turn: number, step: 1, stream: [], message: createAssistantMessage({ source: { provider: 'test', model: 'test' }, content: [{ type: 'text', text: reply }] }) }, { surfaceOp: 'append' })
     session.append('turn/end', { turn: number, reason: { kind: 'completed' } })
   }
-  return { ...fixture, session, agent, create, followup, dispose, started: started.promise, turn }
+  const completion = (): Promise<void> => new Promise((resolve, reject) => {
+    const remove = fixture.service.onActivity(activity => {
+      if (activity.state === 'idle') { remove(); resolve() }
+      if (activity.state === 'error') { remove(); reject(new Error(activity.message)) }
+    })
+  })
+  return { ...fixture, session, agent, create, followup, dispose, started: started.promise, turn, completion }
+}
+
+function suppliedTurns(followup: ReturnType<typeof vi.fn<(message: UserMessage) => void>>): Array<{ turn: number; messages: Array<{ role: string; text: string }> }> {
+  const block = followup.mock.calls[0]?.[0].content.find(item => item.type === 'text')
+  if (block?.type !== 'text') throw new Error('fixture did not receive a learning prompt')
+  return JSON.parse(block.text.split('Conversation JSON: ')[1]!) as Array<{ turn: number; messages: Array<{ role: string; text: string }> }>
 }
 
 afterEach(async () => {
@@ -135,197 +134,189 @@ describe('ProjectMemoryService context projection', () => {
       if (message === undefined) throw new Error('fixture did not receive a memory message')
       session.append('user/message', message, { surfaceOp: 'append' })
     }
-
     const initial = await preStep()
-    if (initial.kind === 'reject') throw new Error('fixture unexpectedly rejected the step')
-    expect(initial.messages).toHaveLength(1)
-    expect(initial.messages[0]?.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('Use focused checks.') })
+    expect(initial).toMatchObject({ kind: 'enter', startsRequestSeries: true, messages: [{ content: [{ type: 'text', text: expect.stringContaining('Use focused checks.') }] }] })
     append(initial)
-    const unchanged = await preStep()
-    if (unchanged.kind === 'reject') throw new Error('fixture unexpectedly rejected the step')
-    expect(unchanged.messages).toHaveLength(0)
+    expect(await preStep()).toMatchObject({ kind: 'enter', messages: [] })
 
     await service.setPolicy(String(session.id), { useMemories: false })
     const cleared = await preStep()
-    if (cleared.kind === 'reject') throw new Error('fixture unexpectedly rejected the step')
-    expect(cleared.messages[0]?.content[0]).toMatchObject({
-      type: 'text',
-      text: 'Project memory is disabled for this session. Earlier memory snapshots no longer apply.',
-    })
+    expect(cleared).toMatchObject({ kind: 'enter', startsRequestSeries: true, messages: [{ content: [{ type: 'text', text: 'Project memory is disabled for this session. Earlier memory snapshots no longer apply.' }] }] })
     append(cleared)
-    const stillCleared = await preStep()
-    if (stillCleared.kind === 'reject') throw new Error('fixture unexpectedly rejected the step')
-    expect(stillCleared.messages).toHaveLength(0)
-
+    expect(await preStep()).toMatchObject({ kind: 'enter', messages: [] })
     await service.setPolicy(String(session.id), { useMemories: true })
-    const restored = await preStep()
-    if (restored.kind === 'reject') throw new Error('fixture unexpectedly rejected the step')
-    expect(restored.messages[0]?.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('Use focused checks.') })
+    expect(await preStep()).toMatchObject({ kind: 'enter', messages: [{ content: [{ type: 'text', text: expect.stringContaining('Use focused checks.') }] }] })
+  })
+
+  it('continues the admitted conversation on index read failure and refreshes after recovery', async () => {
+    const { ctx, cwd, service } = await memoryService()
+    await service.write({ cwd, scope: 'project', summary: 'Keep answers concise.' })
+    const session = sessionFixture(ctx, 'memory-unavailable', cwd)
+    const agent = { id: session.id, session } as unknown as Agent
+    const initial = await nextMemoryStep(ctx, agent)
+    if (initial.kind !== 'enter') throw new Error('fixture unexpectedly rejected the step')
+    session.append('user/message', initial.messages[0]!, { surfaceOp: 'append' })
+    const admitted: PreStepDecision = { kind: 'enter', startsRequestSeries: true, messages: [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue working.' }] })] }
+    vi.spyOn(service.store, 'read').mockRejectedValueOnce(new Error('index is unavailable'))
+
+    expect(await nextMemoryStep(ctx, agent, admitted)).toBe(admitted)
+    await service.write({ cwd, scope: 'project', summary: 'Explain important tradeoffs.' })
+    expect(await nextMemoryStep(ctx, agent)).toMatchObject({ kind: 'enter', messages: [{ content: [{ type: 'text', text: expect.stringContaining('Explain important tradeoffs.') }] }] })
   })
 })
 
 describe('ProjectMemoryService session policy', () => {
+  it('requires opt-in and an explicit background route while foreground writes remain usable', async () => {
+    const { service, cwd } = await memoryService()
+    expect((await service.policy('session')).generateMemories).toBe(false)
+    await expect(service.setPolicy('session', { generateMemories: true })).rejects.toThrow('extractionProvider and extractionModel')
+    expect(await service.write({ cwd, scope: 'project', summary: 'Prefer concise answers.' })).toBe(true)
+    expect((await service.overview(cwd, 'session')).learning).toBeUndefined()
+    const configured = await memoryService({ config: learningRoute })
+    expect((await configured.service.policy('session')).generateMemories).toBe(false)
+    expect(await configured.service.setPolicy('session', { generateMemories: true })).toMatchObject({ generateMemories: true })
+  })
+
   it('persists concurrent partial updates across service recreation without changing new-session defaults', async () => {
-    const first = await memoryService({ config: { generateMemories: true } })
+    const first = await memoryService({ config: { ...learningRoute, generateMemories: true } })
     await Promise.all([
       first.service.setPolicy('session-one', { useMemories: false }),
       first.service.setPolicy('session-one', { generateMemories: false }),
     ])
     await first.ctx.fiber.dispose()
-    const second = await memoryService({ config: { root: first.service.store.root, generateMemories: true } })
-
+    const second = await memoryService({ config: { ...learningRoute, root: first.service.store.root, generateMemories: true } })
     expect(await second.service.policy('session-one')).toEqual({ useMemories: false, generateMemories: false })
     expect(await second.service.policy('session-two')).toEqual({ useMemories: true, generateMemories: true })
   })
 
-  it('reports unreadable policy instead of silently enabling the deployment defaults', async () => {
-    const { service } = await memoryService({ config: { generateMemories: true } })
-    await service.setPolicy('session-one', { generateMemories: false })
-    const directory = join(service.store.root, 'sessions')
-    const [filename] = await readdir(directory)
-    if (filename === undefined) throw new Error('fixture did not persist its policy')
-    await writeFile(join(directory, filename), '{"generateMemories":"off"}')
+  it('does not fall back to the foreground model when a saved enabled policy has no background route', async () => {
+    const first = await memoryService({ config: learningRoute })
+    await first.service.setPolicy('session', { generateMemories: true })
+    await first.ctx.fiber.dispose()
+    const second = await memoryService({ config: { root: first.service.store.root } })
+    expect(await second.service.policy('session')).toEqual({ useMemories: true, generateMemories: false })
+  })
 
-    await expect(service.policy('session-one')).rejects.toThrow('invalid memory session policy')
+  it('reports unreadable policy instead of silently enabling the deployment defaults', async () => {
+    const { ctx, cwd, service } = await memoryService({ config: { ...learningRoute, generateMemories: true } })
+    await service.setPolicy('session-one', { generateMemories: false })
+    const [filename] = await readdir(join(service.store.root, 'sessions'))
+    if (filename === undefined) throw new Error('fixture did not persist its policy')
+    await writeFile(join(service.store.root, 'sessions', filename), '{"generateMemories":"off"}')
+    const session = sessionFixture(ctx, 'session-one', cwd)
+    await expect(nextMemoryStep(ctx, { id: session.id, session } as unknown as Agent)).rejects.toThrow('invalid memory session policy')
   })
 })
 
 describe('ProjectMemoryService quiet learning', () => {
-  it('schedules learning from complete user evidence even after a long assistant reply', async () => {
-    const { service, session, followup } = await learningFixture({ config: { extractionMaxInputBytes: 512 } })
-    const correction = '  记住：以后先给结论再解释；但这次临时展开细节，不改变长期偏好。\n'
-    session.append('turn/start', { turn: 1 })
-    session.append('user/message', createUserMessage({
-      source: { kind: 'user' }, content: [{ type: 'text', text: correction }],
-    }), { surfaceOp: 'append' })
-    session.append('assistant/message', {
-      turn: 1, step: 1, stream: [],
-      message: createAssistantMessage({ source: { provider: 'test', model: 'test' }, content: [{ type: 'text', text: 'Detailed explanation. '.repeat(2_000) }] }),
-    }, { surfaceOp: 'append' })
-    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    await service.settle(String(session.id))
-
-    expect(followup).toHaveBeenCalledOnce()
-    const block = followup.mock.calls[0]?.[0].content.find(item => item.type === 'text')
-    if (block?.type !== 'text') throw new Error('fixture did not receive a learning prompt')
-    expect(JSON.parse(block.text.split('Conversation JSON: ')[1]!)).toEqual([{ role: 'user', text: correction }])
+  it('coalesces recent turns and restarts the idle wait on new work', async () => {
+    const waiting = Promise.withResolvers<void>()
+    const restarted = Promise.withResolvers<void>()
+    let waits = 0
+    const fixture = await learningFixture({
+      config: { idleDelayMs: 20 },
+      parentIdle: async () => { (waits === 0 ? waiting : restarted).resolve(); waits += 1 },
+    })
+    const done = fixture.completion()
+    fixture.turn(1)
+    await waiting.promise
+    fixture.turn(2)
+    await restarted.promise
+    expect(fixture.create).not.toHaveBeenCalled()
+    await done
+    expect(fixture.create).toHaveBeenCalledOnce()
+    expect(suppliedTurns(fixture.followup).map(item => item.turn)).toEqual([1, 2])
+    expect(fixture.create.mock.calls[0]?.[0].agentOptions).toMatchObject({ provider: 'background', model: 'small-model', maxTokens: 900 })
   })
 
-  it('instructs the maintenance agent to reconcile with existing memory before recording', async () => {
-    const { service, session, followup, turn } = await learningFixture()
-    turn(1)
-    await service.settle(String(session.id))
-
-    expect(followup).toHaveBeenCalledTimes(1)
-    const message = followup.mock.calls[0]?.[0] as { content: Array<{ type: string; text: string }> } | undefined
-    const text = message?.content.find(block => block.type === 'text')?.text ?? ''
-    expect(text).toContain('memory_read')
-    expect(text).toContain('memory_forget')
-    expect(text).toContain('exactly one current wording')
-    expect(text).toContain('记住：以后提交前必须先跑 lint。')
-    expect(text).toContain('Do not reply to the original user')
+  it('drops old whole turns when the pending batch is full', async () => {
+    const fixture = await learningFixture({ config: { extractionMaxInputBytes: 220 } })
+    const done = fixture.completion()
+    for (let turn = 1; turn <= 3; turn++) fixture.turn(turn, 'x'.repeat(40))
+    await done
+    const turns = suppliedTurns(fixture.followup)
+    expect(turns.map(item => item.turn)).toEqual([2, 3])
+    expect(Buffer.byteLength(JSON.stringify(turns), 'utf8')).toBeLessThanOrEqual(220)
   })
 
-  it('cancels waiting candidates without reviving them when learning is re-enabled', async () => {
+  it.each(['one reply', 'combined replies'])('keeps complete user evidence when %s overflows the input budget', async mode => {
+    const { turn, followup, completion } = await learningFixture({ config: { extractionMaxInputBytes: 512 } })
+    const done = completion()
+    const correction = '  以后先给结论再解释；但这次临时展开细节，不改变长期偏好。\n'
+    const expected = []
+    if (mode === 'combined replies') {
+      turn(1, 'Preserve user changes.', 'Details. '.repeat(20))
+      expected.push({ turn: 1, messages: [{ role: 'user', text: 'Preserve user changes.' }] })
+    }
+    const number = expected.length + 1
+    turn(number, correction, mode === 'one reply' ? 'Detailed explanation. '.repeat(2_000) : 'Details. '.repeat(20))
+    expected.push({ turn: number, messages: [{ role: 'user', text: correction }] })
+    await done
+    expect(suppliedTurns(followup)).toEqual(expected)
+    expect(Buffer.byteLength(JSON.stringify(suppliedTurns(followup)))).toBeLessThanOrEqual(512)
+  })
+
+  it('cancels waiting work without reviving it when learning is re-enabled', async () => {
     const idle = Promise.withResolvers<void>()
     const waiting = Promise.withResolvers<void>()
-    const { service, session, create, turn } = await learningFixture({
-      parentIdle: () => { waiting.resolve(); return idle.promise },
-    })
-    turn(1)
-    turn(2)
+    const fixture = await learningFixture({ parentIdle: () => { waiting.resolve(); return idle.promise } })
+    fixture.turn(1)
+    fixture.turn(2)
     await waiting.promise
-    await service.setPolicy(String(session.id), { generateMemories: false })
-    await service.setPolicy(String(session.id), { generateMemories: true })
+    await fixture.service.setPolicy(String(fixture.session.id), { generateMemories: false })
+    await fixture.service.setPolicy(String(fixture.session.id), { generateMemories: true })
     idle.resolve()
-    await service.settle(String(session.id))
-    expect(create).not.toHaveBeenCalled()
-
-    turn(3)
-    await service.settle(String(session.id))
-    expect(create).toHaveBeenCalledOnce()
+    expect(fixture.create).not.toHaveBeenCalled()
+    const done = fixture.completion()
+    fixture.turn(3)
+    await done
+    expect(fixture.create).toHaveBeenCalledOnce()
+    expect(suppliedTurns(fixture.followup).map(item => item.turn)).toEqual([3])
   })
 
   it('stops and drains an active child before acknowledging disabled learning', async () => {
     const disposing = Promise.withResolvers<void>()
     const drained = Promise.withResolvers<void>()
-    const { service, session, turn, started, dispose } = await learningFixture({
-      childIdle: () => new Promise(() => {}),
-      disposeChild: () => { disposing.resolve(); return drained.promise },
-    })
-    const activities: MemoryActivity[] = []
-    service.onActivity(activity => { activities.push(activity) })
-    turn(1)
-    await started
+    const fixture = await learningFixture({ childIdle: () => new Promise(() => {}), disposeChild: () => { disposing.resolve(); return drained.promise } })
+    fixture.turn(1)
+    await fixture.started
     let acknowledged = false
-    const disabled = service.setPolicy(String(session.id), { generateMemories: false }).then(() => { acknowledged = true })
-    try {
-      await disposing.promise
-      expect(acknowledged).toBe(false)
-    } finally {
-      drained.resolve()
-    }
+    const disabled = fixture.service.setPolicy(String(fixture.session.id), { generateMemories: false }).then(() => { acknowledged = true })
+    try { await disposing.promise; expect(acknowledged).toBe(false) } finally { drained.resolve() }
     await disabled
-    expect(dispose).toHaveBeenCalledOnce()
-    expect(activities.at(-1)).toEqual({ state: 'idle' })
+    expect(fixture.dispose).toHaveBeenCalledOnce()
   })
 
-  it('allows a session to enable learning when the deployment default is disabled', async () => {
-    const { service, session, turn, create } = await learningFixture({ config: { generateMemories: false } })
-    turn(1)
-    await service.settle(String(session.id))
-    expect(create).not.toHaveBeenCalled()
-
-    await service.setPolicy(String(session.id), { generateMemories: true })
-    turn(2)
-    await service.settle(String(session.id))
-    expect(create).toHaveBeenCalledOnce()
-  })
-
-  it('reports failed child disposal when disabling a queue with more waiting candidates', async () => {
+  it('reports failed child disposal without reverting the disabled policy', async () => {
     const failure = new Error('child disposal failed')
-    const { service, session, turn, started } = await learningFixture({
-      childIdle: () => new Promise(() => {}),
-      disposeChild: async () => { throw failure },
-    })
+    const fixture = await learningFixture({ childIdle: () => new Promise(() => {}), disposeChild: async () => { throw failure } })
     const activities: MemoryActivity[] = []
-    service.onActivity(activity => { activities.push(activity) })
-    turn(1)
-    turn(2)
-    await started
-
-    await expect(service.setPolicy(String(session.id), { generateMemories: false })).rejects.toBe(failure)
+    fixture.service.onActivity(activity => { activities.push(activity) })
+    fixture.turn(1)
+    await fixture.started
+    await expect(fixture.service.setPolicy(String(fixture.session.id), { generateMemories: false })).rejects.toBe(failure)
     expect(activities.at(-1)).toMatchObject({ state: 'error', message: 'child disposal failed' })
-    expect((await service.policy(String(session.id))).generateMemories).toBe(false)
+    expect((await fixture.service.policy(String(fixture.session.id))).generateMemories).toBe(false)
   })
 
-  it('finishes quietly when the Host cancels active maintenance', async () => {
-    const controller = new AbortController()
-    const { service, session, turn, started, dispose } = await learningFixture({
-      maintenanceSignal: controller.signal,
-      childIdle: () => new Promise(() => {}),
-    })
-    const activities: MemoryActivity[] = []
-    service.onActivity(activity => { activities.push(activity) })
-    turn(1)
-    await started
-    controller.abort(new Error('parent canceled'))
-    await service.settle(String(session.id))
-
-    expect(dispose).toHaveBeenCalledOnce()
-    expect(activities.at(-1)).toEqual({ state: 'idle' })
+  it('stops active learning when its source Agent is disposed', async () => {
+    const fixture = await learningFixture({ childIdle: () => new Promise(() => {}) })
+    const done = fixture.completion()
+    fixture.turn(1)
+    await fixture.started
+    fixture.ctx.emit('agent/disposed', { agent: fixture.agent })
+    await done
+    expect(fixture.dispose).toHaveBeenCalledOnce()
   })
 
-  it.each(['waiting', 'running'] as const)('disposes the service while learning is %s without waiting for natural agent completion', async (phase) => {
+  it.each(['waiting', 'running'] as const)('disposes the service while learning is %s without waiting for natural completion', async phase => {
     const waiting = Promise.withResolvers<void>()
     const fixture = await learningFixture(phase === 'waiting'
       ? { parentIdle: () => { waiting.resolve(); return new Promise(() => {}) } }
       : { childIdle: () => new Promise(() => {}) })
     fixture.turn(1)
     await (phase === 'waiting' ? waiting.promise : fixture.started)
-
     await fixture.ctx.fiber.dispose()
-    await fixture.service.settle(String(fixture.session.id))
     expect(fixture.create).toHaveBeenCalledTimes(phase === 'running' ? 1 : 0)
     expect(fixture.dispose).toHaveBeenCalledTimes(phase === 'running' ? 1 : 0)
   })

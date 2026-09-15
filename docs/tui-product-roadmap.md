@@ -117,8 +117,8 @@ and matching Git tags are the release identity.
   snapshot references; authorized local edits remain reversible across roots.
 - Plan each restore as `safe`, `mergeable`, `conflict`, or `unsupported`; only
   AI-owned mutations participate in the default restore plan.
-- Verify and refill complete Prompt text and attachments around one transaction
-  supporting code-and-conversation, conversation-only, and code-only restore.
+- Rewind 收敛为工作区变更与会话 fork，整删通用 participant 抽象及 Memory 参与链路；在同一事务中验证并恢复完整 Prompt 文本和附件，继续支持 code-and-conversation、conversation-only 与 code-only。
+- 持久化统一为 schema 4，仅保存工作区 lineage；移除旧格式迁移、participant 识别及对应兼容测试。非当前格式走无效清单隔离路径，不兼容旧工作区回退记录，不迁移或改写长期记忆。
 - Rebuild visible checkpoints from each active Session log and persist one active
   reversible-effect lineage per canonical workspace, so new and resumed Sessions
   never depend on effect ownership to expose Rewind.
@@ -130,21 +130,23 @@ and matching Git tags are the release identity.
 - Remove whole-worktree inference, tool-name parsing, duplicated checkpoint
   state, compatibility bridges, and TUI-owned Git restore code after cutover.
 
-### Memory — 质量优先的增量
+### Memory — 尽力而为，服务回答质量
 
-- 已实现第一阶段：保留现有 Markdown/主题文件与三个工具，收敛简短索引和按需详情的使用指引；快照按完整条目分配全局/项目预算，省略内容保留明确的读取入口。
-- 学习输入优先保留完整用户证据，不再截断 JSON；助手长回复可省略，用户证据本身放不下则跳过后台学习。没有新增每回合模型调用，也不迁移真实记忆。
-- 回归覆盖索引拥挤、适用条件不被拆散、UTF-8 预算及长回复后的真实服务调度；第二阶段新增 `pnpm test:memory:quality`，从偏好摘要重建历史，由真实模型生成记忆，再以固定路由进行有/无记忆对照。
-- 首轮质量矩阵在 `openai-codex/gpt-6-astra` 上以 22 次调用完成；修正“无历史时合法未知”的评分后，用原始证据零调用复算通过。原生命周期套件另以 24 次调用通过。详见 [回放契约与验收限制](tui-architecture.md#memory-质量回放)；这些是特定行为验收，不是总体质量提升的统计证明。
-- 当前短索引与固定主题文件已满足本轮复用，暂不迁移语义命名文件。后续优先补自然纠正、真实长历史与大量记忆下的自主检索证据，再决定文件组织演进；不预先引入向量库、知识图谱或高可靠存储框架。
+- 目标是利用用户反馈和知识沉淀改善回答、减少重复纠正，不追求完整记录、高可靠存储或确定性召回。
+- 保留 Markdown 短索引、按需主题详情与三个工具；快照按完整条目分配全局/项目预算，省略内容提供读取入口。本轮不迁移真实记忆，不改变文件组织。
+- 长期记忆不再参与 Rewind，回退代码或会话不会改变已写入的记忆，由用户纠正、遗忘或直接编辑维护；Memory API 不提供回退或跨域事务能力，写入与遗忘仅返回是否改变文件的 boolean。批次回合分隔仅供理解上下文，不追踪持久事实的原始回合归因。
+- 主 Agent 用完整上下文沉淀明确纠正与已核实的非显然经验，后台仅补漏用户支持的反馈；索引足够时不强制再读，不猜缺失上下文，不保存代码或指令副本。普通自动索引 I/O 失败警告后沿用旧快照继续；policy、abort 与显式工具读失败仍严格。
+- 后台默认关闭，必须显式配置 `extractionProvider` + `extractionModel`，不继承主 Agent route 或默认选择收费模型。现有 Memories 对话框显示专用 route、空闲等待及请求边界；无路由时提示配置并禁用学习 toggle，使用记忆与文档浏览仍保留，不新增设置页或修改用户配置。
+- 有路由时观察 `completed` 主回合，不收子 Agent，有效 policy 开启学习才进入等待和提取；移除关键词筛选和逐回合 Promise 队列。每源 session 仅一个内存 pending 批次，JSON 默认最多 32 KiB；单回合超限保留全部完整用户消息，用户证据也放不下则跳过，合批超限先舍弃助手上下文，用户证据仍超限才淘汰最旧整回合。持续空闲默认 5 分钟合并一次；新前台回合取消当前等待或学习，不等子 Agent 排空，已取出的批次不重放。
+- 后台 `maxTokens: 900`、每批最多 3 次 canonical `llm/stream`，沿用所选 provider 默认推理设置，不新增 effort 配置；provider 内重试不计入，非总 token、HTTP 请求数或费用保证。失败与限额不自动重试，关闭或退出取消工作，重新开启不恢复旧候选。
+- 更正通过现有 `memory_write` 的 `replaces: { summary, topic? }` 在一次工具调用中提交，不先删旧再等模型补写；单目录排队、逐文件原子提交，允许取消或失败时部分更新，不增加事务或回滚。
+- 清理独立进程质量矩阵、随机标记精确召回、固定字段评分和报告重评分系统；保留生产功能单测与少量任务的[人工质量观察](tui-architecture.md#memory-质量观察)。前述修正前的 8 次 Qwen 请求验证了样例中的纠正复用、明确临时例外与后台替换；本次修正用真实 Agent 循环及脚本化响应验证功能，不宣称已经证明自然回答质量提高。
+- 后续由实际回答中的重复错误、偏好误用或有用知识缺失驱动改进，不预设新的评测平台、文件迁移或检索数据库。
 
 ### Current — Reliability
 
 - Completed: persist Memory session switches, cancel and drain learning when
   disabled, and acknowledge policy changes only after the Host operation settles.
-- Completed: opt-in real-model Memory acceptance for cross-process recall,
-  policy controls, update/forget, background learning, and active cancellation
-  through `pnpm test:memory:e2e`.
 - Verify Rewind recovery with process-interruption fault injection before
   selecting any additional durable transaction mechanism.
 - Establish long-session time and memory baselines with fixed histories and

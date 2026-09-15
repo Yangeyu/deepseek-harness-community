@@ -24,6 +24,7 @@ const projectMemory = document('project', '/memories/projects/demo/MEMORY.md', '
 const overview: MemoryOverview = {
   project: { id: 'demo-123', root: '/workspace', directory: '/memories/projects/demo' },
   policy: { useMemories: true, generateMemories: true },
+  learning: { provider: 'test', model: 'memory-model', idleDelayMs: 300000, maxRequests: 3 },
   global: globalMemory,
   projectMemory,
   documents: [
@@ -34,6 +35,28 @@ const overview: MemoryOverview = {
 }
 
 describe('MemoryDialog', () => {
+  it('blocks background learning without a route while keeping memory use and documents available', () => {
+    const policy = vi.fn()
+    const dialog = new MemoryDialog({
+      ...overview,
+      policy: { useMemories: true, generateMemories: false },
+      learning: undefined,
+    }, () => 24, createTheme(false), policy, vi.fn())
+
+    dialog.handleAction('surface.next')
+    dialog.handleAction('surface.confirm')
+    dialog.handleAction('surface.toggle')
+    expect(policy).not.toHaveBeenCalled()
+
+    dialog.handleAction('surface.previous')
+    dialog.handleAction('surface.confirm')
+    expect(policy).toHaveBeenCalledExactlyOnceWith({ useMemories: false })
+    dialog.handleAction('surface.next')
+    dialog.handleAction('surface.next')
+    dialog.handleAction('surface.confirm')
+    expect(dialog.render(100).join('\n')).toContain('- Use pnpm.')
+  })
+
   it('toggles session policy and opens Markdown files without editing them', () => {
     const policy = vi.fn()
     const cancel = vi.fn()

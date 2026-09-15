@@ -9,7 +9,7 @@ import type {
 
 export type RewindTransactionPhase = 'forking' | 'opening' | 'compensating'
 
-/** Application transaction that commits conversation state after reversible participants. */
+/** Application transaction that commits conversation state after reversible workspace edits. */
 export class RewindTransaction {
   constructor(
     private readonly rewind: RewindPort,

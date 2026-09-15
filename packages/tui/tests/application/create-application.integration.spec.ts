@@ -103,7 +103,6 @@ function rewindPlan(attachments: readonly ImageAttachmentRef[] = []): RewindPlan
     codeScope: 'backward',
     state: 'safe',
     files: [],
-    participants: [],
   }
 }
 

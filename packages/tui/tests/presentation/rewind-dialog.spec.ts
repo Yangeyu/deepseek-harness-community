@@ -18,7 +18,6 @@ function plan(overrides: Partial<RewindPlan> = {}): RewindPlan {
     files: [
       { path: 'src/parser.ts', state: 'safe', added: 4, removed: 2 },
     ],
-    participants: [{ id: 'memory', label: 'Memory', changes: 1, state: 'safe' }],
     ...overrides,
   }
 }
@@ -34,7 +33,6 @@ describe('RewindDialog', () => {
     expect(output).toContain('fix the parser')
     expect(output).toContain('1 source-attributed file is included')
     expect(output).toContain('● src/parser.ts')
-    expect(output).toContain('1 memory update will be reverted when code state is restored')
     expect(output).toContain('› 1. Restore code and conversation')
 
     dialog.handleAction('surface.confirm')
@@ -94,16 +92,16 @@ describe('RewindPointDialog', () => {
     const select = vi.fn()
     const cancel = vi.fn()
     const summaries = [
-      { pointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', imageCount: 0, createdAt: 1, workspaceFiles: 0, unsupportedFiles: 0, participants: [] },
-      { pointId: 'two', sessionId: 'session-1', turn: 2, prompt: 'second', imageCount: 2, createdAt: 2, workspaceFiles: 2, unsupportedFiles: 0, participants: [{ id: 'memory', label: 'Memory', changes: 1, state: 'safe' as const }] },
-      { pointId: 'three', sessionId: 'session-1', turn: 3, prompt: 'third', imageCount: 0, createdAt: 3, workspaceFiles: 0, unsupportedFiles: 1, participants: [] },
+      { pointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', imageCount: 0, createdAt: 1, workspaceFiles: 0, unsupportedFiles: 0 },
+      { pointId: 'two', sessionId: 'session-1', turn: 2, prompt: 'second', imageCount: 2, createdAt: 2, workspaceFiles: 2, unsupportedFiles: 0 },
+      { pointId: 'three', sessionId: 'session-1', turn: 3, prompt: 'third', imageCount: 0, createdAt: 3, workspaceFiles: 0, unsupportedFiles: 1 },
     ]
     const dialog = new RewindPointDialog(summaries, undefined, () => 20, createTheme(false), select, cancel)
 
     expect(dialog.render(80).join('\n')).toContain('› third')
     expect(dialog.render(80).join('\n')).toContain('No AI file edits · 1 unsupported')
     dialog.handleAction('surface.previous')
-    expect(dialog.render(80).join('\n')).toContain('2 AI-edited files this turn · 2 images · 1 memory update')
+    expect(dialog.render(80).join('\n')).toContain('2 AI-edited files this turn · 2 images')
     dialog.handleAction('surface.confirm')
     expect(select).toHaveBeenCalledWith(summaries[1])
 
@@ -113,7 +111,7 @@ describe('RewindPointDialog', () => {
 
   it('renders an empty file impact below actionable secondary text', () => {
     const summaries = [
-      { pointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', imageCount: 0, createdAt: 1, workspaceFiles: 0, unsupportedFiles: 0, participants: [] },
+      { pointId: 'one', sessionId: 'session-1', turn: 1, prompt: 'first', imageCount: 0, createdAt: 1, workspaceFiles: 0, unsupportedFiles: 0 },
     ]
     const output = new RewindPointDialog(
       summaries,

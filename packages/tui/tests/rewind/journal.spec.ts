@@ -52,20 +52,13 @@ describe('RewindJournal', () => {
     })).toThrow('prompt text')
   })
 
-  it('retains bounded Prompt history and returns evicted participant references', () => {
+  it('retains bounded Prompt history', () => {
     const history = journal()
     history.recordPoint(point('session', 1, 'one'))
-    history.recordEffect({ participantId: 'memory', effectId: 'effect-1', sourceSessionId: 'session', sourceTurn: 1 })
     history.recordPoint(point('session', 2, 'two'))
-    const released = history.recordPoint(point('session', 3, 'three'))
+    history.recordPoint(point('session', 3, 'three'))
 
     expect(history.activePoints('session').map(point => point.turn)).toEqual([2, 3])
-    expect(released.released).toEqual([{
-      participantId: 'memory',
-      effectId: 'effect-1',
-      sourceSessionId: 'session',
-      sourceTurn: 1,
-    }])
   })
 
   it('enriches one admitted Prompt with durable attachments without adding a second point', () => {
@@ -87,24 +80,10 @@ describe('RewindJournal', () => {
     }).changed).toBe(false)
   })
 
-  it('selects the boundary and every retained effect after it', () => {
-    const history = journal(3)
-    history.recordPoint(point('session', 1, 'one'))
-    history.recordPoint(point('session', 2, 'two'))
-    history.recordEffect({ participantId: 'memory', effectId: 'effect-2', sourceSessionId: 'session', sourceTurn: 2 })
-    const points = history.activePoints('session')
-
-    const selected = history.selectEffects('session', points[0]?.id ?? '')
-
-    expect(selected.codeScope).toBe('backward')
-    expect(selected.effects.map(effect => effect.effectId)).toEqual(['effect-2'])
-  })
-
   it('moves a timeline cursor without deleting future nodes until a new Prompt branches', () => {
     const history = journal(4)
     history.recordPoint(point('session', 1, 'one'))
     history.recordPoint(point('session', 2, 'two'))
-    history.recordEffect({ participantId: 'memory', effectId: 'future-effect', sourceSessionId: 'session', sourceTurn: 2 })
     history.recordPoint(point('session', 3, 'three'))
     const points = history.activePoints('session')
 
@@ -113,9 +92,8 @@ describe('RewindJournal', () => {
     expect(history.activePoints('forked').map(point => point.turn)).toEqual([1])
     expect(history.snapshot('/workspace')).toMatchObject({ cursor: 1, nodes: [{ turn: 1 }, { turn: 2 }, { turn: 3 }] })
 
-    const branch = history.recordPoint(point('forked', 3, 'replacement'))
+    history.recordPoint(point('forked', 3, 'replacement'))
 
-    expect(branch.released.map(effect => effect.effectId)).toEqual(['future-effect'])
     expect(history.activePoints('forked').map(point => point.turn)).toEqual([1, 3])
     expect(history.snapshot('/workspace')).toMatchObject({ cursor: 2, nodes: [{ turn: 1 }, { turn: 3 }] })
   })
