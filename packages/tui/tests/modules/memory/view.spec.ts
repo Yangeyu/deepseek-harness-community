@@ -24,7 +24,7 @@ const projectMemory = document('project', '/memories/projects/demo/MEMORY.md', '
 const overview: MemoryOverview = {
   project: { id: 'demo-123', root: '/workspace', directory: '/memories/projects/demo' },
   policy: { useMemories: true, generateMemories: true },
-  learning: { provider: 'test', model: 'memory-model', idleDelayMs: 300000, maxRequests: 3 },
+  learning: { route: { provider: 'test', model: 'memory-model' }, idleDelayMs: 300000, maxRequests: 3 },
   global: globalMemory,
   projectMemory,
   documents: [
@@ -35,39 +35,26 @@ const overview: MemoryOverview = {
 }
 
 describe('MemoryDialog', () => {
-  it('blocks background learning without a route while keeping memory use and documents available', () => {
+  it.each([
+    { name: 'foreground', route: undefined, label: 'follows the foreground model' },
+    { name: 'dedicated', route: overview.learning.route, label: 'test / memory-model' },
+  ])('shows the $name route, enables learning and opens Markdown files', ({ route, label }) => {
     const policy = vi.fn()
+    const cancel = vi.fn()
     const dialog = new MemoryDialog({
       ...overview,
       policy: { useMemories: true, generateMemories: false },
-      learning: undefined,
-    }, () => 24, createTheme(false), policy, vi.fn())
+      learning: { ...overview.learning, route },
+    }, () => 24, createTheme(false), policy, cancel)
 
-    dialog.handleAction('surface.next')
-    dialog.handleAction('surface.confirm')
-    dialog.handleAction('surface.toggle')
-    expect(policy).not.toHaveBeenCalled()
-
-    dialog.handleAction('surface.previous')
-    dialog.handleAction('surface.confirm')
-    expect(policy).toHaveBeenCalledExactlyOnceWith({ useMemories: false })
-    dialog.handleAction('surface.next')
-    dialog.handleAction('surface.next')
-    dialog.handleAction('surface.confirm')
-    expect(dialog.render(100).join('\n')).toContain('- Use pnpm.')
-  })
-
-  it('toggles session policy and opens Markdown files without editing them', () => {
-    const policy = vi.fn()
-    const cancel = vi.fn()
-    const dialog = new MemoryDialog(overview, () => 24, createTheme(false), policy, cancel)
+    expect(dialog.render(120).join('\n')).toContain(label)
 
     expect(dialog.render(100).join('\n')).toContain('Use memories in this session  on')
     dialog.handleAction('surface.confirm')
     expect(policy).toHaveBeenLastCalledWith({ useMemories: false })
     dialog.handleAction('surface.next')
     dialog.handleAction('surface.confirm')
-    expect(policy).toHaveBeenLastCalledWith({ generateMemories: false })
+    expect(policy).toHaveBeenLastCalledWith({ generateMemories: true })
 
     dialog.handleAction('surface.next')
     dialog.handleAction('surface.confirm')

@@ -36,9 +36,9 @@ Project identity uses the normalized Git `origin` URL when available, including 
 - 使用规则注册在 system prompt 中；有效全局或项目记忆变化时，会话收到持久索引快照，关闭记忆会发布明确的替代标记。当前请求优先于历史默认值，一次性例外不应成为长期偏好。
 - Snapshots reserve space for both scopes and select complete index entries, not truncated strings. Omitted entries are identified with a scope-specific `memory_read` prompt; full indexes and topic files remain unchanged on disk. Structured documents that cannot safely be split are omitted as a whole when they do not fit.
 - 主 Agent 利用完整任务上下文，通过显式工具沉淀用户的明确纠正与已核实的非显然经验；后台仅补漏有用户依据的反馈，不承担通用知识总结。索引已足够时不强制再读主题，不猜测缺失上下文，不保存代码或项目指令副本。
-- 有显式路由时观察 `completed` 主回合，不收集子 Agent 回合；仅有效 policy 开启学习才进入等待和模型提取，关闭时丢弃候选。不再使用关键词筛选或逐回合 Promise 串行队列。每个源 session 在内存中仅保留一个有界 pending 批次，持续空闲 `idleDelayMs` 后合并提取一次；新回合重置等待，未开始的批次不持久化。学习不占父 Agent 的维护锁；新前台回合开始会取消当前尝试，前台无需等待旧学习排空，已取出的批次不重放。
+- 观察 `completed` 主回合，不收集子 Agent 回合；仅有效 policy 开启学习才进入等待和模型提取，关闭时丢弃候选。不再使用关键词筛选或逐回合 Promise 串行队列。每个源 session 在内存中仅保留一个有界 pending 批次，持续空闲 `idleDelayMs` 后合并提取一次；新回合重置等待，未开始的批次不持久化。学习不占父 Agent 的维护锁；新前台回合开始会取消当前尝试，前台无需等待旧学习排空，已取出的批次不重放。
 - `extractionMaxInputBytes` 默认 32 KiB，按批次 JSON 计量；单回合优先保留完整用户／助手文本，超限时仅保留该回合全部完整用户消息，用户证据也放不下则跳过。合并批次超限时先舍弃全部助手上下文，只有完整用户消息仍放不下才移除最旧回合；不裁断用户证据、不拼装助手片段，也不补猜缺失上下文。
-- 短生命周期学习 Agent 仅可调用三个 Memory 工具，使用显式后台路由、`maxTokens: 900`，单批最多 3 次 canonical `llm/stream` 请求，沿用所选 provider 的默认推理设置，不新增 effort 配置；provider 内部重试不包含在该计数中，因此这不是总 token、HTTP 请求数或费用保证。失败或用尽额度后不自动重试，辅助请求和写入仍留在 Harness 日志中。
+- 短生命周期学习 Agent 仅可调用三个 Memory 工具，优先使用显式后台路由，未配置则沿用源 Agent 的前台路由；固定 `maxTokens: 900`，单批最多 3 次 canonical `llm/stream` 请求，沿用所选 provider 的默认推理设置，不新增 effort 配置；provider 内部重试不包含在该计数中，因此这不是总 token、HTTP 请求数或费用保证。失败或用尽额度后不自动重试，辅助请求和写入仍留在 Harness 日志中。
 - 普通自动索引 I/O 失败会发出警告并沿用旧快照，主回合继续；policy 异常与 abort 仍严格传播。显式 `memory_read` 读失败必须报错，不伪装成空文档。
 - service/store 的 `write` 与 `forget` 返回是否实际改变文件的 `boolean`，不提供记忆回退 API。更正先预读和校验，再逐文件提交新主题、最终索引及不同旧主题的清理；取消或失败可留下部分更新，不保证跨文件原子性，不回滚。批次中的回合分隔只帮助理解反馈上下文，不用于持久事实的原始回合归因。
 - Secret-like values are rejected before files are created.
@@ -64,9 +64,9 @@ Mount the package after the base bundle:
 
 `maxContextBytes` 至少为 256 字节，默认 25,600 字节，包含 scope 标题、省略提示和闭合标记；它是上限，不是索引应填满的目标。`extractionMaxInputBytes` 限制序列化批次 JSON，而非整个维护提示词。
 
-后台默认关闭、等待连续空闲 300,000 毫秒（5 分钟）。需要后台学习时，在 Memory 插件 config 中同时显式设置 `extractionProvider` 与 `extractionModel`，自行选择已注册且愿意承担其费用的路由，再开启 `generateMemories`。不继承主 Agent 路由，不默认选择或配置收费模型；部署示例不包含后台 provider/model，不修改用户已有的 `~/.dsh` 设置。
+后台默认关闭、等待连续空闲 300,000 毫秒（5 分钟）。开启 `generateMemories` 后，优先使用同时配置的 `extractionProvider` 与 `extractionModel`；两项均未配置时，在每批开始学习时沿用源 Agent 当前的 provider/model，未显式指定的字段交给 Harness 正常路由解析。不复制前台的整份 Agent 配置：后台仍只开放三个 Memory 工具，输出预算和请求额度保持独立。沿用前台可能使用较昂贵的模型；需要独立控制成本时可配置专用后台路由。不修改用户已有的 `~/.dsh` 设置。
 
-两项均未配置时，`MemoryOverview.learning` 为 `undefined`，有效 policy 的 `generateMemories` 为 `false`；请求 `setPolicy(..., { generateMemories: true })` 会明确报错。只配置一项或提供空值属于无效插件配置，需修正后加载。路由完整时，`learning` 提供 `provider`、`model`、`idleDelayMs` 与 `maxRequests`。现有 Memories 对话框显示后台专用路由、等待时间及单批模型请求边界；未配置时提示这两个字段并禁用学习开关，使用记忆与文档浏览仍可用，不新增设置页。
+`MemoryOverview.learning` 始终提供 `route`、`idleDelayMs` 与 `maxRequests`；`route` 为显式 `{ provider, model }` 覆盖配置，`undefined` 表示跟随前台，而不是禁止学习。Memories 对话框显示专用路由或跟随前台的成本提示，并允许切换学习。只配置一项或提供空值仍属于无效插件配置，需修正后加载。会话已经保存的学习开关继续生效，不因缺少专用路由被强制关闭。
 
 `generateMemories: false` 仅关闭后台学习，主 Agent 的显式记忆工具仍可用；`useMemories: false` 仅关闭自动索引注入。关闭学习、源 Agent 退出或 Memory 服务退出会取消未开始及活跃工作；重新开启只收集未来回合，不恢复已取消的旧候选批次。
 

@@ -65,7 +65,6 @@ export class MemoryDialog implements SurfaceInputTarget {
       if (this.index < 2) {
         if (this.policy.saving || this.policy.value === undefined) return
         const key = this.index === 0 ? 'useMemories' : 'generateMemories'
-        if (key === 'generateMemories' && this.overview.learning === undefined) return
         this.onPolicy({ [key]: !this.policy.value[key] })
         return
       }
@@ -88,17 +87,17 @@ export class MemoryDialog implements SurfaceInputTarget {
       this.theme.dim(`Project · ${this.overview.project.id}`),
       '',
       this.toggleLine(0, 'Use memories in this session', this.policy.value?.useMemories),
-      this.toggleLine(1, 'Learn from this session', this.policy.value?.generateMemories, this.overview.learning === undefined),
+      this.toggleLine(1, 'Learn from this session', this.policy.value?.generateMemories),
       '',
     ]
     const learning = this.overview.learning
-    const guidance = learning === undefined
-      ? ['Background learning unavailable. Configure both extractionProvider and extractionModel in the memory plugin config.']
-      : [
-          `Background route · ${learning.provider} / ${learning.model}`,
-          `After ${learning.idleDelayMs / 1000}s continuously idle · at most ${learning.maxRequests} model requests per batch.`,
-          'Uses provider-default reasoning. Provider-internal retries are excluded; this is not a total token, HTTP request or cost cap.',
-        ]
+    const guidance = [
+      learning.route === undefined
+        ? 'Background route · follows the foreground model; enabling learning may use an expensive model.'
+        : `Background route · ${learning.route.provider} / ${learning.route.model}`,
+      `After ${learning.idleDelayMs / 1000}s continuously idle · at most ${learning.maxRequests} model requests per batch.`,
+      'Uses provider-default reasoning. Provider-internal retries are excluded; this is not a total token, HTTP request or cost cap.',
+    ]
     for (const line of guidance) {
       lines.push(...wrapTextWithAnsi(this.theme.dim(sanitizeTerminalText(line)), width))
     }
@@ -145,12 +144,10 @@ export class MemoryDialog implements SurfaceInputTarget {
     ]
   }
 
-  private toggleLine(index: number, label: string, enabled: boolean | undefined, disabled = false): string {
+  private toggleLine(index: number, label: string, enabled: boolean | undefined): string {
     const cursor = this.index === index ? this.theme.accent('›') : ' '
     const name = this.index === index ? this.theme.bold(label) : label
-    const status = disabled
-      ? this.theme.dim('unavailable')
-      : enabled === true ? this.theme.success('on') : this.theme.dim(enabled === false ? 'off' : 'unknown')
+    const status = enabled === true ? this.theme.success('on') : this.theme.dim(enabled === false ? 'off' : 'unknown')
     return `${cursor} ${name}  ${status}`
   }
 

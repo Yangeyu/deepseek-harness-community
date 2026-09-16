@@ -62,7 +62,7 @@ async function learningFixture(options: {
     return { agent: child, dispose }
   })
   const fixture = await memoryService({
-    config: { ...learningRoute, generateMemories: true, idleDelayMs: 0, ...options.config },
+    config: { generateMemories: true, idleDelayMs: 0, ...options.config },
     agents: {
       get: () => agent,
       withInitiator: (_initiator: unknown, run: () => unknown) => run(),
@@ -166,35 +166,24 @@ describe('ProjectMemoryService context projection', () => {
 })
 
 describe('ProjectMemoryService session policy', () => {
-  it('requires opt-in and an explicit background route while foreground writes remain usable', async () => {
+  it('keeps learning opt-in and permits enabling it with the foreground route', async () => {
     const { service, cwd } = await memoryService()
     expect((await service.policy('session')).generateMemories).toBe(false)
-    await expect(service.setPolicy('session', { generateMemories: true })).rejects.toThrow('extractionProvider and extractionModel')
     expect(await service.write({ cwd, scope: 'project', summary: 'Prefer concise answers.' })).toBe(true)
-    expect((await service.overview(cwd, 'session')).learning).toBeUndefined()
-    const configured = await memoryService({ config: learningRoute })
-    expect((await configured.service.policy('session')).generateMemories).toBe(false)
-    expect(await configured.service.setPolicy('session', { generateMemories: true })).toMatchObject({ generateMemories: true })
+    expect((await service.overview(cwd, 'session')).learning).toEqual({ route: undefined, idleDelayMs: 300000, maxRequests: 3 })
+    expect(await service.setPolicy('session', { generateMemories: true })).toEqual({ useMemories: true, generateMemories: true })
   })
 
-  it('persists concurrent partial updates across service recreation without changing new-session defaults', async () => {
-    const first = await memoryService({ config: { ...learningRoute, generateMemories: true } })
+  it('persists concurrent policy updates across route changes without changing new-session defaults', async () => {
+    const first = await memoryService({ config: learningRoute })
     await Promise.all([
       first.service.setPolicy('session-one', { useMemories: false }),
-      first.service.setPolicy('session-one', { generateMemories: false }),
+      first.service.setPolicy('session-one', { generateMemories: true }),
     ])
     await first.ctx.fiber.dispose()
-    const second = await memoryService({ config: { ...learningRoute, root: first.service.store.root, generateMemories: true } })
-    expect(await second.service.policy('session-one')).toEqual({ useMemories: false, generateMemories: false })
-    expect(await second.service.policy('session-two')).toEqual({ useMemories: true, generateMemories: true })
-  })
-
-  it('does not fall back to the foreground model when a saved enabled policy has no background route', async () => {
-    const first = await memoryService({ config: learningRoute })
-    await first.service.setPolicy('session', { generateMemories: true })
-    await first.ctx.fiber.dispose()
     const second = await memoryService({ config: { root: first.service.store.root } })
-    expect(await second.service.policy('session')).toEqual({ useMemories: true, generateMemories: false })
+    expect(await second.service.policy('session-one')).toEqual({ useMemories: false, generateMemories: true })
+    expect(await second.service.policy('session-two')).toEqual({ useMemories: true, generateMemories: false })
   })
 
   it('reports unreadable policy instead of silently enabling the deployment defaults', async () => {
@@ -209,6 +198,19 @@ describe('ProjectMemoryService session policy', () => {
 })
 
 describe('ProjectMemoryService quiet learning', () => {
+  it.each([
+    { name: 'foreground route', config: {}, route: { provider: 'foreground', model: 'large-model' } },
+    { name: 'explicit override', config: learningRoute, route: { provider: 'background', model: 'small-model' } },
+  ])('uses the $name for background learning', async ({ config, route }) => {
+    const fixture = await learningFixture({ config })
+    const done = fixture.completion()
+    fixture.turn(1)
+    await done
+    expect(fixture.create.mock.calls[0]?.[0].agentOptions).toEqual({ ...route, maxTokens: 900 })
+    expect((await fixture.service.overview(fixture.cwd, String(fixture.session.id))).learning.route)
+      .toEqual('extractionProvider' in config ? route : undefined)
+  })
+
   it('coalesces recent turns and restarts the idle wait on new work', async () => {
     const waiting = Promise.withResolvers<void>()
     const restarted = Promise.withResolvers<void>()
@@ -226,7 +228,6 @@ describe('ProjectMemoryService quiet learning', () => {
     await done
     expect(fixture.create).toHaveBeenCalledOnce()
     expect(suppliedTurns(fixture.followup).map(item => item.turn)).toEqual([1, 2])
-    expect(fixture.create.mock.calls[0]?.[0].agentOptions).toMatchObject({ provider: 'background', model: 'small-model', maxTokens: 900 })
   })
 
   it('drops old whole turns when the pending batch is full', async () => {

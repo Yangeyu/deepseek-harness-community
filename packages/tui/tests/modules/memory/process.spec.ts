@@ -21,7 +21,7 @@ const directories: string[] = []
 const overview: MemoryOverview = {
   project: { id: 'project', root: '/workspace', directory: '/memory/projects/project' },
   policy: { useMemories: true, generateMemories: true },
-  learning: { provider: 'test', model: 'memory-model', idleDelayMs: 300000, maxRequests: 3 },
+  learning: { route: { provider: 'test', model: 'memory-model' }, idleDelayMs: 300000, maxRequests: 3 },
   global: { scope: 'global', path: '/memory/global/MEMORY.md', content: '', bytes: 0, exists: false },
   projectMemory: { scope: 'project', path: '/memory/projects/project/MEMORY.md', content: '', bytes: 0, exists: false },
   documents: [],

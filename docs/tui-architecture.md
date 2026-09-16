@@ -925,9 +925,9 @@ Memory 的核心目标是利用用户反馈和过往知识沉淀提高 LLM 回�
 - 只有自包含的顶层 bullet 及其缩进续行可以独立选择，不裁剪半个链接或 `memory-context` 标记。除 store 标准索引标题外，手工索引若含顶层普通说明段落、额外标题或代码围栏，在需要裁剪时保守地整份省略，避免将条件引导段落与后续规则拆开；完整文档能放下时保留全文，仅净化结束标记、首尾空白和 CRLF 换行。这不是通用 Markdown 解析器，也不保证理解任意条目之间的语义依赖。
 - 部分快照明确标记被省略的 scope，并给出 `memory_read({"scope":"project"})` 或 global 的完整索引读取入口。全局内容不能消耗项目保留份额；省略内容仍留在原文件，不是遗忘操作。索引快照仍仅在变更时发布，会话开关独立持久化。
 - 主 Agent 利用完整任务上下文，通过显式工具沉淀用户的明确纠正与已核实的非显然经验；后台只补漏有用户依据的反馈。两者都不猜测缺失上下文，不保存代码或项目指令副本，不把一次性例外升级成长期规则。
-- 后台移除关键词筛选与逐回合 Promise 串行队列。有显式路由时观察 `completed` 主回合，子 Agent 回合不进入批次；只有有效 policy 开启学习才进入空闲等待与模型提取，未开启的候选被丢弃。每个源 session 在内存中仅保留一个有界 pending 批次；主 Agent 持续空闲 `idleDelayMs` 后合并提取一次，新回合重置等待。
+- 后台移除关键词筛选与逐回合 Promise 串行队列。观察 `completed` 主回合，子 Agent 回合不进入批次；只有有效 policy 开启学习才进入空闲等待与模型提取，未开启的候选被丢弃。每个源 session 在内存中仅保留一个有界 pending 批次；主 Agent 持续空闲 `idleDelayMs` 后合并提取一次，新回合重置等待。
 - `extractionMaxInputBytes` 默认 32 KiB，按批次 JSON 计量，不包括整个维护提示词。单回合优先保留完整用户／助手文本，超限时只保留该回合全部完整用户消息，用户证据也放不下则跳过；合并批次超限时先将已有回合全部退为完整用户消息，仅用户证据仍超限才移除最旧整回合。不裁断用户证据、不拼装助手片段，已舍弃的助手上下文不另行缓存；缺失上下文的反馈应跳过，不为提高召回率猜测事实。
-- 后台学习使用显式专用 route、`maxTokens: 900`，单批最多 3 次 canonical `llm/stream`，沿用所选 provider 的默认推理设置，不新增 effort 配置；provider 内部重试不属于该计数，因此请求额度不保证总 token、HTTP 请求数或费用上限。失败或限额后不自动重试。
+- 后台学习优先使用显式专用 route，未配置则沿用源 Agent 在该批启动时的 provider/model；未指定的字段交给 Harness 正常路由解析，不复制前台整份 Agent 配置。后台保持 `maxTokens: 900`，单批最多 3 次 canonical `llm/stream`，沿用所选 provider 的默认推理设置，不新增 effort 配置；provider 内部重试不属于该计数，因此请求额度不保证总 token、HTTP 请求数或费用上限。失败或限额后不自动重试。
 
 service/store 的 `write` 与 `forget` 返回表示文件是否改变的 `boolean`，Memory 不提供回退或跨域事务 API。批次中的回合分隔仅供理解上下文，不建立持久事实的原始回合归因。
 
@@ -935,7 +935,7 @@ service/store 的 `write` 与 `forget` 返回表示文件是否改变的 `boolea
 - `memory_write` 支持可选 `replaces: { summary, topic? }`，一次工具调用在同一 scope 内更正旧条目；应提供旧条目的准确摘要及原有主题，普通遗忘才调用 `memory_forget`。不带 `replaces` 保持去重；带此字段可更新相同规范化摘要的详情、主题或索引链接。旧条目缺失仍可写新值，不自动扫描所有主题寻找旧内容。
 - 更正只进入一次现有目录写队列，先读取并校验所需文档及最终大小，再按新主题、最终索引、不同旧主题清理的顺序逐文件原子写入；索引直接替换为最终内容，不先落盘删除再等待模型补写。同一主题的替换在该文件内完成，不再次删除新值。取消或 I/O 失败仍可能部分更新、残留旧详情或链接暂不一致，不回滚。索引按完整摘要匹配，主题仍使用简易摘要／详情格式，不引入通用 Markdown 解析器。
 
-已知取舍：配置了路由但关闭学习时，仍会先扫描当前回合、构造短暂候选，再异步检查 policy 丢弃，不产生后台模型调用；它不是按事件时刻精确冻结的收集门禁。模型是否正确使用更正参数仍依赖指引，三次额度也不保证所有学习任务完成；不为此扩大预算或新增恢复机制。
+已知取舍：关闭学习时，仍会先扫描当前回合、构造短暂候选，再异步检查 policy 丢弃，不产生后台模型调用；它不是按事件时刻精确冻结的收集门禁。模型是否正确使用更正参数仍依赖指引，三次额度也不保证所有学习任务完成；不为此扩大预算或新增恢复机制。
 
 功能单测覆盖索引与用户证据的基本完整性、记忆读写更正／遗忘、会话开关和后台批次等实际行为。真实 Agent 循环配合脚本化响应验证新前台回合不等待已取消学习的排空，以及两次补读后第三次请求完成 `write(replaces)`、额度不影响前台；这类离线功能验证不代表模型自然使用参数的概率或回答质量，不用提示词关键字断言代替效果评价。
 
@@ -972,8 +972,8 @@ service/store 的 `write` 与 `forget` 返回表示文件是否改变的 `boolea
   If that read also fails, switches become unknown and cannot be toggled until
   the dialog is reopened with a readable policy. The TUI owns no persistence or
   optimistic replacement of the saved value.
-- 部署默认 `generateMemories: false`、`idleDelayMs: 300000`，移除 `minCandidateChars`。后台必须同时显式配置 `extractionProvider` 与 `extractionModel`，不回退到主 Agent route，也不默认选择或配置收费模型；不修改用户 `~/.dsh` 设置。
-- `MemoryOverview.learning` 是 required 字段，值为 `{ provider, model, idleDelayMs, maxRequests } | undefined`。缺少显式路由时为 `undefined`，有效 policy 返回 `generateMemories: false`，`setPolicy` 请求开启会明确报错；关闭及使用记忆仍正常。现有 Memories 对话框展示后台 route 和请求成本边界；未配置时提示两个配置字段并禁止学习 toggle，其他 controls 保留，不新增设置页。
+- 部署默认 `generateMemories: false`、`idleDelayMs: 300000`，移除 `minCandidateChars`。后台可沿用源 Agent 的前台 route；同时配置 `extractionProvider` 与 `extractionModel` 时优先使用专用路由，只配置一项或提供空值仍报配置错误。不修改用户 `~/.dsh` 设置。
+- `MemoryOverview.learning` 始终为 `{ route, idleDelayMs, maxRequests }`；`route` 是显式 `{ provider, model }` 或 `undefined`，后者表示每批跟随前台，不是不可用。policy 只由部署默认与已保存的会话开关决定，不以专用路由是否存在改写启用状态。现有 Memories 对话框展示专用 route 或跟随前台的成本提示，并允许学习 toggle；不新增设置页。已有开启会话在未配置专用路由时也会沿用前台，因此可能使用较昂贵的模型，三次请求限额不等于费用保证。
 - 每个源 session 拥有一个 pending 批次及取消作用域，不持久化候选。关闭学习取消等待与活跃工作，等待子 Agent 释放后才确认；重新开启只接收未来回合，被取消的旧候选不恢复。源 Agent 退出与 Memory 服务退出同样取消其工作。
 - Child-disposal failures propagate to callers waiting on learning or a disable
   and publish error activity. A failed drain does not undo the already-persisted

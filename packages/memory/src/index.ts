@@ -55,11 +55,11 @@ export interface MemoryOverview {
   readonly projectMemory: MemoryDocument
   readonly documents: readonly MemoryDocument[]
   readonly learning: {
-    readonly provider: string
-    readonly model: string
+    /** An explicit override; undefined follows the source Agent when learning starts. */
+    readonly route: { readonly provider: string; readonly model: string } | undefined
     readonly idleDelayMs: number
     readonly maxRequests: number
-  } | undefined
+  }
 }
 
 /** Background-learning state emitted without entering conversation history. */
@@ -275,16 +275,11 @@ export class ProjectMemoryService extends Service {
       return { useMemories: true, generateMemories: false }
     }
     const stored = sessionId === undefined ? undefined : await this.store.sessionPolicy(sessionId)
-    const policy = stored ?? { useMemories: this.config.useMemories, generateMemories: this.config.generateMemories }
-    // An old enabled policy must never silently fall back to the foreground model.
-    return { ...policy, generateMemories: policy.generateMemories && this.config.learningRoute !== undefined }
+    return stored ?? { useMemories: this.config.useMemories, generateMemories: this.config.generateMemories }
   }
 
   /** Persist session switches and drain canceled learning before acknowledging a disable. */
   async setPolicy(sessionId: string, patch: Partial<MemorySessionPolicy>): Promise<MemorySessionPolicy> {
-    if (patch.generateMemories === true && this.config.learningRoute === undefined) {
-      throw new Error('Configure memory extractionProvider and extractionModel before enabling background learning')
-    }
     await this.store.updateSessionPolicy(sessionId, patch, this.config)
     const next = await this.policy(sessionId)
     if (!next.generateMemories) {
@@ -306,8 +301,8 @@ export class ProjectMemoryService extends Service {
     ])
     return {
       project, policy, global, projectMemory, documents,
-      learning: this.config.learningRoute === undefined ? undefined : {
-        ...this.config.learningRoute, idleDelayMs: this.config.idleDelayMs, maxRequests: MAX_LEARNING_REQUESTS,
+      learning: {
+        route: this.config.learningRoute, idleDelayMs: this.config.idleDelayMs, maxRequests: MAX_LEARNING_REQUESTS,
       },
     }
   }
@@ -526,7 +521,6 @@ export class ProjectMemoryService extends Service {
   }
 
   private registerBackgroundLearning(): void {
-    if (this.config.learningRoute === undefined) return
     this.ctx.on('agent/disposed', ({ agent }) => {
       this.learningQueues.get(String(agent.id))?.controller.abort(new Error('memory source agent disposed'))
     })
@@ -617,8 +611,7 @@ export class ProjectMemoryService extends Service {
   private async runLearningAgent(candidate: LearningCandidate, signal: AbortSignal): Promise<void> {
     const sessionId = SessionId(`memory-${randomUUID()}`)
     const parentDepth = candidate.agent.session.header.delegationDepth ?? 0
-    const route = this.config.learningRoute
-    if (route === undefined) return
+    const { provider, model } = this.config.learningRoute ?? candidate.agent.options
     let handle: AgentHandle | undefined
     try {
       signal.throwIfAborted()
@@ -631,7 +624,8 @@ export class ProjectMemoryService extends Service {
           delegationDepth: parentDepth + 1,
         },
         agentOptions: {
-          ...route,
+          ...provider === undefined ? {} : { provider },
+          ...model === undefined ? {} : { model },
           maxTokens: 900,
         },
         signal,

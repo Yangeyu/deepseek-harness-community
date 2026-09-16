@@ -58,7 +58,7 @@ async function fixture(stream: (options: GenerateOptions) => AsyncIterable<Strea
   new AgentLoop(ctx, { agents: [] })
   const memory = new ProjectMemoryService(ctx, {
     root: join(cwd, 'memories'), generateMemories: true, idleDelayMs: 0,
-    extractionProvider: 'fixture', extractionModel: 'scripted', maxContextBytes: 256,
+    maxContextBytes: 256,
   })
   const source = await ctx.agents.create({
     sessionId: SessionId('source'), meta: { cwd }, agentOptions: { provider: 'fixture', model: 'scripted' },
