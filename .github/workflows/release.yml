@@ -152,7 +152,7 @@ jobs:
           for delay in 0 2 4 8 16 30; do
             if [[ "$delay" -gt 0 ]]; then sleep "$delay"; fi
             if registry_url=$(npm view "${package_name}@${package_version}" dist.tarball --json 2>/dev/null \
-              | jq -er '.'); then
+              | jq -er 'select(type == "string") | select(startswith("https://"))'); then
               break
             fi
           done
