@@ -50,7 +50,7 @@ export function footerIdentity(
   const safeModel = sanitizeTerminalText(model)
   const naturalWorkspace = workspaceLabel(cwd, branch, Number.MAX_SAFE_INTEGER)
   const taskSuffix = task === '' ? '' : ` · ${sanitizeTerminalText(task)}`
-  const separator = ' │ '
+  const separator = ' | '
   const natural = `${safeModel}${separator}${naturalWorkspace}${taskSuffix}`
   if (visibleWidth(natural) <= safeWidth) return natural
   if (safeWidth < 16) return clip(natural, safeWidth)

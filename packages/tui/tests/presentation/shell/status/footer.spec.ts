@@ -15,7 +15,7 @@ describe('ComposerFooter', () => {
       '',
       120,
     )).toBe(
-      'deepseek-official/deepseek-v4-flash · max │ deepseek-harness-community · feature/footer-context',
+      'deepseek-official/deepseek-v4-flash · max | deepseek-harness-community · feature/footer-context',
     )
   })
 
@@ -27,7 +27,7 @@ describe('ComposerFooter', () => {
       'workspace-write · Goal active 2/8 · Tasks 3/5',
       200,
     )).toBe(
-      'deepseek-official/deepseek-v4-flash · max │ deepseek-harness-community · feature/footer-context · workspace-write · Goal active 2/8 · Tasks 3/5',
+      'deepseek-official/deepseek-v4-flash · max | deepseek-harness-community · feature/footer-context · workspace-write · Goal active 2/8 · Tasks 3/5',
     )
   })
 
