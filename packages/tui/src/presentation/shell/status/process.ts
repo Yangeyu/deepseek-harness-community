@@ -153,7 +153,7 @@ export class ShellStatusProcess {
       const hint = interruptHint === '' ? '' : ` · ${interruptHint}`
       this.status.setText([
         this.options.theme.accent(glyph),
-        this.options.theme.secondary(` ${label} (${elapsed}${hint}${history})`),
+        this.options.theme.dim(` ${label} (${elapsed}${hint}${history})`),
       ].join(''))
       return
     }
@@ -177,7 +177,7 @@ export class ShellStatusProcess {
       return
     }
     if (composerInput.draftRecovery === 'stored') {
-      this.status.setText(this.options.theme.secondary(`Input cleared · ↑ to restore${history}`))
+      this.status.setText(this.options.theme.dim(`Input cleared · ↑ to restore${history}`))
       return
     }
     const previousTurn = previousTurnDuration(state)
@@ -190,7 +190,7 @@ export class ShellStatusProcess {
       state.connection.control === 'online' ? undefined : `control ${state.connection.control}`,
     ].filter((value): value is string => value !== undefined).join(' · ')
     this.status.setText(ready
-      ? `${this.options.theme.bold(this.options.theme.success('Ready'))}${this.options.theme.secondary(`${lastTurn}${policyStatus}${history}`)}`
+      ? `${this.options.theme.bold(this.options.theme.success('Ready'))}${this.options.theme.dim(`${lastTurn}${policyStatus}${history}`)}`
       : this.options.theme.warning(`${connectionLabel === '' ? 'Connecting' : connectionLabel}…${history}`))
   }
 }

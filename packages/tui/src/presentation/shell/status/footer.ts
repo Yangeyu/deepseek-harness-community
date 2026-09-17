@@ -91,16 +91,16 @@ export class ComposerFooter implements Component {
   render(width: number): string[] {
     const safeWidth = Math.max(0, width)
     return [
-      footerIdentity(
+      this.theme.dim(footerIdentity(
         this.snapshot.model,
         this.snapshot.cwd,
         this.snapshot.branch,
         this.snapshot.task,
         safeWidth,
-      ),
+      )),
       ...(this.snapshot.stats === ''
         ? []
-        : [this.theme.secondary(clip(sanitizeTerminalText(this.snapshot.stats), safeWidth))]),
+        : [this.theme.dim(clip(sanitizeTerminalText(this.snapshot.stats), safeWidth))]),
     ]
   }
 }

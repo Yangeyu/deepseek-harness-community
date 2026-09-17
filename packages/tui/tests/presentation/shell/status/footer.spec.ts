@@ -102,7 +102,7 @@ describe('ComposerFooter', () => {
     expect(rows[0]).not.toContain('·')
   })
 
-  it('keeps persistent identity bright and metrics legibly secondary', () => {
+  it('renders identity and metrics as subdued supporting text', () => {
     const footer = new ComposerFooter(createTheme(true))
     footer.setSnapshot({
       model: 'deepseek-official/deepseek-v4-flash · max',
@@ -113,8 +113,9 @@ describe('ComposerFooter', () => {
     })
 
     const [identity, metrics] = footer.render(80)
+    expect(identity).toContain('\u001b[38;2;148;163;184m')
     expect(identity).not.toContain('\u001b[2m')
-    expect(metrics).toContain('\u001b[38;2;188;198;214m')
+    expect(metrics).toContain('\u001b[38;2;148;163;184m')
     expect(metrics).not.toContain('\u001b[2m')
   })
 })
