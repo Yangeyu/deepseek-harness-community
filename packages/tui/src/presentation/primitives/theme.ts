@@ -3,6 +3,7 @@ import type {
   EditorTheme,
   MarkdownTheme,
   SelectListTheme,
+  RgbColor,
 } from '@earendil-works/pi-tui'
 import { stripTerminalSequences } from '@earendil-works/pi-tui'
 
@@ -10,6 +11,8 @@ type Paint = (text: string) => string
 
 /** Terminal presentation roles used by the renderer and dialogs. */
 export interface TuiTheme {
+  readonly colorEnabled: boolean
+  terminalBackground: RgbColor | undefined
   accent: Paint
   bold: Paint
   dim: Paint
@@ -83,6 +86,8 @@ export function createTheme(enabled: boolean): TuiTheme {
     noMatch: warning,
   }
   return {
+    colorEnabled: enabled,
+    terminalBackground: undefined,
     accent,
     bold,
     dim,

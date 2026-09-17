@@ -350,6 +350,7 @@ export function createApplication(
       shellStatus.refresh()
     },
     invalidate: () => { invalidateTerminal() },
+    requestRender: () => { renderScheduler.invalidate() },
     ...vision === undefined ? {} : { vision },
   }
 
@@ -434,7 +435,19 @@ export function createApplication(
     intent: startupIntent,
     runtime,
     terminal,
-    screen: tui,
+    screen: {
+      start: () => {
+        tui.start()
+        if (config.color) {
+          void tui.queryTerminalBackgroundColor({ timeoutMs: 200 }).then(background => {
+            if (!terminalScope.active) return
+            theme.terminalBackground = background
+            renderScheduler.invalidate()
+          })
+        }
+      },
+      stop: () => { tui.stop() },
+    },
     terminalScope,
     attachInput: () => attachTerminalInput(tui, gesture => input.handle(gesture)),
     session,

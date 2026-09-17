@@ -6,6 +6,7 @@ import type { ModelSelection } from '../../runtime/session/contracts.ts'
 import type { TuiTheme } from '../../presentation/primitives/theme.ts'
 import { AttachmentRail } from './view/attachment-rail.ts'
 import { ComposerEditorFrame } from './view/editor-frame.ts'
+import { ComposerSparkle } from './view/sparkle.ts'
 import { AtomicSnapshotStore, type SnapshotListener } from '../../runtime/dispatch/snapshot-store.ts'
 import { ResourceSlot } from '../../runtime/lifecycle/resource-slot.ts'
 import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
@@ -75,6 +76,7 @@ export interface ComposerProcessOptions {
   readonly createEditor: ComposerEditorFactory
   readonly followTranscript: () => void
   readonly openRewind: () => void
+  readonly requestRender: () => void
   readonly scope: LifecycleScope
 }
 
@@ -104,7 +106,12 @@ export class ComposerProcess {
       () => { this.leaveAttachmentRail() },
     )
     this.editor = options.createEditor(() => this.drafts.placeholders)
-    this.editorFrame = new ComposerEditorFrame(this.editor)
+    const sparkle = options.scope.own(new ComposerSparkle({
+      enabled: options.theme.colorEnabled,
+      visible: () => options.scope.active && this.editor.focused && !this.editor.isShowingAutocomplete(),
+      invalidate: options.requestRender,
+    }))
+    this.editorFrame = new ComposerEditorFrame(this.editor, options.theme, sparkle)
     this.editor.onChange = text => {
       this.drafts.reconcileText(text)
       this.input.observeEditorText(text)

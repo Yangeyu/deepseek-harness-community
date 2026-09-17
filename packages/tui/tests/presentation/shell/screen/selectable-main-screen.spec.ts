@@ -34,7 +34,7 @@ describe('SelectableMainScreen', () => {
     })
   })
 
-  it('owns mouse tracking for every terminal start and stop path', () => {
+  it('owns mouse tracking and the native caret shape across terminal start and stop', () => {
     const output = terminal()
     const screen = new SelectableMainScreen(output, false)
 
@@ -42,6 +42,8 @@ describe('SelectableMainScreen', () => {
     screen.stop({ preserveScreen: true })
 
     expect(output.write).toHaveBeenCalledWith(ENABLE_MOUSE_TRACKING)
+    expect(output.write).toHaveBeenCalledWith('\u001b[6 q')
     expect(output.write).toHaveBeenCalledWith(DISABLE_MOUSE_TRACKING)
+    expect(output.write).toHaveBeenCalledWith('\u001b[0 q')
   })
 })

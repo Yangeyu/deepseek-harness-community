@@ -1,4 +1,4 @@
-import type { TUI } from '@earendil-works/pi-tui'
+import { type TUI } from '@earendil-works/pi-tui'
 import type { PromptContentPart } from '../../../src/runtime/session/contracts.ts'
 import type { ResolvedProxyImageRoute, VisionRequest } from '@vascent/deepseek-harness-vision'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -80,6 +80,7 @@ function nativeVision(): VisionGateway {
 }
 
 function fixture(options: {
+  color?: boolean
   clipboardImage?: () => Promise<NewAttachmentDraft>
   vision?: VisionGateway
 } = {}) {
@@ -109,7 +110,7 @@ function fixture(options: {
       editor: () => { tui.setFocus(process.editor) },
       attachments: () => { tui.setFocus(process.attachmentRail) },
     },
-    theme: createTheme(false),
+    theme: createTheme(options.color ?? false),
     session,
     commands: {
       dispatch: vi.fn(async () => false),
@@ -122,11 +123,12 @@ function fixture(options: {
       createTheme(false).editor,
       references,
       createTheme(false).imageReference,
-      { paddingX: 1, autocompleteMaxVisible: 10 },
+      { paddingX: 0, autocompleteMaxVisible: 10 },
     ),
     vision: options.vision ?? nativeVision(),
     followTranscript: vi.fn(),
     openRewind: vi.fn(),
+    requestRender: vi.fn(),
     scope,
   })
   process.start()
@@ -135,14 +137,33 @@ function fixture(options: {
     scope,
     promptWithPreparation,
     submittedContent,
+    current,
   }
 }
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('ComposerProcess', () => {
+  it('keeps the starfield through typing, clearing, and running or historical sessions', async () => {
+    vi.useFakeTimers()
+    const test = fixture({ color: true })
+    test.process.editor.focused = true
+    test.process.editor.handleInput('中文 👋')
+    expect(test.process.editorFrame.render(100).join('\n')).toMatch(/[⠁⠂⠄⠈⠐⠠⡀⢀]/u)
+    expect(test.process.editor.getExpandedText()).toBe('中文 👋')
+    test.process.clearDraft()
+    Object.assign(test.current, { runState: 'running', historyHasMore: true })
+    vi.advanceTimersByTime(30_000)
+    expect(test.process.editorFrame.render(100).join('\n')).toMatch(/[⠁⠂⠄⠈⠐⠠⡀⢀]/u)
+    test.process.editor.focused = false
+    expect(test.process.editorFrame.render(100).join('\n')).not.toMatch(/[⠁⠂⠄⠈⠐⠠⡀⢀]/u)
+    expect(vi.getTimerCount()).toBe(0)
+    await test.scope.dispose()
+  })
+
   it('decodes raw Editor references before preparing one image submission', async () => {
     const test = fixture()
     await test.process.pasteImage()

@@ -45,10 +45,12 @@ export class SelectableMainScreen extends TuiMainScreen {
   protected override afterTerminalStart(): void {
     super.afterTerminalStart()
     this.terminal.write(ENABLE_MOUSE_TRACKING)
+    this.terminal.write('\u001b[6 q') // DECSCUSR: steady vertical insertion caret.
   }
 
   protected override beforeTerminalStop(options: TuiStopOptions): void {
     this.terminal.write(DISABLE_MOUSE_TRACKING)
+    this.terminal.write('\u001b[0 q') // Restore the terminal default when releasing ownership.
     super.beforeTerminalStop(options)
   }
 
