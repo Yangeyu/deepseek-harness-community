@@ -26,3 +26,14 @@ export function formatUsage(usage: ProviderUsage): string {
     ...usage.groups.length === 0 ? ['No quota windows reported.'] : [],
   ].join('\n'))
 }
+
+/** Compact account-wide windows, never substituted with model-specific quotas. */
+export function formatUsageSummary(usage: ProviderUsage | undefined): string {
+  if (usage?.provider !== 'openai-codex') return ''
+  const windows = usage.groups.find(group => group.label === 'Codex')?.windows ?? []
+  return [18_000, 604_800].flatMap(seconds => {
+    const window = windows.find(window => window.durationSeconds === seconds)
+    if (window === undefined) return []
+    return [`${duration(seconds)} ${String(Math.max(0, 100 - window.usedPercent))}% left`]
+  }).join(' · ')
+}

@@ -34,3 +34,8 @@ export interface ShellInterruptionStatus {
   readonly target: string | undefined
   readonly interruptingKey: string | undefined
 }
+
+export interface ShellUsagePort {
+  readonly summary: string
+  observe(provider: string | undefined): void
+}

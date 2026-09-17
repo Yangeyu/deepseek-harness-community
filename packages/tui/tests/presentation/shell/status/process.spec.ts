@@ -1,6 +1,8 @@
 import { stripTerminalSequences } from '@earendil-works/pi-tui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createTheme } from '../../../../src/presentation/primitives/theme.ts'
+import { ProviderUsageProcess } from '../../../../src/modules/usage/process.ts'
+import type { ProviderUsage, ProviderUsagePort } from '../../../../src/modules/usage/contracts.ts'
 import { ShellStatusProcess } from '../../../../src/presentation/shell/status/process.ts'
 import { buildExecutionSnapshot } from '../../../../src/runtime/execution/projection/index.ts'
 import { LifecycleScope } from '../../../../src/runtime/lifecycle/scope.ts'
@@ -31,7 +33,7 @@ function sessionSnapshot(overrides: Partial<RuntimeSessionSnapshot> = {}): Runti
   }
 }
 
-function fixture() {
+function fixture(usageSource?: ProviderUsagePort) {
   let current = sessionSnapshot()
   const sessionListeners = new Set<(snapshot: Readonly<RuntimeSessionSnapshot>) => void>()
   const composerListeners = new Set<() => void>()
@@ -48,7 +50,9 @@ function fixture() {
   const invalidate = vi.fn()
   const advanceTranscriptAnimation = vi.fn()
   const scope = new LifecycleScope('shell-status')
+  const usage = usageSource === undefined ? undefined : new ProviderUsageProcess(usageSource, scope, () => { process.refresh() })
   const process = new ShellStatusProcess({
+    ...usage === undefined ? {} : { usage },
     title: 'dscode',
     theme: createTheme(false),
     session: {
@@ -90,6 +94,35 @@ function fixture() {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ShellStatusProcess', () => {
+  it('refreshes Codex quota in the model row and stops showing it after switching providers', async () => {
+    vi.useFakeTimers()
+    const quota: ProviderUsage = { provider: 'openai-codex', checkedAt: 0, groups: [
+      { label: 'Codex', windows: [
+        { durationSeconds: 18000, usedPercent: 20 },
+        { durationSeconds: 604800, usedPercent: 45 },
+      ] },
+    ] }
+    const read = vi.fn(async (provider: string) => provider === 'openai-codex' ? quota : undefined)
+    const test = fixture({ read })
+    const state = (provider: string) => sessionSnapshot({ modelCatalog: {
+      default: { provider, model: 'gpt-6-astra' }, routableProviders: [provider], groups: [], failures: [],
+    } })
+    test.process.start()
+    test.publishSession(state('openai-codex'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(test.process.footer.render(200)[0]).toContain('openai-codex/gpt-6-astra · 5h 80% left · Weekly 55% left')
+    test.process.refresh()
+    expect(read).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(read).toHaveBeenCalledTimes(2)
+    test.publishSession(state('bailian'))
+    expect(test.process.footer.render(200)[0]).not.toContain('% left')
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(read).toHaveBeenCalledTimes(3)
+    await test.scope.dispose()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('projects session identity and Git context into shell components', () => {
     const test = fixture()
     test.process.start()

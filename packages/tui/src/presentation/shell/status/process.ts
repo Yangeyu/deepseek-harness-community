@@ -18,6 +18,7 @@ import type {
   ShellMemoryActivity,
   ShellStatusComposerPort,
   ShellStatusSessionPort,
+  ShellUsagePort,
 } from './contracts.ts'
 
 export interface ShellStatusProcessOptions {
@@ -34,6 +35,7 @@ export interface ShellStatusProcessOptions {
   readonly invalidate: () => void
   readonly scope: LifecycleScope
   readonly now?: () => number
+  readonly usage?: ShellUsagePort
 }
 
 /** Owns shell header/footer projection, activity status, clocks, and Git observation. */
@@ -97,8 +99,10 @@ export class ShellStatusProcess {
     const model = selection === undefined
       ? 'model unavailable'
       : `${selection.provider}/${selection.model}${selection.reasoningEffort === undefined ? '' : ` · ${selection.reasoningEffort}`}`
+    this.options.usage?.observe(state.sessionId === undefined ? undefined : selection?.provider)
+    const quota = this.options.usage?.summary ?? ''
     this.footer.setSnapshot({
-      model,
+      model: quota === '' ? model : `${model} · ${quota}`,
       cwd: state.cwd,
       ...this.gitBranchCwd === state.cwd && this.branch !== undefined
         ? { branch: this.branch }

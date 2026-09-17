@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatUsage } from '../../../src/modules/usage/format.ts'
+import { formatUsage, formatUsageSummary } from '../../../src/modules/usage/format.ts'
 
 describe('subscription usage display', () => {
   it('labels each server-defined window with remaining quota and reset time', () => {
@@ -18,4 +18,12 @@ describe('subscription usage display', () => {
   it('reports missing windows without inferring a quota', () => {
     expect(formatUsage({ provider: 'openai-codex', checkedAt: 0, groups: [] })).toContain('No quota windows reported.')
   })
+  it('summarizes only reported account-wide windows, without borrowing a model quota', () => {
+    expect(formatUsageSummary({ provider: 'openai-codex', checkedAt: 0, groups: [
+      { label: 'Codex', windows: [{ durationSeconds: 604800, usedPercent: 45 }] },
+      { label: 'Spark', windows: [{ durationSeconds: 18000, usedPercent: 0 }] },
+    ] })).toBe('Weekly 55% left')
+    expect(formatUsageSummary(undefined)).toBe('')
+  })
+
 })

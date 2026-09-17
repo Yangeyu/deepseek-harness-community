@@ -28,6 +28,7 @@ import { ConfigurationProcess } from '../modules/configuration/process.ts'
 import { AuthenticationProcess } from '../modules/authentication/process.ts'
 import type { ProviderAuthenticationPort } from '../modules/authentication/contracts.ts'
 import type { ProviderUsagePort } from '../modules/usage/contracts.ts'
+import { ProviderUsageProcess } from '../modules/usage/process.ts'
 import { formatUsage } from '../modules/usage/format.ts'
 import { selectedModel } from '../runtime/session/model-selection.ts'
 import { openAuthorizationUrl } from '../infrastructure/terminal/open-url.ts'
@@ -162,6 +163,9 @@ export function createApplication(
   let configuration!: ConfigurationProcess
   let sessionCenter!: SessionCenterProcess
   let memoryProcess!: MemoryProcess
+  const usage = dependencies.usage === undefined ? undefined : new ProviderUsageProcess(
+    dependencies.usage, shellScope, () => { shellStatus.refresh() },
+  )
   let input!: InputCoordinator
 
   const commands = new TerminalCommandDirectory(
@@ -184,14 +188,14 @@ export function createApplication(
         const connected = await authentication!.connect(provider)
         if (lifecycle.scope.active) session.notice(connected ? 'Provider connected. Use /model to select a model.' : 'Sign-in cancelled.')
       } },
-      ...dependencies.usage === undefined ? {} : { showUsage: async () => {
+      ...usage === undefined ? {} : { showUsage: async () => {
         const captured = session.captureSession()
         const provider = selectedModel(session.current.modelCatalog, session.current.projections)?.provider
         if (provider === undefined) throw new Error('Select a model with /model before checking usage.')
         let message: string
         try {
-          const usage = await dependencies.usage!.read(provider, commandScope.signal)
-          message = usage === undefined ? `Subscription usage is not available for ${provider}.` : formatUsage(usage)
+          const result = await usage.read(provider, commandScope.signal)
+          message = result === undefined ? `Subscription usage is not available for ${provider}.` : formatUsage(result)
         } catch (error) {
           message = error instanceof Error ? error.message : String(error)
         }
@@ -239,6 +243,7 @@ export function createApplication(
     }),
     followsTranscript: () => layout.followsTranscriptTail,
     advanceTranscriptAnimation: () => { transcript.advanceAnimation() },
+    ...usage === undefined ? {} : { usage },
     gitBranch,
     invalidate: () => { invalidateTerminal() },
     scope: shellScope,

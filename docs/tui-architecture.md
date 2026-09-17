@@ -79,9 +79,11 @@ credential resolution, validation and refresh when serving model requests.
 The Codex companion adapter in `infrastructure/harness/subscription-usage` owns the
 usage endpoint and pi-ai grant format. It calls pi-ai's public OAuth refresh method
 inside the Host's `modifyRecord` lock, shared with model requests. The TUI receives
-only quota groups, window lengths, used percentages and reset timestamps. Queries
-are command-scoped and on demand; retired Session results are discarded. No quota
-cache or background polling is maintained. `/usage` opts into command activity via
+only quota groups, window lengths, used percentages and reset timestamps.
+
+`ProviderUsageProcess` 统一拥有当前 provider 的额度快照，供模型栏与 `/usage` 共用。选中 provider 时查询一次，支持额度查询的 provider 每 60 秒在后台刷新；切换 provider 或退出时取消请求和计时，旧请求结果不覆盖新状态。后台失败时隐藏额度，`/usage` 保留显式错误反馈和会话退役检查。Codex 模型栏仅展示账户级 `Codex` 分组实际返回的 5 小时、每周剩余百分比，不补造缺失窗口，不把其他模型的独立额度当成账户额度。窄终端沿用模型栏的截断规则。
+
+`/usage` opts into command activity via
 its local definition's `activityLabel`. The command router tracks pending executions
 and exposes the most recently started pending label and start time to the existing
 status-bar spinner; completion removes only that execution, revealing earlier
