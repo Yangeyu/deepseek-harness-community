@@ -523,6 +523,7 @@ component references while the Session-owned implementations are replaced.
 - Main-screen text selection, including active Surface content, owns rendered
   cell coordinates, grapheme-aware highlighting, and plain-text extraction.
   The application owns clipboard I/O.
+  `/copy` 从当前会话历史中取最近一条已完成且正文非空的 AI 回复，保留原始 Markdown；不包含思考、工具输出、压缩摘要或流式片段。需要时沿现有历史分页继续查找，会话退役后停止。该命令与鼠标选区共用剪贴板适配器，没有可复制回复时显示提示。
   A primary press starts one gesture; dragging updates selection, while release
   either copies a non-empty range or dispatches a click to the rendered target.
   Transcript disclosure and Surface row selection therefore never run

@@ -227,6 +227,65 @@ afterEach(() => {
 })
 
 describe('createApplication integration', () => {
+  it('copies the latest completed assistant text as Markdown without thoughts, tools, or live output', async () => {
+    const clipboardText = vi.fn(async () => {})
+    const app = application(undefined, undefined, undefined, undefined, { clipboardText })
+    const reply = '# Answer\n\n```ts\nconst n = 1\n```'
+    const events = [
+      { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'text', text: 'Older reply' }] } } } },
+      { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'reasoning', text: 'Private thought' }, { type: 'text', text: reply }, { type: 'text', text: 'Done.' }] } } } },
+      { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'reasoning', text: 'More thought' }] } } } },
+      { event: { type: 'assistant/message', surfaceOp: 'replace', data: { message: { content: [{ type: 'text', text: 'Compaction summary' }] } } } },
+      { event: { type: 'tool/result', data: { message: { content: [{ type: 'text', text: 'Tool output' }] } } } },
+    ] as unknown as HistoryEntry[]
+    vi.spyOn(app.session, 'current', 'get').mockReturnValue({
+      ...app.session.current, events,
+      assistant: { turn: 2, step: 1, content: [{ type: 'text', text: 'Still streaming' }] },
+    })
+
+    await app.composer.submit('/copy')
+
+    expect(clipboardText).toHaveBeenCalledExactlyOnceWith(`${reply}\nDone.`)
+    await app.dispose()
+  })
+
+  it('reports an empty conversation without overwriting the clipboard and surfaces copy errors', async () => {
+    const clipboardText = vi.fn(async () => { throw new Error('Clipboard unavailable') })
+    const app = application(undefined, undefined, undefined, undefined, { clipboardText })
+    const notice = vi.spyOn(app.session, 'notice')
+    await app.composer.submit('/copy')
+    expect(notice).toHaveBeenLastCalledWith('No completed assistant reply to copy.')
+    expect(clipboardText).not.toHaveBeenCalled()
+
+    vi.spyOn(app.session, 'current', 'get').mockReturnValue({ ...app.session.current, events: [
+      { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'text', text: 'Reply' }] } } } },
+    ] as unknown as HistoryEntry[] })
+    await app.composer.submit('/copy')
+    expect(notice).toHaveBeenLastCalledWith('Clipboard unavailable')
+    await app.dispose()
+  })
+
+  it.each([true, false])('searches older history and copies only while the session remains active (%s)', async active => {
+    const clipboardText = vi.fn(async () => {})
+    const app = application(undefined, undefined, undefined, undefined, { clipboardText })
+    const state = { ...app.session.current, historyHasMore: true }
+    vi.spyOn(app.session, 'current', 'get').mockImplementation(() => state)
+    vi.spyOn(app.session, 'captureSession').mockReturnValue({ sessionId: 'copy-session' as SessionId, epoch: 1, active, commitModelCatalog: () => true })
+    vi.spyOn(app.session, 'loadEarlierHistory').mockImplementation(async () => {
+      state.events = [
+        { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'text', text: 'Earlier reply' }] } } } },
+      ] as unknown as HistoryEntry[]
+      state.historyHasMore = false
+      return true
+    })
+
+    await app.composer.submit('/copy')
+
+    if (active) expect(clipboardText).toHaveBeenCalledExactlyOnceWith('Earlier reply')
+    else expect(clipboardText).not.toHaveBeenCalled()
+    await app.dispose()
+  })
+
   it('spins while /usage reads the selected provider and displays quotas without a model request', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)

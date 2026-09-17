@@ -100,6 +100,9 @@ come from the server; an absent 5-hour or weekly window is not inferred. This is
 account-wide quota, separate from the current session's token statistics. Other
 providers currently report that subscription usage is unavailable.
 
+`/copy` copies the latest completed assistant reply in the current conversation
+to the clipboard, preserving Markdown and excluding reasoning and tool output.
+
 ## Packages
 
 - [`@vascent/dsh-tui`](package.json) is the only published npm package. It

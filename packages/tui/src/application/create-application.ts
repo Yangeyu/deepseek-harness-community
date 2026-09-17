@@ -43,6 +43,7 @@ import { SkillsHost } from '../modules/skills/host.ts'
 import { TaskHost } from '../modules/task/host.ts'
 import { TrajectoryHost } from '../modules/trajectory/host.ts'
 import { TranscriptHost } from '../modules/transcript/host.ts'
+import { latestAssistantText } from '../modules/transcript/model.ts'
 import { createTheme } from '../presentation/primitives/theme.ts'
 import type { ClipboardTextWriter } from '../presentation/shell/input/contracts.ts'
 import { ComposerAnchoredLayout } from '../presentation/shell/layout/composer-layout.ts'
@@ -203,6 +204,23 @@ export function createApplication(
       } },
       attach: path => composer.attachPath(path).then(() => undefined),
       pasteImage: () => composer.pasteImage(),
+      copyReply: async () => {
+        let text = latestAssistantText(session.current.events)
+        if (text === undefined && session.current.historyHasMore) {
+          const captured = session.captureSession()
+          while (text === undefined && session.current.historyHasMore) {
+            const loaded = await session.loadEarlierHistory()
+            if (!commandScope.active || !captured.active) return
+            if (!loaded) break
+            text = latestAssistantText(session.current.events)
+          }
+        }
+        if (text === undefined) {
+          session.notice('No completed assistant reply to copy.')
+          return
+        }
+        await copyText(text)
+      },
       toggleDetails: () => { configuration.setDetails(!configuration.details) },
       openSkills: () => { skills.open() },
       openConfiguration: route => configuration.openRoute(route),

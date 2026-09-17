@@ -13,6 +13,7 @@ export interface LocalCommandActions {
   showUsage?(): Promise<void>
   attach(path: string): Promise<void>
   pasteImage(): Promise<void>
+  copyReply(): Promise<void>
   toggleDetails(): void
   openSkills(): void
   openConfiguration(route: string): void | Promise<void>
@@ -69,6 +70,10 @@ export function createLocalCommands(actions: LocalCommandActions): TerminalComma
     name: 'paste-image',
     description: 'Attach the image currently on the clipboard',
     handler: () => actions.pasteImage(),
+  }, {
+    name: 'copy',
+    description: 'Copy the latest completed assistant reply to the clipboard',
+    handler: () => actions.copyReply(),
   }, {
     name: 'details',
     description: 'Toggle all Activity details',
