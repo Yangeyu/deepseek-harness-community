@@ -26,6 +26,19 @@ dscode（DeepSeek Harness Community 终端）环境与运行故障的诊断参�
 - Tavily：`TAVILY_API_KEY`；`searchProvider: community-tavily` 且无 key 时 readiness 失败 → 改回 `auto` 或补 key。
 - 默认模型指向未注册 id：`agent-default-model.model` 必须存在于 `llm-bailian.models` 键中。
 
+### Browser 原子工具不可用、审批拒绝或状态失效
+- 找不到工具：检查有效 Cordis 配置是否启用 `id: browser`；`settings.yaml` 本身不挂载插件。入口是 `browser_open` / `browser_observe` / `browser_act` / `browser_close`，不再提供 `browser_task`。Browser 配置只有 `python`、`timeoutMs`、`idleTimeoutMs`，旧 `provider` / `model` / `maxSteps` / `maxTokens` 不兼容。
+- Python 或依赖错误：核对 `browser.python` 是否指向用户已安装 `browser-harness==0.1.13` 的 Python 3.12+ 环境；默认 `python3`，自定义路径用绝对路径。插件不会自动装依赖或改用户浏览器配置。
+- `daemon ... didn't come up`：读取错误给出的 daemon 日志。`DevToolsActivePort not found` 表示未发现可连接的浏览器；请用户核对预配置的 browser-harness profile、Chrome 远程调试授权或独立 CDP 地址，不要接管其他 tab。Browser 没有独立模型请求循环，不要当成 Browser 模型鉴权失败。
+- 审批立即拒绝：`open` 必须 Host 审批一次，`click` / `fill` / `select` 每动作审批，截图观察也单独审批。approval `never` 明确拒绝全部 `ask`；`danger-full-access` 文件模式不是浏览器许可，其预设还联动 `never`，不能用来绕过审批。请用户用已存在的 `/config permission` 检查并调整预设，不要在 `permission.defaultPreset` 中写 `ask`。
+- 等待审批时超时也会清理 tab：`timeoutMs` 包含每次调用的审批等待，默认 `300000` 毫秒、范围 `1000–1800000`。不要把被取消或超时的动作视为未发生；重新打开并观察验收，避免重复提交。
+- `browserId` 或观察失效：状态仅在同一 Agent 的当前 turn 内跨工具保留，取消、超时、插件卸载、Agent 释放、turn 变为 idle 或空闲兜底 `idleTimeoutMs` 都可能清理。turn 完成后或 resume 先重新 `open`、重新观察；动作使用最新 `observationId` / `actionId`，`text` 仅用于 `fill`。
+- 跨 origin 后无法观察/操作：这是单 origin 边界，DOM 和截图均不再返回；先 `close`，再对新 origin 重新 `open` 审批。它不是网络隔离，已经发生的导航、弹窗、子资源请求不保证阻止；`scroll` / `wait` 复用站点许可，但也可能触发网络请求。
+- 看不到截图：`browser_observe` 的 `screenshot` 默认 `false`，显式开启需单独审批。图像模型从原生工具结果看图；文本模型用返回的真实 `attachment_ref` 调现有 `inspect_image`，再按下文 Vision 项检查配置，不伪造路径或用户 prompt。
+- 页面、截图和填写内容可能含敏感信息，脱敏不完整；密码/OTP 请用户处理。工具参数（包括 `fill` 内容）进入 Host 日志，排障不要转储敏感参数或声称不落盘。
+- 清理后仍有 tab：只关闭本 Agent 自有 tab，不关闭 daemon/browser 或其他 tab；强杀或后端无响应时可能残留，请用户确认归属后处理。工具执行状态不是业务成功，须重新观察确认实际结果。
+- 修复插件源码后仍用 `pnpm dev` 重启；是否构建 Browser 由有效启用配置决定，不需要切换启动命令。若只有 `fetch failed`，不要无证据推断 DNS/TLS 原因，先区分主 Agent、Vision 代理和浏览器后端的错误来源。
+
 ### `web_search` / `web_extract` 不可用
 - 看 `community-web.searchProvider` / `extractProvider` 当前值。`auto` 语义：有 `TAVILY_API_KEY` 走 Tavily，否则 DeepSeek Official。
 - Tavily 超时：`tavilyTimeoutSeconds` 与网络状况；官方搜索是始终存在的回落。

@@ -77,5 +77,24 @@
 #             high: { enableThinking: true, reasoningEffort: high }
 #             max: { enableThinking: true, reasoningEffort: max }
 
+# ────────────────────────────────────────────────────────────────────────
+# Browser — 可选的浏览器原子工具，默认不挂载
+# ────────────────────────────────────────────────────────────────────────
+# 安装用户：复制到 profiles/tui/cordis.patch.yml；仓库开发：复制到
+# profiles/tui-dev/cordis.patch.yml。家级 cordis.patch.yml 会影响所有 profile。
+# - id: browser
+#   disabled: false
+#
+# 设置后重启 dscode / pnpm dev。pnpm dev 只在 Cordis 实际加载 Browser 时
+# 构建它，不用切换命令；发布包已包含代码和 Python worker，无运行时构建。
+# 还需用户准备 Python 3.12+、browser-harness==0.1.13 与预配置的 Chrome/profile；
+# 不自动安装依赖或修改用户配置。每 Agent 创建专属 tab，使用现有登录态，不接管其他 tab。
+# 主 Agent 使用 browser_open/observe/act/close，不再有 browser_task 或内部模型循环。
+# open、click/fill/select 和截图观察须 Host 审批；never 拒绝全部 ask，
+# danger-full-access 文件模式不等于浏览器许可，也不绕过 never，详见配置指南。
+# 单 origin 仅约束观察/操作，不是网络隔离；跨域须 close 后对新 origin open 审批。
+# turn 完成或 resume 须重开观察；只关自有 tab，不关闭 daemon/browser。
+# 截图及页面是敏感上下文，脱敏不完整；fill 等工具参数会进入 Host 日志，密码/OTP 交用户。
+
 # 模板本身是空补丁列表；把上面的条目复制进 cordis.patch.yml 即成为生效配置。
 []

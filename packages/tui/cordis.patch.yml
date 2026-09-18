@@ -109,6 +109,11 @@
         proxyProvider: bailian
         proxyModel: qwen3.7-plus
 
+    # Optional browser automation; Cordis owns effective enablement.
+    - id: browser
+      name: '@vascent/deepseek-harness-tui/browser'
+      disabled: true
+
     - id: community-web
       name: '@vascent/deepseek-harness-tui/web'
       config:

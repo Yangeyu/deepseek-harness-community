@@ -86,6 +86,9 @@ function verifyPackedFiles(files, manifest) {
   const required = exportedPaths(manifest.exports)
   required.add('package.json')
   required.add('dist/launcher.js')
+  for (const asset of ['worker.py', 'requirements.txt', 'jev_browser/browser.py', 'jev_browser/snapshot.js', 'jev_browser/LICENSE', 'jev_browser/PROVENANCE.md']) {
+    required.add(`packages/tui/dist/python/${asset}`)
+  }
   const executables = typeof manifest.bin === 'string'
     ? [manifest.bin]
     : Object.values(manifest.bin ?? {})

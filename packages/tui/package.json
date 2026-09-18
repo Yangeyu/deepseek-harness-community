@@ -25,6 +25,10 @@
     "./web": {
       "types": "./dist/web.d.ts",
       "default": "./dist/web.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
     }
   },
   "license": "MIT",
@@ -35,7 +39,7 @@
   },
   "scripts": {
     "build": "tsdown",
-    "lint": "oxlint --deny-warnings src tests tsdown.config.ts",
+    "lint": "oxlint --deny-warnings src tests browser-dev.ts tsdown.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test"
@@ -161,6 +165,7 @@
     "@deepseek-ai/dsh-user-questions": "catalog:dsh",
     "@deepseek-ai/dsh-web-search-deepseek": "catalog:dsh",
     "@types/node": "^22.20.0",
+    "@vascent/deepseek-harness-browser": "workspace:*",
     "@vascent/deepseek-harness-llm-bailian": "workspace:*",
     "@vascent/deepseek-harness-memory": "workspace:*",
     "@vascent/deepseek-harness-vision": "workspace:*",

@@ -121,6 +121,30 @@
 #   extractMaxOutputChars: 60000
 
 # ────────────────────────────────────────────────────────────────────────
+# browser　可选浏览器原子工具（先在 cordis.patch.yml 启用 id: browser）
+# ────────────────────────────────────────────────────────────────────────
+# settings 不负责挂载插件；未启用时该段不生效。python 指向用户已安装
+# browser-harness==0.1.13 的 Python 3.12+ 环境；不自动安装依赖或改用户配置。
+# browser:
+#   python: python3                      # 默认；自定义解释器用绝对路径，不用 ~
+#   timeoutMs: 300000                     # 每次工具含审批总时限；1000–1800000 ms
+#   idleTimeoutMs: 300000                 # 工具间空闲清理兜底；1000–1800000 ms
+# 仅以上三个配置项；删除 provider/model/maxSteps/maxTokens，不兼容旧配置。
+# 主 Agent 调 browser_open/observe/act/close；不再使用 browser_task 或内部模型循环。
+# 每 Agent 一个专属 tab，连接预配置 profile 的登录态，不接管其他 tab。
+# open 必须 Host 审批，click/fill/select 逐动作审批，observe 截图单独审批；
+# scroll/wait 复用站点许可，仍可触发站点请求，不是网络只读。
+# approval never 拒绝全部 ask；danger-full-access 文件模式不是浏览器许可，
+# 也不绕过 never。用户可用 /config permission 调整预设，不把 ask 写成配置值。
+# 单 origin 限制观察/操作；跨域后不返回 DOM/截图，需 close 后对新 origin open 审批。
+# 这不是网络隔离，不保证阻止已发生的导航、弹窗或子资源请求。
+# 工具间保留状态；取消/超时/卸载/Agent 释放/turn idle 清理，完成 turn 或 resume 要重开观察。
+# 只关自有 tab，不关 daemon/browser；强杀或后端无响应可能残留。
+# 截图走 Attachment，图像模型原生看图，文本模型用 attachment_ref 调 inspect_image。
+# 页面/截图含敏感信息且脱敏不完整；密码/OTP 交用户，fill 等参数会进入 Host 日志。
+# 原子工具状态不代表业务成功，须重新观察验收；不提供任意 JS/CDP 或上传/下载接口。
+
+# ────────────────────────────────────────────────────────────────────────
 # 6) permission　权限预设（终端内 /config permission 可视化）
 # ────────────────────────────────────────────────────────────────────────
 #   defaultPreset：read-only | workspace-write | danger-full-access

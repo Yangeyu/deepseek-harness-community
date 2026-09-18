@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>Browser 插件本地演示：酒店搜索</title>
+<style>
+body { font: 18px system-ui; max-width: 760px; margin: 48px auto; padding: 0 24px; }
+label { display: block; margin: 20px 0; }
+input, select, button { font: inherit; padding: 8px; }
+article { border: 1px solid #ccc; border-radius: 12px; padding: 20px; margin-top: 24px; }
+</style>
+<h1>酒店搜索 · 本地演示</h1>
+<p>这是离线演示页面，不会预订、付款或发送任何外部请求。</p>
+<form id="search">
+  <label>城市 <input name="city" placeholder="输入城市，例如 Lisbon" autocomplete="off"></label>
+  <label>酒店风格 <select name="style"><option value="all">全部</option><option value="design">Design</option><option value="classic">Classic</option></select></label>
+  <label><input type="checkbox" name="cancel"> Free cancellation（免费取消）</label>
+  <button type="submit">搜索酒店</button>
+</form>
+<section id="results" aria-live="polite"></section>
+<script>
+document.querySelector('#search').addEventListener('submit', event => {
+  event.preventDefault();
+  const values = new FormData(event.target);
+  const city = String(values.get('city') || '').trim();
+  const style = values.get('style');
+  const cancellation = values.get('cancel') === 'on';
+  const results = document.querySelector('#results');
+  results.replaceChildren();
+  const summary = document.createElement('p');
+  summary.textContent = `已应用筛选：城市=${city}；风格=${style}；免费取消=${cancellation ? '是' : '否'}`;
+  results.append(summary);
+  const article = document.createElement('article');
+  article.textContent = city.toLowerCase() === 'lisbon' && style === 'design' && cancellation
+    ? 'Casa Flora · Lisbon · Design · Free cancellation · €120 / night'
+    : '请搜索 Lisbon，选择 Design，并勾选 Free cancellation，以查看匹配的 Casa Flora。';
+  results.append(article);
+});
+</script>
+</html>

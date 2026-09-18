@@ -1,9 +1,19 @@
 import { defineConfig } from 'tsdown'
-import { copyFile, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { copyFile, cp, readFile, writeFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+
+// Only the development launcher sets this in its build subprocesses.
+const development = process.env.DSH_TUI_DEV_BUILD === '1'
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/bailian.ts', 'src/memory.ts', 'src/vision.ts', 'src/web.ts'],
+  entry: {
+    index: 'src/index.ts',
+    bailian: 'src/bailian.ts',
+    memory: 'src/memory.ts',
+    vision: 'src/vision.ts',
+    web: 'src/web.ts',
+    browser: development ? 'browser-dev.ts' : 'src/browser.ts',
+  },
   outDir: 'dist',
   format: ['esm'],
   platform: 'node',
@@ -18,6 +28,12 @@ export default defineConfig({
       const exports = Object.fromEntries(Object.entries(source.exports).map(([key, value]) => [
         key, Object.fromEntries(Object.entries(value as Record<string, string>).map(([condition, path]) => [condition, path.replace('./dist/', './')])),
       ]))
+      if (!development) {
+        await cp(new URL('../browser/python/', import.meta.url), join(options.outDir, 'python'), {
+          recursive: true,
+          filter: path => basename(path) !== '__pycache__' && !/\.py[co]$/u.test(path),
+        })
+      }
       await copyFile(new URL('./cordis.patch.yml', import.meta.url), join(options.outDir, 'cordis.patch.yml'))
       await writeFile(join(options.outDir, 'package.json'), JSON.stringify({
         name: source.name, version: root.version, private: true, type: 'module',

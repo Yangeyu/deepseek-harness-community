@@ -42,6 +42,10 @@
       "types": "./packages/tui/dist/web.d.ts",
       "default": "./packages/tui/dist/web.js"
     },
+    "./browser": {
+      "types": "./packages/tui/dist/browser.d.ts",
+      "default": "./packages/tui/dist/browser.js"
+    },
     "./cordis.patch.yml": "./packages/tui/dist/cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -55,6 +59,7 @@
     "guides/docs/troubleshooting.md",
     "packages/tui/dist/*.d.ts",
     "packages/tui/dist/*.js",
+    "packages/tui/dist/python/**",
     "README.md",
     "LICENSE",
     "packages/tui/dist/package.json",
@@ -67,11 +72,11 @@
   },
   "scripts": {
     "build": "pnpm --filter @vascent/deepseek-harness-tui... run build && tsdown",
-    "lint": "oxlint --deny-warnings src scripts tests tsdown.config.ts && pnpm --filter './packages/*' run lint",
+    "lint": "oxlint --deny-warnings bin src scripts tests tsdown.config.ts && pnpm --filter './packages/*' run lint",
     "typecheck": "tsc --noEmit && pnpm --filter './packages/*' run typecheck",
-    "test": "vitest run tests/launcher.test.ts tests/release.test.ts && pnpm --filter './packages/*' run test",
+    "test": "vitest run tests/launcher.test.ts tests/release.test.ts tests/dev.test.ts && pnpm --filter './packages/*' run test",
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
-    "dev": "pnpm run build && node bin/dscode-dev.js",
+    "dev": "node bin/dscode-dev.js",
     "release": "gh workflow run release.yml --ref main",
     "release:candidate": "node scripts/release-candidate.mjs",
     "start": "node bin/dscode.js"

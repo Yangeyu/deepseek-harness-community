@@ -1,0 +1,2 @@
+# Requires Python >=3.12. Install explicitly into a user-selected environment.
+browser-harness==0.1.13

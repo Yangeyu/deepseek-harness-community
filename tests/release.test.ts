@@ -27,6 +27,7 @@ test('pins one explicit Node, pnpm, and npm toolchain', async () => {
 })
 
 const workspacePackageFiles = [
+  'packages/browser/package.json',
   'packages/llm-bailian/package.json',
   'packages/memory/package.json',
   'packages/tui/package.json',
@@ -34,7 +35,7 @@ const workspacePackageFiles = [
   'packages/web/package.json',
 ] as const
 
-test('publishes one package with public TUI, Bailian, Memory, Vision, and Web entry points', async () => {
+test('publishes one package with public community entry points and Browser Python assets', async () => {
   const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
   assert.equal(root.name, '@vascent/dsh-tui')
   assert.notEqual(root.private, true)
@@ -47,6 +48,7 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
     './memory': './packages/tui/dist/memory.js',
     './vision': './packages/tui/dist/vision.js',
     './web': './packages/tui/dist/web.js',
+    './browser': './packages/tui/dist/browser.js',
   } as const
   for (const [specifier, expected] of Object.entries(expectedExports)) {
     const target = root.exports?.[specifier]
@@ -54,6 +56,10 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
   }
   assert.ok(root.files?.includes('packages/tui/dist/*.js'))
   assert.ok(root.files?.includes('packages/tui/dist/*.d.ts'))
+  assert.ok(root.files?.includes('packages/tui/dist/python/**'))
+  for (const asset of ['worker.py', 'requirements.txt', 'jev_browser/browser.py', 'jev_browser/snapshot.js', 'jev_browser/LICENSE', 'jev_browser/PROVENANCE.md']) {
+    assert.equal(await readFile(`packages/tui/dist/python/${asset}`, 'utf8'), await readFile(`packages/browser/python/${asset}`, 'utf8'))
+  }
 
   for (const file of workspacePackageFiles) {
     const workspace = JSON.parse(await readFile(file, 'utf8')) as PackageManifest
