@@ -45,7 +45,7 @@ export class ComposerAnchoredLayout extends Container {
 
   constructor(
     private readonly header: Component,
-    private readonly transcript: Component,
+    private readonly transcript: Component & { setVisibleRange?(top: number, rows: number): void },
     private readonly status: Component,
     private readonly editor: Component,
     private readonly footer: Component,
@@ -76,6 +76,7 @@ export class ComposerAnchoredLayout extends Container {
     const viewportRows = Math.max(0, this.viewportRows())
     this.renderedSurfaceRows = 0
     if (this.activeSurface?.kind === 'workspace') {
+      this.transcript.setVisibleRange?.(0, 0)
       const lines = this.renderActiveSurface(width, this.activeSurface, viewportRows)
       this.captureSurfaceGeometry(0, lines.length, width, this.activeSurface)
       return [
@@ -102,6 +103,7 @@ export class ComposerAnchoredLayout extends Container {
     this.renderedTranscriptTop = Math.max(0, visibleTranscriptStart - transcriptStart)
     this.renderedTranscriptRows = Math.max(0, visibleTranscriptEnd - visibleTranscriptStart)
     this.renderedTranscriptScreenRow = visibleTranscriptStart - top
+    this.transcript.setVisibleRange?.(this.renderedTranscriptTop, this.renderedTranscriptRows)
 
     const gap = Math.max(0, availableRows - visible.length)
     if (this.activeSurface !== undefined) {

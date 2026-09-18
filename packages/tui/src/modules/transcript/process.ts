@@ -1,5 +1,6 @@
 import type { Component } from '@earendil-works/pi-tui'
 import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
+import { ResourceSlot } from '../../runtime/lifecycle/resource-slot.ts'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
 import type { TuiTheme } from '../../presentation/primitives/theme.ts'
 import {
@@ -28,8 +29,10 @@ export interface TranscriptProcessOptions {
 export class TranscriptProcess implements Component {
   private readonly view: TranscriptComponent
   private readonly diffLines: DiffLineLocator
+  private readonly animationTimer: ResourceSlot<ReturnType<typeof setTimeout>>
 
   constructor(private readonly options: TranscriptProcessOptions) {
+    this.animationTimer = options.scope.own(new ResourceSlot(timer => { clearTimeout(timer) }))
     this.view = new TranscriptComponent(
       options.session.current,
       options.theme,
@@ -46,10 +49,6 @@ export class TranscriptProcess implements Component {
     this.view.setDetails(expanded)
   }
 
-  advanceAnimation(): void {
-    this.view.advanceAnimation()
-  }
-
   handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean {
     return this.view.handlePointer(line, action)
   }
@@ -64,6 +63,20 @@ export class TranscriptProcess implements Component {
 
   render(width: number): string[] {
     return this.view.render(width)
+  }
+
+  /** Layout reports actual visibility after clipping; offscreen titles need no animation clock. */
+  setVisibleRange(top: number, rows: number): void {
+    const line = this.view.animationLine
+    if (!this.options.scope.active || line === undefined || line < top || line >= top + rows) {
+      this.animationTimer.clear()
+      return
+    }
+    if (this.animationTimer.current !== undefined) return
+    this.animationTimer.replace(setTimeout(() => {
+      this.animationTimer.clear()
+      if (this.options.scope.active) this.options.invalidate()
+    }, 32))
   }
 
   private update(snapshot: Readonly<RuntimeSessionSnapshot>): void {

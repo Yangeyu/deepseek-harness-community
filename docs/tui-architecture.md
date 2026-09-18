@@ -501,10 +501,28 @@ component references while the Session-owned implementations are replaced.
   Explicit pointer choices override that default until the next global toggle.
   Activity-level choices are indexed by their semantic child keys, preserving
   them when older history changes the visible adjacency group.
-- Tool presentation has three explicit levels: the Activity row uses callable
-  identity, the child row uses the tool-owned one-line operation label, and the
-  expanded child owns complete bounded Arguments and Result. Raw terminal
-  commands never become Activity or child titles.
+- Activity 标题固定为 `Activity`，显示 thought/tool 数量；不追加最新工具名，
+  正常状态使用同一种低强调色。失败与中断按子项计数独立展示，仅失败计数用错误色。
+  仅位于内容尾部、所属执行仍在运行的活动组对整段可见摘要文字（Activity、数量和种类）
+  做两秒一轮的低亮度扫光；箭头、背景和结果标记保持静态，失败计数保留错误色。
+  同组工具失败、重试或 Step 切换不结束扫光；后续正文开始流式输出，或 Prompt、Diff 等
+  正式内容切断该组时立即停止，不等待整个 Turn 结束；Notice、错误提示、排队与本地待提交提示
+  不改变正文活动组的归属。历史组静止，具备最终耗时时显示耗时。
+  `modules/transcript/model.ts` 将普通工具、Vision 预处理与持久结果统一转换为工具项，
+  进入同一次 Activity 分组与活动选择，投影统一返回内容列表与活动组标识。
+  排队与本地待提交 Prompt 标为临时展示项，不参与内容尾部的判定；会话提示在活动选择后追加。
+  执行统一沿已知父节点判断是否结束，无父节点时使用自身状态，不设置工具种类的动画优先级。
+  `modules/transcript/activity-presentation.ts` 集中拥有摘要与扫光样式；
+  theme 提供调色板，view 负责排版、命中位置与动画启用；仅在活动组启用颜色时传入动画帧时间，
+  摘要绘制不重复判断动画资格，process 管理动画时钟。
+- Layout 报告裁剪后的可见行范围，Transcript 仅在活动标题可见时请求 32ms 动画帧，
+  Session scope 负责释放时钟；普通内容更新保留已排定的下一帧，不反复推迟时钟。动画仅更新
+  缓存中的标题行，不重建内容投影、Markdown、工具详情或点击几何。关闭颜色时静态显示，
+  标题悬停时由 hover 样式接管。底部状态栏的 spinner 保持独立的 160ms 节奏。
+- 工具子标题使用工具提供的单行操作说明，展开后展示有界的完整 Arguments 和 Result。
+  原始终端命令只出现在详情中，不进入 Activity 或子标题。
+  工具正文以不可变 HistoryEntry 为键复用有界解析结果；执行快照或工具数量变化不重复
+  解析历史参数与结果，来源条目被替换时重新读取。缓存不改变当前 execution 状态。
 - Failed Activity, child, and Diff nodes stay compact unless the user opens
   them. Interrupted Activity and child nodes follow the same rule.
 - Title rows are the only click targets. The pointer wheel scrolls an expanded
@@ -684,7 +702,7 @@ component references while the Session-owned implementations are replaced.
   can add attachment references without creating another Prompt or Rewind point.
   Durable Vision evidence names its owning `promptId`; projections never infer
   ownership from the nearest or latest Prompt.
-- `buildTrajectoryRecords` and `buildTranscriptItems` join presentation payloads
+- `buildTrajectoryRecords` and `buildTranscriptProjection` join presentation payloads
   to resolved execution nodes without re-pairing execution events or importing
   each other's models.
   `TranscriptComponent` paints and interacts with those items, while

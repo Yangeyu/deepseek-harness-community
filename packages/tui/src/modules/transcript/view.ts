@@ -16,17 +16,19 @@ import {
 } from './diff.ts'
 import {
   buildTranscriptHistory,
-  buildTranscriptItems,
+  buildTranscriptProjection,
+  ToolDetailCache,
   type UngroupedTranscriptItem,
   type TranscriptActivityGroup,
   type TranscriptDiffItem,
-  type TranscriptItem,
+  type TranscriptProjection,
   type TranscriptPromptItem,
   type TranscriptTextItem,
   type TranscriptThinkingItem,
   type TranscriptTone,
   type TranscriptToolItem,
 } from './model.ts'
+import { activityTitle } from './activity-presentation.ts'
 import { sanitizeTerminalText } from '../../presentation/primitives/text.ts'
 import type { TuiTheme } from '../../presentation/primitives/theme.ts'
 import { paintImageReferences } from '../composer/image-reference-presentation.ts'
@@ -35,7 +37,6 @@ import {
   type ExecutionStatus,
 } from '../../runtime/execution/projection/index.ts'
 import {
-  activityLabel,
   executionLabel,
   ExecutionDisclosureState,
 } from './execution-presentation.ts'
@@ -103,7 +104,8 @@ export class TranscriptComponent implements Component {
   private readonly thinkingOffsets = new Map<string, number>()
   private readonly thinkingMaxOffsets = new Map<string, number>()
   private historyItems: UngroupedTranscriptItem[] | undefined
-  private items: TranscriptItem[] | undefined
+  private readonly toolDetails: ToolDetailCache
+  private projection: TranscriptProjection | undefined
   private renderedLineCount = 0
   private renderedDocument: { width: number; lines: string[] } | undefined
   private readonly textBlocks = new Map<string, TextBlockCache>()
@@ -115,7 +117,7 @@ export class TranscriptComponent implements Component {
   private activityExecutionKeys = new Map<string, readonly string[]>()
   private hoveredBlockKey: string | undefined
   private diffLineStarts: DiffLineStarts = new Map()
-  private animationFrame = 0
+  private animatedTitle: { key: string; line: number; render: (elapsedMs: number) => string } | undefined
 
   constructor(
     state: Readonly<RuntimeSessionSnapshot>,
@@ -123,8 +125,10 @@ export class TranscriptComponent implements Component {
     private readonly showReasoning: boolean,
     private readonly maxToolOutputLines: number,
     private readonly thinkingMaxLines = 8,
+    private readonly now: () => number = () => performance.now(),
   ) {
     this.state = state
+    this.toolDetails = new ToolDetailCache(maxToolOutputLines)
   }
 
   setState(state: Readonly<RuntimeSessionSnapshot>): void {
@@ -172,15 +176,11 @@ export class TranscriptComponent implements Component {
     this.invalidate()
   }
 
-  /**
-   * Advance the shared loading-animation frame for the running activity and
-   * execution rows. Drives the same spinner frames as the status bar; a no-op
-   * while no execution node is active, so idle frames never rebuild.
-   */
-  advanceAnimation(): void {
-    if (this.state.execution.active().length === 0) return
-    this.animationFrame += 1
-    this.invalidateContent()
+  /** Hover owns the title's styling until the pointer leaves it. */
+  get animationLine(): number | undefined {
+    return this.renderedDocument !== undefined && this.animatedTitle?.key !== this.hoveredBlockKey
+      ? this.animatedTitle?.line
+      : undefined
   }
 
   invalidate(): void {
@@ -229,14 +229,15 @@ export class TranscriptComponent implements Component {
 
   render(width: number): string[] {
     const safeWidth = Math.max(1, width)
-    if (this.renderedDocument?.width === safeWidth) return this.renderedDocument.lines
+    if (this.renderedDocument?.width === safeWidth) return this.paintAnimation()
     const lines: string[] = []
     const history = this.historyItems ??= buildTranscriptHistory(
-      this.state, this.showReasoning, this.showDetails, this.maxToolOutputLines,
+      this.state, this.showReasoning, this.showDetails, this.maxToolOutputLines, this.toolDetails,
     )
-    const items = this.items ??= buildTranscriptItems(
+    const { items, activeActivityKey } = this.projection ??= buildTranscriptProjection(
       this.state, this.showReasoning, this.showDetails, this.maxToolOutputLines, history,
     )
+    this.animatedTitle = undefined
     const activeTextBlocks = new Set<string>()
     const activePromptBlocks = new Set<string>()
     const activeDiffBlocks = new Set<string>()
@@ -252,7 +253,7 @@ export class TranscriptComponent implements Component {
     for (const [index, item] of items.entries()) {
       if (index > 0) lines.push('')
       if (item.kind === 'activity') {
-        this.renderActivity(lines, item, safeWidth)
+        this.renderActivity(lines, item, safeWidth, item.key === activeActivityKey)
         continue
       }
       if (item.kind === 'diff') {
@@ -279,6 +280,16 @@ export class TranscriptComponent implements Component {
     this.paintHoveredTitle(lines)
     this.renderedDocument = { width: safeWidth, lines }
     this.renderedLineCount = lines.length
+    return this.paintAnimation()
+  }
+
+  /** Repaint one cached title without rebuilding items, Markdown, details, or hit geometry. */
+  private paintAnimation(): string[] {
+    const lines = this.renderedDocument!.lines
+    if (this.animationLine !== undefined) {
+      const title = this.animatedTitle!
+      lines[title.line] = title.render(this.now())
+    }
     return lines
   }
 
@@ -330,11 +341,19 @@ export class TranscriptComponent implements Component {
     }
   }
 
-  private renderActivity(lines: string[], activity: TranscriptActivityGroup, width: number): void {
+  private renderActivity(lines: string[], activity: TranscriptActivityGroup, width: number, active: boolean): void {
     const contentWidth = this.contentWidth(width)
+    const title = activityTitle(activity, contentWidth, this.isActivityExpanded(activity), active, this.theme)
+    if (active && this.theme.colorEnabled) {
+      this.animatedTitle = {
+        key: activity.key,
+        line: lines.length,
+        render: elapsedMs => this.frameContent([title(elapsedMs)], width)[0]!,
+      }
+    }
     this.pushBlock(
       lines,
-      this.frameContent([this.renderActivityTitle(activity, contentWidth)], width),
+      this.frameContent([title()], width),
       activity.key,
       'activity',
     )
@@ -353,38 +372,6 @@ export class TranscriptComponent implements Component {
         item.kind,
       )
     }
-  }
-
-  private renderActivityTitle(activity: TranscriptActivityGroup, width: number): string {
-    const expanded = this.isActivityExpanded(activity)
-    const marker = expanded ? DISCLOSURE_EXPANDED : DISCLOSURE_COLLAPSED
-    const status = activity.execution.status
-    const lead = activityLabel(activity.execution)
-    const thoughts = activity.items.filter(item => item.kind === 'thinking').length
-    const tools = activity.items.length - thoughts
-    const counts = [
-      ...thoughts === 0 ? [] : [`${String(thoughts)} thought${thoughts === 1 ? '' : 's'}`],
-      ...tools === 0 ? [] : [`${String(tools)} tool${tools === 1 ? '' : 's'}`],
-    ]
-    const latest = status === 'running' || status === 'pending'
-      ? activity.items.at(-1)
-      : status === 'failed'
-        ? activity.items.findLast(item => executionStatus(item.execution) === 'failed')
-        : status === 'interrupted'
-          ? activity.items.findLast(item => executionStatus(item.execution) === 'interrupted')
-          : undefined
-    const latestLabel = latest === undefined
-      ? undefined
-      : latest.kind === 'thinking'
-        ? executionLabel('thought', executionStatus(latest.execution))
-        : latest.toolName
-    const title = [lead, ...counts, latestLabel].filter(value => value !== undefined).join(' · ')
-    const paint = status === 'failed'
-      ? this.theme.error
-      : status === 'running' || status === 'pending' || status === 'interrupted'
-        ? this.theme.warning
-        : this.theme.reasoning
-    return this.renderBlockTitle(`${marker} ${title}`, width, paint)
   }
 
   private indentActivityChild(lines: string[], last: boolean): string[] {
@@ -656,11 +643,6 @@ export class TranscriptComponent implements Component {
     }
   }
 
-  private renderBlockTitle(title: string, width: number, paint: (text: string) => string): string {
-    const text = truncateToWidth(sanitizeTerminalText(title), width, '…')
-    return paint(text)
-  }
-
   private renderExecutionTitle(
     marker: string,
     status: ExecutionStatus,
@@ -733,7 +715,7 @@ export class TranscriptComponent implements Component {
   }
 
   private invalidateContent(): void {
-    this.items = undefined
+    this.projection = undefined
     this.invalidate()
   }
 

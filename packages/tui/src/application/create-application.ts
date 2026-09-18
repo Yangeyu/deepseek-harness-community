@@ -260,7 +260,6 @@ export function createApplication(
       interruptingKey: input.interruptingKey,
     }),
     followsTranscript: () => layout.followsTranscriptTail,
-    advanceTranscriptAnimation: () => { transcript.advanceAnimation() },
     ...usage === undefined ? {} : { usage },
     gitBranch,
     invalidate: () => { invalidateTerminal() },

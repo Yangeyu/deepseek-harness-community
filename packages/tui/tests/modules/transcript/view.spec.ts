@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import * as transcriptModel from '../../../src/modules/transcript/model.ts'
-import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
+import { Markdown, Text, stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
 import type {
   HistoryEntry,
   SessionSummary,
@@ -10,6 +10,9 @@ import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manage
 import { sanitizeTerminalText } from '../../../src/presentation/primitives/text.ts'
 import { createTheme } from '../../../src/presentation/primitives/theme.ts'
 import { TranscriptComponent } from '../../../src/modules/transcript/view.ts'
+import { ComposerAnchoredLayout } from '../../../src/presentation/shell/layout/composer-layout.ts'
+import { TranscriptProcess } from '../../../src/modules/transcript/process.ts'
+import { LifecycleScope } from '../../../src/runtime/lifecycle/scope.ts'
 import { buildExecutionSnapshot } from '../../../src/runtime/execution/projection/index.ts'
 
 function state(
@@ -54,6 +57,231 @@ function entry(value: unknown): HistoryEntry {
 }
 
 describe('TranscriptComponent', () => {
+  it('keeps the same active group when temporary prompts and notices appear or disappear', () => {
+    const running = state([entry({ event: { type: 'tool/call', seq: 0, time: 1_100, data: {
+      turn: 1, step: 1, callId: 'read', name: 'read', arguments: '{}',
+    } } })], true)
+    const transcript = new TranscriptComponent(running, createTheme(true), true, 8)
+    transcript.render(80)
+    const row = transcript.animationLine
+    expect(row).toBeDefined()
+
+    transcript.setState({
+      ...running,
+      notice: 'Settings saved.',
+      error: 'Another request could not be queued.',
+      queue: [{
+        id: 'queued-message' as never, placement: 'queued',
+        message: { id: 'queued-message' as never, content: [{ type: 'text', text: 'Do this next.' }] },
+      }],
+      pendingSubmissions: [{ key: 1, text: 'And then this.', mode: 'queue', intent: 'queueing' }],
+    })
+    transcript.render(80)
+    expect(transcript.animationLine).toBe(row)
+    transcript.setState(running)
+    transcript.render(80)
+    expect(transcript.animationLine).toBe(row)
+  })
+
+  it('keeps failure and retry in the open Activity but stops its shimmer when following content begins', () => {
+    const events = [
+      entry({ event: { type: 'turn/start', seq: 0, time: 1_000, data: { turn: 1 } } }),
+      entry({ event: { type: 'step/start', seq: 1, time: 1_000, data: { turn: 1, step: 1 } } }),
+      entry({ event: { type: 'assistant/message', seq: 2, time: 1_100, surfaceOp: 'append', data: {
+        turn: 1, step: 1, stream: [], message: { content: [
+          { type: 'reasoning', text: 'Inspect the project.' },
+          { type: 'text', text: 'Running **checks**.' },
+        ] },
+      } } }),
+      entry({ event: { type: 'tool/call', seq: 3, time: 1_200, data: {
+        turn: 1, step: 1, callId: 'check', name: 'bash', arguments: '{}',
+      } } }),
+      entry({ event: { type: 'tool/result', seq: 4, time: 1_500, surfaceOp: 'append', data: {
+        turn: 1, step: 1, message: { source: { kind: 'tool', callId: 'check' }, content: [
+          { type: 'tool-result', isError: true, content: [{ type: 'text', text: 'Check failed.' }] },
+        ] },
+      } } }),
+      entry({ event: { type: 'step/end', seq: 5, time: 1_600, data: { turn: 1, step: 1 } } }),
+      entry({ event: { type: 'step/start', seq: 6, time: 1_700, data: { turn: 1, step: 2 } } }),
+    ]
+    let now = 0
+    const transcript = new TranscriptComponent(state(events, true), createTheme(true), true, 8, 8, () => now)
+    transcript.setDetails(true)
+    const first = [...transcript.render(80)]
+    const titleRow = first.findIndex(line => stripTerminalSequences(line).includes('Activity · 1 tool · 1 failed'))
+    expect(titleRow).toBeGreaterThan(0)
+    expect(transcript.animationLine).toBeDefined()
+    expect(first[titleRow]).toContain('\u001b[31m1 failed\u001b[39m')
+    const projectItems = vi.spyOn(transcriptModel, 'buildTranscriptProjection')
+    const renderMarkdown = vi.spyOn(Markdown.prototype, 'render')
+    try {
+      now = 1_000
+      const next = [...transcript.render(80)]
+      expect(next.map(stripTerminalSequences)).toEqual(first.map(stripTerminalSequences))
+      expect(next.flatMap((line, index) => line === first[index] ? [] : [index])).toEqual([titleRow])
+      expect(projectItems).not.toHaveBeenCalled()
+      expect(renderMarkdown).not.toHaveBeenCalled()
+      expect(next[titleRow]).toContain('\u001b[31m1 failed\u001b[39m')
+    } finally {
+      projectItems.mockRestore()
+      renderMarkdown.mockRestore()
+    }
+
+    events.push(entry({ event: { type: 'tool/call', seq: 7, time: 1_800, data: {
+      turn: 1, step: 2, callId: 'retry', name: 'read', arguments: '{}',
+    } } }))
+    transcript.setState(state([...events], true))
+    const retry = transcript.render(80)[titleRow]!
+    expect(stripTerminalSequences(retry)).toContain('Activity · 2 tools · 1 failed')
+    expect(transcript.animationLine).toBe(titleRow)
+
+    expect(transcript.handlePointer(titleRow, 'move')).toBe(true)
+    const hovered = [...transcript.render(80)]
+    expect(transcript.animationLine).toBeUndefined()
+    now += 300
+    expect(transcript.render(80)).toEqual(hovered)
+    transcript.handlePointer(titleRow + 1, 'move')
+    transcript.render(80)
+    expect(transcript.animationLine).toBeDefined()
+
+    const reply = { turn: 1, step: 2, content: [{ type: 'text' as const, text: 'The check needs another approach.' }] }
+    transcript.setState(state([...events], true, [], reply))
+    const explaining = [...transcript.render(80)]
+    expect(transcript.animationLine).toBeUndefined()
+    now += 300
+    expect(transcript.render(80)).toEqual(explaining)
+
+    events.push(entry({ event: { type: 'assistant/message', seq: 8, time: 1_850, surfaceOp: 'append', data: {
+      turn: 1, step: 2, stream: [], message: { content: reply.content },
+    } } }))
+    events.push(entry({ event: { type: 'tool/call', seq: 9, time: 1_900, data: {
+      turn: 1, step: 2, callId: 'next-group', name: 'read', arguments: '{}',
+    } } }))
+    transcript.setState(state([...events], true))
+    const nextGroup = [...transcript.render(80)]
+    const nextTitleRow = transcript.animationLine!
+    expect(nextTitleRow).toBeGreaterThan(titleRow)
+    now += 400
+    expect(transcript.render(80)[titleRow]).toBe(nextGroup[titleRow])
+    expect(transcript.render(80)[nextTitleRow]).not.toBe(nextGroup[nextTitleRow])
+
+    events.push(entry({ event: { type: 'turn/end', seq: 10, time: 2_000, data: {
+      turn: 1, reason: { kind: 'interrupted' },
+    } } }))
+    transcript.setState(state([...events]))
+    const stopped = [...transcript.render(80)]
+    expect(transcript.animationLine).toBeUndefined()
+    expect(stripTerminalSequences(stopped[titleRow]!)).toContain('Activity · 2 tools · 800ms · 1 failed · 1 interrupted')
+    now += 500
+    expect(transcript.render(80)).toEqual(stopped)
+
+    // A new Turn without its own Activity must not relight the previous Turn's groups.
+    transcript.setState(state([...events, entry({ event: {
+      type: 'turn/start', seq: 11, time: 2_500, data: { turn: 2 },
+    } })], true))
+    expect(transcript.render(80)).toEqual(stopped)
+    expect(transcript.animationLine).toBeUndefined()
+  })
+
+  it('requests animation frames only while a rendered Activity is active and releases them with its Session', async () => {
+    vi.useFakeTimers()
+    const scope = new LifecycleScope('transcript-animation')
+    const events = [entry({ event: { type: 'assistant/message', seq: 0, time: 900, surfaceOp: 'append', data: {
+      turn: 1, step: 1, stream: [], message: { content: [{ type: 'text', text: 'Earlier message.\n\n'.repeat(12) }] },
+    } } }), entry({ event: { type: 'tool/call', seq: 1, time: 1_000, data: {
+      turn: 1, step: 1, callId: 'read', name: 'read', arguments: '{}',
+    } } })]
+    let current = state(events, true)
+    let publish!: (value: RuntimeSessionSnapshot) => void
+    const invalidate = vi.fn()
+    const theme = createTheme(true)
+    try {
+      const transcript = new TranscriptProcess({
+        session: {
+          get current() { return current },
+          subscribe(listener) { publish = listener; return () => {} },
+        },
+        files: { readText: async () => '' },
+        theme, showReasoning: true, maxToolOutputLines: 8, thinkingMaxLines: 8, invalidate, scope,
+      })
+      const layout = new ComposerAnchoredLayout(
+        new Text('header', 0, 0), transcript, new Text('status', 0, 0),
+        new Text('editor', 0, 0), new Text('footer', 0, 0), () => 8,
+      )
+      expect(vi.getTimerCount()).toBe(0)
+      layout.render(80)
+      vi.advanceTimersByTime(16)
+      layout.render(80)
+      vi.advanceTimersByTime(16)
+      expect(invalidate).toHaveBeenCalledOnce()
+      expect(vi.getTimerCount()).toBe(0)
+      layout.render(80)
+      expect(vi.getTimerCount()).toBe(1)
+      layout.scrollTranscript(-100)
+      layout.render(80)
+      expect(vi.getTimerCount()).toBe(0)
+      layout.followTranscript()
+      layout.render(80)
+      expect(vi.getTimerCount()).toBe(1)
+      layout.setActiveSurface({ kind: 'workspace', component: new Text('Trace', 0, 0) })
+      layout.render(80)
+      expect(vi.getTimerCount()).toBe(0)
+      layout.setActiveSurface(undefined)
+      current = state(events)
+      publish(current)
+      layout.render(80)
+      expect(vi.getTimerCount()).toBe(0)
+      current = state(events, true)
+      publish(current)
+      layout.render(80)
+      await scope.dispose()
+      expect(vi.getTimerCount()).toBe(0)
+
+      const plain = new TranscriptComponent(current, createTheme(false), true, 8)
+      expect(plain.render(80).join('\n')).toContain('Activity · 1 tool')
+      expect(plain.animationLine).toBeUndefined()
+    } finally {
+      await scope.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('reuses historical tool bodies when counts grow and refreshes replaced result evidence', () => {
+    const call = (seq: number, callId: string, path: string) => entry({ event: {
+      type: 'tool/call', seq, time: 1_000 + seq, data: {
+        turn: 1, step: 1, callId, name: 'read', arguments: JSON.stringify({ path }),
+      },
+    } })
+    const result = (text: string) => entry({ event: {
+      type: 'tool/result', seq: 1, time: 1_100, surfaceOp: 'append', data: {
+        turn: 1, step: 1, message: { source: { kind: 'tool', callId: 'old' }, content: [
+          { type: 'tool-result', content: [{ type: 'text', text }] },
+        ] },
+      },
+    } })
+    const old = call(0, 'old', '/old')
+    const initialResult = result('Original evidence')
+    const transcript = new TranscriptComponent(state([old, initialResult], true), createTheme(false), true, 8)
+    transcript.setDetails(true)
+    expect(transcript.render(80).join('\n')).toContain('Original evidence')
+
+    const added = call(2, 'new', '/new')
+    const parse = vi.spyOn(JSON, 'parse')
+    try {
+      transcript.setState(state([old, initialResult, added], true))
+      const output = transcript.render(80).join('\n')
+      expect(output).toContain('Activity · 2 tools')
+      expect(output).toContain('Original evidence')
+      expect(parse).toHaveBeenCalledOnce()
+
+      transcript.setState(state([old, result('Replaced evidence'), added], true))
+      const replaced = transcript.render(80).join('\n')
+      expect(replaced).toContain('Replaced evidence')
+      expect(replaced).not.toContain('Original evidence')
+      expect(parse).toHaveBeenCalledOnce()
+    } finally { parse.mockRestore() }
+  })
+
   it('updates live text without rebuilding unchanged history, and refreshes prepended history', () => {
     const projectHistory = vi.spyOn(transcriptModel, 'buildTranscriptHistory')
     try {
@@ -100,54 +328,6 @@ describe('TranscriptComponent', () => {
     }, createTheme(false), true, 8)
 
     expect(transcript.render(80).join('\n')).toContain('Do not hide this input')
-  })
-
-  it('renders durable Vision evidence after its user prompt', () => {
-    const transcript = new TranscriptComponent(state([entry({
-      event: {
-        type: 'user/message',
-        seq: 0,
-        time: 1_000,
-        surfaceOp: 'append',
-        data: {
-          id: 'message-user',
-          role: 'user',
-          source: { kind: 'user' },
-          content: [{ type: 'text', text: 'What [Image #1] failed?' }],
-        },
-      },
-    }), entry({
-      event: {
-        type: 'user/message',
-        seq: 1,
-        time: 1_500,
-        surfaceOp: 'append',
-        data: {
-          id: 'message-vision',
-          role: 'user',
-          source: {
-            kind: 'community-vision',
-            promptId: 'message-user',
-            analysisId: 'analysis-1',
-            provider: 'bailian',
-            model: 'qwen3.7-plus',
-            attachments: [{ attachmentId: 'image-1', mediaType: 'image/png', bytes: 10, width: 2, height: 2 }],
-            durationMs: 500,
-            finishReason: 'stop',
-            truncated: false,
-          },
-          content: [{ type: 'text', text: 'Visible error dialog' }],
-        },
-      },
-    })]), createTheme(false), true, 8)
-    transcript.setDetails(true)
-
-    const output = transcript.render(100).join('\n')
-    expect(output).toContain('What [Image #1] failed?')
-    expect(output).toContain('Worked for 500ms · 1 tool')
-    expect(output).toContain('Vision · 1 image · qwen3.7-plus')
-    expect(output).toContain('bailian/qwen3.7-plus')
-    expect(output.indexOf('What [Image #1] failed?')).toBeLessThan(output.indexOf('Vision · 1 image'))
   })
 
   it('keeps native image markers on the admitted user prompt', () => {
@@ -220,8 +400,7 @@ describe('TranscriptComponent', () => {
     }), createTheme(false), true, 8)
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(collapsed).toContain('› Worked for 250ms · 1 thought')
-    expect(collapsed).not.toContain('Working')
+    expect(collapsed).toContain('› Activity · 1 thought · 250ms')
     expect(collapsed).not.toContain('Thinking…')
     expect(collapsed).toContain('streaming answer')
 
@@ -362,13 +541,13 @@ describe('TranscriptComponent', () => {
     ]), createTheme(true), true, 8, 3)
 
     const collapsed = transcript.render(80).join('\n')
-    expect(collapsed).toContain('› Worked · 1 thought')
+    expect(stripTerminalSequences(collapsed)).toContain('› Activity · 1 thought')
     expect(collapsed).not.toContain('thought 1')
     expect(collapsed).toContain('final answer')
 
     expect(transcript.handlePointer(0, 'move')).toBe(true)
     const hovered = transcript.render(80)
-    expect(hovered.join('\n')).toContain('\u001b[1m\u001b[36m› Worked · 1 thought\u001b[39m\u001b[22m')
+    expect(hovered.join('\n')).toContain('\u001b[1m\u001b[36m› Activity · 1 thought\u001b[39m\u001b[22m')
     expect(transcript.handlePointer(0, 'move')).toBe(false)
     expect(transcript.render(80)).toBe(hovered)
     expect(transcript.handlePointer(2, 'move')).toBe(true)
@@ -396,7 +575,7 @@ describe('TranscriptComponent', () => {
     expect(transcript.render(80).join('\n')).not.toContain('thought 5')
   })
 
-  it('preserves manual Activity disclosure when older execution children are prepended', () => {
+  it('preserves manual Activity disclosure as children are prepended and appended', () => {
     const tool = entry({
       event: {
         type: 'tool/call',
@@ -421,67 +600,15 @@ describe('TranscriptComponent', () => {
         },
       }),
       tool,
+      entry({ event: { type: 'tool/call', seq: 3, time: 1_300, data: {
+        turn: 1, step: 1, callId: 'test', name: 'bash', arguments: '{}',
+      } } }),
     ], true))
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(expanded).toContain('⌄ Working · 1 thought · 1 tool')
+    expect(expanded).toContain('⌄ Activity · 1 thought · 2 tools')
     expect(expanded).toContain('├─ › • Thought')
-    expect(expanded).toContain('└─ › ◦ Read project')
-  })
-
-  it('renders running activity and execution rows with static glyphs', () => {
-    const tool = entry({
-      event: {
-        type: 'tool/call',
-        seq: 2,
-        time: 1_200,
-        data: { turn: 1, step: 1, callId: 'call-visible', name: 'read', arguments: '{}' },
-      },
-      view: { for: 'call', view: { card: 'generic', title: 'Read project' } },
-    })
-    const transcript = new TranscriptComponent(state([tool], true), createTheme(false), true, 8)
-    transcript.render(80)
-    const plain = (): string => stripTerminalSequences(transcript.render(80).join('\n'))
-
-    expect(plain()).toContain('› Working · 1 tool · Read')
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
-    expect(plain()).toContain('└─ › ◦ Read project')
-  })
-
-  it('keeps settled rows at static glyphs with no spinner animation', () => {
-    const tool = entry({
-      event: {
-        type: 'tool/call',
-        seq: 0,
-        time: 1_000,
-        data: { turn: 1, step: 1, callId: 'call-done', name: 'read', arguments: '{}' },
-      },
-      view: { for: 'call', view: { card: 'generic', title: 'Read project' } },
-    })
-    const result = entry({
-      event: {
-        type: 'tool/result',
-        seq: 1,
-        time: 1_100,
-        surfaceOp: 'append',
-        data: {
-          turn: 1,
-          step: 1,
-          message: {
-            id: 'm-done',
-            role: 'user',
-            source: { kind: 'tool', callId: 'call-done' },
-            content: [{ type: 'tool-result', toolCallId: 'call-done', content: [{ type: 'text', text: 'done' }] }],
-          },
-        },
-      },
-    })
-    const transcript = new TranscriptComponent(state([tool, result], false), createTheme(false), true, 8)
-    transcript.setDetails(true)
-    transcript.render(80)
-    transcript.advanceAnimation()
-    const plain = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(plain).toContain('└─ ⌄ • Read project')
-    expect(plain).not.toContain('✢')
+    expect(expanded).toContain('├─ › ◦ Read project')
+    expect(expanded).toContain('└─ › ◦ Bash')
   })
 
   it('reports whether a disclosure block reaches the transcript end', () => {
@@ -531,7 +658,7 @@ describe('TranscriptComponent', () => {
     })
     const transcript = new TranscriptComponent(live(5), createTheme(false), true, 8, 3)
 
-    expect(transcript.render(80).join('\n')).toContain('› Working · 1 thought · Thinking…')
+    expect(transcript.render(80).join('\n')).toContain('› Activity · 1 thought')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › ◦ Thinking…')
     expect(transcript.handlePointer(1, 'click')).toBe(true)
@@ -575,8 +702,7 @@ describe('TranscriptComponent', () => {
     ]), createTheme(false), true, 8)
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(collapsed).toContain('› Interrupted after 250ms · 1 thought · 1 tool · Search')
-    expect(collapsed).not.toContain('Working')
+    expect(collapsed).toContain('› Activity · 1 thought · 1 tool · 250ms · 2 interrupted')
     expect(collapsed).toContain('The response reached the model output limit.')
 
     expect(transcript.handlePointer(0, 'click')).toBe(true)
@@ -605,13 +731,13 @@ describe('TranscriptComponent', () => {
     ]), createTheme(false), true, 8)
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(collapsed).toContain('› Interrupted after 300ms · 1 thought · Thought interrupted')
+    expect(collapsed).toContain('› Activity · 1 thought · 300ms · 1 interrupted')
     expect(collapsed).not.toContain('diagnostic reasoning')
     expect(collapsed).toContain('model disconnected')
 
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const activityExpanded = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(activityExpanded).toContain('⌄ Interrupted after 300ms · 1 thought · Thought interrupted')
+    expect(activityExpanded).toContain('⌄ Activity · 1 thought · 300ms · 1 interrupted')
     expect(activityExpanded).toContain('└─ › ! Thought interrupted')
     expect(activityExpanded).not.toContain('diagnostic reasoning')
 
@@ -735,23 +861,7 @@ describe('TranscriptComponent', () => {
     expect(output).not.toContain('You')
   })
 
-  it('renders Vision loading directly after the optimistic image prompt', () => {
-    const pending = state([], false, [{
-      key: 1,
-      text: 'analyze [Image #1] now',
-      mode: 'queue',
-      intent: 'working',
-      activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: Date.now() - 1_500 },
-    }])
-    const transcript = new TranscriptComponent(pending, createTheme(false), true, 8)
-
-    const output = transcript.render(80).join('\n')
-    expect(output).toContain('analyze [Image #1] now')
-    expect(output).toContain('Working · 1 tool · Vision')
-    expect(output.indexOf('analyze [Image #1] now')).toBeLessThan(output.indexOf('Working · 1 tool · Vision'))
-  })
-
-  it('keeps Vision loading while the durable event takes ownership of the prompt', () => {
+  it('hands Vision preparation to durable tool evidence without duplicating the prompt or Activity', () => {
     const transitioning = state([entry({
       event: {
         type: 'user/message',
@@ -772,12 +882,52 @@ describe('TranscriptComponent', () => {
       intent: 'working',
       requestId: 'rpc-image' as never,
       durablePromptObserved: true,
-      activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: Date.now() },
+      activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: 1_000 },
     }])
 
-    const output = new TranscriptComponent(transitioning, createTheme(false), true, 8).render(80).join('\n')
+    const pending = state([], false, [{
+      key: 1, text: 'analyze [Image #1] now', mode: 'queue', intent: 'working',
+      activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: 1_000 },
+    }])
+    const transcript = new TranscriptComponent(pending, createTheme(true), true, 8)
+    const initial = transcript.render(80).map(stripTerminalSequences).join('\n')
+    expect(initial).toMatch(/analyze \[Image #1\] now[\s\S]*Activity · 1 tool/u)
+    expect(transcript.animationLine).toBeDefined()
+
+    transcript.setState(transitioning)
+    const output = transcript.render(80).map(stripTerminalSequences).join('\n')
     expect(output.match(/analyze \[Image #1\] now/g)).toHaveLength(1)
-    expect(output).toContain('Working · 1 tool · Vision')
+    expect(output).toContain('Activity · 1 tool')
+    expect(transcript.animationLine).toBeDefined()
+
+    const events = [...transitioning.events,
+      entry({ event: { type: 'user/message', seq: 1, time: 1_500, surfaceOp: 'append', data: {
+        id: 'message-vision', role: 'user',
+        source: {
+          kind: 'community-vision', promptId: 'message-user', analysisId: 'analysis-1',
+          provider: 'bailian', model: 'qwen3.7-plus',
+          attachments: [{ attachmentId: 'image-1', mediaType: 'image/png', bytes: 10, width: 2, height: 2 }],
+          durationMs: 500, finishReason: 'stop', truncated: false,
+        },
+        content: [{ type: 'text', text: 'An error dialog is visible.' }],
+      } } }),
+      entry({ event: { type: 'turn/start', seq: 2, time: 1_600, data: { turn: 1 } } }),
+      entry({ event: { type: 'step/start', seq: 3, time: 1_600, data: { turn: 1, step: 1 } } }),
+      entry({ event: { type: 'tool/call', seq: 4, time: 1_700, data: {
+        turn: 1, step: 1, callId: 'read', name: 'read', arguments: '{}',
+      } } }),
+    ]
+    // Durable evidence replaces the pending source without duplicating the Vision tool.
+    transcript.setState(state(events, true, transitioning.pendingSubmissions))
+    const tools = transcript.render(80).map(stripTerminalSequences).join('\n')
+    expect(tools.match(/Activity/g)).toHaveLength(1)
+    expect(tools).toContain('Activity · 2 tools')
+    expect(transcript.animationLine).toBeDefined()
+    transcript.setDetails(true)
+    const details = transcript.render(80).map(stripTerminalSequences).join('\n')
+    expect(details).toContain('Vision · 1 image · qwen3.7-plus')
+    expect(details).toContain('An error dialog is visible.')
+    expect(details).toContain('bailian/qwen3.7-plus')
   })
 
   it('hands a local prompt to a visible queue row without hiding context placement', () => {
@@ -910,13 +1060,13 @@ describe('TranscriptComponent', () => {
     ], true), createTheme(false), true, 8)
 
     const collapsed = stripTerminalSequences(transcript.render(120).join('\n'))
-    expect(collapsed).toContain('› Working · 1 tool · Bash')
+    expect(collapsed).toContain('› Activity · 1 tool')
     expect(collapsed).not.toContain('Inspect dispatch tests')
     expect(collapsed).not.toContain('python3')
 
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const activity = stripTerminalSequences(transcript.render(120).join('\n'))
-    expect(activity).toContain('⌄ Working · 1 tool · Bash')
+    expect(activity).toContain('⌄ Activity · 1 tool')
     expect(activity).toContain(`└─ › ◦ ${operation}`)
     expect(activity).not.toContain('python3')
 
@@ -974,7 +1124,7 @@ describe('TranscriptComponent', () => {
 
     const collapsedOutput = transcript.render(80).join('\n')
     const collapsed = stripTerminalSequences(collapsedOutput)
-    expect(collapsed).toContain('› Worked for 1ms · 1 tool')
+    expect(collapsed).toContain('› Activity · 1 tool · 1ms')
     expect(collapsed).not.toContain('render details')
     expect(collapsed).not.toContain('3 matches')
 
@@ -1046,7 +1196,7 @@ describe('TranscriptComponent', () => {
     ]), createTheme(false), true, 8)
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(collapsed).toContain('› Failed after 250ms · 1 tool · Bash')
+    expect(collapsed).toContain('› Activity · 1 tool · 250ms · 1 failed')
     expect(collapsed).not.toContain('Run tests')
     expect(collapsed).not.toContain('pnpm test')
     expect(collapsed).not.toContain('1 test failed')
@@ -1054,7 +1204,7 @@ describe('TranscriptComponent', () => {
 
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const activity = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(activity).toContain('⌄ Failed after 250ms · 1 tool · Bash')
+    expect(activity).toContain('⌄ Activity · 1 tool · 250ms · 1 failed')
     expect(activity).toContain('└─ › × Bash · Run tests')
     expect(activity).not.toContain('pnpm test')
     expect(activity).not.toContain('1 test failed')
@@ -1238,7 +1388,6 @@ describe('TranscriptComponent', () => {
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› × Update(src/app.ts)')
     expect(collapsed).not.toContain('partially applied')
-    expect(collapsed).not.toContain('Failed after')
 
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))

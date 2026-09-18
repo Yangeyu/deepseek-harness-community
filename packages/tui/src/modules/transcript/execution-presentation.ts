@@ -1,9 +1,7 @@
 import type {
-  ExecutionAggregate,
   ExecutionKind,
   ExecutionStatus,
 } from '../../runtime/execution/projection/index.ts'
-import { formatDuration } from '../../presentation/primitives/duration.ts'
 
 export function executionLabel(kind: ExecutionKind, status: ExecutionStatus): string {
   if (kind === 'thought') {
@@ -13,20 +11,6 @@ export function executionLabel(kind: ExecutionKind, status: ExecutionStatus): st
     return 'Thought'
   }
   return kind.charAt(0).toUpperCase() + kind.slice(1)
-}
-
-export function activityLabel(activity: ExecutionAggregate): string {
-  const duration = activity.startedAt === undefined || activity.endedAt === undefined
-    ? undefined
-    : Math.max(0, activity.endedAt - activity.startedAt) || undefined
-  if (activity.status === 'pending' || activity.status === 'running') return 'Working'
-  if (activity.status === 'failed') {
-    return duration === undefined ? 'Failed' : `Failed after ${formatDuration(duration)}`
-  }
-  if (activity.status === 'interrupted') {
-    return duration === undefined ? 'Interrupted' : `Interrupted after ${formatDuration(duration)}`
-  }
-  return duration === undefined ? 'Worked' : `Worked for ${formatDuration(duration)}`
 }
 
 /** Transcript disclosure keyed by semantic execution identity, never render rows. */

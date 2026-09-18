@@ -14,6 +14,7 @@ import {
   visionExecutionKey,
   type ExecutionAggregate,
   type ExecutionNode,
+  type ExecutionSnapshot,
 } from '../../runtime/execution/projection/index.ts'
 import { promptTextFromContent } from '../../runtime/execution/prompt-text.ts'
 import { displayUnknown, sanitizeTerminalLine, sanitizeTerminalText } from '../../presentation/primitives/text.ts'
@@ -35,6 +36,8 @@ export interface TranscriptPromptItem {
   key: string
   body: string
   promptStatus?: string
+  /** Queue and local submission rows are visible without closing the current content activity. */
+  transient?: true
   execution?: ExecutionNode
 }
 
@@ -48,7 +51,6 @@ export interface TranscriptThinkingItem {
 export interface TranscriptToolItem {
   kind: 'tool'
   key: string
-  toolName: string
   operation: string
   execution: ExecutionNode
   arguments?: string
@@ -74,6 +76,11 @@ export interface TranscriptDiffItem {
 
 export type UngroupedTranscriptItem = TranscriptTextItem | TranscriptPromptItem | TranscriptActivityItem | TranscriptDiffItem
 export type TranscriptItem = TranscriptTextItem | TranscriptPromptItem | TranscriptActivityGroup | TranscriptDiffItem
+
+export interface TranscriptProjection {
+  items: readonly TranscriptItem[]
+  activeActivityKey: string | undefined
+}
 
 function contentStepKey(turn: number, step: number): string {
   return `${turn}:${step}`
@@ -202,11 +209,25 @@ function resultBody(view: ToolResultView | undefined, fallback: string, limit: n
   }
 }
 
-function isActivityItem(item: UngroupedTranscriptItem): item is TranscriptActivityItem {
-  return item.kind === 'thinking' || item.kind === 'tool'
+/** Bounded tool bodies depend on immutable source entries, not later execution snapshots. */
+export class ToolDetailCache {
+  private readonly bodies = new WeakMap<HistoryEntry, string | undefined>()
+
+  constructor(private readonly maxLines: number) {}
+
+  read(entry: HistoryEntry): string | undefined {
+    if (this.bodies.has(entry)) return this.bodies.get(entry)
+    const body = entry.event.type === 'tool/call'
+      ? toolArguments(entry.event.data.arguments, this.maxLines)
+      : entry.event.type === 'tool/result'
+        ? resultBody(entry.view?.for === 'result' ? entry.view.view : undefined, rawResultText(entry), this.maxLines)
+        : undefined
+    this.bodies.set(entry, body)
+    return body
+  }
 }
 
-/** Group only adjacent model activity. Any user-visible transcript item is a hard boundary. */
+/** Group adjacent activity items from every source, preserving visible content boundaries. */
 export function groupTranscriptActivity(
   items: readonly UngroupedTranscriptItem[],
 ): TranscriptItem[] {
@@ -214,7 +235,6 @@ export function groupTranscriptActivity(
   let activity: TranscriptActivityItem[] = []
 
   const flush = (): void => {
-    if (activity.length === 0) return
     const first = activity[0]
     if (first === undefined) return
     grouped.push({
@@ -227,7 +247,7 @@ export function groupTranscriptActivity(
   }
 
   for (const item of items) {
-    if (isActivityItem(item)) {
+    if (item.kind === 'thinking' || item.kind === 'tool') {
       activity.push(item)
       continue
     }
@@ -244,6 +264,7 @@ export function buildTranscriptHistory(
   showReasoning: boolean,
   showDetails: boolean,
   maxToolOutputLines: number,
+  toolDetails = new ToolDetailCache(maxToolOutputLines),
 ): UngroupedTranscriptItem[] {
   const items: UngroupedTranscriptItem[] = []
   for (const entry of state.events) {
@@ -260,7 +281,6 @@ export function buildTranscriptHistory(
           items.push({
             kind: 'tool',
             key: String(execution.key),
-            toolName: 'Vision',
             operation: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalLine(source.model)}`,
             execution,
             arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${source.provider}/${source.model}`,
@@ -355,15 +375,15 @@ export function buildTranscriptHistory(
           })
           break
         }
-        const argumentsBody = toolArguments(event.data.arguments, maxToolOutputLines)
+        const argumentsBody = toolDetails.read(entry)
+        const resultText = toolResult === undefined ? undefined : toolDetails.read(toolResult)
         items.push({
           kind: 'tool',
           key: String(execution.key),
-          toolName: name,
           operation: toolOperation(name, callView, resultView),
           execution,
           ...argumentsBody === undefined ? {} : { arguments: argumentsBody },
-          ...toolResult === undefined ? {} : { result: resultBody(resultView, rawResultText(toolResult), maxToolOutputLines) },
+          ...resultText === undefined ? {} : { result: resultText },
         })
         break
       }
@@ -430,14 +450,29 @@ export function buildTranscriptHistory(
   return items
 }
 
-/** Compose a reusable history projection with the current live tail. */
-export function buildTranscriptItems(
+/** Temporary prompts do not close content activity; all tool sources share this selection. */
+function activeActivityKey(items: readonly TranscriptItem[], execution: ExecutionSnapshot): string | undefined {
+  const tail = items.findLast(item => item.kind !== 'prompt' || !item.transient)
+  if (tail?.kind !== 'activity') return undefined
+  return tail.items.some(child => {
+    let owner = child.execution
+    while (owner.parentKey !== undefined) {
+      const parent = execution.get(owner.parentKey)
+      if (parent === undefined) break
+      owner = parent
+    }
+    return owner.state.phase !== 'settled'
+  }) ? tail.key : undefined
+}
+
+/** Normalize sources into one content stream, group once, then append session notices. */
+export function buildTranscriptProjection(
   state: Readonly<RuntimeSessionSnapshot>,
   showReasoning: boolean,
   showDetails: boolean,
   maxToolOutputLines: number,
   history = buildTranscriptHistory(state, showReasoning, showDetails, maxToolOutputLines),
-): TranscriptItem[] {
+): TranscriptProjection {
   const items = [...history]
 
   if (state.assistant !== undefined) {
@@ -453,28 +488,29 @@ export function buildTranscriptItems(
     }
   }
 
-  const grouped = groupTranscriptActivity(items)
   const visibleQueueRequestIds = new Set<string>()
   for (const [index, item] of state.queue.entries()) {
     if (item.placement === 'context') continue
     const body = promptTextFromContent(item.message.content)
     if (body.trim() === '') continue
     if (item.rpcId !== undefined) visibleQueueRequestIds.add(String(item.rpcId))
-    grouped.push({
+    items.push({
       kind: 'prompt',
       key: `queue:${item.rpcId === undefined ? String(index) : String(item.rpcId)}`,
       body,
       promptStatus: item.placement === 'steering' ? 'Steering next step…' : 'Queued',
+      transient: true,
     })
   }
   for (const submission of state.pendingSubmissions) {
     const promptVisible = submission.durablePromptObserved === true
       || (submission.requestId !== undefined && visibleQueueRequestIds.has(String(submission.requestId)))
     if (!promptVisible) {
-      grouped.push({
+      items.push({
         kind: 'prompt',
         key: `pending:${String(submission.key)}`,
         body: submission.text,
+        transient: true,
         ...submission.intent === 'queueing'
           ? { promptStatus: 'Queueing…' }
           : submission.intent === 'steering'
@@ -486,21 +522,22 @@ export function buildTranscriptItems(
       const execution = state.execution.get(visionExecutionKey(submission.activity.analysisId))
       if (execution === undefined || execution.durability !== 'ephemeral') continue
       const imageCount = submission.activity.imageCount
-      grouped.push(...groupTranscriptActivity([{
+      items.push({
         kind: 'tool',
         key: String(execution.key),
-        toolName: 'Vision',
         operation: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · Analyzing…`,
         execution,
         arguments: `${String(imageCount)} attached image${imageCount === 1 ? '' : 's'}`,
-      }]))
+      })
     }
   }
+  const grouped = groupTranscriptActivity(items)
+  const activeKey = activeActivityKey(grouped, state.execution)
   if (state.notice !== undefined) {
     grouped.push({ kind: 'text', key: 'session:notice', label: 'Notice', tone: 'accent', body: state.notice })
   }
   if (state.error !== undefined) {
     grouped.push({ kind: 'text', key: 'session:error', label: 'Error', tone: 'error', body: state.error })
   }
-  return grouped
+  return { items: grouped, activeActivityKey: activeKey }
 }

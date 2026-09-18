@@ -30,7 +30,6 @@ export interface ShellStatusProcessOptions {
   readonly memoryActivity: () => Readonly<ShellMemoryActivity>
   readonly interruption: (state: Readonly<RuntimeSessionSnapshot>) => ShellInterruptionStatus
   readonly followsTranscript: () => boolean
-  readonly advanceTranscriptAnimation: () => void
   readonly gitBranch: GitBranchSource
   readonly invalidate: () => void
   readonly scope: LifecycleScope
@@ -118,7 +117,6 @@ export class ShellStatusProcess {
       if (!this.options.scope.active) return
       this.spinnerFrame += 1
       this.updateStatus(this.options.session.current)
-      this.options.advanceTranscriptAnimation()
       this.options.invalidate()
     }, 160))
   }

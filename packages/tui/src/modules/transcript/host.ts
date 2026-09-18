@@ -50,11 +50,6 @@ export class TranscriptHost implements Component {
     this.touch()
   }
 
-  advanceAnimation(): void {
-    this.process?.advanceAnimation()
-    this.touch()
-  }
-
   handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean {
     const changed = this.process?.handlePointer(line, action) ?? false
     if (changed) this.touch()
@@ -62,6 +57,7 @@ export class TranscriptHost implements Component {
   }
 
   isTrailingBlock(line: number): boolean { return this.process?.isTrailingBlock(line) ?? false }
+  setVisibleRange(top: number, rows: number): void { this.process?.setVisibleRange(top, rows) }
   invalidate(): void { this.component.invalidate() }
   render(width: number): string[] { return this.component.render(width) }
 

@@ -12,6 +12,7 @@ type Paint = (text: string) => string
 /** Terminal presentation roles used by the renderer and dialogs. */
 export interface TuiTheme {
   readonly colorEnabled: boolean
+  readonly secondaryColor: RgbColor
   terminalBackground: RgbColor | undefined
   accent: Paint
   bold: Paint
@@ -64,7 +65,8 @@ export function createTheme(enabled: boolean): TuiTheme {
   const focusRow = ansiBackground(enabled, '48;2;42;70;98')
   // Never delegate text contrast to terminal-specific SGR dim. Keep both
   // secondary levels explicit so their hierarchy is stable across terminals.
-  const secondary = ansiSequence(enabled, '38;2;188;198;214', '39')
+  const secondaryColor = { r: 188, g: 198, b: 214 }
+  const secondary = ansiSequence(enabled, `38;2;${secondaryColor.r};${secondaryColor.g};${secondaryColor.b}`, '39')
   const dim = ansiSequence(enabled, '38;2;148;163;184', '39')
   const structure = ansiSequence(enabled, '38;2;100;116;139', '39')
   const reasoning = secondary
@@ -87,6 +89,7 @@ export function createTheme(enabled: boolean): TuiTheme {
   }
   return {
     colorEnabled: enabled,
+    secondaryColor,
     terminalBackground: undefined,
     accent,
     bold,

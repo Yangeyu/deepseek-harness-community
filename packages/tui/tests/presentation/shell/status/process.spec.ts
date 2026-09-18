@@ -48,7 +48,6 @@ function fixture(usageSource?: ProviderUsagePort) {
   let memory: { state: 'idle' | 'learning' } = { state: 'idle' }
   let now = 1_000
   const invalidate = vi.fn()
-  const advanceTranscriptAnimation = vi.fn()
   const scope = new LifecycleScope('shell-status')
   const usage = usageSource === undefined ? undefined : new ProviderUsageProcess(usageSource, scope, () => { process.refresh() })
   const process = new ShellStatusProcess({
@@ -67,7 +66,6 @@ function fixture(usageSource?: ProviderUsagePort) {
     memoryActivity: () => memory,
     interruption: () => ({ target: undefined, interruptingKey: undefined }),
     followsTranscript: () => true,
-    advanceTranscriptAnimation,
     gitBranch: (_cwd, listener) => {
       listener('feature/lifecycle-kernel')
       return () => {}
@@ -80,7 +78,6 @@ function fixture(usageSource?: ProviderUsagePort) {
     process,
     scope,
     invalidate,
-    advanceTranscriptAnimation,
     setCommand(value: typeof command) { command = value },
     setMemory(value: typeof memory) { memory = value },
     setNow(value: number) { now = value },
@@ -178,11 +175,11 @@ describe('ShellStatusProcess', () => {
 
     test.setNow(1_160)
     vi.advanceTimersByTime(160)
-    expect(test.advanceTranscriptAnimation).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(1)
     expect(stripTerminalSequences(test.process.status.render(120).join('\n')).trimStart()).toMatch(/^✢ Running/u)
 
     await test.scope.dispose()
     vi.advanceTimersByTime(320)
-    expect(test.advanceTranscriptAnimation).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
