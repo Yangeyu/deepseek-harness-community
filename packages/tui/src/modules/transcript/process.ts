@@ -8,6 +8,7 @@ import {
   type DiffTextReader,
 } from './diff-location.ts'
 import { TranscriptComponent } from './view.ts'
+import { TranscriptModel } from './model.ts'
 
 export interface TranscriptSessionPort {
   readonly current: Readonly<RuntimeSessionSnapshot>
@@ -27,17 +28,18 @@ export interface TranscriptProcessOptions {
 
 /** Owns Transcript projection, diff enrichment, disclosure, and animation state. */
 export class TranscriptProcess implements Component {
+  private readonly model: TranscriptModel
+  private showDetails = false
   private readonly view: TranscriptComponent
   private readonly diffLines: DiffLineLocator
   private readonly animationTimer: ResourceSlot<ReturnType<typeof setTimeout>>
 
   constructor(private readonly options: TranscriptProcessOptions) {
     this.animationTimer = options.scope.own(new ResourceSlot(timer => { clearTimeout(timer) }))
+    this.model = new TranscriptModel(options.showReasoning, options.maxToolOutputLines)
     this.view = new TranscriptComponent(
-      options.session.current,
+      this.model.project(options.session.current, this.showDetails),
       options.theme,
-      options.showReasoning,
-      options.maxToolOutputLines,
       options.thinkingMaxLines,
     )
     this.diffLines = new DiffLineLocator(options.files)
@@ -46,7 +48,7 @@ export class TranscriptProcess implements Component {
   }
 
   setDetails(expanded: boolean): void {
-    this.view.setDetails(expanded)
+    this.showDetails = expanded
   }
 
   handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean {
@@ -62,6 +64,7 @@ export class TranscriptProcess implements Component {
   }
 
   render(width: number): string[] {
+    this.view.setProjection(this.model.project(this.options.session.current, this.showDetails))
     return this.view.render(width)
   }
 
@@ -81,7 +84,6 @@ export class TranscriptProcess implements Component {
 
   private update(snapshot: Readonly<RuntimeSessionSnapshot>): void {
     if (!this.options.scope.active) return
-    this.view.setState(snapshot)
     this.diffLines.resolve(snapshot, () => {
       if (!this.options.scope.active
         || this.options.session.current.sessionId !== snapshot.sessionId) return

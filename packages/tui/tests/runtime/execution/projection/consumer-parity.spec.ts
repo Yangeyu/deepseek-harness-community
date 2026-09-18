@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { composerExecutionActivity } from '../../../../src/modules/composer/execution-activity.ts'
 import {
-  buildTranscriptProjection,
+  TranscriptModel,
   type TranscriptToolItem,
 } from '../../../../src/modules/transcript/model.ts'
 import {
@@ -18,12 +18,7 @@ import type { RuntimeSessionSnapshot } from '../../../../src/runtime/session/man
 import { state, toolEvents } from '../../../modules/trajectory/fixtures.ts'
 
 function transcriptTool(snapshot: RuntimeSessionSnapshot): TranscriptToolItem {
-  const { items } = buildTranscriptProjection(
-    snapshot,
-    true,
-    false,
-    20,
-  )
+  const { items } = new TranscriptModel(true, 20).project(snapshot, false)
   const activity = items.find(item => item.kind === 'activity')
   const tool = activity?.kind === 'activity'
     ? activity.items.find(item => item.kind === 'tool')

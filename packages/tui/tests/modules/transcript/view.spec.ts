@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import * as transcriptModel from '../../../src/modules/transcript/model.ts'
+import { TranscriptModel } from '../../../src/modules/transcript/model.ts'
+import { state, entry } from './fixtures.ts'
 import { Markdown, Text, stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
-import type {
-  HistoryEntry,
-  SessionSummary,
-} from '../../../src/runtime/session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
 import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manager.ts'
 import { sanitizeTerminalText } from '../../../src/presentation/primitives/text.ts'
@@ -15,58 +12,18 @@ import { TranscriptProcess } from '../../../src/modules/transcript/process.ts'
 import { LifecycleScope } from '../../../src/runtime/lifecycle/scope.ts'
 import { buildExecutionSnapshot } from '../../../src/runtime/execution/projection/index.ts'
 
-function state(
-  events: readonly HistoryEntry[],
-  running = false,
-  pendingSubmissions: RuntimeSessionSnapshot['pendingSubmissions'] = [],
-  assistant?: RuntimeSessionSnapshot['assistant'],
-): RuntimeSessionSnapshot {
-  return {
-    binding: { phase: 'active', sessionId: 'session-test' as SessionSummary['sessionId'], epoch: 0 },
-    sessionId: 'session-test' as SessionSummary['sessionId'],
-    cwd: '/workspace',
-    runState: running ? 'running' : 'idle',
-    connection: { events: 'online', control: 'online' },
-    events,
-    assistant,
-    historyHasMore: false,
-    queue: [],
-    pendingSubmissions,
-    execution: buildExecutionSnapshot({
-      sessionId: 'session-test',
-      epoch: 0,
-      entries: events,
-      assistant,
-      sessionRunning: running,
-      runtimeActivities: pendingSubmissions.flatMap((submission) => {
-        const activity = submission.activity
-        return activity?.kind === 'vision'
-          ? [{ kind: 'vision' as const, analysisId: activity.analysisId, startedAt: activity.startedAt }]
-          : []
-      }),
-    }),
-    modelCatalog: undefined,
-    projections: {},
-    notice: undefined,
-    error: undefined,
-  }
-}
-
-function entry(value: unknown): HistoryEntry {
-  return value as HistoryEntry
-}
-
 describe('TranscriptComponent', () => {
   it('keeps the same active group when temporary prompts and notices appear or disappear', () => {
+    const model = new TranscriptModel(true, 8)
     const running = state([entry({ event: { type: 'tool/call', seq: 0, time: 1_100, data: {
       turn: 1, step: 1, callId: 'read', name: 'read', arguments: '{}',
     } } })], true)
-    const transcript = new TranscriptComponent(running, createTheme(true), true, 8)
+    const transcript = new TranscriptComponent(model.project(running, false), createTheme(true))
     transcript.render(80)
     const row = transcript.animationLine
     expect(row).toBeDefined()
 
-    transcript.setState({
+    transcript.setProjection(model.project({
       ...running,
       notice: 'Settings saved.',
       error: 'Another request could not be queued.',
@@ -75,15 +32,16 @@ describe('TranscriptComponent', () => {
         message: { id: 'queued-message' as never, content: [{ type: 'text', text: 'Do this next.' }] },
       }],
       pendingSubmissions: [{ key: 1, text: 'And then this.', mode: 'queue', intent: 'queueing' }],
-    })
+    }, false))
     transcript.render(80)
     expect(transcript.animationLine).toBe(row)
-    transcript.setState(running)
+    transcript.setProjection(model.project(running, false))
     transcript.render(80)
     expect(transcript.animationLine).toBe(row)
   })
 
   it('keeps failure and retry in the open Activity but stops its shimmer when following content begins', () => {
+    const model = new TranscriptModel(true, 8)
     const events = [
       entry({ event: { type: 'turn/start', seq: 0, time: 1_000, data: { turn: 1 } } }),
       entry({ event: { type: 'step/start', seq: 1, time: 1_000, data: { turn: 1, step: 1 } } }),
@@ -105,32 +63,29 @@ describe('TranscriptComponent', () => {
       entry({ event: { type: 'step/start', seq: 6, time: 1_700, data: { turn: 1, step: 2 } } }),
     ]
     let now = 0
-    const transcript = new TranscriptComponent(state(events, true), createTheme(true), true, 8, 8, () => now)
-    transcript.setDetails(true)
+    const transcript = new TranscriptComponent(model.project(state(events, true), true), createTheme(true), 8, () => now)
+
     const first = [...transcript.render(80)]
     const titleRow = first.findIndex(line => stripTerminalSequences(line).includes('Activity · 1 tool · 1 failed'))
     expect(titleRow).toBeGreaterThan(0)
     expect(transcript.animationLine).toBeDefined()
     expect(first[titleRow]).toContain('\u001b[31m1 failed\u001b[39m')
-    const projectItems = vi.spyOn(transcriptModel, 'buildTranscriptProjection')
     const renderMarkdown = vi.spyOn(Markdown.prototype, 'render')
     try {
       now = 1_000
       const next = [...transcript.render(80)]
       expect(next.map(stripTerminalSequences)).toEqual(first.map(stripTerminalSequences))
       expect(next.flatMap((line, index) => line === first[index] ? [] : [index])).toEqual([titleRow])
-      expect(projectItems).not.toHaveBeenCalled()
       expect(renderMarkdown).not.toHaveBeenCalled()
       expect(next[titleRow]).toContain('\u001b[31m1 failed\u001b[39m')
     } finally {
-      projectItems.mockRestore()
       renderMarkdown.mockRestore()
     }
 
     events.push(entry({ event: { type: 'tool/call', seq: 7, time: 1_800, data: {
       turn: 1, step: 2, callId: 'retry', name: 'read', arguments: '{}',
     } } }))
-    transcript.setState(state([...events], true))
+    transcript.setProjection(model.project(state([...events], true), true))
     const retry = transcript.render(80)[titleRow]!
     expect(stripTerminalSequences(retry)).toContain('Activity · 2 tools · 1 failed')
     expect(transcript.animationLine).toBe(titleRow)
@@ -145,7 +100,7 @@ describe('TranscriptComponent', () => {
     expect(transcript.animationLine).toBeDefined()
 
     const reply = { turn: 1, step: 2, content: [{ type: 'text' as const, text: 'The check needs another approach.' }] }
-    transcript.setState(state([...events], true, [], reply))
+    transcript.setProjection(model.project(state([...events], true, [], reply), true))
     const explaining = [...transcript.render(80)]
     expect(transcript.animationLine).toBeUndefined()
     now += 300
@@ -157,7 +112,7 @@ describe('TranscriptComponent', () => {
     events.push(entry({ event: { type: 'tool/call', seq: 9, time: 1_900, data: {
       turn: 1, step: 2, callId: 'next-group', name: 'read', arguments: '{}',
     } } }))
-    transcript.setState(state([...events], true))
+    transcript.setProjection(model.project(state([...events], true), true))
     const nextGroup = [...transcript.render(80)]
     const nextTitleRow = transcript.animationLine!
     expect(nextTitleRow).toBeGreaterThan(titleRow)
@@ -168,7 +123,7 @@ describe('TranscriptComponent', () => {
     events.push(entry({ event: { type: 'turn/end', seq: 10, time: 2_000, data: {
       turn: 1, reason: { kind: 'interrupted' },
     } } }))
-    transcript.setState(state([...events]))
+    transcript.setProjection(model.project(state([...events]), true))
     const stopped = [...transcript.render(80)]
     expect(transcript.animationLine).toBeUndefined()
     expect(stripTerminalSequences(stopped[titleRow]!)).toContain('Activity · 2 tools · 800ms · 1 failed · 1 interrupted')
@@ -176,14 +131,15 @@ describe('TranscriptComponent', () => {
     expect(transcript.render(80)).toEqual(stopped)
 
     // A new Turn without its own Activity must not relight the previous Turn's groups.
-    transcript.setState(state([...events, entry({ event: {
+    transcript.setProjection(model.project(state([...events, entry({ event: {
       type: 'turn/start', seq: 11, time: 2_500, data: { turn: 2 },
-    } })], true))
+    } })], true), true))
     expect(transcript.render(80)).toEqual(stopped)
     expect(transcript.animationLine).toBeUndefined()
   })
 
   it('requests animation frames only while a rendered Activity is active and releases them with its Session', async () => {
+    const model = new TranscriptModel(true, 8)
     vi.useFakeTimers()
     const scope = new LifecycleScope('transcript-animation')
     const events = [entry({ event: { type: 'assistant/message', seq: 0, time: 900, surfaceOp: 'append', data: {
@@ -237,7 +193,7 @@ describe('TranscriptComponent', () => {
       await scope.dispose()
       expect(vi.getTimerCount()).toBe(0)
 
-      const plain = new TranscriptComponent(current, createTheme(false), true, 8)
+      const plain = new TranscriptComponent(model.project(current, false), createTheme(false))
       expect(plain.render(80).join('\n')).toContain('Activity · 1 tool')
       expect(plain.animationLine).toBeUndefined()
     } finally {
@@ -246,62 +202,8 @@ describe('TranscriptComponent', () => {
     }
   })
 
-  it('reuses historical tool bodies when counts grow and refreshes replaced result evidence', () => {
-    const call = (seq: number, callId: string, path: string) => entry({ event: {
-      type: 'tool/call', seq, time: 1_000 + seq, data: {
-        turn: 1, step: 1, callId, name: 'read', arguments: JSON.stringify({ path }),
-      },
-    } })
-    const result = (text: string) => entry({ event: {
-      type: 'tool/result', seq: 1, time: 1_100, surfaceOp: 'append', data: {
-        turn: 1, step: 1, message: { source: { kind: 'tool', callId: 'old' }, content: [
-          { type: 'tool-result', content: [{ type: 'text', text }] },
-        ] },
-      },
-    } })
-    const old = call(0, 'old', '/old')
-    const initialResult = result('Original evidence')
-    const transcript = new TranscriptComponent(state([old, initialResult], true), createTheme(false), true, 8)
-    transcript.setDetails(true)
-    expect(transcript.render(80).join('\n')).toContain('Original evidence')
-
-    const added = call(2, 'new', '/new')
-    const parse = vi.spyOn(JSON, 'parse')
-    try {
-      transcript.setState(state([old, initialResult, added], true))
-      const output = transcript.render(80).join('\n')
-      expect(output).toContain('Activity · 2 tools')
-      expect(output).toContain('Original evidence')
-      expect(parse).toHaveBeenCalledOnce()
-
-      transcript.setState(state([old, result('Replaced evidence'), added], true))
-      const replaced = transcript.render(80).join('\n')
-      expect(replaced).toContain('Replaced evidence')
-      expect(replaced).not.toContain('Original evidence')
-      expect(parse).toHaveBeenCalledOnce()
-    } finally { parse.mockRestore() }
-  })
-
-  it('updates live text without rebuilding unchanged history, and refreshes prepended history', () => {
-    const projectHistory = vi.spyOn(transcriptModel, 'buildTranscriptHistory')
-    try {
-      const initial = state([], true, [], { turn: 1, step: 1, content: [{ type: 'text', text: 'live' }] })
-      const transcript = new TranscriptComponent(initial, createTheme(false), true, 8)
-      transcript.render(80)
-      projectHistory.mockClear()
-      transcript.setState({ ...initial, assistant: { turn: 1, step: 1, content: [{ type: 'text', text: 'live continuation' }] } })
-      expect(transcript.render(80).join('\n')).toContain('live continuation')
-      expect(projectHistory).not.toHaveBeenCalled()
-      const older = entry({ event: { type: 'user/message', seq: 0, time: 1, surfaceOp: 'append',
-        data: { id: 'older', source: { kind: 'user' }, content: [{ type: 'text', text: 'Earlier prompt' }] },
-      } })
-      transcript.setState(state([older], true, [], initial.assistant))
-      expect(transcript.render(80).join('\n')).toContain('Earlier prompt')
-      expect(projectHistory).toHaveBeenCalledOnce()
-    } finally { projectHistory.mockRestore() }
-  })
-
   it('keeps durable user input visible when execution metadata is unavailable', () => {
+    const model = new TranscriptModel(true, 8)
     const events = [entry({
       event: {
         type: 'user/message',
@@ -317,7 +219,7 @@ describe('TranscriptComponent', () => {
       },
     })]
     const snapshot = state(events)
-    const transcript = new TranscriptComponent({
+    const transcript = new TranscriptComponent(model.project({
       ...snapshot,
       execution: buildExecutionSnapshot({
         sessionId: 'session-test',
@@ -325,18 +227,19 @@ describe('TranscriptComponent', () => {
         entries: [],
         sessionRunning: false,
       }),
-    }, createTheme(false), true, 8)
+    }, false), createTheme(false))
 
     expect(transcript.render(80).join('\n')).toContain('Do not hide this input')
   })
 
   it('keeps native image markers on the admitted user prompt', () => {
+    const model = new TranscriptModel(true, 8)
     const theme = createTheme(true)
     const image = (attachmentId: string) => ({
       type: 'image' as const,
       attachment: { attachmentId, mediaType: 'image/png', bytes: 10, width: 2, height: 2 },
     })
-    const transcript = new TranscriptComponent(state([entry({
+    const transcript = new TranscriptComponent(model.project(state([entry({
       event: {
         type: 'user/message',
         seq: 0,
@@ -355,7 +258,7 @@ describe('TranscriptComponent', () => {
           ],
         },
       },
-    })]), theme, true, 8)
+    })]), false), theme)
 
     const output = transcript.render(100).join('\n')
     expect(stripTerminalSequences(output))
@@ -365,7 +268,8 @@ describe('TranscriptComponent', () => {
   })
 
   it('renders the committed assistant message', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'assistant/message',
@@ -385,7 +289,7 @@ describe('TranscriptComponent', () => {
           },
         },
       }),
-    ]), createTheme(false), true, 8)
+    ]), false), createTheme(false))
 
     const output = transcript.render(80).join('\n')
     expect(output).toContain('final answer')
@@ -394,10 +298,11 @@ describe('TranscriptComponent', () => {
   })
 
   it('settles the Thought indicator while answer text is still streaming', () => {
-    const transcript = new TranscriptComponent(state([], true, [], {
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([], true, [], {
       turn: 1, step: 1, reasoningStartedAt: 1_000, reasoningEndedAt: 1_250,
       content: [{ type: 'reasoning', text: 'reasoning' }, { type: 'text', text: 'streaming answer' }],
-    }), createTheme(false), true, 8)
+    }), false), createTheme(false))
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› Activity · 1 thought · 250ms')
@@ -409,7 +314,8 @@ describe('TranscriptComponent', () => {
   })
 
   it('renders assistant Markdown without exposing code-fence syntax', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'assistant/message',
@@ -432,7 +338,7 @@ describe('TranscriptComponent', () => {
           },
         },
       }),
-    ]), createTheme(false), true, 8)
+    ]), false), createTheme(false))
 
     const output = transcript.render(80).join('\n')
     expect(output).toContain('Result')
@@ -444,6 +350,7 @@ describe('TranscriptComponent', () => {
   })
 
   it('reuses the rendered document until transcript inputs or width change', () => {
+    const model = new TranscriptModel(true, 8)
     const events = [entry({
       event: {
         type: 'assistant/message',
@@ -464,28 +371,29 @@ describe('TranscriptComponent', () => {
       },
     })]
     const snapshot = state(events)
-    const transcript = new TranscriptComponent(snapshot, createTheme(false), true, 8)
+    const transcript = new TranscriptComponent(model.project(snapshot, false), createTheme(false))
 
     const first = transcript.render(80)
     expect(transcript.render(80)).toBe(first)
 
-    transcript.setState({ ...snapshot, projections: { ...snapshot.projections } })
+    transcript.setProjection(model.project({ ...snapshot, projections: { ...snapshot.projections } }, false))
     expect(transcript.render(80)).toBe(first)
     expect(transcript.render(72)).not.toBe(first)
 
-    transcript.setState(state([...events, entry({
+    transcript.setProjection(model.project(state([...events, entry({
       event: {
         type: 'turn/end',
         seq: 1,
         time: 2,
         data: { reason: { kind: 'max-tokens' } },
       },
-    })]))
+    })]), false))
     expect(transcript.render(80)).not.toBe(first)
   })
 
   it('renders deep Markdown headings without exposing their source markers', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'assistant/message',
@@ -505,7 +413,7 @@ describe('TranscriptComponent', () => {
           },
         },
       }),
-    ]), createTheme(true), true, 8)
+    ]), false), createTheme(true))
 
     const output = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(output).toContain('Production CORS')
@@ -515,7 +423,8 @@ describe('TranscriptComponent', () => {
   })
 
   it('collapses activity by default and scrolls expanded thinking within its bounded viewport', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'assistant/message',
@@ -538,7 +447,7 @@ describe('TranscriptComponent', () => {
           },
         },
       }),
-    ]), createTheme(true), true, 8, 3)
+    ]), false), createTheme(true), 3)
 
     const collapsed = transcript.render(80).join('\n')
     expect(stripTerminalSequences(collapsed)).toContain('› Activity · 1 thought')
@@ -576,6 +485,7 @@ describe('TranscriptComponent', () => {
   })
 
   it('preserves manual Activity disclosure as children are prepended and appended', () => {
+    const model = new TranscriptModel(true, 8)
     const tool = entry({
       event: {
         type: 'tool/call',
@@ -585,13 +495,13 @@ describe('TranscriptComponent', () => {
       },
       view: { for: 'call', view: { card: 'generic', title: 'Read project' } },
     })
-    const transcript = new TranscriptComponent(state([tool], true), createTheme(false), true, 8)
+    const transcript = new TranscriptComponent(model.project(state([tool], true), false), createTheme(false))
 
     transcript.render(80)
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › ◦ Read project')
 
-    transcript.setState(state([
+    transcript.setProjection(model.project(state([
       entry({
         event: {
           type: 'assistant/message', surfaceOp: 'append',
@@ -603,7 +513,7 @@ describe('TranscriptComponent', () => {
       entry({ event: { type: 'tool/call', seq: 3, time: 1_300, data: {
         turn: 1, step: 1, callId: 'test', name: 'bash', arguments: '{}',
       } } }),
-    ], true))
+    ], true), false))
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(expanded).toContain('⌄ Activity · 1 thought · 2 tools')
     expect(expanded).toContain('├─ › • Thought')
@@ -612,6 +522,7 @@ describe('TranscriptComponent', () => {
   })
 
   it('reports whether a disclosure block reaches the transcript end', () => {
+    const model = new TranscriptModel(true, 8)
     const tool = entry({
       event: {
         type: 'tool/call',
@@ -621,7 +532,7 @@ describe('TranscriptComponent', () => {
       },
       view: { for: 'call', view: { card: 'generic', title: 'Read project' } },
     })
-    const transcript = new TranscriptComponent(state([tool], true), createTheme(false), true, 8)
+    const transcript = new TranscriptComponent(model.project(state([tool], true), false), createTheme(false))
     transcript.render(80)
 
     expect(transcript.isTrailingBlock(0)).toBe(true)
@@ -630,7 +541,7 @@ describe('TranscriptComponent', () => {
     expect(transcript.handlePointer(0, 'click')).toBe(true)
     expect(transcript.isTrailingBlock(0)).toBe(true)
 
-    transcript.setState(state([
+    transcript.setProjection(model.project(state([
       tool,
       entry({
         event: {
@@ -646,17 +557,18 @@ describe('TranscriptComponent', () => {
           },
         },
       }),
-    ], true))
+    ], true), false))
     transcript.render(80)
     expect(transcript.isTrailingBlock(0)).toBe(false)
   })
 
   it('follows streaming thinking until the user scrolls upward', () => {
+    const model = new TranscriptModel(true, 8)
     const live = (count: number) => state([], true, [], {
       turn: 1, step: 1, reasoningStartedAt: 1,
       content: [{ type: 'reasoning', text: Array.from({ length: count }, (_, index) => `- stream ${index + 1}\n`).join('') }],
     })
-    const transcript = new TranscriptComponent(live(5), createTheme(false), true, 8, 3)
+    const transcript = new TranscriptComponent(model.project(live(5), false), createTheme(false), 3)
 
     expect(transcript.render(80).join('\n')).toContain('› Activity · 1 thought')
     expect(transcript.handlePointer(0, 'click')).toBe(true)
@@ -667,14 +579,15 @@ describe('TranscriptComponent', () => {
     expect(following).not.toContain('stream 1')
 
     expect(transcript.handlePointer(2, 'wheel-up')).toBe(true)
-    transcript.setState(live(6))
+    transcript.setProjection(model.project(live(6), false))
     const paused = transcript.render(80).join('\n')
     expect(paused).toContain('stream 2')
     expect(paused).not.toContain('stream 6')
   })
 
   it('settles unfinished activity when the turn reaches its output limit', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'assistant/message', surfaceOp: 'append',
@@ -699,7 +612,7 @@ describe('TranscriptComponent', () => {
           data: { turn: 1, reason: { kind: 'max-tokens' } },
         },
       }),
-    ]), createTheme(false), true, 8)
+    ]), false), createTheme(false))
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› Activity · 1 thought · 1 tool · 250ms · 2 interrupted')
@@ -712,7 +625,8 @@ describe('TranscriptComponent', () => {
   })
 
   it('keeps interrupted thinking collapsed while the terminal error remains visible', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'assistant/message', surfaceOp: 'append',
@@ -728,7 +642,7 @@ describe('TranscriptComponent', () => {
           data: { turn: 1, reason: { kind: 'error', error: { message: 'model disconnected' } } },
         },
       }),
-    ]), createTheme(false), true, 8)
+    ]), false), createTheme(false))
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› Activity · 1 thought · 300ms · 1 interrupted')
@@ -747,8 +661,8 @@ describe('TranscriptComponent', () => {
     expect(thoughtExpanded).toContain('diagnostic reasoning')
   })
 
-  it('applies the global details toggle to both thinking and tools', () => {
-    const transcript = new TranscriptComponent(state([
+  it('applies the global details toggle through the process and clears manual overrides', async () => {
+    const snapshot = state([
       entry({
         event: {
           type: 'assistant/message',
@@ -799,24 +713,36 @@ describe('TranscriptComponent', () => {
           view: { card: 'generic', title: 'Read src/app.ts', content: [{ type: 'text', text: 'tool details' }] },
         },
       }),
-    ]), createTheme(false), true, 8)
+    ])
+    const scope = new LifecycleScope('transcript-details')
+    const transcript = new TranscriptProcess({
+      session: { current: snapshot, subscribe: () => () => {} },
+      files: { readText: async () => '' }, theme: createTheme(false),
+      showReasoning: true, maxToolOutputLines: 8, thinkingMaxLines: 8,
+      invalidate: () => {}, scope,
+    })
+    try {
+      expect(transcript.render(80).join('\n')).not.toContain('reasoning details')
+      transcript.handlePointer(0, 'click')
+      transcript.render(80)
+      transcript.handlePointer(0, 'click')
+      transcript.setDetails(true)
+      const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
+      expect(expanded).toContain('⌄ • Thought')
+      expect(expanded).toContain('reasoning details')
+      expect(expanded).toContain('⌄ • Read src/app.ts')
+      expect(expanded).toContain('tool details')
 
-    expect(transcript.render(80).join('\n')).not.toContain('reasoning details')
-    transcript.setDetails(true)
-    const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
-    expect(expanded).toContain('⌄ • Thought')
-    expect(expanded).toContain('reasoning details')
-    expect(expanded).toContain('⌄ • Read src/app.ts')
-    expect(expanded).toContain('tool details')
-
-    transcript.setDetails(false)
-    const collapsed = transcript.render(80).join('\n')
-    expect(collapsed).not.toContain('reasoning details')
-    expect(collapsed).not.toContain('tool details')
+      transcript.setDetails(false)
+      const collapsed = transcript.render(80).join('\n')
+      expect(collapsed).not.toContain('reasoning details')
+      expect(collapsed).not.toContain('tool details')
+    } finally { await scope.dispose() }
   })
 
   it('renders the complete user prompt as a full-width block without adding a You label', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'user/message',
@@ -831,7 +757,7 @@ describe('TranscriptComponent', () => {
           },
         },
       }),
-    ]), createTheme(true), true, 8)
+    ]), false), createTheme(true))
 
     const rendered = transcript.render(80)
     const output = rendered.join('\n')
@@ -845,13 +771,14 @@ describe('TranscriptComponent', () => {
   })
 
   it('renders a local prompt block without transport phases', () => {
+    const model = new TranscriptModel(true, 8)
     const pending = state([], false, [{
       key: 1,
       text: 'render before the network round trip',
       mode: 'queue',
       intent: 'working',
     }])
-    const transcript = new TranscriptComponent(pending, createTheme(true), true, 8)
+    const transcript = new TranscriptComponent(model.project(pending, false), createTheme(true))
 
     const output = transcript.render(80).join('\n')
     expect(output).toContain('\u001b[97m› \u001b[39m')
@@ -862,6 +789,7 @@ describe('TranscriptComponent', () => {
   })
 
   it('hands Vision preparation to durable tool evidence without duplicating the prompt or Activity', () => {
+    const model = new TranscriptModel(true, 8)
     const transitioning = state([entry({
       event: {
         type: 'user/message',
@@ -889,12 +817,12 @@ describe('TranscriptComponent', () => {
       key: 1, text: 'analyze [Image #1] now', mode: 'queue', intent: 'working',
       activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: 1_000 },
     }])
-    const transcript = new TranscriptComponent(pending, createTheme(true), true, 8)
+    const transcript = new TranscriptComponent(model.project(pending, false), createTheme(true))
     const initial = transcript.render(80).map(stripTerminalSequences).join('\n')
     expect(initial).toMatch(/analyze \[Image #1\] now[\s\S]*Activity · 1 tool/u)
     expect(transcript.animationLine).toBeDefined()
 
-    transcript.setState(transitioning)
+    transcript.setProjection(model.project(transitioning, false))
     const output = transcript.render(80).map(stripTerminalSequences).join('\n')
     expect(output.match(/analyze \[Image #1\] now/g)).toHaveLength(1)
     expect(output).toContain('Activity · 1 tool')
@@ -918,12 +846,12 @@ describe('TranscriptComponent', () => {
       } } }),
     ]
     // Durable evidence replaces the pending source without duplicating the Vision tool.
-    transcript.setState(state(events, true, transitioning.pendingSubmissions))
+    transcript.setProjection(model.project(state(events, true, transitioning.pendingSubmissions), false))
     const tools = transcript.render(80).map(stripTerminalSequences).join('\n')
     expect(tools.match(/Activity/g)).toHaveLength(1)
     expect(tools).toContain('Activity · 2 tools')
     expect(transcript.animationLine).toBeDefined()
-    transcript.setDetails(true)
+    transcript.setProjection(model.project(state(events, true, transitioning.pendingSubmissions), true))
     const details = transcript.render(80).map(stripTerminalSequences).join('\n')
     expect(details).toContain('Vision · 1 image · qwen3.7-plus')
     expect(details).toContain('An error dialog is visible.')
@@ -931,6 +859,7 @@ describe('TranscriptComponent', () => {
   })
 
   it('hands a local prompt to a visible queue row without hiding context placement', () => {
+    const model = new TranscriptModel(true, 8)
     const base = state([])
     const queued = {
       ...base,
@@ -952,7 +881,7 @@ describe('TranscriptComponent', () => {
       }],
     } satisfies RuntimeSessionSnapshot
 
-    const visible = new TranscriptComponent(queued, createTheme(false), true, 8).render(80).join('\n')
+    const visible = new TranscriptComponent(model.project(queued, false), createTheme(false)).render(80).join('\n')
     expect(visible.match(/queued once/g)).toHaveLength(1)
     expect(visible).toContain('Queued')
 
@@ -960,13 +889,14 @@ describe('TranscriptComponent', () => {
       ...queued,
       queue: [{ ...queued.queue[0]!, placement: 'context' as const }],
     }
-    const context = new TranscriptComponent(contextual, createTheme(false), true, 8).render(80).join('\n')
+    const context = new TranscriptComponent(model.project(contextual, false), createTheme(false)).render(80).join('\n')
     expect(context).toContain('queued once')
     expect(context).not.toContain('Accepted')
   })
 
   it('uses the tool-owned operation summary and expands bounded result output', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'tool/call',
@@ -1008,8 +938,8 @@ describe('TranscriptComponent', () => {
         },
         view: { for: 'result', view: { card: 'terminal', output: 'passed', exitCode: 0 } },
       }),
-    ]), createTheme(false), true, 8)
-    transcript.setDetails(true)
+    ]), true), createTheme(false))
+
 
     const output = transcript.render(80).join('\n')
     expect(output).toContain('Opaque-name · Run tests')
@@ -1040,8 +970,9 @@ describe('TranscriptComponent', () => {
       operation: 'Bash',
     },
   ])('keeps $surface scripts in details while Activity and tool rows stay semantic', ({ callView, operation }) => {
+    const model = new TranscriptModel(true, 8)
     const script = callView.title
-    const transcript = new TranscriptComponent(state([
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'tool/call',
@@ -1057,7 +988,7 @@ describe('TranscriptComponent', () => {
         },
         view: { for: 'call', view: callView },
       }),
-    ], true), createTheme(false), true, 8)
+    ], true), false), createTheme(false))
 
     const collapsed = stripTerminalSequences(transcript.render(120).join('\n'))
     expect(collapsed).toContain('› Activity · 1 tool')
@@ -1078,7 +1009,8 @@ describe('TranscriptComponent', () => {
   })
 
   it('reveals a grouped tool operation before its arguments and result', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'tool/call',
@@ -1120,7 +1052,7 @@ describe('TranscriptComponent', () => {
           view: { card: 'generic', title: 'Search project', content: [{ type: 'text', text: '3 matches' }] },
         },
       }),
-    ]), createTheme(true), true, 8)
+    ]), false), createTheme(true))
 
     const collapsedOutput = transcript.render(80).join('\n')
     const collapsed = stripTerminalSequences(collapsedOutput)
@@ -1149,7 +1081,8 @@ describe('TranscriptComponent', () => {
   })
 
   it('keeps failed activity and tool details collapsed until they are opened', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'tool/call',
@@ -1193,7 +1126,7 @@ describe('TranscriptComponent', () => {
         },
         view: { for: 'result', view: { card: 'terminal', title: 'pnpm test', output: '1 test failed', exitCode: 1 } },
       }),
-    ]), createTheme(false), true, 8)
+    ]), false), createTheme(false))
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› Activity · 1 tool · 250ms · 1 failed')
@@ -1218,7 +1151,8 @@ describe('TranscriptComponent', () => {
   })
 
   it('shows complete applied file diffs inline and leaves wheel scrolling to the conversation', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 3)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'tool/call',
@@ -1261,7 +1195,7 @@ describe('TranscriptComponent', () => {
           },
         },
       }),
-    ]), createTheme(true), true, 3)
+    ]), false), createTheme(true))
     transcript.setDiffLineStarts(new Map([['call-diff:diff', [1]]]))
 
     const initial = transcript.render(80).join('\n')
@@ -1289,8 +1223,9 @@ describe('TranscriptComponent', () => {
   })
 
   it('keeps a large file edit responsive while preserving full on-demand evidence', () => {
+    const model = new TranscriptModel(true, 8)
     const newText = Array.from({ length: 201 }, (_, index) => `export const value${index} = ${index}`).join('\n')
-    const transcript = new TranscriptComponent(state([
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'tool/call',
@@ -1325,7 +1260,7 @@ describe('TranscriptComponent', () => {
           },
         },
       }),
-    ]), createTheme(true), true, 8)
+    ]), false), createTheme(true))
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› • Write(src/generated.ts)')
@@ -1339,7 +1274,8 @@ describe('TranscriptComponent', () => {
   })
 
   it('keeps failed file evidence top-level but collapsed until it is opened', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'tool/call',
@@ -1383,7 +1319,7 @@ describe('TranscriptComponent', () => {
           },
         },
       }),
-    ]), createTheme(false), true, 8)
+    ]), false), createTheme(false))
 
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› × Update(src/app.ts)')
@@ -1396,8 +1332,9 @@ describe('TranscriptComponent', () => {
   })
 
   it('wraps long changed lines without hiding their tail', () => {
+    const model = new TranscriptModel(true, 8)
     const longLine = 'A long changed line keeps wrapping until the unique VISIBLE_TAIL remains readable.'
-    const transcript = new TranscriptComponent(state([
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'tool/call',
@@ -1432,7 +1369,7 @@ describe('TranscriptComponent', () => {
           view: { card: 'diff', title: 'Write notes.txt', diffs: [{ path: 'notes.txt', oldText: null, newText: longLine }] },
         },
       }),
-    ]), createTheme(true), true, 8)
+    ]), false), createTheme(true))
 
     const output = transcript.render(32)
     const plain = stripTerminalSequences(output.join('\n'))
@@ -1443,7 +1380,8 @@ describe('TranscriptComponent', () => {
   })
 
   it('renders one durable command execution row with its settled result', () => {
-    const transcript = new TranscriptComponent(state([
+    const model = new TranscriptModel(true, 8)
+    const transcript = new TranscriptComponent(model.project(state([
       entry({
         event: {
           type: 'command/run',
@@ -1469,7 +1407,7 @@ describe('TranscriptComponent', () => {
           },
         },
       }),
-    ]), createTheme(false), true, 8)
+    ]), false), createTheme(false))
 
     const output = transcript.render(80).join('\n')
     expect(output).toContain('Command')

@@ -92,9 +92,10 @@ function packageVersion(name: string): string {
 
 it.skipIf(!enabled)('reports generated rendering baselines as JSON (DSH_TUI_BENCH=1)', async () => {
   // Runtime imports deliberately all target ROOT, never mix baseline and changed views.
-  const [trajectory, transcript, fixtures, requests, text, themeModule] = await Promise.all([
+  const [trajectory, transcript, transcriptModel, fixtures, requests, text, themeModule] = await Promise.all([
     import(/* @vite-ignore */ `${root}/packages/tui/src/modules/trajectory/view.ts`) as Promise<typeof import('../../src/modules/trajectory/view.ts')>,
     import(/* @vite-ignore */ `${root}/packages/tui/src/modules/transcript/view.ts`) as Promise<typeof import('../../src/modules/transcript/view.ts')>,
+    import(/* @vite-ignore */ `${root}/packages/tui/src/modules/transcript/model.ts`) as Promise<Partial<typeof import('../../src/modules/transcript/model.ts')>>,
     import(/* @vite-ignore */ `${root}/packages/tui/tests/modules/trajectory/fixtures.ts`) as Promise<typeof import('../modules/trajectory/fixtures.ts')>,
     import(/* @vite-ignore */ `${root}/packages/tui/src/runtime/execution/projection/model-call.ts`) as Promise<RequestModule>,
     import(/* @vite-ignore */ `${root}/packages/tui/src/presentation/primitives/text.ts`) as Promise<typeof import('../../src/presentation/primitives/text.ts')>,
@@ -149,6 +150,17 @@ it.skipIf(!enabled)('reports generated rendering baselines as JSON (DSH_TUI_BENC
   }
   emit(metadata)
   const theme = themeModule.createTheme(false)
+  const makeTranscript = (snapshot: ReturnType<typeof fixtures.state>) => {
+    if (transcriptModel.TranscriptModel !== undefined) {
+      const model = new transcriptModel.TranscriptModel(true, 8)
+      return new transcript.TranscriptComponent(model.project(snapshot, false), theme)
+    }
+    // Historical benchmark roots project inside the view; adapt only at this measurement boundary.
+    const LegacyView = transcript.TranscriptComponent as unknown as new (
+      snapshot: ReturnType<typeof fixtures.state>, paintTheme: typeof theme, showReasoning: boolean, maxLines: number,
+    ) => Pick<InstanceType<typeof transcript.TranscriptComponent>, 'render' | 'invalidate'>
+    return new LegacyView(snapshot, theme, true, 8)
+  }
   const noop = () => {}
   let checksum = 0
   type Snapshot = ReturnType<typeof fixtures.state>
@@ -209,11 +221,11 @@ it.skipIf(!enabled)('reports generated rendering baselines as JSON (DSH_TUI_BENC
           })
         } finally { await view.dispose?.() }
       }
-      await measure('transcript.history.cold', dimensions, 'new TranscriptComponent(prebuilt snapshot) + full-document render(width); height is NOT applied by TranscriptComponent', () => {
-        consume(new transcript.TranscriptComponent(snapshot, theme, true, 8).render(viewport.columns))
+      await measure('transcript.history.cold', dimensions, 'new model + content projection + view + full-document render(width); legacy views own projection; excludes runtime projection and viewport clipping', () => {
+        consume(makeTranscript(snapshot).render(viewport.columns))
       })
       if (wants('transcript.history.hot-document') || wants('transcript.history.invalidate-render')) {
-        const component = new transcript.TranscriptComponent(snapshot, theme, true, 8)
+        const component = makeTranscript(snapshot)
         const document = component.render(viewport.columns)
         expect(document.length).toBeGreaterThan(count)
         await measure('transcript.history.hot-document', { ...dimensions, renderedLines: document.length }, 'retained TranscriptComponent.render(width), unchanged state/document cache; NOT viewport scrolling', () => consume(component.render(viewport.columns)))

@@ -6,7 +6,6 @@ import {
   wrapTextWithAnsi,
   type Component,
 } from '@earendil-works/pi-tui'
-import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
 import type { DiffLineStarts } from './diff-location.ts'
 import {
   buildDiffDisplay,
@@ -14,19 +13,15 @@ import {
   highlightDiffText,
   type DiffDisplayLine,
 } from './diff.ts'
-import {
-  buildTranscriptHistory,
-  buildTranscriptProjection,
-  ToolDetailCache,
-  type UngroupedTranscriptItem,
-  type TranscriptActivityGroup,
-  type TranscriptDiffItem,
-  type TranscriptProjection,
-  type TranscriptPromptItem,
-  type TranscriptTextItem,
-  type TranscriptThinkingItem,
-  type TranscriptTone,
-  type TranscriptToolItem,
+import type {
+  TranscriptActivityGroup,
+  TranscriptDiffItem,
+  TranscriptProjection,
+  TranscriptPromptItem,
+  TranscriptTextItem,
+  TranscriptThinkingItem,
+  TranscriptTone,
+  TranscriptToolItem,
 } from './model.ts'
 import { activityTitle } from './activity-presentation.ts'
 import { sanitizeTerminalText } from '../../presentation/primitives/text.ts'
@@ -93,19 +88,14 @@ function padToWidth(value: string, width: number): string {
   return `${clipped}${' '.repeat(Math.max(0, width - visibleWidth(clipped)))}`
 }
 
-/** Scrollback-first transcript component rebuilt from the current API event window. */
+/** Session-owned rendering and interaction over an immutable content projection. */
 export class TranscriptComponent implements Component {
-  private state: Readonly<RuntimeSessionSnapshot>
-  private showDetails = false
   private readonly disclosure = new ExecutionDisclosureState()
   private readonly diffDisclosure = new Map<string, boolean>()
   private readonly renderedDiffCollapsed = new Map<string, boolean>()
   private readonly pausedThinking = new Set<string>()
   private readonly thinkingOffsets = new Map<string, number>()
   private readonly thinkingMaxOffsets = new Map<string, number>()
-  private historyItems: UngroupedTranscriptItem[] | undefined
-  private readonly toolDetails: ToolDetailCache
-  private projection: TranscriptProjection | undefined
   private renderedLineCount = 0
   private renderedDocument: { width: number; lines: string[] } | undefined
   private readonly textBlocks = new Map<string, TextBlockCache>()
@@ -120,53 +110,20 @@ export class TranscriptComponent implements Component {
   private animatedTitle: { key: string; line: number; render: (elapsedMs: number) => string } | undefined
 
   constructor(
-    state: Readonly<RuntimeSessionSnapshot>,
+    private projection: TranscriptProjection,
     private readonly theme: TuiTheme,
-    private readonly showReasoning: boolean,
-    private readonly maxToolOutputLines: number,
     private readonly thinkingMaxLines = 8,
     private readonly now: () => number = () => performance.now(),
-  ) {
-    this.state = state
-    this.toolDetails = new ToolDetailCache(maxToolOutputLines)
-  }
+  ) {}
 
-  setState(state: Readonly<RuntimeSessionSnapshot>): void {
-    const previous = this.state
-    const sessionChanged = state.sessionId !== previous.sessionId
-    const historyChanged = sessionChanged
-      || state.events !== previous.events
-      || state.execution !== previous.execution
-    const contentChanged = historyChanged
-      || state.assistant !== previous.assistant
-      || state.queue !== previous.queue
-      || state.pendingSubmissions !== previous.pendingSubmissions
-      || state.notice !== previous.notice
-      || state.error !== previous.error
-    if (sessionChanged) {
-      this.disclosure.clear()
-      this.diffDisclosure.clear()
-      this.renderedDiffCollapsed.clear()
+  setProjection(projection: TranscriptProjection): void {
+    if (projection === this.projection) return
+    if (projection.showDetails !== this.projection.showDetails) {
+      this.disclosure.clearOverrides()
       this.pausedThinking.clear()
-      this.thinkingOffsets.clear()
-      this.thinkingMaxOffsets.clear()
-      this.hoveredBlockKey = undefined
-      this.textBlocks.clear()
-      this.promptBlocks.clear()
-      this.diffBlocks.clear()
     }
-    this.state = state
-    if (historyChanged) this.historyItems = undefined
-    if (contentChanged) this.invalidateContent()
-  }
-
-  setDetails(show: boolean): void {
-    if (show === this.showDetails) return
-    this.showDetails = show
-    this.historyItems = undefined
-    this.disclosure.clearOverrides()
-    this.pausedThinking.clear()
-    this.invalidateContent()
+    this.projection = projection
+    this.invalidate()
   }
 
   /** Supply asynchronously resolved absolute file-line starts for diff cards. */
@@ -201,9 +158,9 @@ export class TranscriptComponent implements Component {
       if (hit === undefined) return false
       this.hoveredBlockKey = hit.key
       if (hit.kind === 'activity') {
-        this.disclosure.toggleActivity(this.activityExecutionKeys.get(hit.key) ?? [], this.showDetails)
+        this.disclosure.toggleActivity(this.activityExecutionKeys.get(hit.key) ?? [], this.projection.showDetails)
       } else if (hit.kind === 'thinking' || hit.kind === 'tool') {
-        this.disclosure.toggle(hit.key, this.showDetails)
+        this.disclosure.toggle(hit.key, this.projection.showDetails)
         if (hit.kind === 'thinking') {
           this.pausedThinking.delete(hit.key)
           this.thinkingOffsets.delete(hit.key)
@@ -231,12 +188,7 @@ export class TranscriptComponent implements Component {
     const safeWidth = Math.max(1, width)
     if (this.renderedDocument?.width === safeWidth) return this.paintAnimation()
     const lines: string[] = []
-    const history = this.historyItems ??= buildTranscriptHistory(
-      this.state, this.showReasoning, this.showDetails, this.maxToolOutputLines, this.toolDetails,
-    )
-    const { items, activeActivityKey } = this.projection ??= buildTranscriptProjection(
-      this.state, this.showReasoning, this.showDetails, this.maxToolOutputLines, history,
-    )
+    const { items, activeActivityKey } = this.projection
     this.animatedTitle = undefined
     const activeTextBlocks = new Set<string>()
     const activePromptBlocks = new Set<string>()
@@ -379,7 +331,7 @@ export class TranscriptComponent implements Component {
   }
 
   private isActivityExpanded(activity: TranscriptActivityGroup): boolean {
-    return this.disclosure.activityExpanded(activity.items.map(item => item.key), this.showDetails)
+    return this.disclosure.activityExpanded(activity.items.map(item => item.key), this.projection.showDetails)
   }
 
   private renderPromptBlock(item: TranscriptPromptItem, width: number): string[] {
@@ -509,7 +461,7 @@ export class TranscriptComponent implements Component {
   }
 
   private isChildExpanded(key: string): boolean {
-    return this.disclosure.expanded(key, this.showDetails)
+    return this.disclosure.expanded(key, this.projection.showDetails)
   }
 
   private renderDiffBlock(diff: TranscriptDiffItem, width: number): string[] {
@@ -712,11 +664,6 @@ export class TranscriptComponent implements Component {
     else if (delta < 0) this.pausedThinking.add(key)
     this.invalidate()
     return true
-  }
-
-  private invalidateContent(): void {
-    this.projection = undefined
-    this.invalidate()
   }
 
   private pruneBlockCache<T>(cache: Map<string, T>, active: ReadonlySet<string>): void {

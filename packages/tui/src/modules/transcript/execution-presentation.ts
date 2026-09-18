@@ -42,10 +42,6 @@ export class ExecutionDisclosureState {
   }
 
   clearOverrides(): void {
-    this.clear()
-  }
-
-  clear(): void {
     this.entries.clear()
     this.activityEntries.clear()
   }

@@ -509,12 +509,21 @@ component references while the Session-owned implementations are replaced.
   正式内容切断该组时立即停止，不等待整个 Turn 结束；Notice、错误提示、排队与本地待提交提示
   不改变正文活动组的归属。历史组静止，具备最终耗时时显示耗时。
   `modules/transcript/model.ts` 将普通工具、Vision 预处理与持久结果统一转换为工具项，
-  进入同一次 Activity 分组与活动选择，投影统一返回内容列表与活动组标识。
-  排队与本地待提交 Prompt 标为临时展示项，不参与内容尾部的判定；会话提示在活动选择后追加。
+  进入同一次 Activity 分组与活动选择。排队、本地待提交 Prompt、Notice 与临时错误提示
+  统一适配为内部 `supplement` 项：保留独立显示位置，但不关闭内容活动组；分组过程直接确定
+  当前候选组，不再从最终列表反向猜测或依赖提示追加时机。
   执行统一沿已知父节点判断是否结束，无父节点时使用自身状态，不设置工具种类的动画优先级。
   `modules/transcript/activity-presentation.ts` 集中拥有摘要与扫光样式；
   theme 提供调色板，view 负责排版、命中位置与动画启用；仅在活动组启用颜色时传入动画帧时间，
   摘要绘制不重复判断动画资格，process 管理动画时钟。
+- `TranscriptModel.project(snapshot, showDetails)` 是会话内统一内容投影入口，返回只读的
+  `items`、`activeActivityKey`、`showDetails`；与展示无关的快照更新复用同一结果对象。
+  模型拥有历史投影、工具正文解析缓存及其失效判断；view 只消费投影，拥有 Markdown、Prompt、
+  Diff 渲染缓存、交互状态与命中位置，不接收原始 Session 快照。
+  process 在 render 时取得当前投影，流式快照通知只更新异步文件信息，不逐事件重建内容。
+  全局详情选项由 process 持有并随投影传递；view 仅在选项变化时清除手动展开覆盖。
+  每个 Session epoch 创建新的 model/view/process，交互状态随旧 scope 退役，不在视图中维护
+  第二套会话切换判断。
 - Layout 报告裁剪后的可见行范围，Transcript 仅在活动标题可见时请求 32ms 动画帧，
   Session scope 负责释放时钟；普通内容更新保留已排定的下一帧，不反复推迟时钟。动画仅更新
   缓存中的标题行，不重建内容投影、Markdown、工具详情或点击几何。关闭颜色时静态显示，
@@ -702,7 +711,7 @@ component references while the Session-owned implementations are replaced.
   can add attachment references without creating another Prompt or Rewind point.
   Durable Vision evidence names its owning `promptId`; projections never infer
   ownership from the nearest or latest Prompt.
-- `buildTrajectoryRecords` and `buildTranscriptProjection` join presentation payloads
+- `buildTrajectoryRecords` and `TranscriptModel.project` join presentation payloads
   to resolved execution nodes without re-pairing execution events or importing
   each other's models.
   `TranscriptComponent` paints and interacts with those items, while

@@ -4,7 +4,7 @@ import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import { LifecycleScope } from '../../../src/runtime/lifecycle/scope.ts'
 import { SessionRuntime } from '../../../src/runtime/session/runtime.ts'
 import { stepExecutionKey } from '../../../src/runtime/execution/projection/index.ts'
-import { buildTranscriptProjection } from '../../../src/modules/transcript/model.ts'
+import { TranscriptModel } from '../../../src/modules/transcript/model.ts'
 
 const attemptId = LlmAttemptId('attempt')
 const page = { events: [], hasMore: false }
@@ -42,7 +42,7 @@ describe('Session assistant presentation', () => {
     value.acceptAssistantFrame({ type: 'end', attemptId, revision: 5, index: 2,
       outcome: { kind: 'committed', eventType: 'assistant/message', seq: event.seq } })
     expect(value.current.assistant).toBeUndefined()
-    expect(buildTranscriptProjection(value.current, true, false, 8).items.filter(item => item.kind === 'text'))
+    expect(new TranscriptModel(true, 8).project(value.current, false).items.filter(item => item.kind === 'text'))
       .toEqual([{ kind: 'text', key: 'assistant:1:1:text', body: 'hello world', markdown: true }])
     await value.dispose()
   })
