@@ -227,7 +227,7 @@ afterEach(() => {
 })
 
 describe('createApplication integration', () => {
-  it('copies the latest completed assistant text as Markdown without thoughts, tools, or live output', async () => {
+  it('copies the latest completed assistant text as Markdown without thoughts, tools, or partial output', async () => {
     const clipboardText = vi.fn(async () => {})
     const app = application(undefined, undefined, undefined, undefined, { clipboardText })
     const reply = '# Answer\n\n```ts\nconst n = 1\n```'
@@ -235,6 +235,7 @@ describe('createApplication integration', () => {
       { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'text', text: 'Older reply' }] } } } },
       { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'reasoning', text: 'Private thought' }, { type: 'text', text: reply }, { type: 'text', text: 'Done.' }] } } } },
       { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'reasoning', text: 'More thought' }] } } } },
+      { event: { type: 'assistant/message', surfaceOp: 'append', data: { interrupted: true, message: { content: [{ type: 'text', text: 'Interrupted reply' }] } } } },
       { event: { type: 'assistant/message', surfaceOp: 'replace', data: { message: { content: [{ type: 'text', text: 'Compaction summary' }] } } } },
       { event: { type: 'tool/result', data: { message: { content: [{ type: 'text', text: 'Tool output' }] } } } },
     ] as unknown as HistoryEntry[]

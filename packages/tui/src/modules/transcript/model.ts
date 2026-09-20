@@ -131,11 +131,12 @@ function reasoningText(content: readonly { type: string; text?: string }[]): str
     .join('\n')
 }
 
-/** Latest settled, visible assistant reply, preserving its original Markdown. */
+/** Latest completed, visible assistant reply, preserving its original Markdown. */
 export function latestAssistantText(entries: readonly HistoryEntry[]): string | undefined {
   for (let index = entries.length - 1; index >= 0; index--) {
     const event = entries[index]!.event
     if (event.type !== 'assistant/message' || event.surfaceOp !== 'append') continue
+    if (event.data.interrupted) continue
     const text = messageText(event.data.message.content, false)
     if (text.trim() !== '') return text
   }
