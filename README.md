@@ -225,16 +225,17 @@ release transaction from an authenticated development machine:
 pnpm release
 ```
 
-The workflow accepts no version input and performs no version mutation. It
-requires successful CI for the exact source commit, builds one tarball, records
-its source and SHA-256 in a receipt, then performs one strict fresh install and
-real 80x24 PTY startup check. Separate least-privilege jobs tag that exact
-commit, publish the retained tarball through Trusted Publishing (OIDC), and
-attach the same bytes to one GitHub Release. Retried downstream jobs reuse the
-accepted candidate and reconcile only identical tag and artifact state, so a
-partial external failure cannot silently replace a release. Routine Linux and
-macOS CI owns the full
-`pnpm check`; release acceptance does not duplicate its lint, typecheck, or test
-passes. Node, pnpm, npm, the public package, and the DeepSeek runtime train each
-have one repository-owned version source. Local npm credentials and repository
-`NPM_TOKEN` secrets are not used.
+发布工作流不接受版本输入，也不修改版本号。它要求准确的源码提交已通过 CI，
+只构建一份 tarball，记录源码 SHA 和产物 SHA-256，并执行全新安装及真实
+80×24 PTY 启动验证。各 job 按最小权限分别创建标签、通过 Trusted Publishing
+（OIDC）发布 npm 包，以及将同一份 tarball 附加到 GitHub Release。
+
+正常流程以 `npm publish` 和 GitHub Release 创建/上传命令的成功结果为准，
+不在发布后轮询 npm 或重新下载产物；npm 接受发布后，包仍可能需要几分钟才可下载。
+发布失败时使用 Actions 的 **Re-run failed jobs** 复用已验收的候选包。仅在重跑中，
+npm 步骤先查询一次对应版本：已存在则校验产物一致性并继续，否则尝试发布。
+既有标签或产物冲突会失败，不覆盖已发布内容；重新触发同版本的工作流不等同于重跑。
+
+Linux/macOS CI 负责完整的 `pnpm check`，发布验收不重复 lint、类型检查和单元测试。
+Node、pnpm、npm、公开包版本及 DeepSeek runtime train 各自只有一个仓库内版本来源。
+发布不使用本地 npm 凭据或仓库 `NPM_TOKEN` secret。

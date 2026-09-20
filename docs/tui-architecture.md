@@ -237,18 +237,23 @@ the installed TUI in a real 80x24 PTY, and writes one receipt containing the
 source SHA, package and runtime identities, toolchain versions, artifact
 SHA-256, and size. It does not repeat lint, typecheck, or unit tests.
 
-The retained tarball and receipt cross the release jobs as one immutable
-artifact. Separate jobs use only their required permissions: candidate
-acceptance is read-only, the tag job writes the Git ref, the npm job receives
-OIDC, and the GitHub Release job writes release assets. Tag creation,
-npm publication, and GitHub asset creation can be retried only when existing
-external state resolves to the same source or digest. A release therefore
-maintains the identity `github.sha = peeled tag SHA = receipt source SHA`, while
-npm and GitHub receive byte-identical archives. Release jobs do not use a
-dependency cache or rebuild the candidate after acceptance. npm read-side
-visibility is an explicit external consistency boundary: after a publish
-attempt, the workflow waits at most 60 seconds for that exact version to become
-readable, then compares the registry tarball with the accepted candidate.
+已验收的 tarball 和 receipt 作为同一份不可变产物在发布 job 间传递。
+各 job 仅使用所需权限：候选验收只读，标签 job 写入 Git ref，npm job 使用 OIDC，
+GitHub Release job 写入发布资产。发布保持
+`github.sha = peeled tag SHA = receipt source SHA`，npm 和 GitHub 使用同一份候选包。
+只允许从 `main` 触发，并要求触发时的 `github.sha` 已通过 CI；后续 `main` 推进
+不改变该次发布的源码身份，也不使已验收的候选包失效。
+发布 job 不使用依赖缓存，也不在验收后重新构建候选包。
+
+正常发布以 `npm publish`、GitHub Release 创建/上传命令的结果为准；发布前仍校验
+候选包的源码身份与摘要，发布后不轮询 npm 可见性或重新下载产物。npm 接受发布与
+registry 可下载是不同阶段，工作流成功不承诺包已立即可下载。
+
+通过 Actions 的 **Re-run failed jobs** 恢复部分成功的发布时，复用原候选包。
+仅当 `github.run_attempt > 1`，npm 步骤先查询一次对应版本：可见时下载并核对
+SHA-256，相同则跳过重复发布，不同则失败；查询未取得有效地址时尝试 `npm publish`，
+由该命令决定结果，不等待或吞掉发布错误。新触发的同版本工作流不视为恢复重跑。
+标签和 GitHub Release 的恢复继续要求既有源码或产物摘要一致，不覆盖冲突状态。
 
 ## Invariants
 

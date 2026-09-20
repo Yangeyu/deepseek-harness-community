@@ -80,7 +80,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 0
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-candidate-${{ github.sha }}
@@ -94,12 +93,10 @@ jobs:
           receipt_version=$(jq -er '.package.version' artifacts/release-receipt.json)
           [[ "$receipt_sha" == "$GITHUB_SHA" ]]
           [[ "$receipt_version" == "$VERSION" ]]
-          main_sha=$(git ls-remote origin refs/heads/main | cut -f1)
-          [[ "$main_sha" == "$GITHUB_SHA" ]]
 
           tag="v${VERSION}"
           if git ls-remote --exit-code origin "refs/tags/${tag}" >/dev/null 2>&1; then
-            git fetch origin "refs/tags/${tag}:refs/tags/${tag}"
+            git fetch --depth=1 --no-tags origin "refs/tags/${tag}:refs/tags/${tag}"
             tag_sha=$(git rev-list -n 1 "$tag")
             [[ "$tag_sha" == "$GITHUB_SHA" ]]
           else
@@ -133,43 +130,35 @@ jobs:
         run: |
           npm install --global "npm@${NPM_VERSION}" --no-audit --no-fund
           [[ "$(npm --version)" == "$NPM_VERSION" ]]
-      - name: Publish or reconcile the verified npm artifact
+      - name: Publish the verified npm artifact
+        env:
+          RELEASE_ATTEMPT: ${{ github.run_attempt }}
         shell: bash
         run: |
           archive=$(jq -er '.artifact.file' artifacts/release-receipt.json)
           expected_sha=$(jq -er '.artifact.sha256' artifacts/release-receipt.json)
-          package_name=$(jq -er '.package.name' artifacts/release-receipt.json)
-          package_version=$(jq -er '.package.version' artifacts/release-receipt.json)
           [[ "$(jq -er '.source.gitSha' artifacts/release-receipt.json)" == "$GITHUB_SHA" ]]
           [[ "$(sha256sum "artifacts/${archive}" | cut -d ' ' -f1)" == "$expected_sha" ]]
 
-          set +e
-          npm publish "./artifacts/${archive}" --access public
-          publish_status=$?
-          set -e
-
-          registry_url=''
-          for delay in 0 2 4 8 16 30; do
-            if [[ "$delay" -gt 0 ]]; then sleep "$delay"; fi
-            if registry_url=$(npm view "${package_name}@${package_version}" dist.tarball --json 2>/dev/null \
+          # A rerun may resume after npm accepted the candidate but a later step failed.
+          if [[ "$RELEASE_ATTEMPT" -gt 1 ]]; then
+            package_name=$(jq -er '.package.name' artifacts/release-receipt.json)
+            package_version=$(jq -er '.package.version' artifacts/release-receipt.json)
+            if registry_url=$(npm view "${package_name}@${package_version}" dist.tarball --json \
               | jq -er 'select(type == "string") | select(startswith("https://"))'); then
-              break
+              curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+                "$registry_url" --output "$RUNNER_TEMP/registry.tgz"
+              registry_sha=$(sha256sum "$RUNNER_TEMP/registry.tgz" | cut -d ' ' -f1)
+              if [[ "$registry_sha" != "$expected_sha" ]]; then
+                echo "npm artifact digest ${registry_sha} does not match candidate ${expected_sha}" >&2
+                exit 1
+              fi
+              echo "npm already contains the verified candidate; resuming release"
+              exit 0
             fi
-          done
-          if [[ -z "$registry_url" ]]; then
-            echo "npm registry did not expose ${package_name}@${package_version} within 60 seconds" >&2
-            exit 1
           fi
-          curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
-            "$registry_url" --output "$RUNNER_TEMP/registry.tgz"
-          registry_sha=$(sha256sum "$RUNNER_TEMP/registry.tgz" | cut -d ' ' -f1)
-          if [[ "$registry_sha" != "$expected_sha" ]]; then
-            echo "npm artifact digest ${registry_sha} does not match candidate ${expected_sha}" >&2
-            exit 1
-          fi
-          if [[ "$publish_status" -ne 0 ]]; then
-            echo "npm publish returned ${publish_status}, but the registry already contains the exact candidate"
-          fi
+
+          npm publish "./artifacts/${archive}" --access public
 
   github-release:
     needs: [candidate, publish-npm]
@@ -196,19 +185,15 @@ jobs:
           [[ "$(sha256sum "artifacts/${archive}" | cut -d ' ' -f1)" == "$expected_sha" ]]
           tag="v${VERSION}"
 
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" "artifacts/${archive}" --verify-tag --generate-notes --title "$tag"
-          else
-            asset_digest=$(gh release view "$tag" --json assets \
-              | jq -r --arg archive "$archive" '.assets[] | select(.name == $archive) | .digest')
+          if release=$(gh release view "$tag" --json assets); then
+            asset_digest=$(jq -r --arg archive "$archive" \
+              '.assets[] | select(.name == $archive) | .digest' <<< "$release")
             if [[ -z "$asset_digest" ]]; then
               gh release upload "$tag" "artifacts/${archive}"
             elif [[ "$asset_digest" != "sha256:${expected_sha}" ]]; then
               echo "GitHub Release asset ${asset_digest} does not match candidate sha256:${expected_sha}" >&2
               exit 1
             fi
+          else
+            gh release create "$tag" "artifacts/${archive}" --verify-tag --generate-notes --title "$tag"
           fi
-
-          final_digest=$(gh release view "$tag" --json assets \
-            | jq -r --arg archive "$archive" '.assets[] | select(.name == $archive) | .digest')
-          [[ "$final_digest" == "sha256:${expected_sha}" ]]
