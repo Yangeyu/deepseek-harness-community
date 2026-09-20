@@ -898,8 +898,11 @@ history rather than competing with this canonical contract.
   验证、持久化 seed 和 setup 后缀，再发布 Session/Agent。首次观察新分支时旧队列
   已清除，重新载入也不会复活；不删改历史事件，不做发布后清队列或界面隐藏补偿。
 - 模型绑定不复制官方 Controller 的私有实现，也不另装一套 `installModelSelection`。
-  rewind 分支仍通过官方 Controller 的 `prompt`/`selectModel` 驱动；它在第一次唤醒
-  前恢复 pending selection、request header 或默认模型，并安装自己的唯一绑定。
+  `SessionManager.rewind` 在创建分支前捕获当前有效的 provider、model 与 reasoningEffort；
+  回退到开头和中间轮次统一在打开目标会话前通过官方 Controller 的 `selectModel`
+  写入新会话自己的选择事件。历史请求配置保留原样，后续请求沿用回退前的选择，
+  重新加载通过同一模型投影恢复。Controller 独占模型校验、持久化与运行时绑定。
+  应用模型失败不打开目标会话，错误进入现有 Rewind 补偿路径；已创建的持久分支可能保留。
   setup 只做组合，不驱动 Agent；任意插件绕开 Controller 提前驱动不属于此入口契约。
 - 创建/setup 失败不向 TUI 返回可打开分支，已有 RewindTransaction 补偿文件阶段。
   原子保证针对继承 inbox 的初始化，不扩大为所有 Host 资源的总事务：工作区关联

@@ -112,8 +112,6 @@ class FakeSessionTransport implements SessionTransport {
   readonly projections = new Map<string, SessionProjectionBaseline>()
   readonly promptRequests: Parameters<SessionTransport['prompt']>[0][] = []
   readonly selectionRequests: Array<{ sessionId: SessionId; selection: ModelSelection }> = []
-  readonly createRequests: Parameters<SessionTransport['createSession']>[0][] = []
-  readonly forkRequests: Parameters<SessionTransport['forkSession']>[0][] = []
   readonly pageRequests: Parameters<SessionTransport['page']>[0][] = []
   readonly cancelRequests: SessionId[] = []
   readonly summaries: SessionSummary[] = []
@@ -141,12 +139,10 @@ class FakeSessionTransport implements SessionTransport {
   }
 
   createSession(request: Parameters<SessionTransport['createSession']>[0]): Promise<{ readonly sessionId: SessionId }> {
-    this.createRequests.push(request)
     return Promise.resolve({ sessionId: request.sessionId ?? sessionId(`session-${String(++this.created)}`) })
   }
 
-  forkSession(request: Parameters<SessionTransport['forkSession']>[0]): Promise<{ readonly sessionId: SessionId }> {
-    this.forkRequests.push(request)
+  forkSession(): Promise<{ readonly sessionId: SessionId }> {
     const forked = sessionId('session-forked')
     this.summaries.push({ sessionId: forked, updatedAt: Date.now(), running: false, blank: false, cwd: '/workspace' })
     return Promise.resolve({ sessionId: forked })
@@ -166,6 +162,9 @@ class FakeSessionTransport implements SessionTransport {
 
   selectModel(target: SessionId, selection: ModelSelection): Promise<void> {
     this.selectionRequests.push({ sessionId: target, selection })
+    this.projections.set(target, baseline(1, {
+      modelSelection: { lastUsed: null, next: selection },
+    }))
     return Promise.resolve()
   }
 
@@ -394,17 +393,25 @@ describe('SessionManager', () => {
     expect(events).toEqual(['questions', 'cancelled'])
   })
 
-  it('forks at a durable boundary without replaying terminal state', async () => {
-    const { manager, transport } = await startFixture()
-    const phases: string[] = []
+  it.each([
+    { point: 'the first turn', previousTurnEndSeq: undefined, target: 'session-2' },
+    { point: 'a later turn', previousTurnEndSeq: 9, target: 'session-forked' },
+  ])('preserves the current model when rewinding to $point', async ({ previousTurnEndSeq, target }) => {
+    const transport = new FakeSessionTransport()
+    const selection = { provider: 'selected-provider', model: 'selected-model', reasoningEffort: 'high' }
+    transport.projections.set('session-1', baseline(3, {
+      modelSelection: { lastUsed: transport.modelCatalogValue.default, next: selection },
+    }))
+    transport.summaries.push({ sessionId: sessionId(target), updatedAt: 0, running: false, blank: false })
+    const { manager } = await startFixture(transport)
 
-    await expect(manager.rewind({
-      sessionId: 'session-1', previousTurnEndSeq: 9,
-    }, phase => { phases.push(phase) })).resolves.toBe(sessionId('session-forked'))
+    await manager.rewind({
+      sessionId: 'session-1',
+      ...previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq },
+    })
 
-    expect(transport.forkRequests).toEqual([{ sessionId: sessionId('session-1'), atSeq: 9 }])
-    expect(phases).toEqual(['forking', 'opening'])
-    expect(manager.current.sessionId).toBe(sessionId('session-forked'))
+    expect(manager.current.sessionId).toBe(sessionId(target))
+    expect(selectedModel(manager.current.modelCatalog, manager.current.projections)).toEqual(selection)
   })
 
   it('routes Host status only to the matching active Session', async () => {

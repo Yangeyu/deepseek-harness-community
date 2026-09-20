@@ -206,28 +206,20 @@ export class SessionManager {
     await this.openSession(sessionId)
   }
 
-  /** Fork to the selected turn boundary, then open and return the replacement session. */
+  /** Restore conversation history while retaining the current model for subsequent requests. */
   async rewind(request: SessionForkRequest, onPhase?: (phase: 'forking' | 'opening') => void): Promise<SessionId> {
     const source = this.requireSession()
     if (String(source) !== request.sessionId) throw new Error('the active session changed before rewind')
+    const selection = selectedModel(this.current.modelCatalog, this.current.projections)
     onPhase?.('forking')
-    let target: SessionId
-    if (request.previousTurnEndSeq === undefined) {
-      const created = await this.transport.createSession({ cwd: this.current.cwd })
-      target = created.sessionId
-      const selection = selectedModel(this.current.modelCatalog, this.current.projections)
-      if (selection !== undefined) {
-        await this.transport.selectModel(target, {
-          provider: selection.provider,
-          model: selection.model,
-          ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+    const { sessionId: target } = request.previousTurnEndSeq === undefined
+      ? await this.transport.createSession({ cwd: this.current.cwd })
+      : await this.transport.forkSession({
+          sessionId: source,
+          atSeq: request.previousTurnEndSeq,
         })
-      }
-    } else {
-      target = (await this.transport.forkSession({
-        sessionId: source,
-        atSeq: request.previousTurnEndSeq,
-      })).sessionId
+    if (selection !== undefined) {
+      await this.transport.selectModel(target, selection)
     }
     onPhase?.('opening')
     await this.openSession(String(target))

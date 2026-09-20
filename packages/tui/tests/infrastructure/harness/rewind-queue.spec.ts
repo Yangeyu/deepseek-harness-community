@@ -265,6 +265,39 @@ describe('rewind fork inbox isolation', () => {
     }
   })
 
+  it('uses the current model on a historical branch and retains it after a cold reload', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-rewind-model-'))
+    let host: Awaited<ReturnType<typeof fixture>> | undefined
+    let reader: Awaited<ReturnType<typeof fixture>> | undefined
+    try {
+      host = await fixture(root)
+      await prompt(host, host.source.id, 'DISCARDED')
+      const selection = { provider: 'fixture', model: 'current', reasoningEffort: 'high' }
+      await host.transport.selectModel(host.source.id, selection)
+
+      const child = await host.transport.forkSession({ sessionId: host.source.id, atSeq: host.boundary.seq })
+      await host.transport.selectModel(child.sessionId, selection)
+      await prompt(host, child.sessionId, 'RETRY')
+
+      expect(host.configs.at(-1)).toMatchObject(selection)
+      expect(host.errors).toEqual([])
+      await host.ctx.fiber.dispose()
+
+      reader = await fixture()
+      const storage = new JsonlSessionPersistence(reader.ctx, { root })
+      await using handle = await storage.open(child.sessionId, 'read')
+      const loaded = await handle.read()
+      const restored = Session.fromRestore(
+        handle.id, loaded.events, handle.header, handle.inheritedEventCount, loaded.eventState,
+      )
+      expect(reader.ctx.sessionProjections.snapshot(restored).values.modelSelection?.next).toEqual(selection)
+    } finally {
+      await host?.ctx.fiber.dispose()
+      await reader?.ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('refuses a delegated source before creating a branch', async () => {
     const host = await fixture()
     try {
