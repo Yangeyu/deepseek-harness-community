@@ -228,22 +228,24 @@ accepts no bump input and never writes a generated release commit back to
 `main`. Git history and GitHub Releases are the release history, so private
 workspaces carry neither copied versions nor independent changelogs.
 
-Linux and macOS CI own source acceptance through `pnpm check`. A manually
-dispatched Release requires that CI to have succeeded for the exact
-`github.sha`, then builds one candidate archive from that commit. The
-`release:candidate` boundary inspects the package contents, installs the
-archive into an isolated global npm prefix, verifies `dscode --version`, starts
-the installed TUI in a real 80x24 PTY, and writes one receipt containing the
-source SHA, package and runtime identities, toolchain versions, artifact
-SHA-256, and size. It does not repeat lint, typecheck, or unit tests.
+版本 tag 的 push 是 Release 唯一入口。`vX.Y.Z` 必须与该提交的根
+`package.json#version` 一致，工作流不创建或移动 tag，也不修改版本号。
+发布来源固定为触发事件的 `github.sha`，不依赖后续分支状态或外部 CI 运行记录。
+
+Release 的顶层链路是 `checks → candidate → publish-npm → github-release`。
+`checks` 通过 `workflow_call` 复用同一提交内的 `ci.yml`，对 tag 对应提交执行
+Linux/macOS 的 `pnpm check`；只有双平台都成功，才进入候选验收和发布。
+main/PR 的日常 CI 仍独立触发，但发布无需等待人读取其结果或再次手动启动。
+
+`release:candidate` 检查包内容，在隔离的全局 npm prefix 全新安装，验证
+`dscode --version` 并在真实 80×24 PTY 启动 TUI；随后写入包含源码 SHA、包和
+runtime 身份、工具版本、产物 SHA-256 与大小的 receipt。候选验收不重复源码检查。
 
 已验收的 tarball 和 receipt 作为同一份不可变产物在发布 job 间传递。
-各 job 仅使用所需权限：候选验收只读，标签 job 写入 Git ref，npm job 使用 OIDC，
-GitHub Release job 写入发布资产。发布保持
-`github.sha = peeled tag SHA = receipt source SHA`，npm 和 GitHub 使用同一份候选包。
-只允许从 `main` 触发，并要求触发时的 `github.sha` 已通过 CI；后续 `main` 推进
-不改变该次发布的源码身份，也不使已验收的候选包失效。
-发布 job 不使用依赖缓存，也不在验收后重新构建候选包。
+各 job 仅使用所需权限：源码检查与候选验收只读，npm job 使用 OIDC，
+GitHub Release job 写入发布资产。触发 tag 对应的源码、检查的源码及 receipt
+源码身份保持一致，npm 和 GitHub 使用同一份候选包。候选构建与发布 job 不使用
+依赖缓存，也不在验收后重新构建候选包；复用的源码 CI 保持原有依赖缓存策略。
 
 正常发布以 `npm publish`、GitHub Release 创建/上传命令的结果为准；发布前仍校验
 候选包的源码身份与摘要，发布后不轮询 npm 可见性或重新下载产物。npm 接受发布与
@@ -252,8 +254,8 @@ registry 可下载是不同阶段，工作流成功不承诺包已立即可下�
 通过 Actions 的 **Re-run failed jobs** 恢复部分成功的发布时，复用原候选包。
 仅当 `github.run_attempt > 1`，npm 步骤先查询一次对应版本：可见时下载并核对
 SHA-256，相同则跳过重复发布，不同则失败；查询未取得有效地址时尝试 `npm publish`，
-由该命令决定结果，不等待或吞掉发布错误。新触发的同版本工作流不视为恢复重跑。
-标签和 GitHub Release 的恢复继续要求既有源码或产物摘要一致，不覆盖冲突状态。
+由该命令决定结果，不等待或吞掉发布错误。恢复使用原工作流的重跑，不移动或重新推送 tag。
+GitHub Release 的恢复继续要求既有产物摘要一致，不覆盖冲突状态。
 
 ## Invariants
 

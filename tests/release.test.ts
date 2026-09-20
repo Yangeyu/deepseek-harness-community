@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import { access, readFile } from 'node:fs/promises'
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'vitest'
 import { parse } from 'yaml'
 
@@ -24,6 +27,35 @@ test('pins one explicit Node, pnpm, and npm toolchain', async () => {
   assert.match(nodeVersion.trim(), /^\d+\.\d+\.\d+$/u)
   assert.match(root.packageManager ?? '', /^pnpm@\d+\.\d+\.\d+$/u)
   assert.match(root.devDependencies?.npm ?? '', /^\d+\.\d+\.\d+$/u)
+})
+
+test('accepts only a release tag matching the committed package version', async () => {
+  const manifest = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest
+  const workflow = parse(await readFile('.github/workflows/release.yml', 'utf8')) as {
+    jobs: { candidate: { steps: { id?: string; run?: string }[] } }
+  }
+  const script = workflow.jobs.candidate.steps.find(step => step.id === 'identity')?.run
+  assert.ok(script)
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-release-identity-'))
+  try {
+    for (const [ref, accepted] of [
+      [`refs/tags/v${manifest.version}`, true],
+      [`refs/tags/v${manifest.version}0`, false],
+      [`refs/tags/v${manifest.version}-rc.1`, false],
+      ['refs/heads/main', false],
+    ] as const) {
+      const result: SpawnSyncReturns<string> = spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', script], {
+        encoding: 'utf8',
+        timeout: 10_000,
+        env: { ...process.env, GITHUB_REF: ref, GITHUB_OUTPUT: join(directory, 'outputs') },
+      })
+      assert.equal(result.status, accepted ? 0 : 1, `${ref}: ${result.stderr}`)
+    }
+    const outputs = await readFile(join(directory, 'outputs'), 'utf8')
+    assert.ok(outputs.split('\n').includes(`version=${manifest.version}`))
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 const workspacePackageFiles = [

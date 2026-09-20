@@ -203,39 +203,32 @@ Every workspace manifest refers to `catalog:dsh`, so an upgrade never requires
 distributing the same version across package files. `pnpm pack` replaces the
 catalog protocol with the concrete version in the published root manifest.
 
-The public distribution version lives only in the root `package.json`. Private
-workspaces deliberately have no independent versions. Prepare a release by
-changing that one committed value, for example:
+公开版本号只存于根 `package.json`，私有 workspace 不维护独立版本。
+在已合入待发布变更的 `main` 分支、干净工作区执行：
 
 ```sh
-pnpm exec npm version patch --no-git-tag-version
-git add package.json
-git commit -m "chore: prepare vX.Y.Z"
-git push
+pnpm exec npm version patch -m "chore: release v%s"
+version=$(node --print "require('./package.json').version")
+git push --atomic origin main "refs/tags/v${version}"
 ```
 
-Use `minor` or `major` in place of `patch` when that is the intended semantic
-change. The version change is an ordinary reviewed source commit; the release
-workflow never writes back to `main`.
+第一条命令更新版本号并创建版本提交和 tag；需要时将 `patch` 换成 `minor` 或 `major`。
+推送 `vX.Y.Z` tag 后自动启动 Release，无需等待另一条 CI 后再手动触发发布。
+tag 必须与该提交的 `package.json` 版本一致；当前只发布稳定版本。
 
-After CI succeeds for that exact `origin/main` commit, trigger the remote
-release transaction from an authenticated development machine:
+Release 内依次完成 Linux/macOS 检查、版本身份与候选包验收、npm 发布及 GitHub Release
+创建。双平台检查复用 `ci.yml` 的 `workflow_call`，检查的就是 tag 对应提交；日常
+main/PR CI 继续独立自动运行，不是发布流程的人工前置条件。
 
-```sh
-pnpm release
-```
-
-发布工作流不接受版本输入，也不修改版本号。它要求准确的源码提交已通过 CI，
-只构建一份 tarball，记录源码 SHA 和产物 SHA-256，并执行全新安装及真实
-80×24 PTY 启动验证。各 job 按最小权限分别创建标签、通过 Trusted Publishing
-（OIDC）发布 npm 包，以及将同一份 tarball 附加到 GitHub Release。
+候选验收只打包一份 tarball，记录源码 SHA 和产物 SHA-256，并执行全新安装及真实
+80×24 PTY 启动验证。后续 job 按最小权限通过 Trusted Publishing（OIDC）发布 npm 包，
+将同一份 tarball 附加到已有 tag 的 GitHub Release。工作流不修改版本号，也不创建或移动 tag。
 
 正常流程以 `npm publish` 和 GitHub Release 创建/上传命令的成功结果为准，
 不在发布后轮询 npm 或重新下载产物；npm 接受发布后，包仍可能需要几分钟才可下载。
-发布失败时使用 Actions 的 **Re-run failed jobs** 复用已验收的候选包。仅在重跑中，
-npm 步骤先查询一次对应版本：已存在则校验产物一致性并继续，否则尝试发布。
-既有标签或产物冲突会失败，不覆盖已发布内容；重新触发同版本的工作流不等同于重跑。
+下游发布步骤失败时使用 Actions 的 **Re-run failed jobs** 复用已验收的候选包，
+不要移动或重新推送 tag。仅在重跑中，npm 步骤先查询一次对应版本：已存在则校验
+产物一致性并继续，否则尝试发布。既有产物冲突会失败，不覆盖已发布内容。
 
-Linux/macOS CI 负责完整的 `pnpm check`，发布验收不重复 lint、类型检查和单元测试。
 Node、pnpm、npm、公开包版本及 DeepSeek runtime train 各自只有一个仓库内版本来源。
 发布不使用本地 npm 凭据或仓库 `NPM_TOKEN` secret。

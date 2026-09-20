@@ -72,7 +72,6 @@
     "test": "vitest run tests/launcher.test.ts tests/release.test.ts && pnpm --filter './packages/*' run test",
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test",
     "dev": "pnpm run build && node bin/dscode-dev.js",
-    "release": "gh workflow run release.yml --ref main",
     "release:candidate": "node scripts/release-candidate.mjs",
     "start": "node bin/dscode.js"
   },
