@@ -324,7 +324,6 @@ export function createApplication(
     theme,
     visibleRows: () => terminal.rows,
     imageSubmissionBusy: () => composer.current.imageSubmissionBusy,
-    setTranscriptDetails: expanded => { transcript.setDetails(expanded) },
     invalidate: () => { invalidateTerminal() },
     scope: configurationScope,
     ...vision === undefined ? {} : { vision },
@@ -356,6 +355,10 @@ export function createApplication(
     commands,
     composer,
     transcript,
+    transcriptDetails: {
+      get current() { return configuration.details },
+      subscribe: (listener: () => void) => configuration.subscribeDetails(listener),
+    },
     surfaces,
     fileReferences: host.fileReferences,
     clipboardImage,

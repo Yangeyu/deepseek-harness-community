@@ -113,6 +113,18 @@ export class TranscriptModel {
   }
 }
 
+/** Compose content in order: normalize sources, group boundaries, then resolve activity liveness. */
+function buildTranscriptProjection(
+  state: Readonly<RuntimeSessionSnapshot>,
+  showReasoning: boolean,
+  showDetails: boolean,
+  history: readonly UngroupedTranscriptItem[],
+): TranscriptProjection {
+  const sources = collectTranscriptSources(state, showReasoning, history)
+  const { items, tail } = groupTranscriptActivity(sources)
+  return { items, activeActivityKey: activeActivityKey(tail, state.execution), showDetails }
+}
+
 function contentStepKey(turn: number, step: number): string {
   return `${turn}:${step}`
 }
@@ -265,12 +277,14 @@ type TranscriptSourceItem = UngroupedTranscriptItem | {
   item: TranscriptPromptItem | TranscriptTextItem
 }
 
-/** One pass owns both visible grouping and the current content activity boundary. */
-function groupTranscriptActivity(
-  items: readonly TranscriptSourceItem[],
-  execution: ExecutionSnapshot,
-  showDetails: boolean,
-): TranscriptProjection {
+interface GroupedTranscriptActivity {
+  readonly items: readonly TranscriptItem[]
+  /** Last activity not closed by content; supplementary rows never replace it. */
+  readonly tail: TranscriptActivityGroup | undefined
+}
+
+/** Group visible items and preserve the content boundary before supplements are unwrapped. */
+function groupTranscriptActivity(items: readonly TranscriptSourceItem[]): GroupedTranscriptActivity {
   const grouped: TranscriptItem[] = []
   let activity: TranscriptActivityItem[] = []
   let tail: TranscriptActivityGroup | undefined
@@ -302,7 +316,7 @@ function groupTranscriptActivity(
     }
   }
   flush()
-  return { items: grouped, activeActivityKey: activeActivityKey(tail, execution), showDetails }
+  return { items: grouped, tail }
 }
 
 /** Project durable history only; live output and pending work are composed separately. */
@@ -510,13 +524,12 @@ function activeActivityKey(tail: TranscriptActivityGroup | undefined, execution:
   }) ? tail.key : undefined
 }
 
-/** Normalize all sources before applying content boundaries and activity selection. */
-function buildTranscriptProjection(
+/** Adapt live output and temporary rows without letting display placement determine content boundaries. */
+function collectTranscriptSources(
   state: Readonly<RuntimeSessionSnapshot>,
   showReasoning: boolean,
-  showDetails: boolean,
   history: readonly UngroupedTranscriptItem[],
-): TranscriptProjection {
+): TranscriptSourceItem[] {
   const items: TranscriptSourceItem[] = [...history]
 
   if (state.assistant !== undefined) {
@@ -579,5 +592,5 @@ function buildTranscriptProjection(
   if (state.error !== undefined) {
     items.push({ kind: 'supplement', item: { kind: 'text', key: 'session:error', label: 'Error', tone: 'error', body: state.error } })
   }
-  return groupTranscriptActivity(items, state.execution, showDetails)
+  return items
 }

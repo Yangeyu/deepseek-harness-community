@@ -62,6 +62,33 @@ function hostPorts(): TuiHostPorts {
   }
 }
 
+function transcriptHostPorts(): TuiHostPorts {
+  const host = hostPorts()
+  let sessionNumber = 0
+  host.sessions.createSession = async () => ({ sessionId: `session-${++sessionNumber}` as SessionId })
+  host.sessions.modelCatalog = async () => ({ default: { provider: 'test', model: 'test' }, routableProviders: [], groups: [], failures: [] })
+  host.sessions.follow = async function*(sessionId, _maxMessages, signal) {
+    const events = [
+      { event: { type: 'tool/call', seq: 0, time: 1, data: {
+        turn: 1, step: 1, callId: 'search-1', name: 'search', arguments: '{"query":"render details"}',
+      } }, view: { for: 'call', view: { card: 'generic', title: 'Search project' } } },
+      { event: { type: 'tool/result', seq: 1, time: 2, surfaceOp: 'append', data: {
+        turn: 1, step: 1, message: {
+          id: 'result-1', role: 'user', source: { kind: 'tool', callId: 'search-1' },
+          content: [{ type: 'tool-result', toolCallId: 'search-1', content: [
+            { type: 'text', text: `Matches from ${sessionId}` },
+          ] }],
+        },
+      } } },
+    ] as unknown as HistoryEntry[]
+    yield { type: 'snapshot', cursor: 1, page: { events, hasMore: false } }
+    if (!signal.aborted) await new Promise<void>(resolve => {
+      signal.addEventListener('abort', () => { resolve() }, { once: true })
+    })
+  }
+  return host
+}
+
 function sendInput(internals: ApplicationAssembly, data: string): { consume?: boolean } | undefined {
   return internals.input.handle(decodeTerminalInput(data))
 }
@@ -158,6 +185,7 @@ function application(
   runtimeOverrides: Partial<TuiRuntime> = {},
   commandSource?: HostCommandSource,
   dependencies: TuiApplicationDependencies = {},
+  host: TuiHostPorts = hostPorts(),
 ): TestApplication {
   const runtime: TuiRuntime = {
     stdin: process.stdin,
@@ -167,7 +195,7 @@ function application(
     ...runtimeOverrides,
   }
   const assembly = createApplication(
-    hostPorts(),
+    host,
     resolveConfig({ cwd: '/workspace', color: false }),
     runtime,
     rewind,
@@ -674,6 +702,53 @@ describe('createApplication integration', () => {
     expect(handlePointer).toHaveBeenCalledWith(0, 'click')
     expect(internals.transcript.isTrailingBlock).toHaveBeenCalledWith(0)
     expect(internals.layout.preserveTranscriptViewport).not.toHaveBeenCalled()
+  })
+
+  it('clears manually expanded tool details when Ctrl+O is toggled twice before the next frame', async () => {
+    const app = application(undefined, undefined, undefined, undefined, {}, transcriptHostPorts())
+    await app.session.newSession()
+    const clickTitle = (title: string): void => {
+      const lines = app.tui.render(80).map(stripTerminalSequences)
+      const row = lines.findIndex(line => line.includes(title))
+      expect(row).toBeGreaterThanOrEqual(0)
+      sendInput(app, `\u001b[<0;1;${String(row + 1)}M`)
+      sendInput(app, `\u001b[<0;1;${String(row + 1)}m`)
+    }
+
+    expect(app.transcript.render(80).join('\n')).not.toContain('Matches from session-1')
+    clickTitle('Activity')
+    clickTitle('Search project')
+    expect(app.transcript.render(80).join('\n')).toContain('Matches from session-1')
+
+    // Neither a render nor an async boundary may hide the intermediate global change.
+    expect(sendInput(app, '\u000f')).toEqual({ consume: true })
+    expect(sendInput(app, '\u000f')).toEqual({ consume: true })
+
+    expect(app.configuration.details).toBe(false)
+    const collapsed = stripTerminalSequences(app.transcript.render(80).join('\n'))
+    expect(collapsed).toContain('› Activity')
+    expect(collapsed).not.toContain('Matches from session-1')
+    clickTitle('Activity')
+    const reopened = stripTerminalSequences(app.transcript.render(80).join('\n'))
+    expect(reopened).toContain('› • Search project')
+    expect(reopened).not.toContain('Matches from session-1')
+    await app.dispose()
+  })
+
+  it('keeps global details expanded when switching to another Session', async () => {
+    const app = application(undefined, undefined, undefined, undefined, {}, transcriptHostPorts())
+    await app.session.newSession()
+    app.configuration.setDetails(true)
+    expect(app.transcript.render(80).join('\n')).toContain('Matches from session-1')
+
+    await app.session.newSession()
+
+    expect(app.configuration.details).toBe(true)
+    const output = stripTerminalSequences(app.transcript.render(80).join('\n'))
+    expect(output).toContain('⌄ • Search project')
+    expect(output).toContain('Matches from session-2')
+    expect(output).not.toContain('Matches from session-1')
+    await app.dispose()
   })
 
   it('coalesces hover invalidations when the pointer enters or leaves a fold title', async () => {

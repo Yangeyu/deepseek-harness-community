@@ -9,6 +9,7 @@ import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
 import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
 import type { SessionEffectScope, SessionEffectScopeSource } from '../../runtime/session/effect-scope.ts'
 import { ScopedEffectRunner } from '../../runtime/dispatch/effect-runner.ts'
+import { AtomicSnapshotStore } from '../../runtime/dispatch/snapshot-store.ts'
 import { configurationSnapshot, modelDirectorySnapshot } from './model.ts'
 import type { ConfigurationSnapshot } from './model.ts'
 import type {
@@ -46,7 +47,6 @@ export interface ConfigurationProcessOptions {
   readonly theme: TuiTheme
   readonly visibleRows: () => number
   readonly imageSubmissionBusy: () => boolean
-  readonly setTranscriptDetails: (expanded: boolean) => void
   readonly invalidate: () => void
   readonly scope: LifecycleScope
   readonly vision?: VisionConfigurationPort
@@ -61,7 +61,7 @@ export class ConfigurationProcess {
   private webView: WebConfigView | undefined
   private visionStatus: VisionStatus | undefined
   private webStatus: CommunityWebStatus | undefined
-  private detailsExpanded = false
+  private readonly detailsState = new AtomicSnapshotStore(false)
 
   constructor(private readonly options: ConfigurationProcessOptions) {
     this.effects = new ScopedEffectRunner(options.scope, (error) => {
@@ -78,7 +78,12 @@ export class ConfigurationProcess {
   }
 
   get details(): boolean {
-    return this.detailsExpanded
+    return this.detailsState.current
+  }
+
+  /** Notify each actual change synchronously without coalescing; read the value from details. */
+  subscribeDetails(listener: () => void): () => void {
+    return this.detailsState.subscribe(listener)
   }
 
   get current(): Readonly<ConfigurationSnapshot> {
@@ -317,8 +322,7 @@ export class ConfigurationProcess {
   }
 
   setDetails(expanded: boolean): void {
-    this.detailsExpanded = expanded
-    this.options.setTranscriptDetails(expanded)
+    if (!this.detailsState.replace(expanded)) return
     this.refreshSurface()
     this.options.invalidate()
   }
@@ -327,7 +331,7 @@ export class ConfigurationProcess {
     return configurationSnapshot(
       state.modelCatalog,
       state.projections,
-      this.detailsExpanded,
+      this.details,
       this.visionStatus,
       this.options.web === undefined ? undefined : this.webStatus ?? null,
     )

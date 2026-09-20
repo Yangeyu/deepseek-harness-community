@@ -23,7 +23,7 @@ import type { GoalPort, GoalSessionSource } from '../modules/task/contracts.ts'
 import { TaskProcess } from '../modules/task/process.ts'
 import { TrajectoryProcess } from '../modules/trajectory/process.ts'
 import { TranscriptHost } from '../modules/transcript/host.ts'
-import { TranscriptProcess } from '../modules/transcript/process.ts'
+import { TranscriptProcess, type TranscriptDetailsPort } from '../modules/transcript/process.ts'
 import type { TuiTheme } from '../presentation/primitives/theme.ts'
 import type { SurfaceHost } from '../presentation/shell/surfaces/surface-host.ts'
 import type { TerminalCommandDirectory } from '../runtime/commands.ts'
@@ -40,6 +40,7 @@ export interface SessionFeatureSetOptions {
   readonly commands: TerminalCommandDirectory
   readonly composer: ComposerHost
   readonly transcript: TranscriptHost
+  readonly transcriptDetails: TranscriptDetailsPort
   readonly surfaces: SurfaceHost
   readonly fileReferences: FileReferenceSource
   readonly clipboardImage: ClipboardImageLoader
@@ -96,6 +97,7 @@ export function createSessionFeatureSet(
   })
   const transcript = new TranscriptProcess({
     session,
+    details: options.transcriptDetails,
     files: new NodeTextFileReader(),
     theme: options.theme,
     showReasoning: options.showReasoning,

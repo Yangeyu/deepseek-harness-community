@@ -518,12 +518,19 @@ component references while the Session-owned implementations are replaced.
   摘要绘制不重复判断动画资格，process 管理动画时钟。
 - `TranscriptModel.project(snapshot, showDetails)` 是会话内统一内容投影入口，返回只读的
   `items`、`activeActivityKey`、`showDetails`；与展示无关的快照更新复用同一结果对象。
+  `buildTranscriptProjection` 依次归一化来源、分组、解析活性并组装投影；同文件内的
+  `collectTranscriptSources` 保留 supplement 语义，`groupTranscriptActivity` 只返回可见列表与
+  候选尾组，不接收展示选项或执行快照、不判断活性，也不从解包后的列表反推内容边界。
   模型拥有历史投影、工具正文解析缓存及其失效判断；view 只消费投影，拥有 Markdown、Prompt、
   Diff 渲染缓存、交互状态与命中位置，不接收原始 Session 快照。
   process 在 render 时取得当前投影，流式快照通知只更新异步文件信息，不逐事件重建内容。
-  全局详情选项由 process 持有并随投影传递；view 仅在选项变化时清除手动展开覆盖。
-  每个 Session epoch 创建新的 model/view/process，交互状态随旧 scope 退役，不在视图中维护
-  第二套会话切换判断。
+- 全局详情配置的唯一写入者是 Configuration。应用装配将当前值与同步变化订阅作为只读端口传给
+  TranscriptProcess，Host/Process 不保存可变副本、不转发配置赋值；新 Session 直接读取现值。
+  每次真实配置变化都同步清除 view 的 Activity/子项展开覆盖和思考滚动暂停，再请求渲染。
+  `setProjection` 只更新展示内容，不推断交互动作；同一帧内开关两次也不会遗漏覆盖清理。
+  指针动作使用最后渲染的命中位置和当前配置默认值，不依赖上一帧的配置值。
+  每个 Session epoch 创建新的 model/view/process，交互状态及配置订阅随旧 scope 退役；
+  切换中仍存活的旧实例继续接收配置变化，失败回滚无需补偿同步，也不在视图中维护第二套会话判断。
 - Layout 报告裁剪后的可见行范围，Transcript 仅在活动标题可见时请求 32ms 动画帧，
   Session scope 负责释放时钟；普通内容更新保留已排定的下一帧，不反复推迟时钟。动画仅更新
   缓存中的标题行，不重建内容投影、Markdown、工具详情或点击几何。关闭颜色时静态显示，

@@ -10,6 +10,7 @@ import { TranscriptComponent } from '../../../src/modules/transcript/view.ts'
 import { ComposerAnchoredLayout } from '../../../src/presentation/shell/layout/composer-layout.ts'
 import { TranscriptProcess } from '../../../src/modules/transcript/process.ts'
 import { LifecycleScope } from '../../../src/runtime/lifecycle/scope.ts'
+import { AtomicSnapshotStore } from '../../../src/runtime/dispatch/snapshot-store.ts'
 import { buildExecutionSnapshot } from '../../../src/runtime/execution/projection/index.ts'
 
 describe('TranscriptComponent', () => {
@@ -90,12 +91,12 @@ describe('TranscriptComponent', () => {
     expect(stripTerminalSequences(retry)).toContain('Activity · 2 tools · 1 failed')
     expect(transcript.animationLine).toBe(titleRow)
 
-    expect(transcript.handlePointer(titleRow, 'move')).toBe(true)
+    expect(transcript.handlePointer(titleRow, 'move', true)).toBe(true)
     const hovered = [...transcript.render(80)]
     expect(transcript.animationLine).toBeUndefined()
     now += 300
     expect(transcript.render(80)).toEqual(hovered)
-    transcript.handlePointer(titleRow + 1, 'move')
+    transcript.handlePointer(titleRow + 1, 'move', true)
     transcript.render(80)
     expect(transcript.animationLine).toBeDefined()
 
@@ -157,6 +158,7 @@ describe('TranscriptComponent', () => {
           get current() { return current },
           subscribe(listener) { publish = listener; return () => {} },
         },
+        details: new AtomicSnapshotStore(false),
         files: { readText: async () => '' },
         theme, showReasoning: true, maxToolOutputLines: 8, thinkingMaxLines: 8, invalidate, scope,
       })
@@ -309,7 +311,7 @@ describe('TranscriptComponent', () => {
     expect(collapsed).not.toContain('Thinking…')
     expect(collapsed).toContain('streaming answer')
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › • Thought')
   })
 
@@ -454,19 +456,19 @@ describe('TranscriptComponent', () => {
     expect(collapsed).not.toContain('thought 1')
     expect(collapsed).toContain('final answer')
 
-    expect(transcript.handlePointer(0, 'move')).toBe(true)
+    expect(transcript.handlePointer(0, 'move', false)).toBe(true)
     const hovered = transcript.render(80)
     expect(hovered.join('\n')).toContain('\u001b[1m\u001b[36m› Activity · 1 thought\u001b[39m\u001b[22m')
-    expect(transcript.handlePointer(0, 'move')).toBe(false)
+    expect(transcript.handlePointer(0, 'move', false)).toBe(false)
     expect(transcript.render(80)).toBe(hovered)
-    expect(transcript.handlePointer(2, 'move')).toBe(true)
+    expect(transcript.handlePointer(2, 'move', false)).toBe(true)
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     const activity = transcript.render(80).join('\n')
     expect(stripTerminalSequences(activity)).toContain('└─ › • Thought')
     expect(activity).not.toContain('thought 1')
 
-    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'click', false)).toBe(true)
     const expanded = transcript.render(80).join('\n')
     expect(stripTerminalSequences(expanded)).toContain('⌄ • Thought')
     expect(expanded).toContain('thought 1')
@@ -474,13 +476,13 @@ describe('TranscriptComponent', () => {
     expect(expanded).not.toContain('thought 8')
     expect(expanded.split('\n').filter(line => line.includes('│'))).toHaveLength(3)
 
-    expect(transcript.handlePointer(2, 'wheel-down')).toBe(true)
+    expect(transcript.handlePointer(2, 'wheel-down', false)).toBe(true)
     const scrolled = transcript.render(80).join('\n')
     expect(scrolled).toContain('thought 2')
     expect(scrolled).toContain('thought 4')
     expect(scrolled).not.toContain('thought 5')
 
-    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'click', false)).toBe(true)
     expect(transcript.render(80).join('\n')).not.toContain('thought 5')
   })
 
@@ -498,7 +500,7 @@ describe('TranscriptComponent', () => {
     const transcript = new TranscriptComponent(model.project(state([tool], true), false), createTheme(false))
 
     transcript.render(80)
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › ◦ Read project')
 
     transcript.setProjection(model.project(state([
@@ -538,7 +540,7 @@ describe('TranscriptComponent', () => {
     expect(transcript.isTrailingBlock(0)).toBe(true)
     expect(transcript.isTrailingBlock(1)).toBe(false)
     // Disclosure clicks invalidate the render cache but keep the last block geometry.
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     expect(transcript.isTrailingBlock(0)).toBe(true)
 
     transcript.setProjection(model.project(state([
@@ -571,14 +573,14 @@ describe('TranscriptComponent', () => {
     const transcript = new TranscriptComponent(model.project(live(5), false), createTheme(false), 3)
 
     expect(transcript.render(80).join('\n')).toContain('› Activity · 1 thought')
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     expect(stripTerminalSequences(transcript.render(80).join('\n'))).toContain('└─ › ◦ Thinking…')
-    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'click', false)).toBe(true)
     const following = transcript.render(80).join('\n')
     expect(following).toContain('stream 5')
     expect(following).not.toContain('stream 1')
 
-    expect(transcript.handlePointer(2, 'wheel-up')).toBe(true)
+    expect(transcript.handlePointer(2, 'wheel-up', false)).toBe(true)
     transcript.setProjection(model.project(live(6), false))
     const paused = transcript.render(80).join('\n')
     expect(paused).toContain('stream 2')
@@ -618,7 +620,7 @@ describe('TranscriptComponent', () => {
     expect(collapsed).toContain('› Activity · 1 thought · 1 tool · 250ms · 2 interrupted')
     expect(collapsed).toContain('The response reached the model output limit.')
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(expanded).toContain('├─ › ! Thought interrupted')
     expect(expanded).toContain('└─ › ! Search project')
@@ -649,13 +651,13 @@ describe('TranscriptComponent', () => {
     expect(collapsed).not.toContain('diagnostic reasoning')
     expect(collapsed).toContain('model disconnected')
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     const activityExpanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(activityExpanded).toContain('⌄ Activity · 1 thought · 300ms · 1 interrupted')
     expect(activityExpanded).toContain('└─ › ! Thought interrupted')
     expect(activityExpanded).not.toContain('diagnostic reasoning')
 
-    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'click', false)).toBe(true)
     const thoughtExpanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(thoughtExpanded).toContain('└─ ⌄ ! Thought interrupted')
     expect(thoughtExpanded).toContain('diagnostic reasoning')
@@ -715,8 +717,10 @@ describe('TranscriptComponent', () => {
       }),
     ])
     const scope = new LifecycleScope('transcript-details')
+    const details = new AtomicSnapshotStore(false)
     const transcript = new TranscriptProcess({
       session: { current: snapshot, subscribe: () => () => {} },
+      details,
       files: { readText: async () => '' }, theme: createTheme(false),
       showReasoning: true, maxToolOutputLines: 8, thinkingMaxLines: 8,
       invalidate: () => {}, scope,
@@ -726,14 +730,14 @@ describe('TranscriptComponent', () => {
       transcript.handlePointer(0, 'click')
       transcript.render(80)
       transcript.handlePointer(0, 'click')
-      transcript.setDetails(true)
+      details.replace(true)
       const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
       expect(expanded).toContain('⌄ • Thought')
       expect(expanded).toContain('reasoning details')
       expect(expanded).toContain('⌄ • Read src/app.ts')
       expect(expanded).toContain('tool details')
 
-      transcript.setDetails(false)
+      details.replace(false)
       const collapsed = transcript.render(80).join('\n')
       expect(collapsed).not.toContain('reasoning details')
       expect(collapsed).not.toContain('tool details')
@@ -995,13 +999,13 @@ describe('TranscriptComponent', () => {
     expect(collapsed).not.toContain('Inspect dispatch tests')
     expect(collapsed).not.toContain('python3')
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     const activity = stripTerminalSequences(transcript.render(120).join('\n'))
     expect(activity).toContain('⌄ Activity · 1 tool')
     expect(activity).toContain(`└─ › ◦ ${operation}`)
     expect(activity).not.toContain('python3')
 
-    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'click', false)).toBe(true)
     const details = stripTerminalSequences(transcript.render(120).join('\n'))
     expect(details).toContain('Arguments')
     expect(details).toContain("python3 - <<'PYEOF'")
@@ -1060,14 +1064,14 @@ describe('TranscriptComponent', () => {
     expect(collapsed).not.toContain('render details')
     expect(collapsed).not.toContain('3 matches')
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     const activityOutput = transcript.render(80).join('\n')
     const activity = stripTerminalSequences(activityOutput)
     expect(activity).toContain('└─ › • Search project')
     expect(activityOutput).toContain('\u001b[1m\u001b[32m•\u001b[39m\u001b[22m')
     expect(activityOutput).toContain('\u001b[38;2;125;211;252mSearch project\u001b[39m')
 
-    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'click', false)).toBe(true)
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(expanded).toContain('⌄ • Search project')
     expect(expanded).toContain('Arguments')
@@ -1075,7 +1079,7 @@ describe('TranscriptComponent', () => {
     expect(expanded).toContain('Result')
     expect(expanded).toContain('3 matches')
 
-    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'click', false)).toBe(true)
     expect(transcript.render(80).join('\n')).not.toContain('3 matches')
     expect(transcript.render(32).every(line => visibleWidth(line) === 32)).toBe(true)
   })
@@ -1135,14 +1139,14 @@ describe('TranscriptComponent', () => {
     expect(collapsed).not.toContain('1 test failed')
     expect(collapsed).not.toContain('[exit 1]')
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     const activity = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(activity).toContain('⌄ Activity · 1 tool · 250ms · 1 failed')
     expect(activity).toContain('└─ › × Bash · Run tests')
     expect(activity).not.toContain('pnpm test')
     expect(activity).not.toContain('1 test failed')
 
-    expect(transcript.handlePointer(1, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'click', false)).toBe(true)
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(expanded).toContain('└─ ⌄ × Bash · Run tests')
     expect(expanded).toContain('pnpm test')
@@ -1215,8 +1219,8 @@ describe('TranscriptComponent', () => {
     expect(plainInitial).toContain('3 + const mode = "new"')
     expect(plainInitial).toContain('5   end()')
     expect(initial).toContain('\u001b[48;2;12;48;28m')
-    expect(transcript.handlePointer(1, 'wheel-down')).toBe(false)
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(1, 'wheel-down', false)).toBe(false)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     const collapsed = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(collapsed).toContain('› • Update(src/app.ts)')
     expect(collapsed).not.toContain('const mode')
@@ -1267,7 +1271,7 @@ describe('TranscriptComponent', () => {
     expect(collapsed).toContain('└ Added 201 lines')
     expect(collapsed).not.toContain('value200')
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(expanded).toContain('⌄ • Write(src/generated.ts)')
     expect(expanded).toContain('201 + export const value200 = 200')
@@ -1325,7 +1329,7 @@ describe('TranscriptComponent', () => {
     expect(collapsed).toContain('› × Update(src/app.ts)')
     expect(collapsed).not.toContain('partially applied')
 
-    expect(transcript.handlePointer(0, 'click')).toBe(true)
+    expect(transcript.handlePointer(0, 'click', false)).toBe(true)
     const expanded = stripTerminalSequences(transcript.render(80).join('\n'))
     expect(expanded).toContain('⌄ × Update(src/app.ts)')
     expect(expanded).toContain('partially applied')

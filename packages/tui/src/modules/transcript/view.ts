@@ -118,11 +118,14 @@ export class TranscriptComponent implements Component {
 
   setProjection(projection: TranscriptProjection): void {
     if (projection === this.projection) return
-    if (projection.showDetails !== this.projection.showDetails) {
-      this.disclosure.clearOverrides()
-      this.pausedThinking.clear()
-    }
     this.projection = projection
+    this.invalidate()
+  }
+
+  /** Apply a global detail-preference change immediately, even between rendered frames. */
+  resetActivityDisclosure(): void {
+    this.disclosure.clearOverrides()
+    this.pausedThinking.clear()
     this.invalidate()
   }
 
@@ -144,8 +147,8 @@ export class TranscriptComponent implements Component {
     this.renderedDocument = undefined
   }
 
-  /** Apply one pointer action to the block rendered at a transcript-relative row. */
-  handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean {
+  /** Target the last rendered geometry, using the current preference rather than a stale frame's default. */
+  handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down', showDetails: boolean): boolean {
     if (action === 'move') {
       const next = this.blockTitleHits.get(line)?.key
       if (next === this.hoveredBlockKey) return false
@@ -158,9 +161,9 @@ export class TranscriptComponent implements Component {
       if (hit === undefined) return false
       this.hoveredBlockKey = hit.key
       if (hit.kind === 'activity') {
-        this.disclosure.toggleActivity(this.activityExecutionKeys.get(hit.key) ?? [], this.projection.showDetails)
+        this.disclosure.toggleActivity(this.activityExecutionKeys.get(hit.key) ?? [], showDetails)
       } else if (hit.kind === 'thinking' || hit.kind === 'tool') {
-        this.disclosure.toggle(hit.key, this.projection.showDetails)
+        this.disclosure.toggle(hit.key, showDetails)
         if (hit.kind === 'thinking') {
           this.pausedThinking.delete(hit.key)
           this.thinkingOffsets.delete(hit.key)
@@ -174,7 +177,7 @@ export class TranscriptComponent implements Component {
       return true
     }
     const hit = this.blockHitAt(line)
-    if (hit?.kind !== 'thinking' || !this.isChildExpanded(hit.key)) return false
+    if (hit?.kind !== 'thinking' || !this.disclosure.expanded(hit.key, showDetails)) return false
     return this.scrollThinking(hit.key, action === 'wheel-up' ? -1 : 1)
   }
 

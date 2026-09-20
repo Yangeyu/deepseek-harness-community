@@ -26,7 +26,7 @@ function setup() {
     },
     models: { select, refresh },
     surfaces: { active: false, open }, commands: { dispatch: async () => false, dispatchHost: async () => {} },
-    visibleRows: () => 24, imageSubmissionBusy: () => false, setTranscriptDetails: vi.fn(), invalidate: vi.fn(),
+    visibleRows: () => 24, imageSubmissionBusy: () => false, invalidate: vi.fn(),
   })
   return { process, scope, select, refresh, open, catalog,
     async rebind() { await sessionScope.dispose(); sessionScope = scope.fork(`session-${String(++epoch)}`) },

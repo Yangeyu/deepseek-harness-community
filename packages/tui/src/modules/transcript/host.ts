@@ -45,11 +45,6 @@ export class TranscriptHost implements Component {
     this.store.replace({ ...current, revision: current.revision + 1 })
   }
 
-  setDetails(expanded: boolean): void {
-    this.process?.setDetails(expanded)
-    this.touch()
-  }
-
   handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean {
     const changed = this.process?.handlePointer(line, action) ?? false
     if (changed) this.touch()

@@ -15,8 +15,16 @@ export interface TranscriptSessionPort {
   subscribe(listener: (snapshot: Readonly<RuntimeSessionSnapshot>) => void): () => void
 }
 
+/** Read-only application preference; Transcript never owns a writable copy. */
+export interface TranscriptDetailsPort {
+  readonly current: boolean
+  /** Notify each actual change synchronously without coalescing; read the value from current. */
+  subscribe(listener: () => void): () => void
+}
+
 export interface TranscriptProcessOptions {
   readonly session: TranscriptSessionPort
+  readonly details: TranscriptDetailsPort
   readonly files: DiffTextReader
   readonly theme: TuiTheme
   readonly showReasoning: boolean
@@ -26,10 +34,9 @@ export interface TranscriptProcessOptions {
   readonly scope: LifecycleScope
 }
 
-/** Owns Transcript projection, diff enrichment, disclosure, and animation state. */
+/** Coordinates content rendering, preference-driven interaction updates, diff enrichment, and animation. */
 export class TranscriptProcess implements Component {
   private readonly model: TranscriptModel
-  private showDetails = false
   private readonly view: TranscriptComponent
   private readonly diffLines: DiffLineLocator
   private readonly animationTimer: ResourceSlot<ReturnType<typeof setTimeout>>
@@ -38,21 +45,22 @@ export class TranscriptProcess implements Component {
     this.animationTimer = options.scope.own(new ResourceSlot(timer => { clearTimeout(timer) }))
     this.model = new TranscriptModel(options.showReasoning, options.maxToolOutputLines)
     this.view = new TranscriptComponent(
-      this.model.project(options.session.current, this.showDetails),
+      this.model.project(options.session.current, options.details.current),
       options.theme,
       options.thinkingMaxLines,
     )
     this.diffLines = new DiffLineLocator(options.files)
-    options.scope.onDispose(options.session.subscribe(snapshot => { this.update(snapshot) }))
-    this.update(options.session.current)
-  }
-
-  setDetails(expanded: boolean): void {
-    this.showDetails = expanded
+    options.scope.onDispose(options.session.subscribe(snapshot => { this.resolveDiffLines(snapshot) }))
+    options.scope.onDispose(options.details.subscribe(() => {
+      if (!options.scope.active) return
+      this.view.resetActivityDisclosure()
+      options.invalidate()
+    }))
+    this.resolveDiffLines(options.session.current)
   }
 
   handlePointer(line: number, action: 'move' | 'click' | 'wheel-up' | 'wheel-down'): boolean {
-    return this.view.handlePointer(line, action)
+    return this.view.handlePointer(line, action, this.options.details.current)
   }
 
   isTrailingBlock(line: number): boolean {
@@ -64,7 +72,7 @@ export class TranscriptProcess implements Component {
   }
 
   render(width: number): string[] {
-    this.view.setProjection(this.model.project(this.options.session.current, this.showDetails))
+    this.view.setProjection(this.model.project(this.options.session.current, this.options.details.current))
     return this.view.render(width)
   }
 
@@ -82,7 +90,7 @@ export class TranscriptProcess implements Component {
     }, 32))
   }
 
-  private update(snapshot: Readonly<RuntimeSessionSnapshot>): void {
+  private resolveDiffLines(snapshot: Readonly<RuntimeSessionSnapshot>): void {
     if (!this.options.scope.active) return
     this.diffLines.resolve(snapshot, () => {
       if (!this.options.scope.active
