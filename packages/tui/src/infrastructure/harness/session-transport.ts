@@ -16,7 +16,6 @@ import { mergePromptContent } from '../../runtime/session/input.ts'
 import type {
   SessionControlFrame,
   SessionFollowFrame,
-  SessionPromptReceipt,
   SessionTransport,
 } from '../../runtime/session/transport.ts'
 
@@ -113,9 +112,8 @@ export class HarnessSessionTransport implements SessionTransport {
   async prompt(
     request: Parameters<SessionTransport['prompt']>[0],
     signal: AbortSignal,
-  ): Promise<SessionPromptReceipt> {
+  ): Promise<void> {
     await this.options.controller.prompt(request, signal)
-    return { requestId: request.requestId }
   }
 
   async cancel(sessionId: Parameters<SessionTransport['cancel']>[0]): Promise<void> {
@@ -185,12 +183,9 @@ export class HarnessSessionTransport implements SessionTransport {
       if (frame.type === 'baseline') {
         yield {
           type: 'baseline',
-          queues: frame.value.queues,
           projections: Object.fromEntries(Object.entries(frame.value.projections)
             .map(([sessionId, value]) => [sessionId, projectionBaseline(value)])),
         }
-      } else if (frame.type === 'queue') {
-        yield frame
       } else if (frame.type === 'projection') {
         yield frame
       }

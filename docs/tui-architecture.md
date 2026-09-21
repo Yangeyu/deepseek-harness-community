@@ -221,12 +221,41 @@ TUI 的中断策略由 `HarnessSessionTransport.cancel` 适配：先通过 Contr
 所有新输入只走 `SessionManager → SessionTransport.prompt → Controller.prompt`。
 不把已准入消息再转成上传格式重走 admission：这会重新归一化图片、损失引用元数据，
 并在移除与重投之间引入异步事务缺口。续接仅使用公开 inbox/Agent 操作，不维护第二份队列。
-`SubmissionTracker` 在收到持久化 inbox 入列或 `user/message` 事件时统一退役整个乐观提交，
-不再等待另一条 Vision 消息；显示随后由真实 inbox 和历史接管。
+
+### 消息展示的连续交接
+
+`SubmissionTracker.start` 在发布本地回显前生成请求身份；发送和回显使用同一个 `requestId`。
+`SessionTransport.prompt` 只返回 `Promise<void>`，表达 Host 调用的成功或失败，不返回回执、
+不参与消息展示交接。Transcript 的 prompt key 统一使用请求身份，无 RPC 的 Host 消息使用
+`message.id`；同一身份按历史、队列、本地回显的优先级只显示一次，不按文本去重。
+
+队列展示与历史共用一条 Session follow：opening snapshot 的 `inbox` 投影初始化现有
+`RuntimeSessionSnapshot.queue`，之后只应用 cursor 后连续的 `agent/inbox/spliced`。
+同页历史不重放到已初始化的 inbox，向前加载历史也不修改当前队列。control 仍提供其他
+投影更新，但无序 queue 帧不再是第二个队列写源。`runtime/session/inbox.ts` 仅折叠公开
+日志形成展示数据，不执行、重排或提交 Agent 工作；splice 索引包含不显示的插件上下文。
+
+交接在一次 runtime snapshot 发布中完成：
+
+- 入列：真实 queue 行替代本地回显，连同准备期 Vision activity 一起退役。
+- 消费：从 queue 移出的用户消息把完整正文交给现有 `pendingSubmissions`，等待
+  `user/message` 原子接管；ESC 合并产生的新身份以及没有 RPC 的远端消息也走相同链路。
+- 取消：只退役实际移除的消息，不把原地编辑后重插的同一身份误判为取消。
+- 消费后中断或失败：即使没有生成 `user/message`，所属 `turn/end` 也会退役交接回显；
+  分页快照省略 `turn/start` 时，以后续首个 `turn/end` 为该次消费的结束屏障。
+  对账保留消费序号，重连页中的更早 turn 边界不会误清回显；确认已进入更晚 turn 后，
+  即使原 turn 的结束事件不在分页窗口内，也会退役旧交接记录。
+
+排队/steering 状态复用 prompt 卡片已有的底部留白行，不增减卡片高度。短对话逐帧测试
+同时覆盖未溢出和已溢出视口；不是用防抖、虚拟列表或额外队列掩盖中间状态。
+
+同 epoch 重连保留已经观察到的消费中回显。已知边界：首次打开，或断线期间才发生消费，
+若快照 inbox 已空且没有消费中 payload，当前公开快照不能完整恢复尚未进入历史的正文；
+这段重连窗口不承诺无空档，严格恢复需要补齐历史或上游提供消费中快照。
 
 | Community component | Responsibility |
 |---|---|
-| TUI | Session follow owns durable history and live Assistant presentation; control owns queue/projection baselines; `api-session/status` owns run state. |
+| TUI | Session follow 统一拥有历史、inbox 展示与实时 Assistant；control 提供投影更新；`api-session/status` 提供运行状态。 |
 | Bailian | Provider capabilities and DashScope request/response translation. |
 | Memory | Durable Markdown facts, direct Session reads, and persona-prefix registration for its learning Agent. |
 | Vision | 代理模型路由、结构化观察结果与 `inspect_image`；不提交 Session 消息。原生能力由 Host 提供，图片存储由官方 Attachment 服务负责。 |
@@ -452,7 +481,7 @@ define another persistence format.
 ApplicationScope
 ├── terminal                TerminalSnapshot · RenderScheduler · terminal lifetime
 ├── session-kernel
-│   ├── control-connection  Session Controller queue/projection stream
+│   ├── control-connection  Session Controller projection stream
 │   └── workspace
 │       └── SessionScope(epoch N)
 │           ├── history-follow   opening snapshot and ordered event suffix

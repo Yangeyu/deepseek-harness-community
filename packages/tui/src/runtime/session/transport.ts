@@ -8,7 +8,6 @@ import type {
   HistoryEntry,
   ModelSelection,
   PromptContentPart,
-  QueuedInboxItem,
   SessionRequestId,
   SessionSummary,
 } from './contracts.ts'
@@ -31,13 +30,7 @@ export type SessionFollowFrame =
 export type SessionControlFrame =
   | {
       readonly type: 'baseline'
-      readonly queues: Readonly<Record<string, readonly QueuedInboxItem[]>>
       readonly projections: Readonly<Record<string, SessionProjectionBaseline>>
-    }
-  | {
-      readonly type: 'queue'
-      readonly sessionId: SessionId
-      readonly items: readonly QueuedInboxItem[]
     }
   | {
       readonly type: 'projection'
@@ -46,10 +39,6 @@ export type SessionControlFrame =
       readonly value: SessionProjectionValue
       readonly seq: number
     }
-
-export interface SessionPromptReceipt {
-  readonly requestId: SessionRequestId
-}
 
 /** Consumer-owned Host boundary required by the Session lifecycle kernel. */
 export interface SessionTransport {
@@ -66,13 +55,14 @@ export interface SessionTransport {
   }, signal: AbortSignal): Promise<SessionHistoryPage>
   modelCatalog(): Promise<ModelCatalog>
   selectModel(sessionId: SessionId, selection: ModelSelection): Promise<void>
+  /** Complete the Host call; prompt presentation is driven by Session follow. */
   prompt(request: {
     readonly requestId: SessionRequestId
     readonly sessionId: SessionId
     readonly mode: 'queue' | 'steer'
     readonly content: readonly PromptContentPart[]
     readonly clientTimeZone?: string
-  }, signal: AbortSignal): Promise<SessionPromptReceipt>
+  }, signal: AbortSignal): Promise<void>
   /** Interrupt execution and resubmit pending user steering as one follow-up. */
   cancel(sessionId: SessionId): Promise<void>
   openPath(path: string, signal: AbortSignal): Promise<void>

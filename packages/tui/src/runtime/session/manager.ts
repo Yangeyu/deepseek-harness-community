@@ -1,10 +1,8 @@
-import { randomUUID } from 'node:crypto'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval/types'
 import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions/types'
 import type {
   PromptContentPart,
   ModelCatalog,
-  SessionRequestId,
   SessionSummary,
 } from './contracts.ts'
 // Merge the Web composer's projection keys into SessionProjectionMap.
@@ -259,7 +257,6 @@ export class SessionManager {
       if (this.workspace.owns(runtime)) runtime.setSubmissionActivity(pending.key, activity)
     }
     const clientTimeZone = terminalTimeZone()
-    const requestId = randomUUID() as SessionRequestId
     try {
       const prepared = typeof contentOrPreparation === 'function'
         ? await contentOrPreparation({ setActivity })
@@ -267,15 +264,13 @@ export class SessionManager {
       if (!this.workspace.visible(runtime)) {
         throw new Error('The active session changed while preparing the prompt.')
       }
-      const response = await this.transport.prompt({
-        requestId,
+      await this.transport.prompt({
+        requestId: pending.requestId,
         sessionId: runtime.sessionId,
         mode,
         content: prepared.content,
         ...clientTimeZone === undefined ? {} : { clientTimeZone },
       }, runtime.signal)
-      if (!this.workspace.owns(runtime)) return
-      runtime.acceptSubmission(pending.key, response.requestId)
     } catch (error: unknown) {
       rejectPending()
       throw error
@@ -479,20 +474,13 @@ export class SessionManager {
     if (frame.type === 'baseline') {
       const runtime = this.workspace.active
       if (runtime === undefined) return
-      runtime.setQueue(frame.queues[String(runtime.sessionId)] ?? [])
       const projections = frame.projections[String(runtime.sessionId)]
       if (projections !== undefined) runtime.applyProjectionBaseline(projections)
       return
     }
     const runtime = this.workspace.runtimeFor(frame.sessionId)
     if (runtime === undefined) return
-    if (frame.type === 'queue') {
-      runtime.setQueue(frame.items)
-      return
-    }
-    if (frame.type === 'projection') {
-      runtime.applyProjection(frame.key, frame.value, frame.seq)
-    }
+    runtime.applyProjection(frame.key, frame.value, frame.seq)
   }
 
   private requestApproval(prompt: ApprovalPrompt): Promise<ApprovalOutcome | undefined> {

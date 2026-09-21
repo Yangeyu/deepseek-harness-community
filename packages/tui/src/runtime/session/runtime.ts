@@ -1,8 +1,6 @@
 import type {
   HistoryEntry,
   ModelCatalog,
-  QueuedInboxItem,
-  SessionRequestId,
 } from './contracts.ts'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import {
@@ -28,6 +26,7 @@ import type {
 } from './snapshot.ts'
 import type { SessionHistoryPage, SessionProjectionBaseline } from './history-page.ts'
 import { AssistantStream } from './assistant-stream.ts'
+import { queueFromInbox, spliceQueue } from './inbox.ts'
 import type { SessionAssistantStreamBaseline, SessionAssistantStreamFrame } from '@deepseek-ai/dsh-api-session-controller/types'
 
 export type AppendEventResult = 'appended' | 'duplicate' | 'gap' | 'retired'
@@ -165,11 +164,7 @@ export class SessionRuntime {
     this.update(data => ({ ...data, modelCatalog }))
   }
 
-  setQueue(queue: readonly QueuedInboxItem[]): void {
-    this.update(data => ({ ...data, queue: [...queue], pendingSubmissions: this.submissions.snapshot }))
-  }
-
-  startSubmission(text: string, mode: 'queue' | 'steer'): PendingSubmission | undefined {
+  startSubmission(text: string, mode: 'queue' | 'steer'): ReturnType<SubmissionTracker['start']> | undefined {
     if (!this.active) return undefined
     const pending = this.submissions.start(text, mode, this.current.runState !== 'idle')
     this.publishSubmissions(data => ({ ...data, notice: undefined, error: undefined }))
@@ -182,21 +177,9 @@ export class SessionRuntime {
     this.publishSubmissions()
   }
 
-  acceptSubmission(key: number, requestId: SessionRequestId): void {
-    if (!this.active) return
-    this.submissions.accept(key, requestId)
-    this.publishSubmissions()
-  }
-
   rejectSubmission(key: number): void {
     if (!this.active) return
     this.submissions.reject(key)
-    this.publishSubmissions()
-  }
-
-  settleSubmission(key: number): void {
-    if (!this.active) return
-    this.submissions.settle(key)
     this.publishSubmissions()
   }
 
@@ -207,10 +190,14 @@ export class SessionRuntime {
   hydrate(page: SessionHistoryPage, cursor: number, baseline?: SessionAssistantStreamBaseline): void {
     if (!this.active) return
     this.followCursor = cursor
+    const queue = queueFromInbox(page.projections?.values.inbox)
+    // Keep existing handoffs across reconnects; visible history retires them.
     this.submissions.observeEvents(page.events)
+    this.submissions.observeQueue(queue)
     this.update(data => ({
       ...data,
       events: [...page.events],
+      queue,
       assistant: this.assistantStream.replace(baseline),
       historyHasMore: page.hasMore,
       pendingSubmissions: this.submissions.snapshot,
@@ -236,17 +223,29 @@ export class SessionRuntime {
 
   appendEvent(entry: HistoryEntry): AppendEventResult {
     if (!this.active) return 'retired'
-    this.submissions.observeEvents([entry])
-    const currentLast = this.current.events.at(-1)?.event.seq
-    if (currentLast !== undefined && entry.event.seq <= currentLast) {
-      this.publishSubmissions()
-      return 'duplicate'
+    const cursor = this.followCursor
+    if (cursor !== undefined && entry.event.seq <= cursor) return 'duplicate'
+    if (cursor !== undefined && entry.event.seq !== cursor + 1) return 'gap'
+
+    let queue = this.current.queue
+    const event = entry.event
+    if (event.type === 'agent/inbox/spliced') {
+      const spliced = spliceQueue(queue, event.data)
+      queue = spliced.queue
+      if (event.data.outcome === 'canceled') {
+        this.submissions.retireQueue(spliced.removed)
+      } else {
+        this.submissions.handoff(spliced.removed, this.submissions.activeTurn, event.seq)
+      }
+      this.submissions.observeQueue(queue)
     }
-    if (currentLast !== undefined && entry.event.seq !== currentLast + 1) return 'gap'
+    this.submissions.observeEvents([entry])
+    this.followCursor = event.seq
     this.update(data => ({
       ...data,
       events: [...data.events, entry],
-      assistant: this.assistantStream.settle(entry.event),
+      queue,
+      assistant: this.assistantStream.settle(event),
       pendingSubmissions: this.submissions.snapshot,
       error: undefined,
     }))

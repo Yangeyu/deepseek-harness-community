@@ -342,7 +342,7 @@ function buildTranscriptHistory(
           if (text.trim() !== '') {
             items.push({
               kind: 'prompt',
-              key: `prompt:${String(event.data.id)}`,
+              key: `prompt:${String(('rpcId' in source ? source.rpcId : undefined) ?? event.data.id)}`,
               body: text,
               ...execution === undefined ? {} : { execution },
             })
@@ -546,25 +546,32 @@ function collectTranscriptSources(
     }
   }
 
-  const visibleQueueRequestIds = new Set<string>()
-  for (const [index, item] of state.queue.entries()) {
+  const visiblePromptKeys = new Set(history.filter(item => item.kind === 'prompt').map(item => item.key))
+  const queuedItems: TranscriptSourceItem[] = []
+  for (const item of state.queue) {
     if (item.placement === 'context') continue
+    const key = `prompt:${String(item.rpcId ?? item.message.id)}`
+    if (visiblePromptKeys.has(key)) continue
     const body = promptTextFromContent(item.message.content)
     if (body.trim() === '') continue
-    if (item.rpcId !== undefined) visibleQueueRequestIds.add(String(item.rpcId))
-    items.push({ kind: 'supplement', item: {
+    visiblePromptKeys.add(key)
+    queuedItems.push({ kind: 'supplement', item: {
       kind: 'prompt',
-      key: `queue:${item.rpcId === undefined ? String(index) : String(item.rpcId)}`,
+      key,
       body,
       promptStatus: item.placement === 'steering' ? 'Steering next step…' : 'Queued',
     } })
   }
+  const localItems: TranscriptSourceItem[] = []
   for (const submission of state.pendingSubmissions) {
-    const promptVisible = submission.requestId !== undefined && visibleQueueRequestIds.has(String(submission.requestId))
-    if (!promptVisible) {
-      items.push({ kind: 'supplement', item: {
+    // Queue wins duplicate sources, but consumed input stays ahead of waiting work.
+    const pendingItems = submission.messageId === undefined ? localItems : items
+    const key = `prompt:${String(submission.requestId ?? submission.messageId)}`
+    if (!visiblePromptKeys.has(key)) {
+      visiblePromptKeys.add(key)
+      pendingItems.push({ kind: 'supplement', item: {
         kind: 'prompt',
-        key: `pending:${String(submission.key)}`,
+        key,
         body: submission.text,
         ...submission.intent === 'queueing'
           ? { promptStatus: 'Queueing…' }
@@ -577,7 +584,7 @@ function collectTranscriptSources(
       const execution = state.execution.get(visionExecutionKey(submission.activity.analysisId))
       if (execution === undefined || execution.durability !== 'ephemeral') continue
       const imageCount = submission.activity.imageCount
-      items.push({
+      pendingItems.push({
         kind: 'tool',
         key: String(execution.key),
         operation: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · Analyzing…`,
@@ -586,6 +593,7 @@ function collectTranscriptSources(
       })
     }
   }
+  items.push(...queuedItems, ...localItems)
   if (state.notice !== undefined) {
     items.push({ kind: 'supplement', item: { kind: 'text', key: 'session:notice', label: 'Notice', tone: 'accent', body: state.notice } })
   }

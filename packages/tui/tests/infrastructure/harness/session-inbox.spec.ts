@@ -22,6 +22,9 @@ import { AttachmentDraftStore } from '../../../src/modules/composer/attachments/
 import { promptTextFromContent } from '../../../src/runtime/execution/prompt-text.ts'
 import { promptImagesFromContent, visionEvidenceFromContent } from '../../../src/runtime/session/input.ts'
 import { preparePromptDraft } from '../../../src/modules/rewind/application/prompt-draft.ts'
+import { TranscriptModel } from '../../../src/modules/transcript/model.ts'
+import { LifecycleScope } from '../../../src/runtime/lifecycle/scope.ts'
+import { SessionRuntime } from '../../../src/runtime/session/runtime.ts'
 
 // Resolve the installed loop through its declared owner, not a pnpm store path or a user profile.
 const require = createRequire(import.meta.url)
@@ -121,7 +124,8 @@ async function fixture(root?: string) {
     async observeSession(id: SessionId) {
       const session = ctx.sessions.get(id)!
       return {
-        header: session.header, events: session.snapshotEvents(),
+        source: 'live', header: session.header, events: session.snapshotEvents(),
+        cursor: session.seq - 1, inheritedEventCount: session.inheritedEventCount,
         projections: ctx.sessionProjections.snapshot(session), [Symbol.dispose]() {},
       }
     },
@@ -129,7 +133,7 @@ async function fixture(root?: string) {
   new AgentLoop(ctx, { agents: [] })
   const controller = new SessionController(ctx, { nativeOpen: false })
   const source = (await ctx.agents.create({
-    sessionId: SessionId('source'), agentOptions: { provider: 'fixture', model: 'no-network' },
+    sessionId: SessionId('source'), meta: { cwd: '/workspace' }, agentOptions: { provider: 'fixture', model: 'no-network' },
   })).agent
   source.followup(message('HISTORY'))
   await source.whenIdle()
@@ -191,6 +195,105 @@ async function prompt(host: Awaited<ReturnType<typeof fixture>>, sessionId: Sess
 }
 
 const emptyInbox = { 'next-turn': [], 'next-step': [] }
+
+describe('follow-owned prompt presentation', () => {
+  it('keeps one complete prompt through a real claim paused before user/message', async () => {
+    const host = await fixture()
+    const scope = new LifecycleScope('host-prompt-handoff')
+    const runtime = new SessionRuntime(scope, host.source.id, 1, '/workspace', { events: 'online', control: 'online' })
+    const follow = host.transport.follow(host.source.id, 50, scope.signal)[Symbol.asyncIterator]()
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const stop = host.ctx.on('agent/pre-step', async (_payload, next) => {
+      entered.resolve()
+      await release.promise
+      return next()
+    })
+    const model = new TranscriptModel(true, 100)
+    const publications: { prompts: { key: string; body: string }[]; queued: boolean }[] = []
+    let unsubscribe = () => {}
+    try {
+      const opening = await follow.next()
+      if (opening.done || opening.value.type !== 'snapshot') throw new Error('expected follow snapshot')
+      expect(opening.value.page.projections?.values.inbox).toEqual(emptyInbox)
+      runtime.hydrate(opening.value.page, opening.value.cursor, opening.value.assistantStream)
+      unsubscribe = runtime.subscribe(snapshot => {
+        publications.push({
+          prompts: model.project(snapshot, false).items.filter(item => item.kind === 'prompt')
+            .map(item => ({ key: item.key, body: item.body })),
+          queued: snapshot.queue.length > 0,
+        })
+      })
+      const text = `Full prompt before the claim gate: ${'retain every word '.repeat(30)}END`
+      const submission = runtime.startSubmission(text, 'queue')!
+      const key = `prompt:${submission.requestId}`
+      await host.transport.prompt({
+        sessionId: host.source.id, requestId: submission.requestId,
+        content: [{ type: 'text', text }], mode: 'queue',
+      }, scope.signal)
+      await entered.promise
+
+      const advance = async () => {
+        const frame = await follow.next()
+        if (frame.done || frame.value.type === 'snapshot') throw new Error('expected live follow frame')
+        if (frame.value.type === 'event') expect(runtime.appendEvent(frame.value.entry)).toBe('appended')
+        else runtime.acceptAssistantFrame(frame.value.frame)
+      }
+      while (!runtime.current.pendingSubmissions.some(item => item.requestId === submission.requestId && item.messageId !== undefined)) {
+        await advance()
+      }
+      expect(runtime.current.queue).toEqual([])
+      expect(runtime.current.pendingSubmissions).toEqual([expect.objectContaining({ requestId: submission.requestId, text })])
+      expect(host.source.session.snapshotEvents().some(event => event.type === 'user/message'
+        && event.data.source.kind === 'user' && 'rpcId' in event.data.source
+        && event.data.source.rpcId === submission.requestId)).toBe(false)
+      expect(publications.some(publication => publication.queued)).toBe(true)
+
+      release.resolve()
+      while (runtime.current.pendingSubmissions.length > 0) await advance()
+      expect(runtime.current.events.at(-1)?.event.type).toBe('user/message')
+      for (const publication of publications) {
+        expect(publication.prompts.filter(item => item.key === key || item.body === text)).toEqual([{ key, body: text }])
+      }
+      await host.source.whenIdle()
+      expect(host.errors).toEqual([])
+    } finally {
+      unsubscribe()
+      stop()
+      release.resolve()
+      await scope.dispose()
+      await follow.return?.()
+      await host.ctx.fiber.dispose()
+    }
+  })
+
+  it('seeds existing inbox rows from the follow cut without replaying historical insertions', async () => {
+    const host = await fixture()
+    const scope = new LifecycleScope('host-inbox-baseline')
+    const runtime = new SessionRuntime(scope, host.source.id, 1, '/workspace', { events: 'online', control: 'online' })
+    const existing = message('ALREADY QUEUED')
+    host.source.inbox.splice('next-turn', 0, 0, [existing])
+    const follow = host.transport.follow(host.source.id, 50, scope.signal)[Symbol.asyncIterator]()
+    try {
+      const opening = await follow.next()
+      if (opening.done || opening.value.type !== 'snapshot') throw new Error('expected follow snapshot')
+      expect(opening.value.page.projections?.values.inbox?.['next-turn']).toEqual([existing])
+      runtime.hydrate(opening.value.page, opening.value.cursor, opening.value.assistantStream)
+      expect(runtime.current.queue.map(item => item.id)).toEqual([existing.id])
+
+      const later = message('ADMITTED AFTER THE CUT')
+      host.source.inbox.splice('next-turn', 1, 0, [later])
+      const update = await follow.next()
+      if (update.done || update.value.type !== 'event') throw new Error('expected live inbox event')
+      expect(runtime.appendEvent(update.value.entry)).toBe('appended')
+      expect(runtime.current.queue.map(item => item.id)).toEqual([existing.id, later.id])
+    } finally {
+      await scope.dispose()
+      await follow.return?.()
+      await host.ctx.fiber.dispose()
+    }
+  })
+})
 
 describe('TUI interrupt', () => {
   it.each([true, false])('resubmits pending steering after cancellation (steering: %s)', async (withSteering) => {

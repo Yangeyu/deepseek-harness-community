@@ -21,7 +21,6 @@ import { selectedModel } from '../../../src/runtime/session/model-selection.ts'
 import type {
   SessionControlFrame,
   SessionFollowFrame,
-  SessionPromptReceipt,
   SessionTransport,
 } from '../../../src/runtime/session/transport.ts'
 
@@ -120,7 +119,7 @@ class FakeSessionTransport implements SessionTransport {
   promptImplementation: SessionTransport['prompt'] | undefined
   pageResult: SessionHistoryPage = { events: [], hasMore: false }
   controlBaseline: Extract<SessionControlFrame, { type: 'baseline' }> = {
-    type: 'baseline', queues: {}, projections: {},
+    type: 'baseline', projections: {},
   }
   modelCatalogValue: ModelCatalog = {
     default: { provider: 'default-provider', model: 'default-model' },
@@ -171,9 +170,9 @@ class FakeSessionTransport implements SessionTransport {
   prompt(
     request: Parameters<SessionTransport['prompt']>[0],
     signal: AbortSignal,
-  ): Promise<SessionPromptReceipt> {
+  ): Promise<void> {
     this.promptRequests.push(request)
-    return this.promptImplementation?.(request, signal) ?? Promise.resolve({ requestId: request.requestId })
+    return this.promptImplementation?.(request, signal) ?? Promise.resolve()
   }
 
   cancel(target: SessionId): Promise<void> {
@@ -292,37 +291,43 @@ describe('SessionManager', () => {
     })
   })
 
-  it('reconciles a durable prompt that arrives before its command receipt', async () => {
+  it('hands off to durable history while the Host prompt call is still in flight', async () => {
     const { manager, transport } = await startFixture()
-    const receipt = Promise.withResolvers<SessionPromptReceipt>()
-    transport.promptImplementation = async () => receipt.promise
+    const completion = Promise.withResolvers<void>()
+    transport.promptImplementation = async () => completion.promise
 
     const submitted = manager.prompt('race', 'queue')
     await vi.waitFor(() => { expect(transport.promptRequests).toHaveLength(1) })
     const id = transport.promptRequests[0]!.requestId
+    expect(manager.current.pendingSubmissions[0]?.requestId).toBe(id)
     transport.followQueue(sessionId('session-1')).push({ type: 'event', entry: userMessage(1, id, 'race') })
     await vi.waitFor(() => { expect(manager.current.events).toHaveLength(1) })
-    expect(manager.current.pendingSubmissions).toHaveLength(1)
+    expect(manager.current.pendingSubmissions).toEqual([])
 
-    receipt.resolve({ requestId: id })
+    completion.resolve()
     await submitted
 
     expect(manager.current.pendingSubmissions).toEqual([])
   })
 
-  it('prevents a late command receipt from mutating the replacement Session epoch', async () => {
+  it('keeps a replacement Session prompt when the previous Session request fails late', async () => {
     const { manager, transport } = await startFixture()
-    const receipt = Promise.withResolvers<SessionPromptReceipt>()
-    transport.promptImplementation = async () => receipt.promise
+    const completion = Promise.withResolvers<void>()
+    transport.promptImplementation = async () => completion.promise
     const submitted = manager.prompt('old epoch', 'queue')
+    const failure = expect(submitted).rejects.toThrow('old request failed')
     await vi.waitFor(() => { expect(transport.promptRequests).toHaveLength(1) })
 
     await manager.newSession()
-    expect(String(manager.current.sessionId)).toBe('session-2')
-    receipt.resolve({ requestId: transport.promptRequests[0]!.requestId })
-    await submitted
+    transport.promptImplementation = undefined
+    await manager.prompt('new epoch', 'queue')
+    const pending = manager.current.pendingSubmissions
+    expect(pending).toEqual([expect.objectContaining({ text: 'new epoch' })])
+    completion.reject(new Error('old request failed'))
+    await failure
 
-    expect(manager.current.pendingSubmissions).toEqual([])
+    expect(String(manager.current.sessionId)).toBe('session-2')
+    expect(manager.current.pendingSubmissions).toEqual(pending)
     expect(manager.current.events).toEqual([])
   })
 

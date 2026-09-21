@@ -26,7 +26,7 @@ import type {
   InteractionResolution,
 } from '../../src/runtime/session/interactions.ts'
 import { decodeTerminalInput } from '../../src/infrastructure/terminal/decode-input.ts'
-import type { HistoryEntry } from '../../src/runtime/session/contracts.ts'
+import type { HistoryEntry, SessionRequestId } from '../../src/runtime/session/contracts.ts'
 
 function hostPorts(): TuiHostPorts {
   const unavailable = async (): Promise<never> => { throw new Error('Host port is not configured for this test') }
@@ -1252,8 +1252,8 @@ describe('createApplication integration', () => {
       runState: 'running',
       pendingSubmissions: [{
         key: 1,
+        requestId: 'rpc-start' as SessionRequestId,
         text: 'start work',
-        mode: 'queue',
         intent: 'working',
       }],
     } satisfies RuntimeSessionSnapshot
@@ -1357,8 +1357,8 @@ describe('createApplication integration', () => {
       ...base,
       pendingSubmissions: [{
         key: 1,
+        requestId: 'rpc-first' as SessionRequestId,
         text: 'first task',
-        mode: 'queue',
         intent: 'working',
       }],
     })
@@ -1367,8 +1367,8 @@ describe('createApplication integration', () => {
       ...base,
       pendingSubmissions: [{
         key: 2,
+        requestId: 'rpc-second' as SessionRequestId,
         text: 'second task',
-        mode: 'queue',
         intent: 'working',
       }],
     })
@@ -1385,8 +1385,8 @@ describe('createApplication integration', () => {
 
     const pendingSubmissions: RuntimeSessionSnapshot['pendingSubmissions'] = [{
       key: 1,
+      requestId: 'rpc-vision' as SessionRequestId,
       text: 'analyze this image',
-      mode: 'queue',
       intent: 'working',
       activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: 1_000 },
     }]

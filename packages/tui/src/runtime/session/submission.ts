@@ -1,7 +1,10 @@
+import { randomUUID } from 'node:crypto'
 import type {
   HistoryEntry,
+  QueuedInboxItem,
   SessionRequestId,
 } from './contracts.ts'
+import { promptTextFromContent } from '../execution/prompt-text.ts'
 
 export interface PendingVisionActivity {
   kind: 'vision'
@@ -13,102 +16,102 @@ export interface PendingVisionActivity {
 export type PendingSubmissionActivity = PendingVisionActivity
 export type SubmissionActivityUpdate = Omit<PendingVisionActivity, 'startedAt'>
 
-/** Local prompt echo retained until the Host inbox or conversation represents it. */
-export interface PendingSubmission {
+/** A local submission or a consumed inbox message awaiting its conversation row. */
+export type PendingSubmission = {
   key: number
   text: string
-  mode: 'queue' | 'steer'
   intent: 'working' | 'queueing' | 'steering'
-  requestId?: SessionRequestId
   activity?: PendingSubmissionActivity
-}
+} & (
+  | { requestId: SessionRequestId; messageId?: string }
+  | { requestId?: never; messageId: string }
+)
 
-function userMessageRequestIds(entry: HistoryEntry): SessionRequestId[] {
-  const event = entry.event
-  const messages = event.type === 'user/message' ? [event.data]
-    : event.type === 'agent/inbox/spliced' ? event.data.inserted : []
-  return messages.flatMap(({ source }) =>
-    source.kind === 'user' && 'rpcId' in source ? [source.rpcId] : [])
-}
-
-/** Reconciles optimistic prompts with the authoritative inbox and conversation. */
+/** Keeps prompt presentation continuous across preparation, inbox, and conversation. */
 export class SubmissionTracker {
   private nextKey = 0
   private pending: PendingSubmission[] = []
-  private readonly observedRequestIds = new Set<SessionRequestId>()
+  private readonly handoffs = new Map<number, { turn: number | undefined; consumedAt: number }>()
+  private turn: number | undefined
 
-  /** Return an immutable-by-convention state snapshot for the renderer. */
   get snapshot(): PendingSubmission[] {
     return [...this.pending]
   }
 
-  /** Publish a prompt before its Host request settles. */
-  start(text: string, mode: PendingSubmission['mode'], running: boolean): PendingSubmission {
+  get activeTurn(): number | undefined {
+    return this.turn
+  }
+
+  start(text: string, mode: 'queue' | 'steer', running: boolean): PendingSubmission & { requestId: SessionRequestId } {
     const intent = mode === 'steer' ? 'steering' : running ? 'queueing' : 'working'
-    const submission = { key: ++this.nextKey, text, mode, intent } as const
+    const submission = { key: ++this.nextKey, requestId: randomUUID() as SessionRequestId, text, intent } as const
     this.pending = [...this.pending, submission]
     return submission
   }
 
-  /** Attach a preparation phase without changing prompt reconciliation identity. */
   setActivity(key: number, activity: SubmissionActivityUpdate): void {
     this.pending = this.pending.map(item => item.key === key
       ? { ...item, activity: { ...activity, startedAt: Date.now() } }
       : item)
   }
 
-  /** Attach the request identity or retire an already durable prompt. */
-  accept(key: number, requestId: SessionRequestId): void {
-    this.pending = this.pending.flatMap((item): PendingSubmission[] => {
-      if (item.key !== key) return [item]
-      return this.observedRequestIds.has(requestId) ? [] : [{ ...item, requestId }]
-    })
-    this.pruneObservedRequestIds()
-  }
-
-  /** Remove a prompt whose Host request failed. */
   reject(key: number): void {
     this.settle(key)
   }
 
-  /** Retire input settled without a durable user-message event, such as a command. */
-  settle(key: number): void {
+  private settle(key: number): void {
     this.pending = this.pending.filter(item => item.key !== key)
-    this.pruneObservedRequestIds()
+    this.handoffs.delete(key)
   }
 
-  /** Retire local echoes when durable inbox admission or conversation events arrive. */
+  /** The inbox and retirement of its local echo are published in one snapshot. */
+  observeQueue(queue: readonly QueuedInboxItem[]): void {
+    this.retireQueue(queue)
+  }
+
+  retireQueue(queue: readonly QueuedInboxItem[]): void {
+    for (const item of this.pending) {
+      if (queue.some(row => row.id === item.messageId
+        || (row.rpcId !== undefined && row.rpcId === item.requestId))) this.settle(item.key)
+    }
+  }
+
+  /** A consumed message can wait through asynchronous pre-step work before user/message. */
+  handoff(queue: readonly QueuedInboxItem[], turn: number | undefined, consumedAt: number): void {
+    this.retireQueue(queue)
+    for (const row of queue) {
+      if (row.placement === 'context') continue
+      const submission: PendingSubmission = {
+        key: ++this.nextKey,
+        messageId: String(row.message.id),
+        ...row.rpcId === undefined ? {} : { requestId: row.rpcId },
+        text: promptTextFromContent(row.message.content),
+        intent: 'working',
+      }
+      this.pending = [...this.pending, submission]
+      this.handoffs.set(submission.key, { turn, consumedAt })
+    }
+  }
+
   observeEvents(entries: readonly HistoryEntry[]): void {
-    for (const entry of entries) {
-      for (const requestId of userMessageRequestIds(entry)) this.observe(requestId)
-    }
-    this.reconcile()
-  }
-
-  /** Drop terminal-local state when switching sessions. */
-  reset(): void {
-    this.pending = []
-    this.observedRequestIds.clear()
-  }
-
-  private observe(requestId: SessionRequestId | undefined): void {
-    if (requestId === undefined) return
-    if (this.pending.some(item => item.requestId === undefined || item.requestId === requestId)) {
-      this.observedRequestIds.add(requestId)
-    }
-  }
-
-  private reconcile(): void {
-    this.pending = this.pending.filter(item =>
-      item.requestId === undefined || !this.observedRequestIds.has(item.requestId))
-    this.pruneObservedRequestIds()
-  }
-
-  private pruneObservedRequestIds(): void {
-    if (this.pending.some(item => item.requestId === undefined)) return
-    const active = new Set(this.pending.flatMap(item => item.requestId === undefined ? [] : [item.requestId]))
-    for (const requestId of this.observedRequestIds) {
-      if (!active.has(requestId)) this.observedRequestIds.delete(requestId)
+    for (const { event } of entries) {
+      if (event.type === 'turn/start' || event.type === 'turn/end') {
+        for (const [key, handoff] of this.handoffs) {
+          // Reconnect pages may include older boundaries or omit the original turn/end.
+          if (event.seq <= handoff.consumedAt) continue
+          if (handoff.turn === undefined || (event.type === 'turn/end'
+            ? event.data.turn >= handoff.turn : event.data.turn > handoff.turn)) this.settle(key)
+        }
+        if (event.type === 'turn/start') this.turn = event.data.turn
+        else if (this.turn === undefined || this.turn <= event.data.turn) this.turn = undefined
+      }
+      if (event.type !== 'user/message' || event.surfaceOp !== 'append') continue
+      const source = event.data.source
+      const requestId = source.kind === 'user' && 'rpcId' in source ? source.rpcId : undefined
+      for (const item of this.pending) {
+        if (item.messageId === event.data.id
+          || (requestId !== undefined && item.requestId === requestId)) this.settle(item.key)
+      }
     }
   }
 }

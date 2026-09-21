@@ -359,10 +359,9 @@ export class TranscriptComponent implements Component {
         firstLine = false
       }
     }
-    if (item.promptStatus !== undefined) {
-      lines.push(paintLine(`   ${this.theme.dim(this.theme.user(item.promptStatus))} `))
-    }
-    lines.push(paintLine(' '.repeat(width)))
+    lines.push(paintLine(item.promptStatus === undefined
+      ? ''
+      : `   ${this.theme.dim(this.theme.user(item.promptStatus))} `))
     this.promptBlocks.set(item.key, {
       width,
       body: item.body,

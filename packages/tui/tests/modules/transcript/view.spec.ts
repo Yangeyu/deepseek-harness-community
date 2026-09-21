@@ -34,7 +34,7 @@ describe('TranscriptComponent', () => {
         id: 'queued-message' as never, placement: 'queued',
         message: { id: 'queued-message' as never, content: [{ type: 'text', text: 'Do this next.' }] },
       }],
-      pendingSubmissions: [{ key: 1, text: 'And then this.', mode: 'queue', intent: 'queueing' }],
+      pendingSubmissions: [{ key: 1, requestId: 'rpc-next' as never, text: 'And then this.', intent: 'queueing' }],
     }, false))
     transcript.render(80)
     expect(transcript.animationLine).toBe(row)
@@ -780,8 +780,8 @@ describe('TranscriptComponent', () => {
     const model = new TranscriptModel(true, 8)
     const pending = state([], false, [{
       key: 1,
+      requestId: 'rpc-local' as never,
       text: 'render before the network round trip',
-      mode: 'queue',
       intent: 'working',
     }])
     const transcript = new TranscriptComponent(model.project(pending, false), createTheme(true))
@@ -797,7 +797,7 @@ describe('TranscriptComponent', () => {
   it('hands Vision preparation to durable tool evidence without duplicating the prompt or Activity', () => {
     const model = new TranscriptModel(true, 8)
     const pending = state([], false, [{
-      key: 1, text: 'analyze [Image #1] now', mode: 'queue', intent: 'working',
+      key: 1, requestId: 'rpc-image' as never, text: 'analyze [Image #1] now', intent: 'working',
       activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: 1_000 },
     }])
     const transcript = new TranscriptComponent(model.project(pending, false), createTheme(true))
@@ -875,7 +875,6 @@ describe('TranscriptComponent', () => {
       pendingSubmissions: [{
       key: 1,
       text: 'queued once',
-      mode: 'queue',
       intent: 'working',
       requestId: 'rpc-queued' as never,
       }],
