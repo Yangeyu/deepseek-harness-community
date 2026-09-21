@@ -287,7 +287,7 @@ export class SessionManager {
     await this.transport.openPath(path, signal)
   }
 
-  /** Cancel the active turn while preserving pending queued work. */
+  /** Interrupt execution and let the Host adapter resubmit pending steering. */
   async cancel(): Promise<void> {
     const runtime = this.requireRuntime()
     const previous = runtime.current.runState

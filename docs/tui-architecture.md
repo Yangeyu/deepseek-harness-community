@@ -204,6 +204,26 @@ The Controller requires the official Connection registry and file-upload service
 The community bundle mounts both; without a Web server the Connection registry
 provides no HTTP listener. The TUI continues to call the Controller in-process.
 
+### 中断后发送 steering
+
+TUI 的中断策略由 `HarnessSessionTransport.cancel` 适配：先通过 Controller
+取消当前执行并保留 inbox，再把 `next-step` 中尚未消费的 user 来源消息按原顺序
+合并为一条新的用户消息，通过公开 `Agent.followup` 提交。上游执行循环负责在
+中断收尾后启动该消息；TUI 不轮询 idle，也不维护另一份执行队列。没有用户 steering
+时只中断，插件上下文留在原 inbox。普通 `next-turn` queue 沿用上游顺序，不增加优先级规则。
+
+这是已准入内容的续接，不重新上传图片或调用识图模型。`runtime/session/input.ts`
+按原输入顺序合并完整内容块，在输入之间插入明确的换行分隔，同时重编号用户正文与
+代理证据中的图片引用；原生图片引用及代理分析身份保持不变。合并消息使用新的消息与
+请求身份，采用首条消息的用户来源元数据，原 steering 的入列和移除事实仍留在日志中。
+插件上下文会在重投消息之前被消费，不保证它与原 steering 的交错顺序。
+
+所有新输入只走 `SessionManager → SessionTransport.prompt → Controller.prompt`。
+不把已准入消息再转成上传格式重走 admission：这会重新归一化图片、损失引用元数据，
+并在移除与重投之间引入异步事务缺口。续接仅使用公开 inbox/Agent 操作，不维护第二份队列。
+`SubmissionTracker` 在收到持久化 inbox 入列或 `user/message` 事件时统一退役整个乐观提交，
+不再等待另一条 Vision 消息；显示随后由真实 inbox 和历史接管。
+
 | Community component | Responsibility |
 |---|---|
 | TUI | Session follow owns durable history and live Assistant presentation; control owns queue/projection baselines; `api-session/status` owns run state. |
@@ -312,7 +332,7 @@ GitHub Release 的恢复继续要求既有产物摘要一致，不覆盖冲突�
    不混入用户原文。附件在首次准入时已完整，不存在稍后补证据的更新链路。
    附件位置统一表示为 `{ reference, attachment }`：相同图片的多个引用位置按出现次数保留，
    不按附件 ID 去重。未绑定当前草稿的 `[Image #N]` 是普通文字引用，编译器不把它当作
-   新附件；Rewind 按显式绑定恢复，不扫描全文猜对应。
+   新附件；合并时保留这类文字并避开其编号，Rewind 按显式绑定恢复，不扫描全文猜对应。
    未挂载 Vision 或关闭代理不影响原生多模态输入；无法原生看图且无代理时明确拒绝，
    不静默丢图。
    每次输入只解析一次不可变准备路线。原生交给官方 Host 准入；代理携带已解析的
@@ -826,8 +846,9 @@ history rather than competing with this canonical contract.
 - 文本、原生图片和代理图片都由准备阶段返回标准内容数据，经 SessionManager 的同一个
   `transport.prompt` 调用准入为一条普通用户消息。代理结果是其中独立、有来源的证据块，
   不存在 `vision.admit`、自定义提交回调、特殊提交来源或事件展开适配器。
-- Transcript、Trajectory 与 Rewind 读取同一条持久消息。旧版本独立证据消息不提供专属
-  迁移解释，作为普通上下文保留在历史与 Request 中。
+- Transcript、Trajectory 与 Rewind 读取同一条持久消息。中断续接只合并已准备内容，
+  不再推理，不重新上传，不增加模式兼容链路。旧版本独立证据消息不提供专属迁移解释，
+  作为普通上下文保留在历史与 Request 中。
 - Keep generic compatible-provider declarations in `dsh-llm-pi-ai`. The
   first-class Bailian package directly owns its endpoint, credential, model
   capabilities, request serialization, and SSE translation; `/config Vision`

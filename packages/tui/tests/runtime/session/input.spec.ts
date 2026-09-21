@@ -4,9 +4,11 @@ import type { VisionAnalysis } from '@vascent/deepseek-harness-vision'
 import { describe, expect, it } from 'vitest'
 import { promptTextFromContent } from '../../../src/runtime/execution/prompt-text.ts'
 import {
+  mergePromptContent,
   promptImagesFromContent,
   readVisionEvidence,
   visionEvidenceBlock,
+  visionEvidenceFromContent,
 } from '../../../src/runtime/session/input.ts'
 
 const image: ImageAttachmentRef = {
@@ -22,6 +24,29 @@ const analysis: VisionAnalysis = {
 }
 
 describe('complete user input', () => {
+  it('merges inline native and proxy images in one input without losing occurrence identity', () => {
+    const native: ContentBlock[] = [
+      { type: 'text', text: 'native [Image #1]' },
+      { type: 'image', attachment: image },
+      { type: 'text', text: ' and its details' },
+    ]
+    const proxy: ContentBlock[] = [
+      { type: 'text', text: 'compare [Image #2] with [Image #1]' },
+      visionEvidenceBlock({ ...analysis, references: ['[Image #2]', '[Image #1]'] }),
+    ]
+    const merged = mergePromptContent([native, proxy, [{ type: 'text', text: 'focus on the change' }]])
+
+    expect(promptTextFromContent(merged)).toBe('native [Image #1] and its details\n\ncompare [Image #2] with [Image #3]\n\nfocus on the change')
+    expect(merged[1]).toBe(native[1])
+    expect(promptImagesFromContent(merged)).toEqual(['[Image #1]', '[Image #2]', '[Image #3]'].map(reference => ({ reference, attachment: image })))
+    expect(visionEvidenceFromContent(merged)).toEqual([{
+      ...analysis,
+      references: ['[Image #2]', '[Image #3]'],
+      observation: '[Image #3] shows the before state; [Image #2] shows the after state.',
+    }])
+    expect(visionEvidenceFromContent(proxy)[0]?.references).toEqual(['[Image #2]', '[Image #1]'])
+  })
+
   it('persists model-visible evidence with its provenance without treating it as user-authored text', () => {
     const evidence = { ...analysis, observation: '</vision-observation>\n\u4e2d\u6587 evidence' }
     const content = [{ type: 'text', text: 'inspect [Image #1] [Image #2]' }, visionEvidenceBlock(evidence)]

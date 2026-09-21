@@ -14,6 +14,14 @@ import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { describe, expect, it } from 'vitest'
 import { HarnessSessionTransport } from '../../../src/infrastructure/harness/session-transport.ts'
 import { HostRewindFork } from '../../../src/modules/rewind/adapters/fork.ts'
+import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import { VisionService } from '@vascent/deepseek-harness-vision'
+import { harnessImageInput } from '../../../src/infrastructure/harness/image-input.ts'
+import { AttachmentCoordinator, type PreparedPromptSender } from '../../../src/modules/composer/attachments/coordinator.ts'
+import { AttachmentDraftStore } from '../../../src/modules/composer/attachments/drafts.ts'
+import { promptTextFromContent } from '../../../src/runtime/execution/prompt-text.ts'
+import { promptImagesFromContent, visionEvidenceFromContent } from '../../../src/runtime/session/input.ts'
+import { preparePromptDraft } from '../../../src/modules/rewind/application/prompt-draft.ts'
 
 // Resolve the installed loop through its declared owner, not a pnpm store path or a user profile.
 const require = createRequire(import.meta.url)
@@ -25,6 +33,9 @@ const { AgentLoop } = await import(pathToFileURL(baseRequire.resolve('@deepseek-
 const { default: JsonlSessionPersistence } = await import(pathToFileURL(baseRequire.resolve('@deepseek-ai/dsh-session-persistence-jsonl')).href) as {
   default: new (ctx: Context, config: { root: string }) => SessionPersistence
 }
+const { default: LocalAttachmentStore } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-attachment-local')).href) as {
+  default: new (ctx: Context, config: { dshHome: string }) => AttachmentStore
+}
 const agentRequire = createRequire(require.resolve('@deepseek-ai/dsh-agent'))
 const { scopeOf } = await import(pathToFileURL(agentRequire.resolve('@deepseek-ai/dsh-scope')).href) as {
   scopeOf: (ctx: Context) => Agent
@@ -34,7 +45,7 @@ function transportFor(ctx: Context, controller: SessionController) {
   return new HarnessSessionTransport({
     cwd: '/workspace', controller,
     forkSession: request => new HostRewindFork(ctx).fork(request),
-    tools: { get: () => undefined }, toolScope: () => undefined as never,
+    tools: { get: () => undefined }, agentFor: sessionId => ctx.agents.get(sessionId),
     onStatus: () => () => {}, onError: () => () => {},
   })
 }
@@ -49,6 +60,9 @@ async function fixture(root?: string) {
   const requests: GenerateOptions[] = []
   const configs: LlmCallConfig[] = []
   const errors: unknown[] = []
+  const proxyRequests: GenerateOptions[] = []
+  type Gate = { entered: ReturnType<typeof Promise.withResolvers<void>>; release: ReturnType<typeof Promise.withResolvers<void>> }
+  let streamGate: Gate | undefined
   ctx.on('agent/error', ({ error }) => { errors.push(error) })
   new AgentRegistry(ctx)
   new SessionStore(ctx)
@@ -56,9 +70,17 @@ async function fixture(root?: string) {
   new SystemPrompt(ctx, { includeHarnessIdentity: false, includeRuntimeContext: false })
   // Only non-execution host capabilities are stubs. Forking, replay, queue mutation,
   // model request assembly and the pump all run their real upstream implementations.
-  ctx.provide('tools', { get: () => undefined } as never)
+  ctx.provide('tools', { get: () => undefined, register() {} } as never)
   ctx.provide('llm', {
     listProviders: () => [{ id: 'fixture' }],
+    resolveModelInfo: async (provider: string, model: string) => ({ provider, id: model, inputModalities: ['text', 'image'] }),
+    async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {
+      proxyRequests.push(request)
+      const text = '[Image #1] shows the old layout; [Image #2] shows the new layout.'
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
     resolveCallConfig: async (config: LlmCallConfig) => config,
     prepareCall: async (config: LlmCallConfig) => ({
       config,
@@ -67,6 +89,12 @@ async function fixture(root?: string) {
         configs.push(config)
         yield { type: 'block-start', index: 0, blockType: 'text' }
         yield { type: 'text-delta', index: 0, text: 'done' }
+        const gate = streamGate
+        streamGate = undefined
+        if (gate !== undefined) {
+          gate.entered.resolve()
+          await gate.release.promise
+        }
         yield { type: 'block-end', index: 0, block: { type: 'text', text: 'done' } }
         yield { type: 'finish', reason: { kind: 'stop' } }
       },
@@ -80,7 +108,8 @@ async function fixture(root?: string) {
     registerAgentResolver: () => () => {}, retirePrompt() {},
     bindPrompt: () => ({ commit() {}, [Symbol.dispose]() {} }),
   } as never)
-  ctx.provide('attachments', {
+  if (root !== undefined) new LocalAttachmentStore(ctx, { dshHome: root })
+  else ctx.provide('attachments', {
     admitPromptContent: async (content: unknown) => content,
     imageLimits: {
       maxImageBytes: 1, maxImagesPerMessage: 1, maxMessageImageBytes: 1,
@@ -108,7 +137,14 @@ async function fixture(root?: string) {
   const boundary = source.session.snapshotEvents().findLast(event => event.type === 'turn/end')!
   requests.length = 0
   configs.length = 0
-  return { ctx, source, boundary, requests, configs, errors, controller, transport: transportFor(ctx, controller) }
+  return {
+    ctx, source, boundary, requests, configs, errors, proxyRequests, controller, transport: transportFor(ctx, controller),
+    pauseNextStream() {
+      const gate = { entered: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() }
+      streamGate = gate
+      return gate
+    },
+  }
 }
 
 async function queue(controller: SessionController, id: SessionId) {
@@ -155,6 +191,141 @@ async function prompt(host: Awaited<ReturnType<typeof fixture>>, sessionId: Sess
 }
 
 const emptyInbox = { 'next-turn': [], 'next-step': [] }
+
+describe('TUI interrupt', () => {
+  it.each([true, false])('resubmits pending steering after cancellation (steering: %s)', async (withSteering) => {
+    const host = await fixture()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const stop = host.ctx.on('agent/request', async (_payload, next) => {
+      entered.resolve(undefined)
+      await release.promise
+      return next()
+    })
+    try {
+      host.source.followup(message('INTERRUPTED'))
+      await entered.promise
+      stop()
+      const context = createUserMessage({
+        content: [{ type: 'text', text: 'CONTEXT' }], source: { kind: 'plugin', plugin: 'fixture' },
+      })
+      const first = message('FIRST')
+      const second = message('SECOND')
+      if (withSteering) host.source.steer(first)
+      host.source.inject(context)
+      if (withSteering) host.source.steer(second)
+
+      await host.transport.cancel(host.source.id)
+      release.resolve(undefined)
+      await host.source.whenIdle()
+
+      expect(host.requests.map(userTexts)).toEqual(withSteering ? [['HISTORY', 'CONTEXT', 'FIRST', '\n\n', 'SECOND']] : [])
+      const admitted = host.source.session.snapshotEvents()
+        .filter(event => event.seq > host.boundary.seq && event.type === 'user/message')
+        .map(event => event.data)
+      if (withSteering) {
+        expect(admitted).toEqual([context, expect.objectContaining({
+          content: [...first.content, { type: 'text', text: '\n\n' }, ...second.content], source: expect.objectContaining({ kind: 'user' }),
+        })])
+        expect(host.source.inbox.nextStep).toEqual([])
+      } else {
+        expect(admitted).toEqual([])
+        expect(host.source.inbox.nextStep).toEqual([context])
+      }
+      expect(host.errors).toEqual([])
+    } finally {
+      stop()
+      release.resolve(undefined)
+      await host.ctx.fiber.dispose()
+    }
+  })
+})
+
+describe('complete image input', () => {
+  it('continues merged native and proxy steering after a streaming interrupt and replays every image occurrence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-image-input-'))
+    const reader = new Context()
+    const host = await fixture(root)
+    const gate = host.pauseNextStream()
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+    try {
+      host.source.followup(message('ORIGINAL'))
+      await gate.entered.promise
+      await host.transport.prompt({
+        sessionId: host.source.id, requestId: 'queued' as never,
+        content: [{ type: 'text', text: 'QUEUED' }], mode: 'queue',
+      }, new AbortController().signal)
+
+      await host.transport.prompt({
+        sessionId: host.source.id, requestId: 'earlier' as never,
+        content: [{ type: 'text', text: 'Earlier [Image #1] was incorrect.' }], mode: 'steer',
+      }, new AbortController().signal)
+      const nativeDrafts = new AttachmentDraftStore()
+      nativeDrafts.complete(nativeDrafts.reserve(), { mediaType: 'image/png', name: 'native.png', data: png, source: 'file' })
+      const submit = (requestId: string): PreparedPromptSender => async (_text, mode, prepare) => {
+        const prepared = await prepare({ setActivity() {} })
+        await host.transport.prompt({ sessionId: host.source.id, requestId: requestId as never, mode, content: prepared.content }, new AbortController().signal)
+      }
+      await new AttachmentCoordinator(nativeDrafts, harnessImageInput(host.ctx.llm)).submit(
+        { provider: 'fixture', model: 'no-network' }, 'native [Image #1] details', 'steer', submit('native'),
+      )
+      const native = host.source.inbox.nextStep[1]!.content.find(block => block.type === 'image')!
+
+      const config = { mode: 'proxy' as const, proxyProvider: 'fixture', proxyModel: 'vision', maxObservationChars: 12000, maxTokens: 2048 }
+      host.ctx.provide('settings', { register: () => ({ get: () => config }) } as never)
+      const vision = new VisionService(host.ctx, config)
+      const proxyDrafts = new AttachmentDraftStore()
+      for (const name of ['before.png', 'after.png']) {
+        proxyDrafts.complete(proxyDrafts.reserve(), { mediaType: 'image/png', name, data: png, source: 'file' })
+      }
+      await new AttachmentCoordinator(proxyDrafts, harnessImageInput(host.ctx.llm, vision)).submit(
+        { provider: 'fixture', model: 'no-network' }, 'before [Image #1] after [Image #2]', 'steer', submit('proxy'),
+      )
+      expect(host.proxyRequests).toHaveLength(1)
+      await host.transport.cancel(host.source.id)
+      gate.release.resolve()
+      await host.source.whenIdle()
+
+      expect(host.errors).toEqual([])
+      expect(host.requests).toHaveLength(3)
+      expect(userTexts(host.requests[1]!)).toContain('QUEUED')
+      const event = host.source.session.snapshotEvents().findLast(event => event.type === 'user/message' && event.data.source.kind === 'user')!
+      if (event.type !== 'user/message') throw new Error('expected continued input')
+      const content = event.data.content
+      expect(promptTextFromContent(content)).toBe('Earlier [Image #1] was incorrect.\n\nnative [Image #2] details\n\nbefore [Image #3] after [Image #4]')
+      expect(content.find(block => block.type === 'image')).toEqual(native)
+      const [evidence] = visionEvidenceFromContent(content)
+      expect(evidence).toMatchObject({
+        references: ['[Image #3]', '[Image #4]'],
+        observation: '[Image #3] shows the old layout; [Image #4] shows the new layout.',
+      })
+      expect(host.proxyRequests).toHaveLength(1)
+      expect(host.requests[2]!.messages.findLast(message => message.source.kind === 'user')?.content).toEqual(content)
+      expect(await queue(host.controller, host.source.id)).toEqual([])
+      await host.ctx.fiber.dispose()
+
+      const storage = new JsonlSessionPersistence(reader, { root })
+      const attachments = new LocalAttachmentStore(reader, { dshHome: root })
+      await using handle = await storage.open(host.source.id, 'read')
+      const loaded = await handle.read()
+      const replay = loaded.events.findLast(event => event.type === 'user/message')!
+      if (replay.type !== 'user/message') throw new Error('expected replayed input')
+      expect(replay.data.content).toEqual(content)
+      const restored = await preparePromptDraft({
+        text: promptTextFromContent(replay.data.content),
+        attachments: promptImagesFromContent(replay.data.content),
+      }, attachments)
+      expect(restored.text).toBe('Earlier [Image #1] was incorrect.\n\nnative [Image #2] details\n\nbefore [Image #3] after [Image #4]')
+      expect(restored.attachments.map(image => image.placeholder)).toEqual(['[Image #2]', '[Image #3]', '[Image #4]'])
+      expect(restored.attachments.map(image => image.name)).toEqual(['native.png', 'before.png', 'after.png'])
+    } finally {
+      gate.release.resolve()
+      await host.ctx.fiber.dispose()
+      await reader.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
 
 describe('rewind fork inbox isolation', () => {
   it('publishes a clean inbox to both observers and reopens its full disk log without altering the source', async () => {

@@ -25,12 +25,17 @@ function userEvent(text: string): HistoryEntry {
 }
 
 describe('SubmissionTracker', () => {
-  it('reconciles a durable event that races ahead of the prompt response', () => {
+  it.each(['conversation', 'inbox'] as const)('reconciles %s admission that races ahead of the prompt response', (admission) => {
     const tracker = new SubmissionTracker()
     const pending = tracker.start('durable prompt', 'queue', false)
     expect(pending.intent).toBe('working')
 
-    tracker.observeEvents([userEvent('durable prompt')])
+    const entry = userEvent('durable prompt')
+    const event = entry.event
+    if (event.type !== 'user/message') throw new Error('expected user message')
+    tracker.observeEvents([admission === 'conversation' ? entry : {
+      event: { type: 'agent/inbox/spliced', seq: event.seq, time: event.time, data: { target: 'next-step', start: 0, inserted: [event.data] } },
+    }])
     expect(tracker.snapshot).toEqual([pending])
 
     tracker.accept(pending.key, requestId)

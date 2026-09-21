@@ -73,6 +73,7 @@ export interface SessionTransport {
     readonly content: readonly PromptContentPart[]
     readonly clientTimeZone?: string
   }, signal: AbortSignal): Promise<SessionPromptReceipt>
+  /** Interrupt execution and resubmit pending user steering as one follow-up. */
   cancel(sessionId: SessionId): Promise<void>
   openPath(path: string, signal: AbortSignal): Promise<void>
   follow(sessionId: SessionId, maxMessages: number, signal: AbortSignal): AsyncIterable<SessionFollowFrame>

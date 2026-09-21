@@ -155,7 +155,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
     controller: ctx.sessionController,
     forkSession: request => rewindFork.fork(request),
     tools: ctx.tools,
-    toolScope: sessionId => ctx.agents.get(sessionId),
+    agentFor: sessionId => ctx.agents.get(sessionId),
     onStatus: listener => ctx.on('api-session/status', listener),
     onError: listener => ctx.on('api-session/error', listener),
     onPresenterError: message => { ctx.logger.warn(message) },

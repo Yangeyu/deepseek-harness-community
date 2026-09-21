@@ -13,7 +13,7 @@ export interface PendingVisionActivity {
 export type PendingSubmissionActivity = PendingVisionActivity
 export type SubmissionActivityUpdate = Omit<PendingVisionActivity, 'startedAt'>
 
-/** Locally visible prompt retained until its durable user-message event is observed. */
+/** Local prompt echo retained until the Host inbox or conversation represents it. */
 export interface PendingSubmission {
   key: number
   text: string
@@ -23,13 +23,15 @@ export interface PendingSubmission {
   activity?: PendingSubmissionActivity
 }
 
-function userMessageRequestId(entry: HistoryEntry): SessionRequestId | undefined {
+function userMessageRequestIds(entry: HistoryEntry): SessionRequestId[] {
   const event = entry.event
-  if (event.type !== 'user/message' || event.data.source.kind !== 'user') return undefined
-  return 'rpcId' in event.data.source ? event.data.source.rpcId : undefined
+  const messages = event.type === 'user/message' ? [event.data]
+    : event.type === 'agent/inbox/spliced' ? event.data.inserted : []
+  return messages.flatMap(({ source }) =>
+    source.kind === 'user' && 'rpcId' in source ? [source.rpcId] : [])
 }
 
-/** Reconciles optimistic prompts with durable user-message events. */
+/** Reconciles optimistic prompts with the authoritative inbox and conversation. */
 export class SubmissionTracker {
   private nextKey = 0
   private pending: PendingSubmission[] = []
@@ -75,10 +77,10 @@ export class SubmissionTracker {
     this.pruneObservedRequestIds()
   }
 
-  /** Reconcile prompts represented by durable user-message events. */
+  /** Retire local echoes when durable inbox admission or conversation events arrive. */
   observeEvents(entries: readonly HistoryEntry[]): void {
     for (const entry of entries) {
-      this.observe(userMessageRequestId(entry))
+      for (const requestId of userMessageRequestIds(entry)) this.observe(requestId)
     }
     this.reconcile()
   }

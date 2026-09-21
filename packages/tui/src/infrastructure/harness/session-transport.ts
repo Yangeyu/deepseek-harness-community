@@ -1,14 +1,18 @@
+import { randomUUID } from 'node:crypto'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionController } from '@deepseek-ai/dsh-api-session-controller'
 import type {
   SessionHistoryRecord,
   SessionProjectionBaseline as HarnessProjectionBaseline,
   SessionWireEvent,
 } from '@deepseek-ai/dsh-api-session-controller/types'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { snapshotSessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { ToolDefinition, ToolRuntime } from '@deepseek-ai/dsh-tools'
-import type { HistoryEntry, SessionId } from '../../runtime/session/contracts.ts'
+import type { HistoryEntry, SessionId, SessionRequestId } from '../../runtime/session/contracts.ts'
 import type { SessionHistoryPage, SessionProjectionBaseline } from '../../runtime/session/history-page.ts'
+import { mergePromptContent } from '../../runtime/session/input.ts'
 import type {
   SessionControlFrame,
   SessionFollowFrame,
@@ -27,6 +31,7 @@ type SessionControllerPort = Pick<SessionController,
   | 'page'
   | 'prompt'
   | 'selectModel'
+  | 'updateQueue'
 >
 
 export interface HarnessSessionTransportOptions {
@@ -34,7 +39,7 @@ export interface HarnessSessionTransportOptions {
   readonly controller: SessionControllerPort
   readonly forkSession: SessionTransport['forkSession']
   readonly tools: Pick<ToolRuntime, 'get'>
-  readonly toolScope: (sessionId: SessionId) => Parameters<ToolRuntime['get']>[1]
+  readonly agentFor: (sessionId: SessionId) => Agent | undefined
   readonly onStatus: SessionTransport['onStatus']
   readonly onError: SessionTransport['onError']
   readonly onPresenterError?: (message: string) => void
@@ -115,6 +120,21 @@ export class HarnessSessionTransport implements SessionTransport {
 
   async cancel(sessionId: Parameters<SessionTransport['cancel']>[0]): Promise<void> {
     this.options.controller.cancel({ sessionId })
+    const agent = this.options.agentFor(sessionId)
+    if (agent?.status !== 'running') return
+    const steering = agent.inbox.nextStep.filter(message => message.source.kind === 'user')
+    const first = steering[0]
+    if (first === undefined) return
+    const input = createUserMessage({
+      content: mergePromptContent(steering.map(message => message.content)),
+      source: { ...first.source, rpcId: randomUUID() as SessionRequestId },
+    })
+    for (const message of steering) {
+      this.options.controller.updateQueue({ sessionId, itemId: message.id, action: { kind: 'remove' } })
+    }
+    // Resume already admitted content without re-uploading images or rerunning preparation.
+    // Public followup latches a new turn until the cancelled driver settles.
+    agent.followup(input)
   }
 
   async openPath(path: string, signal: AbortSignal): Promise<void> {
@@ -242,7 +262,7 @@ export class HarnessSessionTransport implements SessionTransport {
   }
 
   private definition(name: string, sessionId: SessionId): ToolDefinition | undefined {
-    return this.options.tools.get(name, this.options.toolScope(sessionId))
+    return this.options.tools.get(name, this.options.agentFor(sessionId))
   }
 
   private rememberCalls(calls: Map<string, ToolCallArguments>, events: readonly SessionEvent[]): void {
