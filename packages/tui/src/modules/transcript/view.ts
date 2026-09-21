@@ -61,7 +61,6 @@ interface TextBlockCache {
 interface PromptBlockCache {
   width: number
   body: string
-  status: string | undefined
   lines: string[]
 }
 
@@ -341,8 +340,7 @@ export class TranscriptComponent implements Component {
     const cached = this.promptBlocks.get(item.key)
     if (cached !== undefined
       && cached.width === width
-      && cached.body === item.body
-      && cached.status === item.promptStatus) return cached.lines
+      && cached.body === item.body) return cached.lines
     const paintLine = (line: string): string => {
       const clipped = truncateToWidth(line, width, '…')
       const padding = ' '.repeat(Math.max(0, width - visibleWidth(clipped)))
@@ -359,13 +357,10 @@ export class TranscriptComponent implements Component {
         firstLine = false
       }
     }
-    lines.push(paintLine(item.promptStatus === undefined
-      ? ''
-      : `   ${this.theme.dim(this.theme.user(item.promptStatus))} `))
+    lines.push(paintLine(''))
     this.promptBlocks.set(item.key, {
       width,
       body: item.body,
-      status: item.promptStatus,
       lines,
     })
     return lines

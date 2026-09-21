@@ -42,5 +42,8 @@ export interface HistoryEntry {
   readonly view?: ToolEventView
 }
 
-/** Exact pending Agent inbox face published by the Session Controller. */
-export type QueuedInboxItem = SessionQueuedItem
+/** Pending Agent inbox face plus local presentation ownership, not execution state. */
+export type QueuedInboxItem = SessionQueuedItem & {
+  /** This prompt already appeared inline as an idle local submission. */
+  readonly localEcho?: true
+}

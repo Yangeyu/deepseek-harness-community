@@ -9,6 +9,7 @@ import {
 } from './diff-location.ts'
 import { TranscriptComponent } from './view.ts'
 import { TranscriptModel } from './model.ts'
+import { PendingInputPreview } from './pending-input.ts'
 
 export interface TranscriptSessionPort {
   readonly current: Readonly<RuntimeSessionSnapshot>
@@ -38,12 +39,14 @@ export interface TranscriptProcessOptions {
 export class TranscriptProcess implements Component {
   private readonly model: TranscriptModel
   private readonly view: TranscriptComponent
+  private readonly pendingPreview: PendingInputPreview
   private readonly diffLines: DiffLineLocator
   private readonly animationTimer: ResourceSlot<ReturnType<typeof setTimeout>>
 
   constructor(private readonly options: TranscriptProcessOptions) {
     this.animationTimer = options.scope.own(new ResourceSlot(timer => { clearTimeout(timer) }))
     this.model = new TranscriptModel(options.showReasoning, options.maxToolOutputLines)
+    this.pendingPreview = new PendingInputPreview(options.theme)
     this.view = new TranscriptComponent(
       this.model.project(options.session.current, options.details.current),
       options.theme,
@@ -74,6 +77,12 @@ export class TranscriptProcess implements Component {
   render(width: number): string[] {
     this.view.setProjection(this.model.project(this.options.session.current, this.options.details.current))
     return this.view.render(width)
+  }
+
+  /** The same projection owns both conversation and the bounded composer-side preview. */
+  renderPendingInputs(width: number, rows: number): string[] {
+    this.pendingPreview.setItems(this.model.project(this.options.session.current, this.options.details.current).pendingInputs)
+    return this.pendingPreview.render(width, rows)
   }
 
   /** Layout reports actual visibility after clipping; offscreen titles need no animation clock. */

@@ -64,7 +64,7 @@ function fixture(usageSource?: ProviderUsagePort) {
     composer,
     commandActivity: () => command,
     memoryActivity: () => memory,
-    interruption: () => ({ target: undefined, interruptingKey: undefined }),
+    interruption: () => undefined,
     followsTranscript: () => true,
     gitBranch: (_cwd, listener) => {
       listener('feature/lifecycle-kernel')

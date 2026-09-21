@@ -55,6 +55,9 @@ export class TranscriptHost implements Component {
   setVisibleRange(top: number, rows: number): void { this.process?.setVisibleRange(top, rows) }
   invalidate(): void { this.component.invalidate() }
   render(width: number): string[] { return this.component.render(width) }
+  renderPendingInputs(width: number, rows: number): string[] {
+    return this.process?.renderPendingInputs(width, rows) ?? []
+  }
 
   private publish(sessionId: SessionId | undefined, epoch: number | undefined): void {
     this.store.update(current => ({ sessionId, epoch, revision: current.revision + 1 }))

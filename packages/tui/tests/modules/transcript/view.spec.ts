@@ -9,6 +9,7 @@ import type { RuntimeSessionSnapshot } from '../../../src/runtime/session/manage
 import { sanitizeTerminalText } from '../../../src/presentation/primitives/text.ts'
 import { createTheme } from '../../../src/presentation/primitives/theme.ts'
 import { TranscriptComponent } from '../../../src/modules/transcript/view.ts'
+import { PendingInputPreview } from '../../../src/modules/transcript/pending-input.ts'
 import { ComposerAnchoredLayout } from '../../../src/presentation/shell/layout/composer-layout.ts'
 import { TranscriptProcess } from '../../../src/modules/transcript/process.ts'
 import { LifecycleScope } from '../../../src/runtime/lifecycle/scope.ts'
@@ -776,7 +777,7 @@ describe('TranscriptComponent', () => {
     expect(output).not.toContain('You')
   })
 
-  it('renders a local prompt block without transport phases', () => {
+  it('renders immediate idle input as a user prompt', () => {
     const model = new TranscriptModel(true, 8)
     const pending = state([], false, [{
       key: 1,
@@ -789,8 +790,6 @@ describe('TranscriptComponent', () => {
     const output = transcript.render(80).join('\n')
     expect(output).toContain('\u001b[97m› \u001b[39m')
     expect(output).toContain('\u001b[97mrender before the network round trip\u001b[39m')
-    expect(output).not.toContain('Accepted')
-    expect(output).not.toContain('Sending')
     expect(output).not.toContain('You')
   })
 
@@ -867,16 +866,16 @@ describe('TranscriptComponent', () => {
     expect(output).toMatch(/inspect \[Image #1\][\s\S]*inspect \[Image #2\][\s\S]*Observation 1[\s\S]*Observation 2/u)
   })
 
-  it('hands a local prompt to a visible queue row without hiding context placement', () => {
+  it('hands local input to its queue preview while plugin context never takes its place', () => {
     const model = new TranscriptModel(true, 8)
     const base = state([])
     const queued = {
       ...base,
       pendingSubmissions: [{
-      key: 1,
-      text: 'queued once',
-      intent: 'working',
-      requestId: 'rpc-queued' as never,
+        key: 1,
+        text: 'queued once',
+        intent: 'working',
+        requestId: 'rpc-queued' as never,
       }],
       queue: [{
         id: 'message-queued' as never,
@@ -889,7 +888,13 @@ describe('TranscriptComponent', () => {
       }],
     } satisfies RuntimeSessionSnapshot
 
-    const visible = new TranscriptComponent(model.project(queued, false), createTheme(false)).render(80).join('\n')
+    const projection = model.project(queued, false)
+    const preview = new PendingInputPreview(createTheme(false))
+    preview.setItems(projection.pendingInputs)
+    const visible = [
+      ...new TranscriptComponent(projection, createTheme(false)).render(80),
+      ...preview.render(80),
+    ].join('\n')
     expect(visible.match(/queued once/g)).toHaveLength(1)
     expect(visible).toContain('Queued')
 
@@ -899,7 +904,7 @@ describe('TranscriptComponent', () => {
     }
     const context = new TranscriptComponent(model.project(contextual, false), createTheme(false)).render(80).join('\n')
     expect(context).toContain('queued once')
-    expect(context).not.toContain('Accepted')
+    expect(model.project(contextual, false).pendingInputs).toEqual([])
   })
 
   it('uses the tool-owned operation summary and expands bounded result output', () => {

@@ -45,7 +45,10 @@ export class ComposerAnchoredLayout extends Container {
 
   constructor(
     private readonly header: Component,
-    private readonly transcript: Component & { setVisibleRange?(top: number, rows: number): void },
+    private readonly transcript: Component & {
+      setVisibleRange?(top: number, rows: number): void
+      renderPendingInputs?(width: number, rows: number): string[]
+    },
     private readonly status: Component,
     private readonly editor: Component,
     private readonly footer: Component,
@@ -96,7 +99,8 @@ export class ComposerAnchoredLayout extends Container {
 
     const requestedTop = this.conversationTop ?? this.maxConversationTop
     const top = Math.max(0, Math.min(this.maxConversationTop, requestedTop))
-    if (this.conversationTop !== undefined && top === this.maxConversationTop) this.conversationTop = undefined
+    // Geometry can clamp manual reading to the bottom without requesting tail follow.
+    if (this.conversationTop !== undefined) this.conversationTop = top
     const visible = conversation.slice(top, top + availableRows)
     const visibleTranscriptStart = Math.max(top, transcriptStart)
     const visibleTranscriptEnd = Math.min(top + visible.length, conversation.length)
@@ -191,12 +195,15 @@ export class ComposerAnchoredLayout extends Container {
     if (this.activeSurface !== undefined) {
       return this.renderActiveSurface(width, this.activeSurface, viewportRows)
     }
-    return [
+    const composer = [
       ...this.status.render(width),
       ...this.attachments?.render(width) ?? [],
       ...this.editor.render(width),
       ...this.footer.render(width),
     ]
+    // Pending input is a dock, not history: reserve room for the editor and conversation.
+    const previewRows = Math.max(0, Math.min(Math.floor(viewportRows / 3), viewportRows - composer.length - 3))
+    return [...this.transcript.renderPendingInputs?.(width, previewRows) ?? [], ...composer]
   }
 
   private renderActiveSurface(width: number, surface: ActiveSurface, viewportRows: number): string[] {

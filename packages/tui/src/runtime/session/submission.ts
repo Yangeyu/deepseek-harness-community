@@ -64,9 +64,17 @@ export class SubmissionTracker {
     this.handoffs.delete(key)
   }
 
-  /** The inbox and retirement of its local echo are published in one snapshot. */
-  observeQueue(queue: readonly QueuedInboxItem[]): void {
-    this.retireQueue(queue)
+  /** Transfer inline ownership before retiring local echo and preparation activity. */
+  observeQueue(queue: readonly QueuedInboxItem[], previous: readonly QueuedInboxItem[] = []): QueuedInboxItem[] {
+    const observed = queue.map(row => {
+      const localEcho = this.pending.some(item => item.intent === 'working'
+        && (row.id === item.messageId || (row.rpcId !== undefined && row.rpcId === item.requestId)))
+        || previous.some(item => item.localEcho
+          && (row.id === item.id || (row.rpcId !== undefined && row.rpcId === item.rpcId)))
+      return localEcho ? { ...row, localEcho: true as const } : row
+    })
+    this.retireQueue(observed)
+    return observed
   }
 
   retireQueue(queue: readonly QueuedInboxItem[]): void {
@@ -86,7 +94,7 @@ export class SubmissionTracker {
         messageId: String(row.message.id),
         ...row.rpcId === undefined ? {} : { requestId: row.rpcId },
         text: promptTextFromContent(row.message.content),
-        intent: 'working',
+        intent: row.localEcho ? 'working' : row.placement === 'steering' ? 'steering' : 'queueing',
       }
       this.pending = [...this.pending, submission]
       this.handoffs.set(submission.key, { turn, consumedAt })

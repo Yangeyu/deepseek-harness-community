@@ -9,12 +9,12 @@ import { selectedModel } from '../../../runtime/session/model-selection.ts'
 import { formatDuration } from '../../primitives/duration.ts'
 import { spinnerGlyph } from '../../primitives/spinner.ts'
 import type { TuiTheme } from '../../primitives/theme.ts'
+import type { InputInterruption } from '../input/contracts.ts'
 import { ComposerFooter } from './footer.ts'
 import { composerStats } from './stats.ts'
 import type {
   GitBranchSource,
   ShellCommandActivity,
-  ShellInterruptionStatus,
   ShellMemoryActivity,
   ShellStatusComposerPort,
   ShellStatusSessionPort,
@@ -28,7 +28,7 @@ export interface ShellStatusProcessOptions {
   readonly composer: ShellStatusComposerPort
   readonly commandActivity: () => Readonly<ShellCommandActivity> | undefined
   readonly memoryActivity: () => Readonly<ShellMemoryActivity>
-  readonly interruption: (state: Readonly<RuntimeSessionSnapshot>) => ShellInterruptionStatus
+  readonly interruption: (state: Readonly<RuntimeSessionSnapshot>) => InputInterruption | undefined
   readonly followsTranscript: () => boolean
   readonly gitBranch: GitBranchSource
   readonly invalidate: () => void
@@ -147,11 +147,13 @@ export class ShellStatusProcess {
           ? commandActivity.label
           : 'Working'
       const interruption = this.options.interruption(state)
-      const interruptHint = interruption.target === undefined
+      const interruptHint = interruption === undefined
         ? ''
-        : interruption.interruptingKey === interruption.target
+        : interruption.requested
           ? 'Ctrl+C again to exit'
-          : 'esc to interrupt'
+          : interruption.action === 'interrupt-and-send'
+            ? 'esc: stop & send'
+            : 'esc to interrupt'
       const hint = interruptHint === '' ? '' : ` · ${interruptHint}`
       this.status.setText([
         this.options.theme.accent(glyph),

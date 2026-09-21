@@ -190,10 +190,9 @@ export class SessionRuntime {
   hydrate(page: SessionHistoryPage, cursor: number, baseline?: SessionAssistantStreamBaseline): void {
     if (!this.active) return
     this.followCursor = cursor
-    const queue = queueFromInbox(page.projections?.values.inbox)
     // Keep existing handoffs across reconnects; visible history retires them.
     this.submissions.observeEvents(page.events)
-    this.submissions.observeQueue(queue)
+    const queue = this.submissions.observeQueue(queueFromInbox(page.projections?.values.inbox), this.current.queue)
     this.update(data => ({
       ...data,
       events: [...page.events],
@@ -237,7 +236,7 @@ export class SessionRuntime {
       } else {
         this.submissions.handoff(spliced.removed, this.submissions.activeTurn, event.seq)
       }
-      this.submissions.observeQueue(queue)
+      queue = this.submissions.observeQueue(queue, this.current.queue)
     }
     this.submissions.observeEvents([entry])
     this.followCursor = event.seq

@@ -7,6 +7,7 @@ import { SessionRuntime } from '../../../src/runtime/session/runtime.ts'
 import type { HistoryEntry, SessionId } from '../../../src/runtime/session/contracts.ts'
 import { TranscriptModel } from '../../../src/modules/transcript/model.ts'
 import { TranscriptComponent } from '../../../src/modules/transcript/view.ts'
+import { PendingInputPreview } from '../../../src/modules/transcript/pending-input.ts'
 import { ComposerAnchoredLayout } from '../../../src/presentation/shell/layout/composer-layout.ts'
 import { createTheme } from '../../../src/presentation/primitives/theme.ts'
 
@@ -43,12 +44,17 @@ function inboxSplice(inserted: readonly UserMessage[], removedCount = 0, outcome
 }
 
 function visiblePrompts(runtime: SessionRuntime): string[] {
-  return new TranscriptModel(false, 8).project(runtime.current, false).items
-    .flatMap(item => item.kind === 'prompt' ? [item.body] : [])
+  const projection = new TranscriptModel(false, 8).project(runtime.current, false)
+  return [
+    ...projection.items.flatMap(item => item.kind === 'prompt' ? [item.body] : []),
+    ...projection.pendingInputs.map(item => item.text),
+  ]
 }
 
 describe('prompt handoff', () => {
-  it.each([18, 24])('keeps short conversation rows fixed through every published submission phase (%i rows)', (rows) => {
+  it.each([
+    ['steer', 18], ['steer', 24], ['queue', 18], ['queue', 24],
+  ] as const)('keeps %s in its display region until its single conversation handoff (%i rows)', (mode, rows) => {
     const oldUser = createUserMessage({ content: [{ type: 'text', text: 'PREVIOUS USER' }], source: { kind: 'user' } })
     const { runtime, emit } = fixture([
       entry(1, 'user/message', oldUser, true),
@@ -57,19 +63,27 @@ describe('prompt handoff', () => {
       } }, true),
     ])
     const text = 'NEW MESSAGE LINE ONE\nNEW MESSAGE LINE TWO'
-    const pending = runtime.startSubmission(text, 'steer')!
+    const pending = runtime.startSubmission(text, mode)!
+    const target = mode === 'steer' ? 'next-step' : 'next-turn'
     const message = createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user', rpcId: pending.requestId } })
     const model = new TranscriptModel(false, 8)
     const transcript = new TranscriptComponent(model.project(runtime.current, false), createTheme(false))
+    const preview = new PendingInputPreview(createTheme(false))
+    const content = Object.assign(transcript, {
+      renderPendingInputs: (width: number, budget: number) => preview.render(width, budget),
+    })
     const layout = new ComposerAnchoredLayout(
-      new Text('APP TITLE\n/workspace · session', 0, 0), transcript,
+      new Text('APP TITLE\n/workspace · session', 0, 0), content,
       new Text('STATUS', 0, 0), new Text('\nEDITOR\n', 0, 0), new Text('MODEL\nTOKEN STATS', 0, 0), () => rows,
     )
     const frames: { oldRow: number; newRow: number; lines: number }[] = []
     const capture = (): void => {
       const projection = model.project(runtime.current, false)
-      expect(projection.items.filter(item => item.kind === 'prompt' && item.key === `prompt:${pending.requestId}`)).toHaveLength(1)
+      const inHistory = projection.items.filter(item => item.kind === 'prompt' && item.key === `prompt:${pending.requestId}`).length
+      const inPreview = projection.pendingInputs.filter(item => item.key === `prompt:${pending.requestId}`).length
+      expect(inHistory + inPreview).toBe(1)
       transcript.setProjection(projection)
+      preview.setItems(projection.pendingInputs)
       const frame = layout.render(80).map(stripTerminalSequences)
       expect(frame.filter(line => line.includes('NEW MESSAGE LINE ONE'))).toHaveLength(1)
       frames.push({ oldRow: frame.findIndex(line => line.includes('PREVIOUS USER')),
@@ -78,43 +92,48 @@ describe('prompt handoff', () => {
     capture()
     runtime.subscribe(capture)
     emit('turn/start', { turn: 2 })
-    emit('agent/inbox/spliced', inboxSplice([message]))
+    emit('agent/inbox/spliced', { ...inboxSplice([message]), target })
     expect(runtime.current.pendingSubmissions).toEqual([])
     // A control projection ahead of follow cannot remove or duplicate its visible row.
     runtime.applyProjection('inbox', emptyInbox, 100)
-    emit('agent/inbox/spliced', inboxSplice([], 1))
+    emit('agent/inbox/spliced', { ...inboxSplice([], 1), target })
     expect(runtime.current.queue).toEqual([])
     expect(runtime.current.pendingSubmissions[0]?.messageId).toBe(message.id)
-    emit('user/message', message, true)
-    expect(runtime.current.pendingSubmissions).toEqual([])
     expect(frames.length).toBeGreaterThan(4)
     expect(frames.every(frame => frame.oldRow === frames[0]!.oldRow && frame.newRow === frames[0]!.newRow && frame.lines === rows)).toBe(true)
+    emit('user/message', message, true)
+    expect(runtime.current.pendingSubmissions).toEqual([])
+    const accepted = model.project(runtime.current, false)
+    expect(accepted.pendingInputs).toEqual([])
+    expect(accepted.items.filter(item => item.kind === 'prompt' && item.body === text)).toHaveLength(1)
+    expect(frames.at(-1)?.lines).toBe(rows)
+    if (mode === 'queue') expect(frames.at(-1)).toEqual(frames[0])
   })
 
-  it('keeps consumed next-turn prompts ahead of the remaining queue and new local submissions', () => {
+  it('keeps consumed input first in the preview until each prompt moves into conversation', () => {
     const { runtime, emit } = fixture()
+    runtime.setRunState('running')
     const messages = ['FIRST QUEUED', 'SECOND QUEUED'].map(text => createUserMessage({
       content: [{ type: 'text', text }], source: { kind: 'user' },
     }))
     emit('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: messages })
     runtime.startSubmission('NEW LOCAL', 'queue')
     const model = new TranscriptModel(false, 8)
-    const transcript = new TranscriptComponent(model.project(runtime.current, false), createTheme(false))
-    const positions = (): number[] => {
-      transcript.setProjection(model.project(runtime.current, false))
-      const lines = transcript.render(80).map(stripTerminalSequences)
-      return ['FIRST QUEUED', 'SECOND QUEUED', 'NEW LOCAL'].map(text => lines.findIndex(line => line.includes(text)))
+    const preview = new PendingInputPreview(createTheme(false))
+    const renderPreview = (): string[] => {
+      preview.setItems(model.project(runtime.current, false).pendingInputs)
+      return preview.render(80).map(stripTerminalSequences)
     }
-    const before = positions()
-    const frames: number[][] = []
-    runtime.subscribe(() => { frames.push(positions()) })
     for (const [index, message] of messages.entries()) {
+      const before = renderPreview()
       emit('turn/start', { turn: index + 1 })
       emit('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount: 1, inserted: [] })
+      expect(renderPreview()).toEqual(before)
       emit('user/message', message, true)
       emit('turn/end', { turn: index + 1, reason: { kind: 'aborted', reason: 'test' } })
+      expect(visiblePrompts(runtime)).toEqual(['FIRST QUEUED', 'SECOND QUEUED', 'NEW LOCAL'])
     }
-    expect(frames.every(frame => frame.every((row, index) => row === before[index]))).toBe(true)
+    expect(model.project(runtime.current, false).pendingInputs.map(item => item.text)).toEqual(['NEW LOCAL'])
   })
 
   it('retires canceled steering and hands the ESC replacement over without resurrecting old echoes', () => {
@@ -168,7 +187,7 @@ describe('prompt handoff', () => {
     const cursor = runtime.historyCursor!
     runtime.hydrate({ events: [entry(0, 'turn/end', { turn: 0, reason: { kind: 'aborted', reason: 'old turn' } }), ...runtime.current.events],
       hasMore: false, projections: { asOfSeq: cursor, values: { inbox: emptyInbox } } }, cursor)
-    expect(visiblePrompts(runtime)).toEqual(['claimed', 'new preparation'])
+    expect(visiblePrompts(runtime)).toEqual(['new preparation', 'claimed'])
     runtime.hydrate({ events: [entry(20, 'turn/start', { turn: 3 })], hasMore: true,
       projections: { asOfSeq: 20, values: { inbox: emptyInbox } } }, 20)
     expect(runtime.current.pendingSubmissions).toEqual([pending])

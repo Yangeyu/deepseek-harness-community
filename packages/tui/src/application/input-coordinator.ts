@@ -4,7 +4,7 @@ import { composerExecutionActivity } from '../modules/composer/execution-activit
 import type { PointerAction, TerminalGesture } from '../presentation/shell/input/gesture.ts'
 import type { KeymapAction } from '../presentation/shell/input/keymap.ts'
 import { resolveTerminalInput } from '../presentation/shell/input/resolve-terminal-input.ts'
-import type { ClipboardTextWriter } from '../presentation/shell/input/contracts.ts'
+import type { ClipboardTextWriter, InputInterruption } from '../presentation/shell/input/contracts.ts'
 import {
   isSurfaceInputAction,
   type SurfaceInputAction,
@@ -103,7 +103,7 @@ export interface InputCoordinatorOptions {
 
 /** Dispatches normalized terminal gestures to their owning feature ports. */
 export class InputCoordinator {
-  private interruptingActivityKey: string | undefined
+  private interruptingTarget: string | undefined
   private readonly actions = new ActionDispatcher<KeymapAction>()
   private readonly effects: ScopedEffectRunner
 
@@ -116,20 +116,31 @@ export class InputCoordinator {
     options.scope.onDispose(options.composer.subscribe(() => { this.reconcile() }))
   }
 
-  get interruptingKey(): string | undefined {
-    return this.interruptingActivityKey
-  }
-
-  interruptionTarget(state: Readonly<RuntimeSessionSnapshot> = this.options.session.current): string | undefined {
-    return composerExecutionActivity(state)?.key
-      ?? (this.options.composer.current.imageSubmissionBusy ? 'vision:preparation' : undefined)
-      ?? this.options.interactions.activeKey
+  /** Resolve priority once: an interaction, image preparation, then the Session run. */
+  interruption(state: Readonly<RuntimeSessionSnapshot> = this.options.session.current): InputInterruption | undefined {
+    let action: InputInterruption['action']
+    let target: string
+    const interactionKey = this.options.interactions.activeKey
+    if (interactionKey !== undefined) {
+      action = 'cancel-interaction'
+      target = interactionKey
+    } else {
+      const activity = composerExecutionActivity(state)
+      if (this.options.composer.current.imageSubmissionBusy) {
+        action = 'cancel-image-preparation'
+        target = activity?.kind === 'vision' ? activity.key : 'image:preparation'
+      } else {
+        if (activity === undefined) return undefined
+        action = state.queue.some(item => item.placement === 'steering') ? 'interrupt-and-send' : 'interrupt-session'
+        target = activity.key
+      }
+    }
+    return { action, target, requested: this.interruptingTarget === target }
   }
 
   reconcile(state: Readonly<RuntimeSessionSnapshot> = this.options.session.current): void {
-    if (this.interruptingActivityKey === undefined) return
-    if (this.interruptingActivityKey !== this.interruptionTarget(state)) {
-      this.interruptingActivityKey = undefined
+    if (this.interruptingTarget !== undefined && this.interruptingTarget !== this.interruption(state)?.target) {
+      this.interruptingTarget = undefined
     }
   }
 
@@ -167,7 +178,7 @@ export class InputCoordinator {
   private registerActions(): void {
     const { composer, configuration, layout } = this.options
     this.actions.register('application', 'app.cancel-or-exit', () => { this.cancelOrExit() })
-    this.actions.register('interaction', 'interaction.cancel', () => this.cancelActiveInteraction())
+    this.actions.register('interaction', 'interaction.cancel', () => this.requestInterrupt())
     this.actions.register('composer', 'turn.queue', () => {
       this.effects.start(async () => { await composer.submitEditor('queue') })
     })
@@ -259,14 +270,22 @@ export class InputCoordinator {
     if (changed) this.options.invalidate()
   }
 
-  private requestInterrupt(): boolean {
-    const target = this.interruptionTarget()
-    if (target === undefined) return false
-    if (this.interruptingActivityKey === target) return true
-    this.interruptingActivityKey = target
-    if (this.options.interactions.active) this.options.interactions.cancel()
-    else if (this.options.composer.current.imageSubmissionBusy) this.options.composer.cancelImageSubmission()
-    else this.effects.start(async () => { await this.options.session.cancel() })
+  private requestInterrupt(interruption = this.interruption()): boolean {
+    if (interruption === undefined) return false
+    if (interruption.requested) return true
+    this.interruptingTarget = interruption.target
+    switch (interruption.action) {
+      case 'cancel-interaction':
+        this.options.interactions.cancel()
+        break
+      case 'cancel-image-preparation':
+        this.options.composer.cancelImageSubmission()
+        break
+      case 'interrupt-session':
+      case 'interrupt-and-send':
+        this.effects.start(async () => { await this.options.session.cancel() })
+        break
+    }
     this.options.invalidate()
     return true
   }
@@ -276,10 +295,10 @@ export class InputCoordinator {
       this.options.composer.clearDraft()
       return
     }
-    const target = this.interruptionTarget()
-    if (target !== undefined) {
-      if (this.interruptingActivityKey !== target) {
-        this.requestInterrupt()
+    const interruption = this.interruption()
+    if (interruption !== undefined) {
+      if (!interruption.requested) {
+        this.requestInterrupt(interruption)
         return
       }
       this.effects.start(async () => { await this.options.requestExit(0) })
@@ -288,11 +307,4 @@ export class InputCoordinator {
     if (this.options.composer.clearDraft()) return
     this.effects.start(async () => { await this.options.requestExit(0) })
   }
-
-  private cancelActiveInteraction(): boolean {
-    if (!this.options.interactions.active) return false
-    this.requestInterrupt()
-    return true
-  }
-
 }

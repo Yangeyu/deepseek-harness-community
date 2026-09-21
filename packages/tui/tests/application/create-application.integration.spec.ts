@@ -3,6 +3,8 @@ import {
   type Terminal,
 } from '@earendil-works/pi-tui'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { InboxWireState } from '@deepseek-ai/dsh-agent'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createApplication,
@@ -728,6 +730,147 @@ describe('createApplication integration', () => {
     expect(reopened).toContain('› • Search project')
     expect(reopened).not.toContain('Matches from session-1')
     await app.dispose()
+  })
+
+  it('renders pending input beside the composer with its Session-owned lifetime and actionable status', async () => {
+    const host = transcriptHostPorts()
+    let setRunning: ((sessionId: SessionId, running: boolean) => void) | undefined
+    host.sessions.onStatus = listener => { setRunning = listener; return () => {} }
+    host.sessions.follow = async function*(sessionId, _maxMessages, signal) {
+      const first = String(sessionId) === 'session-1'
+      const inbox = {
+        'next-step': first ? [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'STEER THIS STEP' }] })] : [],
+        'next-turn': first ? [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'QUEUE NEXT TURN' }] })] : [],
+      } as unknown as InboxWireState
+      yield { type: 'snapshot', cursor: 0, page: {
+        events: first ? [{ event: { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } } }] as HistoryEntry[] : [],
+        hasMore: false, projections: { asOfSeq: 0, values: { inbox } },
+      } }
+      if (!signal.aborted) await new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => { resolve() }, { once: true })
+      })
+    }
+    const app = application(undefined, undefined, undefined, undefined, {}, host)
+    try {
+      await app.session.start()
+      setRunning?.(app.session.current.sessionId!, true)
+      app.render()
+      const frame = app.layout.render(80).map(stripTerminalSequences)
+      const steering = frame.findIndex(line => line.includes('↳ STEER THIS STEP'))
+      const queued = frame.findIndex(line => line.includes('↳ QUEUE NEXT TURN'))
+      const status = frame.findIndex(line => line.includes('Working'))
+      expect(frame).toHaveLength(24)
+      expect(steering).toBeGreaterThan(0)
+      expect(queued).toBeGreaterThan(steering)
+      expect(status).toBeGreaterThan(queued)
+      expect(frame[status]).toContain('esc: stop & send')
+      expect(app.transcript.render(80).join('\n')).not.toContain('STEER THIS STEP')
+      await app.session.newSession()
+      const switched = app.layout.render(80).map(stripTerminalSequences).join('\n')
+      expect(switched).toContain('session-2')
+      expect(switched).not.toContain('STEER THIS STEP')
+      expect(switched).not.toContain('QUEUE NEXT TURN')
+    } finally {
+      await app.dispose()
+    }
+  })
+
+  it.each([
+    ['queue', false], ['queue', true], ['steer', true],
+  ] as const)('keeps Vision progress in the status bar during %s image preparation (running=%s)', async (mode, running) => {
+    const host = transcriptHostPorts()
+    let setRunning: ((sessionId: SessionId, running: boolean) => void) | undefined
+    host.sessions.onStatus = listener => { setRunning = listener; return () => {} }
+    host.sessions.prompt = async () => {}
+    const app = application(undefined, undefined, undefined, undefined, {}, host)
+    await app.session.start()
+    setRunning?.(app.session.current.sessionId!, running)
+    app.configuration.setDetails(true)
+    const release = Promise.withResolvers<void>()
+    const submitted = app.session.promptWithPreparation('Inspect [Image #1]', mode, async ({ setActivity }) => {
+      setActivity({ kind: 'vision', analysisId: 'pending-image', imageCount: 1 })
+      await release.promise
+      return { content: [{ type: 'text', text: 'Inspect [Image #1]' }] }
+    })
+    try {
+      app.render()
+      const frame = app.layout.render(80).map(stripTerminalSequences).join('\n')
+      const conversation = app.transcript.render(80).map(stripTerminalSequences).join('\n')
+      expect(frame.match(/Inspect \[Image #1\]/g)).toHaveLength(1)
+      expect(frame).toContain('Vision · Analyzing 1 image')
+      if (!running) {
+        expect(conversation).toContain('Inspect [Image #1]')
+        expect(conversation).toContain('Vision')
+      } else {
+        expect(frame).toContain(mode === 'steer' ? 'Steering · before the next step' : 'Queued · after this turn')
+        expect(conversation).not.toContain('Inspect [Image #1]')
+        expect(conversation).not.toContain('Vision')
+      }
+    } finally {
+      release.resolve()
+      await submitted
+      await app.dispose()
+    }
+  })
+
+  it.each(['route', 'vision'] as const)('cancels image %s preparation before interrupting a Session with queued steering', async phase => {
+    const host = transcriptHostPorts()
+    let setRunning: ((sessionId: SessionId, running: boolean) => void) | undefined
+    host.sessions.onStatus = listener => { setRunning = listener; return () => {} }
+    host.sessions.cancel = vi.fn(async () => {})
+    host.sessions.follow = async function*(_sessionId, _maxMessages, signal) {
+      const inbox = {
+        'next-step': [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'STEER THIS STEP' }] })],
+        'next-turn': [],
+      } as unknown as InboxWireState
+      yield { type: 'snapshot', cursor: -1, page: {
+        events: [], hasMore: false, projections: { asOfSeq: -1, values: { inbox } },
+      } }
+      if (!signal.aborted) await new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => { resolve() }, { once: true })
+      })
+    }
+    const aborted = vi.fn()
+    const waitForAbort = vi.fn((signal?: AbortSignal) => new Promise<never>((_resolve, reject) => {
+      expect(signal).toBeDefined()
+      signal!.addEventListener('abort', () => { aborted(); reject(signal!.reason) }, { once: true })
+    }))
+    const images: ImageInputGateway = {
+      resolveImageRoute: async (_provider, _model, signal) => phase === 'route' ? waitForAbort(signal) : {
+        strategy: 'proxy', provider: 'proxy', model: 'vision', maxObservationChars: 12_000, maxTokens: 2_048,
+      },
+      analyze: async (_route, _request, signal) => waitForAbort(signal),
+    }
+    const app = application(undefined, undefined, undefined, undefined, {
+      images, clipboardImage: async () => clipboardPng(),
+    }, host)
+    let submitted: Promise<void> | undefined
+    try {
+      await app.session.start()
+      setRunning?.(app.session.current.sessionId!, true)
+      await app.composer.pasteImage()
+      submitted = app.composer.submitEditor('steer')
+      await vi.waitFor(() => { expect(waitForAbort).toHaveBeenCalledOnce() })
+      app.render()
+      expect(app.status.render(120).join('\n')).toContain('esc to interrupt')
+
+      expect(sendInput(app, '\u001b')).toEqual({ consume: true })
+      await submitted
+      expect(aborted).toHaveBeenCalledOnce()
+      expect(host.sessions.cancel).not.toHaveBeenCalled()
+      expect(app.composer.current.imageSubmissionBusy).toBe(false)
+      expect(app.session.current.queue).toHaveLength(1)
+      expect(app.session.current.runState).toBe('running')
+
+      app.render()
+      expect(app.status.render(120).join('\n')).toContain('esc: stop & send')
+      expect(sendInput(app, '\u001b')).toEqual({ consume: true })
+      await vi.waitFor(() => { expect(host.sessions.cancel).toHaveBeenCalledOnce() })
+    } finally {
+      app.composer.cancelImageSubmission()
+      await submitted
+      await app.dispose()
+    }
   })
 
   it('keeps global details expanded when switching to another Session', async () => {

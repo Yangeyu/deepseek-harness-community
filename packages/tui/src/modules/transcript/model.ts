@@ -36,7 +36,6 @@ export interface TranscriptPromptItem {
   kind: 'prompt'
   key: string
   body: string
-  promptStatus?: string
   execution?: ExecutionNode
 }
 
@@ -76,8 +75,15 @@ export interface TranscriptDiffItem {
 type UngroupedTranscriptItem = TranscriptTextItem | TranscriptPromptItem | TranscriptActivityItem | TranscriptDiffItem
 export type TranscriptItem = TranscriptTextItem | TranscriptPromptItem | TranscriptActivityGroup | TranscriptDiffItem
 
+export interface PendingInputItem {
+  readonly key: string
+  readonly text: string
+  readonly kind: 'steering' | 'queued'
+}
+
 export interface TranscriptProjection {
   readonly items: readonly TranscriptItem[]
+  readonly pendingInputs: readonly PendingInputItem[]
   readonly activeActivityKey: string | undefined
   readonly showDetails: boolean
 }
@@ -121,9 +127,9 @@ function buildTranscriptProjection(
   showDetails: boolean,
   history: readonly UngroupedTranscriptItem[],
 ): TranscriptProjection {
-  const sources = collectTranscriptSources(state, showReasoning, history)
+  const { sources, pendingInputs } = collectTranscriptSources(state, showReasoning, history)
   const { items, tail } = groupTranscriptActivity(sources)
-  return { items, activeActivityKey: activeActivityKey(tail, state.execution), showDetails }
+  return { items, pendingInputs, activeActivityKey: activeActivityKey(tail, state.execution), showDetails }
 }
 
 function contentStepKey(turn: number, step: number): string {
@@ -530,8 +536,9 @@ function collectTranscriptSources(
   state: Readonly<RuntimeSessionSnapshot>,
   showReasoning: boolean,
   history: readonly UngroupedTranscriptItem[],
-): TranscriptSourceItem[] {
+): { sources: TranscriptSourceItem[]; pendingInputs: PendingInputItem[] } {
   const items: TranscriptSourceItem[] = [...history]
+  const pendingInputs: PendingInputItem[] = []
 
   if (state.assistant !== undefined) {
     const assistant = state.assistant
@@ -548,6 +555,7 @@ function collectTranscriptSources(
 
   const visiblePromptKeys = new Set(history.filter(item => item.kind === 'prompt').map(item => item.key))
   const queuedItems: TranscriptSourceItem[] = []
+  const queuedInputs: PendingInputItem[] = []
   for (const item of state.queue) {
     if (item.placement === 'context') continue
     const key = `prompt:${String(item.rpcId ?? item.message.id)}`
@@ -555,32 +563,28 @@ function collectTranscriptSources(
     const body = promptTextFromContent(item.message.content)
     if (body.trim() === '') continue
     visiblePromptKeys.add(key)
-    queuedItems.push({ kind: 'supplement', item: {
-      kind: 'prompt',
-      key,
-      body,
-      promptStatus: item.placement === 'steering' ? 'Steering next step…' : 'Queued',
-    } })
+    if (item.localEcho === true) {
+      queuedItems.push({ kind: 'supplement', item: { kind: 'prompt', key, body } })
+    } else {
+      queuedInputs.push({ key, text: body, kind: item.placement === 'steering' ? 'steering' : 'queued' })
+    }
   }
   const localItems: TranscriptSourceItem[] = []
+  const localInputs: PendingInputItem[] = []
   for (const submission of state.pendingSubmissions) {
     // Queue wins duplicate sources, but consumed input stays ahead of waiting work.
     const pendingItems = submission.messageId === undefined ? localItems : items
     const key = `prompt:${String(submission.requestId ?? submission.messageId)}`
     if (!visiblePromptKeys.has(key)) {
       visiblePromptKeys.add(key)
-      pendingItems.push({ kind: 'supplement', item: {
-        kind: 'prompt',
-        key,
-        body: submission.text,
-        ...submission.intent === 'queueing'
-          ? { promptStatus: 'Queueing…' }
-          : submission.intent === 'steering'
-            ? { promptStatus: 'Steering…' }
-            : {},
-      } })
+      if (submission.intent === 'working') {
+        pendingItems.push({ kind: 'supplement', item: { kind: 'prompt', key, body: submission.text } })
+      } else {
+        const inputs = submission.messageId === undefined ? localInputs : pendingInputs
+        inputs.push({ key, text: submission.text, kind: submission.intent === 'steering' ? 'steering' : 'queued' })
+      }
     }
-    if (submission.activity?.kind === 'vision') {
+    if (submission.intent === 'working' && submission.activity?.kind === 'vision') {
       const execution = state.execution.get(visionExecutionKey(submission.activity.analysisId))
       if (execution === undefined || execution.durability !== 'ephemeral') continue
       const imageCount = submission.activity.imageCount
@@ -594,11 +598,12 @@ function collectTranscriptSources(
     }
   }
   items.push(...queuedItems, ...localItems)
+  pendingInputs.push(...queuedInputs, ...localInputs)
   if (state.notice !== undefined) {
     items.push({ kind: 'supplement', item: { kind: 'text', key: 'session:notice', label: 'Notice', tone: 'accent', body: state.notice } })
   }
   if (state.error !== undefined) {
     items.push({ kind: 'supplement', item: { kind: 'text', key: 'session:error', label: 'Error', tone: 'error', body: state.error } })
   }
-  return items
+  return { sources: items, pendingInputs }
 }

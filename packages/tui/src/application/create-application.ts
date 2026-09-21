@@ -258,10 +258,7 @@ export function createApplication(
     composer,
     commandActivity: () => commandRouter.activity,
     memoryActivity: () => memoryProcess.activity,
-    interruption: state => ({
-      target: input.interruptionTarget(state),
-      interruptingKey: input.interruptingKey,
-    }),
+    interruption: state => input.interruption(state),
     followsTranscript: () => layout.followsTranscriptTail,
     ...usage === undefined ? {} : { usage },
     gitBranch,

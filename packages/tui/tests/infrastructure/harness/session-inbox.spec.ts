@@ -197,7 +197,7 @@ async function prompt(host: Awaited<ReturnType<typeof fixture>>, sessionId: Sess
 const emptyInbox = { 'next-turn': [], 'next-step': [] }
 
 describe('follow-owned prompt presentation', () => {
-  it('keeps one complete prompt through a real claim paused before user/message', async () => {
+  it.each([false, true])('keeps one complete prompt through a real claim paused before user/message (running: %s)', async running => {
     const host = await fixture()
     const scope = new LifecycleScope('host-prompt-handoff')
     const runtime = new SessionRuntime(scope, host.source.id, 1, '/workspace', { events: 'online', control: 'online' })
@@ -210,18 +210,23 @@ describe('follow-owned prompt presentation', () => {
       return next()
     })
     const model = new TranscriptModel(true, 100)
-    const publications: { prompts: { key: string; body: string }[]; queued: boolean }[] = []
+    const publications: { prompts: { key: string; body: string }[]; queued: boolean; preview: boolean }[] = []
     let unsubscribe = () => {}
     try {
       const opening = await follow.next()
       if (opening.done || opening.value.type !== 'snapshot') throw new Error('expected follow snapshot')
       expect(opening.value.page.projections?.values.inbox).toEqual(emptyInbox)
       runtime.hydrate(opening.value.page, opening.value.cursor, opening.value.assistantStream)
+      runtime.setRunState(running ? 'running' : 'idle')
       unsubscribe = runtime.subscribe(snapshot => {
+        const projection = model.project(snapshot, false)
         publications.push({
-          prompts: model.project(snapshot, false).items.filter(item => item.kind === 'prompt')
-            .map(item => ({ key: item.key, body: item.body })),
+          prompts: [
+            ...projection.items.filter(item => item.kind === 'prompt').map(item => ({ key: item.key, body: item.body })),
+            ...projection.pendingInputs.map(item => ({ key: item.key, body: item.text })),
+          ],
           queued: snapshot.queue.length > 0,
+          preview: projection.pendingInputs.length > 0,
         })
       })
       const text = `Full prompt before the claim gate: ${'retain every word '.repeat(30)}END`
@@ -248,6 +253,7 @@ describe('follow-owned prompt presentation', () => {
         && event.data.source.kind === 'user' && 'rpcId' in event.data.source
         && event.data.source.rpcId === submission.requestId)).toBe(false)
       expect(publications.some(publication => publication.queued)).toBe(true)
+      expect(publications.every(publication => publication.preview === running)).toBe(true)
 
       release.resolve()
       while (runtime.current.pendingSubmissions.length > 0) await advance()

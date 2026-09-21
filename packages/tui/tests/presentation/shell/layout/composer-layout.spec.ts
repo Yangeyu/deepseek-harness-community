@@ -21,6 +21,28 @@ describe('ComposerAnchoredLayout', () => {
     expect(lines.slice(-3).map(line => line.trim())).toEqual(['status', 'editor', 'footer'])
   })
 
+  it.each([
+    { rows: 48, editorRows: 1, budget: 16 },
+    { rows: 9, editorRows: 3, budget: 1 },
+    { rows: 5, editorRows: 1, budget: 0 },
+  ])('offers pending input the space left by terminal and composer constraints ($rows rows)', ({ rows, editorRows, budget }) => {
+    let availableRows = -1
+    const transcript = Object.assign(new Text('message', 0, 0), {
+      renderPendingInputs: (_width: number, maxRows: number): string[] => {
+        availableRows = maxRows
+        return []
+      },
+    })
+    const layout = new ComposerAnchoredLayout(
+      new Text('header', 0, 0), transcript,
+      new Text('status', 0, 0), new Text(Array<string>(editorRows).fill('editor').join('\n'), 0, 0),
+      new Text('footer', 0, 0), () => rows,
+    )
+
+    layout.render(80)
+    expect(availableRows).toBe(budget)
+  })
+
   it('frames a readable surface as a distinct bottom dock without adding rows', () => {
     const layout = new ComposerAnchoredLayout(
       new Text('header', 0, 0),

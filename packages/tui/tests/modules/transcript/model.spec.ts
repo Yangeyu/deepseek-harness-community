@@ -48,12 +48,14 @@ describe('TranscriptModel', () => {
     }, false)
 
     expect(projection.items.map(item => item.kind === 'prompt'
-      ? { key: item.key, body: item.body, status: item.promptStatus }
+      ? { key: item.key, body: item.body }
       : { kind: item.kind })).toEqual([
-      { key: 'prompt:rpc-first', body: 'Repeat this', status: undefined },
-      { key: 'prompt:prompt-2', body: 'Remote prompt', status: undefined },
-      { key: 'prompt:rpc-second', body: 'Repeat this', status: 'Queued' },
-      { key: 'prompt:rpc-local', body: 'Still local', status: undefined },
+      { key: 'prompt:rpc-first', body: 'Repeat this' },
+      { key: 'prompt:prompt-2', body: 'Remote prompt' },
+      { key: 'prompt:rpc-local', body: 'Still local' },
+    ])
+    expect(projection.pendingInputs).toEqual([
+      { key: 'prompt:rpc-second', text: 'Repeat this', kind: 'queued' },
     ])
   })
 
@@ -65,7 +67,7 @@ describe('TranscriptModel', () => {
     }))
     const local = { key: 1, requestId: 'rpc-C' as never, text: 'C', intent: 'queueing' } as const
     const consumed = {
-      key: 2, requestId: 'rpc-A' as never, messageId: 'message-A', text: 'A', intent: 'working',
+      key: 2, requestId: 'rpc-A' as never, messageId: 'message-A', text: 'A', intent: 'queueing',
     } as const
     const base = state([], true, [local])
     const snapshots = [
@@ -78,12 +80,14 @@ describe('TranscriptModel', () => {
 
     for (const snapshot of snapshots) {
       const projection = model.project(snapshot, false)
-      expect(projection.items.flatMap(item => item.kind === 'prompt' ? [{ key: item.key, body: item.body }] : []))
-        .toEqual([
-          { key: 'prompt:rpc-A', body: 'A' },
-          { key: 'prompt:rpc-B', body: 'B' },
-          { key: 'prompt:rpc-C', body: 'C' },
-        ])
+      expect([
+        ...projection.items.flatMap(item => item.kind === 'prompt' ? [{ key: item.key, body: item.body }] : []),
+        ...projection.pendingInputs.map(item => ({ key: item.key, body: item.text })),
+      ]).toEqual([
+        { key: 'prompt:rpc-A', body: 'A' },
+        { key: 'prompt:rpc-B', body: 'B' },
+        { key: 'prompt:rpc-C', body: 'C' },
+      ])
     }
   })
 
