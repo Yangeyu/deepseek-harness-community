@@ -2,12 +2,7 @@ import type {
   ImageAttachmentRef,
   ImageMediaType,
 } from '@deepseek-ai/dsh-attachment'
-import type { MessageId, TokenUsage } from '@deepseek-ai/dsh-llm'
-
-export interface VisionObservationBlock {
-  readonly type: 'community-vision-observation'
-  readonly text: string
-}
+import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 
 export type VisionMode = 'auto' | 'proxy' | 'disabled'
 
@@ -51,12 +46,11 @@ export type ResolvedProxyImageRoute = Extract<ResolvedImageRoute, { strategy: 'p
 
 export interface VisionRequest {
   readonly analysisId: string
-  readonly sessionId: string
   readonly userText: string
   readonly images: readonly VisionImageInput[]
 }
 
-/** Provider facts shared by direct inspection, admission carriers, and durable evidence. */
+/** Provider facts shared by proxy analysis and direct inspection. */
 export interface VisionResultMetadata {
   readonly provider: string
   readonly model: string
@@ -71,37 +65,13 @@ export interface VisionInspection extends VisionResultMetadata {
   readonly observation: string
 }
 
-/** Durable evidence adds an identity to the common provider result. */
-export interface VisionEvidenceMetadata extends VisionResultMetadata {
+/** Analysis data; the caller owns evidence formatting, persistence, and submission. */
+export interface VisionAnalysis extends VisionResultMetadata {
   readonly analysisId: string
-}
-
-export interface VisionAnalysis extends VisionEvidenceMetadata {
-  readonly sessionId: string
+  /** Sanitized raw observation body, limited to maxObservationChars. */
   readonly observation: string
-}
-
-export interface VisionAdmissionRequest {
-  readonly analysis: VisionAnalysis
-  readonly promptText: string
-  readonly mode: 'queue' | 'steer'
-  readonly rpcId: string
-  readonly clientTimeZone?: string
-}
-
-/** Structured provenance persisted inside the supported `user/message` event. */
-export interface VisionEvidenceSource extends VisionEvidenceMetadata {
-  readonly kind: 'community-vision'
-  /** Stable identity of the admitted human Prompt that owns this evidence. */
-  readonly promptId: MessageId
-}
-
-/** Complete pre-admission carrier that keeps proxy media model-invisible. */
-export interface VisionSubmissionSource extends VisionEvidenceMetadata {
-  readonly kind: 'community-vision-submission'
-  readonly sessionId: string
-  readonly rpcId: string
-  readonly clientTimeZone?: string
+  /** Exact image labels, in the same order as attachments. */
+  readonly references: readonly string[]
 }
 
 export interface VisionStatus {

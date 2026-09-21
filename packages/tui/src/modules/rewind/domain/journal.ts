@@ -86,7 +86,15 @@ export interface RewindJournalPointResult {
 function copyInput(input: RewindPromptInput): RewindPromptInput {
   return {
     text: input.text,
-    attachments: input.attachments.map(attachment => ({ ...attachment })),
+    attachments: input.attachments.map(({ reference, attachment }) => ({
+      reference,
+      attachment: {
+        ...attachment,
+        ...attachment.originalDimensions === undefined
+          ? {}
+          : { originalDimensions: { ...attachment.originalDimensions } },
+      },
+    })),
   }
 }
 
@@ -150,11 +158,13 @@ function validatePoint(input: RewindPointInput): void {
     throw new Error('rewind point conversation boundary must precede its Prompt')
   }
   if (input.input.text.trim() === '') throw new Error('rewind point prompt text must not be empty')
-  const attachmentIds = new Set<string>()
-  for (const attachment of input.input.attachments) {
-    const id = String(attachment.attachmentId)
-    if (id.trim() === '' || attachmentIds.has(id)) throw new Error('rewind point attachment identity is invalid')
-    attachmentIds.add(id)
+  const references = new Set<string>()
+  for (const { reference, attachment } of input.input.attachments) {
+    if (reference.trim() === '' || references.has(reference)) {
+      throw new Error('rewind point image reference is invalid or duplicated')
+    }
+    references.add(reference)
+    if (String(attachment.attachmentId).trim() === '') throw new Error('rewind point attachment identity is invalid')
     if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(attachment.mediaType)
       || !Number.isSafeInteger(attachment.bytes) || attachment.bytes < 1
       || !Number.isSafeInteger(attachment.width) || attachment.width < 1
@@ -163,45 +173,6 @@ function validatePoint(input: RewindPointInput): void {
       throw new Error('rewind point attachment metadata is invalid')
     }
   }
-}
-
-function sameAttachment(
-  left: RewindPromptInput['attachments'][number],
-  right: RewindPromptInput['attachments'][number],
-): boolean {
-  return String(left.attachmentId) === String(right.attachmentId)
-    && left.mediaType === right.mediaType
-    && left.bytes === right.bytes
-    && left.width === right.width
-    && left.height === right.height
-    && left.name === right.name
-}
-
-function enrichPoint(point: RewindPoint, input: RewindPointInput): boolean {
-  if (point.id !== input.pointId
-    || point.sessionId !== input.sessionId
-    || point.turn !== input.turn
-    || point.workspaceRoot !== input.workspaceRoot
-    || point.promptSeq !== input.promptSeq
-    || point.createdAt !== input.createdAt
-    || point.previousTurnEndSeq !== input.previousTurnEndSeq
-    || point.input.text !== input.input.text) {
-    throw new Error('rewind point update conflicts with its admitted Prompt')
-  }
-  const attachments = new Map(point.input.attachments.map(attachment => [String(attachment.attachmentId), attachment]))
-  let changed = false
-  for (const attachment of input.input.attachments) {
-    const id = String(attachment.attachmentId)
-    const existing = attachments.get(id)
-    if (existing !== undefined) {
-      if (!sameAttachment(existing, attachment)) throw new Error('rewind point attachment metadata changed')
-      continue
-    }
-    attachments.set(id, { ...attachment })
-    changed = true
-  }
-  if (changed) point.input = { text: point.input.text, attachments: [...attachments.values()] }
-  return changed
 }
 
 /**
@@ -300,11 +271,8 @@ export class RewindJournal {
     if (timeline.ownerSessionId !== input.sessionId) {
       return { changed: false, durable: false, workspaceRoot: input.workspaceRoot }
     }
-    const retained = timeline.nodes.find(point => point.id === input.pointId)
-    if (retained !== undefined) {
-      const changed = retained.sessionId === input.sessionId && enrichPoint(retained, input)
-      if (changed) timeline.updatedAt = Date.now()
-      return { changed, durable: true, workspaceRoot: input.workspaceRoot }
+    if (timeline.nodes.some(point => point.id === input.pointId)) {
+      return { changed: false, durable: true, workspaceRoot: input.workspaceRoot }
     }
     const applied = timeline.nodes.slice(0, timeline.cursor)
     const latestForSession = applied.filter(point => point.sessionId === input.sessionId).at(-1)

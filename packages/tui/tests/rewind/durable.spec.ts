@@ -11,6 +11,7 @@ import {
   RewindService,
 } from '../../src/modules/rewind/index.ts'
 import { TestRewindConversationHistory } from './history-fixture.ts'
+import type { PromptImage } from '../../src/runtime/session/input.ts'
 
 const temporaryDirectories: string[] = []
 const histories = new WeakMap<RewindService, TestRewindConversationHistory>()
@@ -40,7 +41,7 @@ async function begin(
   root: string,
   turn: number,
   sessionId = 'session',
-  attachments: readonly ImageAttachmentRef[] = [],
+  attachments: readonly PromptImage[] = [],
 ): Promise<void> {
   const point: RewindPointInput = {
     pointId: `${sessionId}-prompt-${String(turn)}`,
@@ -96,7 +97,7 @@ describe('durable Rewind lifecycle', () => {
       height: 1,
       name: 'image.png',
     }
-    await begin(first, workspaceRoot, 1, 'session', [attachment])
+    await begin(first, workspaceRoot, 1, 'session', [{ reference: '[Image #1]', attachment }])
     await writeFile(path, after)
     record(first, workspaceRoot, 1, before, after)
     await first.settle('session')
@@ -108,7 +109,7 @@ describe('durable Rewind lifecycle', () => {
     const plan = await resumed.plan('session', point?.pointId ?? '')
 
     expect(plan.state).toBe('safe')
-    expect(plan.input.attachments).toEqual([attachment])
+    expect(plan.input.attachments).toEqual([{ reference: '[Image #1]', attachment }])
     await resumed.restore(plan)
     expect(await readFile(path, 'utf8')).toBe(before)
     await resumed.close()

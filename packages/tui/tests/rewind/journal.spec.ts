@@ -61,23 +61,22 @@ describe('RewindJournal', () => {
     expect(history.activePoints('session').map(point => point.turn)).toEqual([2, 3])
   })
 
-  it('enriches one admitted Prompt with durable attachments without adding a second point', () => {
+  it('records a complete image Prompt once when its admission is replayed', () => {
     const history = journal()
-    const admitted = point('session', 1, 'inspect image')
+    const admitted = {
+      ...point('session', 1, 'compare [Image #1] and [Image #2]'),
+      input: {
+        text: 'compare [Image #1] and [Image #2]',
+        attachments: [
+          { reference: '[Image #1]', attachment: attachment() },
+          { reference: '[Image #2]', attachment: attachment() },
+        ],
+      },
+    }
     expect(history.recordPoint(admitted).changed).toBe(true)
-
-    const enriched = history.recordPoint({
-      ...admitted,
-      input: { text: admitted.input.text, attachments: [attachment()] },
-    })
-
-    expect(enriched.changed).toBe(true)
+    expect(history.recordPoint(admitted).changed).toBe(false)
     expect(history.activePoints('session')).toHaveLength(1)
-    expect(history.activePoints('session')[0]?.input.attachments).toEqual([attachment()])
-    expect(history.recordPoint({
-      ...admitted,
-      input: { text: admitted.input.text, attachments: [attachment()] },
-    }).changed).toBe(false)
+    expect(history.activePoints('session')[0]?.input).toEqual(admitted.input)
   })
 
   it('moves a timeline cursor without deleting future nodes until a new Prompt branches', () => {

@@ -11,7 +11,7 @@ Harness Host
   session log · projections · LLM · attachments · file references · commands · tools · persistence
       │
       ├── Bailian provider (endpoint · credentials · common request policy · model capabilities)
-      ├── Vision fallback (route policy · proxy analysis · evidence admission)
+      ├── Vision fallback (proxy analysis · attributed observations · inspect_image)
       ├── Web service (official registry · community provider adapters)
       │
       │ in-process Session Controller and Cordis lifecycle events
@@ -209,7 +209,7 @@ provides no HTTP listener. The TUI continues to call the Controller in-process.
 | TUI | Session follow owns durable history and live Assistant presentation; control owns queue/projection baselines; `api-session/status` owns run state. |
 | Bailian | Provider capabilities and DashScope request/response translation. |
 | Memory | Durable Markdown facts, direct Session reads, and persona-prefix registration for its learning Agent. |
-| Vision | Native/proxy routing and attributed evidence; official Attachment services own image storage. |
+| Vision | 代理模型路由、结构化观察结果与 `inspect_image`；不提交 Session 消息。原生能力由 Host 提供，图片存储由官方 Attachment 服务负责。 |
 | Web | Tavily adapters and settings-backed provider selection; official Web tools own search/fetch contracts. |
 
 Upstream owns migration of older sessions to V3. Opening an existing session with
@@ -281,8 +281,9 @@ GitHub Release 的恢复继续要求既有产物摘要一致，不覆盖冲突�
    interrupted; terminal history never remains visually live. During a live
    assistant step, the first answer text chunk completes the preceding Thought
    immediately instead of waiting for the final assistant message.
-6. Recorded timing is authoritative. Pending records may use the current render
-   clock, but completed records never infer timestamps that are absent.
+6. 已记录的执行时间优先，进行中的节点可使用当前渲染时钟。Vision 当前只记录实际耗时，
+   时间轴仍以用户消息准入时间回推起点；排队后这个锚点不等于真实分析完成时间，这是
+   尚未补足的时间元数据契约，不应解读为精确墙钟时间。
 7. Stable semantic keys preserve selection across live replacement and history
    paging. UI row indexes are not identities.
 8. Image bytes become durable only through the Harness attachment service.
@@ -306,18 +307,19 @@ GitHub Release 的恢复继续要求既有产物摘要一致，不覆盖冲突�
    the one-reference-per-draft rule: a submission that races still-loading
    clipboard bytes lets the image intentionally not attach, and a detached
    draft re-binds if its live reference reappears in Composer text.
-   Native and proxy routes produce the same human Prompt lifecycle. Proxy
-   observations are source-attributed children of that Prompt, never rewritten
-   as human text. Native image blocks and proxy evidence enrich the same Prompt
-   with immutable attachment references, and a missing Vision capability never
-   silently drops an attachment.
-   The TUI resolves one immutable image route per submission. An image-capable
-   `auto` route is handed directly to Host admission; a text-only or forced
-   proxy route carries its resolved provider, model, token limit, and evidence
-   limit through storage, inference, and admission without another settings or
-   model-catalog lookup. Local drafts retain only source bytes, a declared media
-   type, and the inline reference; byte validation, dimensions, normalization,
-   and provider projection remain official Attachment/Host responsibilities.
+   原生与代理输入共用同一条用户消息生命周期。代理观察作为同一消息中的独立标准文本块，
+   显式标明不可信证据、来源及附件引用；展示层将它投影为 Prompt 的 Vision 子节点，
+   不混入用户原文。附件在首次准入时已完整，不存在稍后补证据的更新链路。
+   附件位置统一表示为 `{ reference, attachment }`：相同图片的多个引用位置按出现次数保留，
+   不按附件 ID 去重。未绑定当前草稿的 `[Image #N]` 是普通文字引用，编译器不把它当作
+   新附件；Rewind 按显式绑定恢复，不扫描全文猜对应。
+   未挂载 Vision 或关闭代理不影响原生多模态输入；无法原生看图且无代理时明确拒绝，
+   不静默丢图。
+   每次输入只解析一次不可变准备路线。原生交给官方 Host 准入；代理携带已解析的
+   provider、model、token 与证据限额完成存储和推理，不在准备过程重复读取动态配置。
+   本地草稿只持有源字节、声明媒体类型与引用，校验、尺寸、归一化和 Provider 图片投影
+   仍由官方 Attachment/Host 负责。准备阶段可取消并恢复草稿；交给 Controller 后的
+   admission 没有公开的原子撤销契约，不能承诺取消已提交输入。
    Model selection does not load and scan historical events to preflight image
    compatibility; the official Host request boundary is authoritative when a
    selected model cannot consume image-bearing history.
@@ -641,13 +643,11 @@ component references while the Session-owned implementations are replaced.
   and a released click activates the rendered Execution row or Detail tab.
   Workspace geometry remains independent of the narrower decision-card reading
   width.
-- `VisionService` owns only image-route policy, proxy fallback inference, and
-  bounded source-attributed evidence. It does not decode images, derive
-  dimensions, normalize bytes, persist media, or serialize native-provider
-  requests; the official Host, Attachment service, and provider adapters own
-  those stages. Composer analysis requires one unique inline reference per
-  image and consumes the already-resolved proxy route, so no downstream step
-  re-reads live settings or model metadata.
+- `VisionService` 只负责代理模型路由、代理推理和带来源的有界观察结果，以及独立的
+  `inspect_image` 工具。它不持有用户提交模式、Session 身份或消息发送权。
+  `harnessImageInput` 直接读取 Host 模型能力，原生路线不依赖 Vision；代理路线调用
+  `resolveProxyRoute` 与 `analyze`，返回的数据交回统一 Session 提交流程。
+  图片校验、尺寸、标准化与持久化由官方 Attachment 服务负责，原生请求由 Provider 负责。
 - `inspect_image` has one stable global schema, matching the official
   `read_image` registration pattern. Execution resolves the current route
   before parsing or reading its source: native `auto` routes reject with
@@ -658,11 +658,14 @@ component references while the Session-owned implementations are replaced.
   declare media type, and Attachment storage remains authoritative for byte
   validation and normalization. Both sources then enter the same
   reference-only proxy inference core and return text-only untrusted evidence.
-- `VisionEvidenceAdmissionAdapter` is the stateless admission boundary for the
-  Agent pre-step contract: it converts one complete proxy carrier into the exact
-  human Prompt plus a source-attributed evidence message during `pre-step`.
-  There is no process-local staging Map, expiry, or discard protocol. Delete
-  this adapter when upstream admission can atomically accept multiple messages.
+- `runtime/session/input.ts` 定义唯一的模型可见证据文本格式：独立标准 `text` 块包含
+  `vision-observation version="1" trust="untrusted"` 边界、来源说明和 JSON 分析结果
+  （分析身份、图片标记与附件引用、观察正文、用量与完成元数据）。Controller 原样准入，
+  不增加自定义来源、内容块或 `pre-step` 展开。相同内容用于请求、持久化与回放，
+  原文提取、执行投影及 Rewind 从这份数据读取，不维护另一份结果存储。
+  格式中的来源是可读的自声明，解析不赋予权限；未知格式保持普通文本。
+  代理附件由 Vision 调用官方存储保存、本地读取时再次校验；上游 Controller 的附件授权
+  不扫描文本中的引用，因此不把这份文本契约冒充原生图片附件授权。
 - Bailian composition resolves one configuration snapshot after each accepted
   settings change; Settings owns validation and last-good fallback.
   `BailianAdapter` binds resolved model metadata and request dispatch through
@@ -721,10 +724,9 @@ component references while the Session-owned implementations are replaced.
 - Prompt projection retains both `turn-entry` and `in-turn` user admissions.
   Rewind's adapter selects only `turn-entry`, matching the Host's completed-turn
   fork contract instead of silently deduplicating steering messages in Journal.
-  The Prompt feed upserts immutable snapshots so later Vision evidence
-  can add attachment references without creating another Prompt or Rewind point.
-  Durable Vision evidence names its owning `promptId`; projections never infer
-  ownership from the nearest or latest Prompt.
+  Prompt 在单次用户消息准入时发布完整快照，正文与附件不再延后补全。
+  同一消息内的 Vision 证据直接以该消息身份建立父子关系，不猜测最近的 Prompt。
+  Rewind 对完整 Prompt 的重复回放只做身份去重，不保留补附件更新分支。
 - `buildTrajectoryRecords` and `TranscriptModel.project` join presentation payloads
   to resolved execution nodes without re-pairing execution events or importing
   each other's models.
@@ -814,28 +816,18 @@ history rather than competing with this canonical contract.
 
 ### Implemented: Visual Input and Vision Proxy
 
-- Add `packages/vision` as a terminal-independent Cordis service workspace. It depends on
-  Harness LLM, Attachment, Agent/Session, Settings, and Credentials contracts,
-  but never on the TUI or pi-tui.
-- Keep the Vision workspace implementation independent while exposing its
-  public API through the root package's `./vision` subpath. Internal workspace
-  manifests remain non-publishable so releases produce one npm artifact.
-- Pass a narrow `VisionPort` into the TUI application composition root. Image
-  draft state and platform clipboard adapters stay in TUI application code;
-  routing, proxy execution, observation safety, and evidence provenance stay in
-  the Vision workspace.
-- Use explicit model modality metadata for native routing. Text-only or unknown
-  routes use the configured proxy or reject without submitting partial input.
-  Resolve that decision once per submission; official Host admission and
-  provider adapters remain the only native image pipeline.
-- Preserve two durable messages in proxy mode: the exact human-authored user
-  message first, followed by a source-attributed Vision evidence message with
-  route, attachment, timing, and completion metadata. A stateless `pre-step`
-  adapter bridges the current single-message admission API without staging
-  analysis in process memory.
-- Extend Transcript and Trajectory from that supported `user/message` source
-  instead of inventing an out-of-repository session event or retaining a
-  second UI-owned result store.
+- `packages/vision` 是独立于终端的代理识图与图片检查服务，通过根包 `./vision`
+  子路径提供公开 API；不依赖 Session 提交，也不依赖 TUI 或 pi-tui。
+- Composer 负责图片草稿与光标位置，编译器保存图文顺序；`ImageInputGateway` 提供
+  Host 原生能力查询与可选代理分析，配置页面单独消费 Vision 配置接口。
+  应用在 profile 组装完成后取得可选 Vision 服务，Vision 不是 TUI 启动依赖。
+- 每次输入只解析一次准备路线：显式支持图片的非强制代理路线交给官方 Host admission；
+  文本或能力未知的路线使用代理，无法兜底则整条拒绝并恢复草稿，不提交半完成输入。
+- 文本、原生图片和代理图片都由准备阶段返回标准内容数据，经 SessionManager 的同一个
+  `transport.prompt` 调用准入为一条普通用户消息。代理结果是其中独立、有来源的证据块，
+  不存在 `vision.admit`、自定义提交回调、特殊提交来源或事件展开适配器。
+- Transcript、Trajectory 与 Rewind 读取同一条持久消息。旧版本独立证据消息不提供专属
+  迁移解释，作为普通上下文保留在历史与 Request 中。
 - Keep generic compatible-provider declarations in `dsh-llm-pi-ai`. The
   first-class Bailian package directly owns its endpoint, credential, model
   capabilities, request serialization, and SSE translation; `/config Vision`
@@ -875,11 +867,9 @@ history rather than competing with this canonical contract.
 - One `rewind` domain replaces the TUI-owned Git checkpoint subsystem; there is
   no compatibility reader, detached index, tree snapshot, or alternate restore
   path.
-- `runtime/execution/projection/host` projects a first-class Prompt only from a
-  committed human `user/message`; `modules/rewind/adapters/prompt` maps its
-  `turn-entry` subset to Rewind points. Vision transport and evidence cannot
-  create or suppress that point; evidence can only enrich its durable attachment
-  references.
+- `runtime/execution/projection/host` 只从已提交的用户 `user/message` 投影完整 Prompt；
+  `modules/rewind/adapters/prompt` 只把 `turn-entry` 子集映射为 Rewind 检查点。
+  正文及显式图片绑定随该消息一次投影，Vision 不拥有创建、抑制或稍后补全检查点的链路。
 - `modules/rewind/adapters/host` joins `fs/observed` and `tools/result` by execution
   identity, validates the canonical text-mutation contract, and attributes it
   through stable root-call, session, and turn identities without parsing tool
@@ -896,7 +886,7 @@ history rather than competing with this canonical contract.
   optimistic revision checks, quarantines invalid state, applies byte budgets,
   and conditionally removes stale history if a newer snapshot cannot be
   committed.
-- 持久化统一使用 schema 4，仅保存工作区 lineage；不保留旧格式迁移、participant 识别或历史兼容分支。非当前格式按既有无效清单路径告警并隔离，不转换为新格式，也不能用于恢复旧工作区变更；不读取或改写长期记忆文件。
+- 持久化统一使用 schema 5，保存工作区 lineage 与 Prompt 附件的显式 `{ reference, attachment }` 绑定；不保留旧格式迁移、participant 识别或历史兼容分支。非当前格式按既有无效清单路径告警并隔离，不转换为新格式，也不能用于恢复旧工作区变更；不读取或改写长期记忆文件。
 - `RewindTransaction` 只组合可选的工作区可逆阶段与可选的 conversation fork，同一事务路径支持 code-and-conversation、conversation-only 与 code-only。后续会话阶段失败时补偿已完成的代码阶段，不包含长期记忆或其他领域。Composer 恢复先通过 Host store 验证附件引用，fork 成功后一起恢复文本和图片草稿；安全及可合并的代码计划默认 code-and-conversation，受阻或无代码计划默认 conversation-only，确认前列出精确路径。
 - Rewind 恢复已提交的对话，不恢复历史时点的待执行 inbox。通用 fork 的历史前缀
   可能包含入队事件，却不包含后来的出队事件，不能直接当作 rewind 的执行语义。

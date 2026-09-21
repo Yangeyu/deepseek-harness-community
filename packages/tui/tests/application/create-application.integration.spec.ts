@@ -18,7 +18,7 @@ import { resolveConfig } from '../../src/application/config.ts'
 import type { RuntimeSessionSnapshot } from '../../src/runtime/session/manager.ts'
 import type { SessionId } from '../../src/runtime/session/snapshot.ts'
 import type { HostCommandSource, HostCommandResult } from '../../src/runtime/commands.ts'
-import type { VisionGateway } from '../../src/modules/composer/attachments/coordinator.ts'
+import type { ImageInputGateway } from '../../src/modules/composer/attachments/coordinator.ts'
 import type { NewAttachmentDraft } from '../../src/modules/composer/attachments/drafts.ts'
 import { buildExecutionSnapshot } from '../../src/runtime/execution/projection/index.ts'
 import type {
@@ -124,7 +124,7 @@ function rewindPlan(attachments: readonly ImageAttachmentRef[] = []): RewindPlan
     turn: 1,
     input: {
       text: attachments.length === 0 ? 'inspect image' : 'inspect [Image #1]',
-      attachments,
+      attachments: attachments.map((attachment, index) => ({ reference: `[Image #${String(index + 1)}]`, attachment })),
     },
     createdAt: 1,
     codeScope: 'backward',
@@ -228,16 +228,11 @@ function usageApplication(read: ProviderUsagePort['read']): TestApplication {
   return app
 }
 
-function visionFixture(): VisionGateway {
+function imageFixture(): ImageInputGateway {
   return {
-    config: {
-      mode: 'auto',
-      proxyProvider: 'proxy',
-      proxyModel: 'vision',
-      maxObservationChars: 12_000,
-      maxTokens: 2_048,
-    },
-  } as VisionGateway
+    resolveImageRoute: async (provider, model) => ({ strategy: 'native', provider, model }),
+    analyze: async () => { throw new Error('This fixture uses native images.') },
+  }
 }
 
 function clipboardPng(): NewAttachmentDraft {
@@ -831,9 +826,9 @@ describe('createApplication integration', () => {
     const clipboardImage = vi.fn(() => new Promise<NewAttachmentDraft>((resolve) => {
       resolveClipboard = resolve
     }))
-    const vision = visionFixture()
+    const images = imageFixture()
     const app = application(undefined, undefined, undefined, undefined, {
-      vision,
+      images,
       clipboardImage,
     })
     const internals = app
@@ -853,9 +848,9 @@ describe('createApplication integration', () => {
   })
 
   it('retains a Composer image created by the paste-image command', async () => {
-    const vision = visionFixture()
+    const images = imageFixture()
     const app = application(undefined, undefined, undefined, undefined, {
-      vision,
+      images,
       clipboardImage: async () => clipboardPng(),
     })
     const internals = app
@@ -869,9 +864,9 @@ describe('createApplication integration', () => {
   })
 
   it('treats an inline image reference as one editing unit', async () => {
-    const vision = visionFixture()
+    const images = imageFixture()
     const app = application(undefined, undefined, undefined, undefined, {
-      vision,
+      images,
       clipboardImage: async () => clipboardPng(),
     })
     const internals = app
@@ -1187,9 +1182,9 @@ describe('createApplication integration', () => {
   it('clears and restores text and images as one Composer draft', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
-    const vision = visionFixture()
+    const images = imageFixture()
     const app = application(undefined, undefined, undefined, undefined, {
-      vision,
+      images,
       clipboardImage: async () => clipboardPng(),
     })
     const internals = app

@@ -16,7 +16,7 @@ import type { PreparedPrompt, PromptPreparationContext } from '../../runtime/ses
 import { ComposerAutocompleteProvider, type FileReferenceSource } from './autocomplete.ts'
 import {
   AttachmentCoordinator,
-  type VisionGateway,
+  type ImageInputGateway,
 } from './attachments/coordinator.ts'
 import {
   AttachmentDraftStore,
@@ -72,7 +72,7 @@ export interface ComposerProcessOptions {
   readonly commands: ComposerCommandPort
   readonly fileReferences: FileReferenceSource
   readonly clipboardImage: ClipboardImageLoader
-  readonly vision?: VisionGateway
+  readonly images?: ImageInputGateway
   readonly createEditor: ComposerEditorFactory
   readonly followTranscript: () => void
   readonly openRewind: () => void
@@ -96,9 +96,9 @@ export class ComposerProcess {
   private clipboardPastePending = false
 
   constructor(private readonly options: ComposerProcessOptions) {
-    this.coordinator = options.vision === undefined
+    this.coordinator = options.images === undefined
       ? undefined
-      : new AttachmentCoordinator(this.drafts, options.vision)
+      : new AttachmentCoordinator(this.drafts, options.images)
     this.rewindTimer = options.scope.own(new ResourceSlot(timer => { clearTimeout(timer) }))
     this.attachmentRail = new AttachmentRail(
       options.theme,
@@ -193,7 +193,7 @@ export class ComposerProcess {
 
   async pasteImage(): Promise<void> {
     if (this.clipboardPastePending) return
-    this.ensureVisionAvailable()
+    this.ensureImageInputAvailable()
     if (this.current.imageSubmissionBusy) throw new Error('Vision analysis is already in progress.')
     this.clipboardPastePending = true
     this.publish()
@@ -223,14 +223,14 @@ export class ComposerProcess {
   }
 
   async attachPath(path: string, cwd = this.options.session.current.cwd): Promise<AttachmentDraft> {
-    this.ensureVisionAvailable()
+    this.ensureImageInputAvailable()
     if (this.current.imageSubmissionBusy) throw new Error('Vision analysis is already in progress.')
     return this.insertImageDraft(await imageDraftFromPath(path, cwd))
   }
 
   async loadImagePaths(paths: readonly string[], cwd = this.options.session.current.cwd): Promise<void> {
     if (paths.length === 0) return
-    this.ensureVisionAvailable()
+    this.ensureImageInputAvailable()
     const drafts = await Promise.all(paths.map(path => imageDraftFromPath(path, cwd)))
     for (const draft of drafts) this.insertImageDraft(draft)
   }
@@ -318,12 +318,11 @@ export class ComposerProcess {
     const coordinator = this.coordinator
     const state = this.options.session.current
     const selection: ModelSelection | undefined = selectedModel(state.modelCatalog, state.projections)
-    if (coordinator === undefined) throw new Error('Vision is unavailable in this profile.')
+    if (coordinator === undefined) throw new Error('Image input is unavailable in this Host.')
     if (state.sessionId === undefined || selection === undefined) {
       throw new Error('Wait for the active session and model before submitting images.')
     }
     const submission = coordinator.submit(
-      String(state.sessionId),
       selection,
       text,
       mode,
@@ -401,8 +400,8 @@ export class ComposerProcess {
     if (next !== current) this.editor.setText(next)
   }
 
-  private ensureVisionAvailable(): void {
-    if (this.coordinator === undefined) throw new Error('Vision is unavailable in this profile.')
+  private ensureImageInputAvailable(): void {
+    if (this.coordinator === undefined) throw new Error('Image input is unavailable in this Host.')
   }
 
   private createAutocompleteProvider(): ComposerAutocompleteProvider {

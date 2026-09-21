@@ -24,33 +24,6 @@ function userEvent(text: string): HistoryEntry {
   } as unknown as HistoryEntry
 }
 
-function visionEvent(analysisId: string): HistoryEntry {
-  return {
-    event: {
-      type: 'user/message',
-      seq: 2,
-      time: 2,
-      surfaceOp: 'append',
-      data: {
-        id: 'message-vision',
-        role: 'user',
-        source: {
-          kind: 'community-vision',
-          promptId: 'message-durable',
-          analysisId,
-          provider: 'proxy',
-          model: 'vision',
-          attachments: [],
-          durationMs: 10,
-          finishReason: 'stop',
-          truncated: false,
-        },
-        content: [{ type: 'text', text: 'visual evidence' }],
-      },
-    },
-  } as unknown as HistoryEntry
-}
-
 describe('SubmissionTracker', () => {
   it('reconciles a durable event that races ahead of the prompt response', () => {
     const tracker = new SubmissionTracker()
@@ -81,7 +54,7 @@ describe('SubmissionTracker', () => {
     expect(tracker.start('later', 'queue', true).intent).toBe('queueing')
   })
 
-  it('keeps Vision activity until its durable analysis event takes over', () => {
+  it('retires preparation activity with the complete prompt admission', () => {
     const tracker = new SubmissionTracker()
     const pending = tracker.start('analyze', 'queue', false)
     const analysisId = 'analysis-1'
@@ -94,9 +67,6 @@ describe('SubmissionTracker', () => {
 
     tracker.accept(pending.key, requestId)
     tracker.observeEvents([userEvent('analyze')])
-    expect(tracker.snapshot[0]).toMatchObject({ durablePromptObserved: true, activity: { analysisId } })
-
-    tracker.observeEvents([visionEvent(analysisId)])
     expect(tracker.snapshot).toEqual([])
   })
 

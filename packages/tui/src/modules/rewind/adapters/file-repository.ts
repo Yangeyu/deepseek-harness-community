@@ -24,7 +24,7 @@ import type {
 } from '../application/repository.ts'
 import { RewindRepositoryConflictError } from '../application/repository.ts'
 
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 const HASH_PATTERN = /^[a-f0-9]{64}$/u
 const LOCK_STALE_MS = 30_000
@@ -47,7 +47,7 @@ interface StoredPoint extends Omit<RewindPointSnapshot, 'workspaceMutations'> {
 }
 
 interface TimelineManifest {
-  readonly schema: 4
+  readonly schema: typeof SCHEMA_VERSION
   readonly workspaceId: string
   readonly workspaceRoot: string
   readonly lineageId: string
@@ -139,7 +139,13 @@ function promptInput(value: unknown): RewindPromptInput {
   const item = record(value, 'point.input')
   return {
     text: string(item.text, 'point.input.text'),
-    attachments: array(item.attachments, 'point.input.attachments').map(attachmentRef),
+    attachments: array(item.attachments, 'point.input.attachments').map(value => {
+      const image = record(value, 'prompt image')
+      return {
+        reference: string(image.reference, 'prompt image.reference'),
+        attachment: attachmentRef(image.attachment),
+      }
+    }),
   }
 }
 
@@ -198,11 +204,10 @@ function validateManifestIntegrity(manifest: TimelineManifest): void {
   for (const point of manifest.nodes) {
     if (pointIds.has(point.id)) throw new Error('rewind manifest contains a duplicate point')
     pointIds.add(point.id)
-    const attachmentIds = new Set<string>()
-    for (const attachment of point.input.attachments) {
-      const id = String(attachment.attachmentId)
-      if (attachmentIds.has(id)) throw new Error('rewind point contains a duplicate prompt attachment')
-      attachmentIds.add(id)
+    const imageReferences = new Set<string>()
+    for (const { reference } of point.input.attachments) {
+      if (imageReferences.has(reference)) throw new Error('rewind point contains a duplicate prompt image reference')
+      imageReferences.add(reference)
     }
     if (point.previousTurnEndSeq !== undefined && point.previousTurnEndSeq >= point.promptSeq) {
       throw new Error('rewind point conversation boundary does not precede its Prompt')

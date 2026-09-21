@@ -1,6 +1,7 @@
 import { isCompactCheckpointSource } from '@deepseek-ai/dsh-compaction/checkpoint'
 import type { ContextForm, Message } from '@deepseek-ai/dsh-llm'
 import { sanitizeTerminalLine } from '../../presentation/primitives/text.ts'
+import { readVisionEvidence } from '../../runtime/session/input.ts'
 
 const FORM_TITLES = new Map<ContextForm, string>([
   ['instructions', 'Workspace instructions'], ['catalog', 'Catalog'], ['snapshot', 'Context snapshot'],
@@ -15,6 +16,7 @@ export function messageExcerpt(text: string): string {
 
 function contentExcerpt(content: Message['content']): string {
   for (const block of content) {
+    if (readVisionEvidence(block) !== undefined) continue
     if (block.type === 'text' || block.type === 'reasoning') {
       if (block.text !== '') return messageExcerpt(block.text)
     } else if (block.type === 'tool-call') return `Call ${messageExcerpt(block.name)}`
@@ -34,7 +36,6 @@ export function messageLabel(message: Message): { title: string; summary: string
   else if (source.kind === 'user') title = 'User input'
   else if (source.kind === 'model') title = 'Assistant response'
   else if (source.kind === 'tool') title = 'Tool result'
-  else if (source.kind === 'community-vision') title = 'Vision analysis'
   else {
     const producer = source.kind === 'plugin' ? source.plugin : source.kind
     const form = 'form' in source ? source.form : undefined

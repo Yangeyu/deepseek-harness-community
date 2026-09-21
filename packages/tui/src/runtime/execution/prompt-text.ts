@@ -1,3 +1,5 @@
+import { readVisionEvidence } from '../session/input.ts'
+
 interface PromptTextBlock {
   readonly type: string
   readonly text?: string
@@ -12,10 +14,8 @@ function isPromptTextBlock(value: unknown): value is PromptTextBlock {
 
 /** Project exact durable or Controller-wire text without inventing image positions. */
 export function promptTextFromContent(content: readonly unknown[]): string {
-  const blocks = content.filter(isPromptTextBlock)
-  const textBlocks = blocks
-    .filter(block => block.type === 'text')
+  return content.filter(isPromptTextBlock)
+    .filter(block => block.type === 'text' && readVisionEvidence(block) === undefined)
     .map(block => block.text ?? '')
-  const hasImages = blocks.some(block => block.type === 'image')
-  return textBlocks.join(hasImages ? '' : '\n')
+    .join('')
 }

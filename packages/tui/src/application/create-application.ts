@@ -18,7 +18,8 @@ import {
   imageDraftFromClipboard,
   type ClipboardImageLoader,
 } from '../modules/composer/attachments/clipboard.ts'
-import type { VisionGateway } from '../modules/composer/attachments/coordinator.ts'
+import type { ImageInputGateway } from '../modules/composer/attachments/coordinator.ts'
+import type { VisionConfigurationPort } from '../modules/configuration/contracts.ts'
 import { ComposerHost } from '../modules/composer/host.ts'
 import type {
   PermissionDefaultPort,
@@ -69,7 +70,8 @@ export interface TuiApplicationDependencies {
   authentication?: ProviderAuthenticationPort
   usage?: ProviderUsagePort
   commandSource?: HostCommandSource
-  vision?: VisionGateway
+  images?: ImageInputGateway
+  vision?: VisionConfigurationPort
   web?: WebGateway
   permissionDefault?: PermissionDefaultPort
   startup?: TuiStartupOptions
@@ -115,6 +117,7 @@ export function createApplication(
 ): ApplicationAssembly {
   const {
     commandSource,
+    images,
     vision,
     web,
     permissionDefault,
@@ -376,7 +379,7 @@ export function createApplication(
     },
     invalidate: () => { invalidateTerminal() },
     requestRender: () => { renderScheduler.invalidate() },
-    ...vision === undefined ? {} : { vision },
+    ...images === undefined ? {} : { images },
   }
 
   const bootstrapScope = lifecycle.scope.fork('unbound-features')

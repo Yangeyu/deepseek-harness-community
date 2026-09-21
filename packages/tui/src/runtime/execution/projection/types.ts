@@ -1,5 +1,5 @@
 import type { AssistantPresentation } from '../../session/assistant-stream.ts'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { PromptImage } from '../../session/input.ts'
 import type { HistoryEntry } from '../../session/contracts.ts'
 import type { ModelRequestAvailability, StepModelCall } from './model-call.ts'
 
@@ -111,7 +111,7 @@ export interface PromptNode {
   readonly workspaceRoot: string
   readonly input: {
     readonly text: string
-    readonly attachments: readonly ImageAttachmentRef[]
+    readonly attachments: readonly PromptImage[]
   }
   /** Placement within the enclosing Turn; only the entry Prompt is a conversation fork boundary. */
   readonly position: 'turn-entry' | 'in-turn'

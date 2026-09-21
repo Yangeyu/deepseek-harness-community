@@ -34,9 +34,9 @@ DeepSeek 的模型目录和能力由上游 provider 及 `llm-deepseek.models` �
 - 没有对应 section 时该 provider 不注册模型——这是"挂载"式注册，不是声明式开关。
 
 ### `vision:` — 图片路由
-- `mode`：`auto`（按线路能力自动决定直读/代理）、`proxy`（强制经文本代理链路分析）、`disabled`（关闭）。
+- `mode`：`auto`（按线路能力自动决定直读/代理）、`proxy`（强制经文本代理链路分析）、`disabled`（关闭代理；不影响原生多模态输入）。
 - `proxyProvider` / `proxyModel`：代理线路与模型（Bundle 默认 `bailian` / `qwen3.7-plus`）。
-- 语义：每次图片提交只解析一次线路；`auto` 下图文模型直接进入官方 Host/Attachment/provider 链路，文本模型才进入代理，`proxy` 则显式强制代理。`read_image` 仅原生图文线路可用。`inspect_image` 虽保持稳定注册，但会先检查当前线路：原生 `auto` 线路在读取来源前拒绝，文本 `auto` 或强制代理线路才执行。文件来源与官方 `read` 工具族共用 filesystem backend；扩展名只声明媒体类型，图片字节、尺寸、标准化和部署上限由官方 Attachment 服务最终校验。
+- 语义：每次图片提交只解析一次线路；非强制代理时，图文模型直接进入官方 Host/Attachment/provider 链路，即使 Vision 未挂载或设为 `disabled` 也可用。文本或能力未知的模型需要可用代理，`proxy` 则显式强制代理。图片与文本共用提交、排队和中断流程，代理观察作为同条消息的独立证据保存。`read_image` 仅原生图文线路可用。`inspect_image` 虽保持稳定注册，但会先检查当前线路：原生 `auto` 线路在读取来源前拒绝，文本 `auto` 或强制代理线路才执行。文件来源与官方 `read` 工具族共用 filesystem backend；扩展名只声明媒体类型，图片字节、尺寸、标准化和部署上限由官方 Attachment 服务最终校验。
 
 ### `community-web:` — 搜索与网页提取
 - `searchProvider`：`auto`（有 `TAVILY_API_KEY` 走 Tavily，否则回落 DeepSeek Official）、`community-tavily`（强制 Tavily，无 key 时 readiness 失败）、`deepseek-official`（强制官方）。

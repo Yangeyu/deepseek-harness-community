@@ -1,7 +1,8 @@
 import { Context } from '@deepseek-ai/cordis'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
-import type {} from '@vascent/deepseek-harness-vision'
 import { describe, expect, it, vi } from 'vitest'
+import { visionEvidenceBlock } from '../../../../src/runtime/session/input.ts'
 import {
   installPromptProjection,
   projectPromptNode,
@@ -83,132 +84,50 @@ describe('Prompt execution Host projection', () => {
       promptId: 'native-prompt',
       input: {
         text: '[Image #1]',
-        attachments: [expect.objectContaining({ attachmentId: 'attachment-native' })],
+        attachments: [{ reference: '[Image #1]', attachment: expect.objectContaining({ attachmentId: 'attachment-native' }) }],
       },
     }))
   })
 
-  it('enriches one proxy-image Prompt from its source-attributed evidence', async () => {
+  it('publishes complete native and proxy attachments atomically with the original Prompt', async () => {
+    const native = {
+      attachmentId: AttachmentId('attachment-native'), mediaType: 'image/png' as const,
+      bytes: 4, width: 1, height: 1, name: 'native.png',
+    }
+    const proxy = { ...native, attachmentId: AttachmentId('attachment-proxy'), name: 'proxy.png' }
     const start = event({ type: 'turn/start', seq: 0, time: 100, data: { turn: 1 } })
     const prompt = event({
-      type: 'user/message',
-      seq: 1,
-      time: 120,
-      surfaceOp: 'append',
+      type: 'user/message', seq: 1, time: 180, surfaceOp: 'append',
       data: {
-        id: 'image-prompt',
-        role: 'user',
-        source: { kind: 'user', rpcId: 'rpc-1' },
-        content: [{ type: 'text', text: 'inspect [Image #1] now' }],
+        id: 'image-prompt', role: 'user', source: { kind: 'user', rpcId: 'rpc-1' },
+        content: [
+          { type: 'text', text: 'compare [Image #1]' },
+          { type: 'image', attachment: native },
+          { type: 'text', text: ' with [Image #2] now' },
+          visionEvidenceBlock({
+            analysisId: 'analysis-1', provider: 'bailian', model: 'qwen',
+            observation: 'Objects in image', attachments: [proxy], references: ['[Image #2]'],
+            durationMs: 60, truncated: false, finishReason: 'stop',
+          }),
+        ],
       },
     })
-    const evidence = event({
-      type: 'user/message',
-      seq: 2,
-      time: 180,
-      surfaceOp: 'append',
-      data: {
-        id: 'vision-evidence',
-        role: 'user',
-        source: {
-          kind: 'community-vision',
-          promptId: 'image-prompt',
-          analysisId: 'analysis-1',
-          attachments: [{
-            attachmentId: 'attachment-1',
-            mediaType: 'image/png',
-            bytes: 4,
-            width: 1,
-            height: 1,
-            name: 'image.png',
-          }],
-        },
-        content: [{ type: 'text', text: 'objects in image' }],
-      },
-    })
-    const current = session([start, prompt, evidence])
+    const current = session([start, prompt])
     const upsertPrompt = vi.fn()
     const ctx = new Context()
     installPromptProjection(ctx, { upsertPrompt })
 
     ctx.emit('session/event', current, prompt)
-    ctx.emit('session/event', current, evidence)
 
-    expect(upsertPrompt).toHaveBeenCalledTimes(2)
-    expect(upsertPrompt).toHaveBeenLastCalledWith(expect.objectContaining({
-      promptId: 'image-prompt',
-      turn: 1,
+    expect(upsertPrompt).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      promptId: 'image-prompt', turn: 1,
       input: {
-        text: 'inspect [Image #1] now',
-        attachments: [expect.objectContaining({ attachmentId: 'attachment-1' })],
+        text: 'compare [Image #1] with [Image #2] now',
+        attachments: [{ reference: '[Image #1]', attachment: native }, { reference: '[Image #2]', attachment: proxy }],
       },
-      position: 'turn-entry',
+      position: 'turn-entry', admittedSeq: 1, admittedAt: 180,
     }))
     await ctx.fiber.dispose()
-  })
-
-  it('associates delayed Vision evidence by Prompt identity instead of event proximity', () => {
-    const start = event({ type: 'turn/start', seq: 0, time: 100, data: { turn: 1 } })
-    const first = event({
-      type: 'user/message',
-      seq: 1,
-      time: 110,
-      surfaceOp: 'append',
-      data: {
-        id: 'first-prompt',
-        role: 'user',
-        source: { kind: 'user', rpcId: 'rpc-1' },
-        content: [{ type: 'text', text: 'first [Image #1]' }],
-      },
-    })
-    const second = event({
-      type: 'user/message',
-      seq: 2,
-      time: 120,
-      surfaceOp: 'append',
-      data: {
-        id: 'second-prompt',
-        role: 'user',
-        source: { kind: 'user', rpcId: 'rpc-2' },
-        content: [{ type: 'text', text: 'second' }],
-      },
-    })
-    const evidence = event({
-      type: 'user/message',
-      seq: 3,
-      time: 180,
-      surfaceOp: 'append',
-      data: {
-        id: 'vision-evidence',
-        role: 'user',
-        source: {
-          kind: 'community-vision',
-          promptId: 'first-prompt',
-          analysisId: 'analysis-1',
-          attachments: [{
-            attachmentId: 'attachment-1',
-            mediaType: 'image/png',
-            bytes: 4,
-            width: 1,
-            height: 1,
-          }],
-        },
-        content: [{ type: 'text', text: 'evidence for first' }],
-      },
-    })
-    const current = session([start, first, second, evidence])
-
-    expect(projectPromptNode(current, evidence)).toEqual(expect.objectContaining({
-      promptId: 'first-prompt',
-      input: {
-        text: 'first [Image #1]',
-        attachments: [expect.objectContaining({ attachmentId: 'attachment-1' })],
-      },
-    }))
-    expect(projectPromptNode(current, second)).toEqual(expect.objectContaining({
-      promptId: 'second-prompt',
-      input: { text: 'second', attachments: [] },
-    }))
   })
 
   it('does not create a point when a turn closes before prompt admission', () => {

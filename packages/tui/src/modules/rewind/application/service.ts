@@ -171,7 +171,15 @@ export class RewindService implements RewindPort, RewindPointSink, RewindWorkspa
       turn: point.turn,
       input: Object.freeze({
         text: point.input.text,
-        attachments: Object.freeze(point.input.attachments.map(attachment => Object.freeze({ ...attachment }))),
+        attachments: Object.freeze(point.input.attachments.map(({ reference, attachment }) => Object.freeze({
+          reference,
+          attachment: Object.freeze({
+            ...attachment,
+            ...attachment.originalDimensions === undefined
+              ? {}
+              : { originalDimensions: Object.freeze({ ...attachment.originalDimensions }) },
+          }),
+        }))),
       }),
       createdAt: point.createdAt,
       ...point.previousTurnEndSeq === undefined

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { PromptImage } from '../../src/runtime/session/input.ts'
 import {
   FileRewindRepository,
   RewindRepositoryConflictError,
@@ -22,7 +23,7 @@ function stored(workspaceRoot: string, options: {
   readonly before?: string
   readonly after?: string
   readonly updatedAt?: number
-  readonly attachments?: readonly ImageAttachmentRef[]
+  readonly attachments?: readonly PromptImage[]
 } = {}): StoredRewindTimeline {
   const sessionId = options.sessionId ?? 'session'
   const before = options.before ?? 'before secret\n'
@@ -78,16 +79,17 @@ describe('FileRewindRepository', () => {
     const root = await temporary('dsh-rewind-repository-')
     const workspaceRoot = await temporary('dsh-rewind-workspace-')
     const repository = new FileRewindRepository(root)
+    const attachment: ImageAttachmentRef = {
+      attachmentId: 'attachment-1' as ImageAttachmentRef['attachmentId'],
+      mediaType: 'image/png',
+      bytes: 4,
+      width: 1,
+      height: 1,
+      name: 'image.png',
+      originalDimensions: { width: 2, height: 2 },
+    }
     const value = stored(workspaceRoot, {
-      attachments: [{
-        attachmentId: 'attachment-1' as ImageAttachmentRef['attachmentId'],
-        mediaType: 'image/png',
-        bytes: 4,
-        width: 1,
-        height: 1,
-        name: 'image.png',
-        originalDimensions: { width: 2, height: 2 },
-      }],
+      attachments: ['[Image #2]', '[Image #3]'].map(reference => ({ reference, attachment })),
     })
 
     await repository.save(value, null)
@@ -100,14 +102,17 @@ describe('FileRewindRepository', () => {
     await repository.close()
   })
 
-  it('quarantines a malformed manifest instead of guessing or overwriting it', async () => {
+  it.each(['malformed', 'previous-schema'])('quarantines a %s manifest instead of guessing or migrating it', async (format) => {
     const root = await temporary('dsh-rewind-corrupt-')
     const workspaceRoot = await temporary('dsh-rewind-workspace-')
     const warning = vi.fn()
     const repository = new FileRewindRepository(root, { onWarning: warning })
     await repository.save(stored(workspaceRoot), null)
     const manifestName = (await readdir(join(root, 'timelines')))[0]
-    await writeFile(join(root, 'timelines', manifestName ?? ''), '{broken', 'utf8')
+    const manifestPath = join(root, 'timelines', manifestName ?? '')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>
+    const incompatible = format === 'malformed' ? '{broken' : JSON.stringify({ ...manifest, schema: 4 })
+    await writeFile(manifestPath, incompatible, 'utf8')
 
     await expect(repository.load(workspaceRoot)).resolves.toBeUndefined()
 

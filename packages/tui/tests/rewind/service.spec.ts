@@ -115,7 +115,7 @@ describe('RewindService', () => {
     expect(summary).toMatchObject({ pointId: 'prompt-1', workspaceFiles: 1 })
   })
 
-  it('updates one Prompt point when durable image evidence arrives', async () => {
+  it('restores the complete image input recorded with its Prompt', async () => {
     const root = await workspace()
     const rewind = service()
     const base = {
@@ -126,7 +126,6 @@ describe('RewindService', () => {
       promptSeq: 1,
       createdAt: 1,
     }
-    await admit(rewind, { ...base, input: { text: 'inspect image', attachments: [] } })
     const attachment: ImageAttachmentRef = {
       attachmentId: 'attachment-1' as ImageAttachmentRef['attachmentId'],
       mediaType: 'image/png',
@@ -134,12 +133,15 @@ describe('RewindService', () => {
       width: 1,
       height: 1,
     }
-    await admit(rewind, { ...base, input: { text: 'inspect image', attachments: [attachment] } })
+    await admit(rewind, { ...base, input: { text: 'inspect [Image #1]', attachments: [{ reference: '[Image #1]', attachment }] } })
 
     const [summary] = await list(rewind)
     expect(summary).toMatchObject({ pointId: 'prompt-1', imageCount: 1 })
     const plan = await rewind.plan('session', summary?.pointId ?? '')
-    expect(plan.input).toEqual({ text: 'inspect image', attachments: [attachment] })
+    expect(plan.input).toEqual({ text: 'inspect [Image #1]', attachments: [{ reference: '[Image #1]', attachment }] })
+    expect(plan.input.attachments[0]?.attachment).not.toBe(attachment)
+    expect(Object.isFrozen(plan.input.attachments[0])).toBe(true)
+    expect(Object.isFrozen(plan.input.attachments[0]?.attachment)).toBe(true)
   })
 
   it('restores only source-attributed AI files and supports compensation', async () => {

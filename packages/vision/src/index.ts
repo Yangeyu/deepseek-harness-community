@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import {
@@ -7,50 +6,37 @@ import {
   type ContentBlock,
   type LlmFailure,
 } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SettingsScope } from '@deepseek-ai/dsh-settings'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { VisionConfigSchema } from './config.ts'
 import {
   VISION_SYSTEM_PROMPT,
   visionInferenceContent,
-  wrapObservation,
+  sanitizeObservation,
   wrapToolObservation,
 } from './observation.ts'
-import { chooseVisionRoute } from './routing.ts'
-import { VisionEvidenceAdmissionAdapter } from './events.ts'
 import { createInspectImageTool } from './tool.ts'
 import type {
   ResolvedImageRoute,
   ResolvedProxyImageRoute,
-  VisionAdmissionRequest,
   VisionAnalysis,
   VisionConfig,
-  VisionEvidenceSource,
   VisionImageInput,
   VisionInspection,
-  VisionObservationBlock,
   VisionRequest,
   VisionResultMetadata,
   VisionStatus,
-  VisionSubmissionSource,
 } from './types.ts'
 
 export { VisionConfigSchema as Config }
-export { chooseVisionRoute } from './routing.ts'
-export { VISION_SYSTEM_PROMPT, visionUserPrompt, wrapObservation, wrapToolObservation } from './observation.ts'
 export type {
   ResolvedImageRoute,
   ResolvedProxyImageRoute,
-  VisionAdmissionRequest,
   VisionAnalysis,
   VisionConfig,
-  VisionEvidenceMetadata,
-  VisionEvidenceSource,
   VisionImageInput,
   VisionInspection,
   VisionMode,
-  VisionObservationBlock,
   VisionRequest,
   VisionResultMetadata,
   VisionStatus,
@@ -63,17 +49,6 @@ const VISION_NAMESPACE = 'vision'
 declare module '@deepseek-ai/cordis' {
   interface Context {
     vision: VisionService
-  }
-}
-
-declare module '@deepseek-ai/dsh-llm' {
-  interface ContentBlockMap {
-    'community-vision-observation': VisionObservationBlock
-  }
-
-  interface MessageSourceMap {
-    'community-vision': VisionEvidenceSource
-    'community-vision-submission': VisionSubmissionSource
   }
 }
 
@@ -100,18 +75,16 @@ interface VisionInference extends VisionResultMetadata {
   rawObservation: string
 }
 
-/** Proxy fallback policy and evidence adapter built on official media services. */
+/** Proxy image analysis and inspection built on official media services. */
 export class VisionService extends Service {
-  static inject = ['agents', 'attachments', 'fs', 'llm', 'settings', 'tools']
+  static inject = ['attachments', 'fs', 'llm', 'settings', 'tools']
   static Config = VisionConfigSchema
 
   private readonly settings: SettingsScope<VisionConfig>
-  private readonly admission: VisionEvidenceAdmissionAdapter
 
   constructor(ctx: Context, config: VisionConfig) {
     super(ctx, 'vision')
     this.settings = ctx.settings.register(VISION_NAMESPACE, VisionConfigSchema, { base: config, applies: 'live' })
-    this.admission = new VisionEvidenceAdmissionAdapter(ctx)
     ctx.tools.register(createInspectImageTool({
       attachments: ctx.attachments,
       fs: ctx.fs,
@@ -125,24 +98,39 @@ export class VisionService extends Service {
     return this.settings.get()
   }
 
-  newAnalysisId(): string {
-    return randomUUID()
-  }
-
-  async resolveImageRoute(provider: string, model: string, signal?: AbortSignal): Promise<ResolvedImageRoute> {
-    const config = this.config
-    if (config.mode === 'disabled') return chooseVisionRoute(config, undefined, undefined)
-    const main = config.mode === 'auto'
-      ? await this.ctx.llm.resolveModelInfo(provider, model, signal).catch(() => undefined)
-      : undefined
+  /** Resolve only the configured proxy; callers own native image submission. */
+  async resolveProxyRoute(
+    signal?: AbortSignal,
+  ): Promise<ResolvedProxyImageRoute | Extract<ResolvedImageRoute, { strategy: 'disabled' }>> {
     signal?.throwIfAborted()
-    if (config.mode === 'auto' && main?.inputModalities?.includes('image')) {
-      return chooseVisionRoute(config, main, undefined)
+    const config = this.config
+    if (config.mode === 'disabled') {
+      return { strategy: 'disabled', reason: 'disabled', message: 'Vision proxy is disabled. Open /config Vision to enable it.' }
     }
     const proxy = await this.ctx.llm.resolveModelInfo(config.proxyProvider, config.proxyModel, signal)
       .catch(() => undefined)
     signal?.throwIfAborted()
-    return chooseVisionRoute(config, main, proxy)
+    if (proxy === undefined) {
+      return {
+        strategy: 'disabled',
+        reason: 'proxy-unavailable',
+        message: `Vision proxy ${config.proxyProvider}/${config.proxyModel} is unavailable. Open /config Vision to configure it.`,
+      }
+    }
+    if (!proxy.inputModalities?.includes('image')) {
+      return {
+        strategy: 'disabled',
+        reason: 'proxy-does-not-support-images',
+        message: `Vision proxy ${config.proxyProvider}/${config.proxyModel} does not declare image input support.`,
+      }
+    }
+    return {
+      strategy: 'proxy',
+      provider: proxy.provider,
+      model: proxy.id,
+      maxObservationChars: config.maxObservationChars,
+      maxTokens: config.maxTokens,
+    }
   }
 
   async status(signal?: AbortSignal): Promise<VisionStatus> {
@@ -161,14 +149,6 @@ export class VisionService extends Service {
     await this.settings.update({ mode })
   }
 
-  admit(request: VisionAdmissionRequest): void {
-    const agent = this.ctx.agents.get(SessionId(request.analysis.sessionId))
-    if (agent === undefined) throw new VisionError('SESSION_UNAVAILABLE', 'The active session is no longer available.')
-    const message = this.admission.submission(request)
-    if (request.mode === 'steer') agent.steer(message)
-    else agent.followup(message)
-  }
-
   async analyze(
     route: ResolvedProxyImageRoute,
     request: VisionRequest,
@@ -176,9 +156,6 @@ export class VisionService extends Service {
   ): Promise<VisionAnalysis> {
     this.assertImages(request.images)
     this.assertReferences(request.images)
-    if (this.ctx.agents.get(SessionId(request.sessionId)) === undefined) {
-      throw new VisionError('SESSION_UNAVAILABLE', 'The active session is no longer available.')
-    }
     const startedAt = Date.now()
     signal?.throwIfAborted()
     const saved = await this.ctx.attachments.saveImages(request.images.map(image => ({
@@ -197,23 +174,13 @@ export class VisionService extends Service {
       startedAt,
       signal,
     )
-    const wrapped = wrapObservation(
-      rawObservation,
-      inference.provider,
-      inference.model,
-      route.maxObservationChars,
-      inference.attachments.map((attachment, index) => ({
-        attachment,
-        reference: request.images[index]!.reference,
-      })),
-    )
-    const truncated = inference.truncated || wrapped.truncated
+    const observation = sanitizeObservation(rawObservation, route.maxObservationChars)
     return {
       analysisId: request.analysisId,
-      sessionId: request.sessionId,
       ...inference,
-      observation: wrapped.text,
-      truncated,
+      observation: observation.text,
+      references: request.images.map(image => image.reference),
+      truncated: inference.truncated || observation.truncated,
     }
   }
 
@@ -301,15 +268,22 @@ export class VisionService extends Service {
   }
 
   private async resolveToolRoute(exec: ToolRunContext): Promise<ResolvedImageRoute> {
-    const request = exec.agent?.session.requestHeader()?.config
-    const provider = request?.provider ?? exec.agent?.options.provider
-    const model = request?.model ?? exec.agent?.options.model
-    if (provider === undefined || model === undefined) {
-      throw new VisionError('MODEL_ROUTE_UNAVAILABLE', 'inspect_image could not resolve the current model route.')
+    exec.signal.throwIfAborted()
+    if (this.config.mode !== 'proxy') {
+      const request = exec.agent?.session.requestHeader()?.config
+      const provider = request?.provider ?? exec.agent?.options.provider
+      const model = request?.model ?? exec.agent?.options.model
+      if (provider === undefined || model === undefined) {
+        throw new VisionError('MODEL_ROUTE_UNAVAILABLE', 'inspect_image could not resolve the current model route.')
+      }
+      const main = await this.ctx.llm.resolveModelInfo(provider, model, exec.signal).catch(() => undefined)
+      exec.signal.throwIfAborted()
+      if (main?.inputModalities?.includes('image')) {
+        return { strategy: 'native', provider: main.provider, model: main.id }
+      }
     }
-    return this.resolveImageRoute(provider, model, exec.signal)
+    return this.resolveProxyRoute(exec.signal)
   }
-
 }
 
 export default VisionService

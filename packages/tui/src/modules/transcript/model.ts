@@ -17,6 +17,7 @@ import {
   type ExecutionSnapshot,
 } from '../../runtime/execution/projection/index.ts'
 import { promptTextFromContent } from '../../runtime/execution/prompt-text.ts'
+import { visionEvidenceFromContent } from '../../runtime/session/input.ts'
 import { displayUnknown, sanitizeTerminalLine, sanitizeTerminalText } from '../../presentation/primitives/text.ts'
 
 export type TranscriptTone = 'accent' | 'dim' | 'error' | 'warning'
@@ -333,34 +334,34 @@ function buildTranscriptHistory(
       case 'user/message': {
         if (event.surfaceOp !== 'append') break
         const source = event.data.source
-        const rawText = messageText(event.data.content, showReasoning)
-        if (source.kind === 'community-vision') {
-          const execution = state.execution.get(visionExecutionKey(source.analysisId))
-          if (execution === undefined) break
-          const imageCount = source.attachments.length
-          items.push({
-            kind: 'tool',
-            key: String(execution.key),
-            operation: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalLine(source.model)}`,
-            execution,
-            arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${source.provider}/${source.model}`,
-            result: rawText === '' ? 'Vision analysis completed.' : rawText,
-          })
-          break
-        }
         const human = source.kind === 'user'
         if (!human && !showDetails) break
         if (human) {
           const execution = state.execution.get(promptExecutionKey(String(event.data.id)))
           const text = promptTextFromContent(event.data.content)
-          if (text.trim() === '') break
-          items.push({
-            kind: 'prompt',
-            key: `prompt:${String(event.data.id)}`,
-            body: text,
-            ...execution === undefined ? {} : { execution },
-          })
+          if (text.trim() !== '') {
+            items.push({
+              kind: 'prompt',
+              key: `prompt:${String(event.data.id)}`,
+              body: text,
+              ...execution === undefined ? {} : { execution },
+            })
+          }
+          for (const analysis of visionEvidenceFromContent(event.data.content)) {
+            const vision = state.execution.get(visionExecutionKey(analysis.analysisId))
+            if (vision === undefined) continue
+            const imageCount = analysis.attachments.length
+            items.push({
+              kind: 'tool',
+              key: String(vision.key),
+              operation: `Vision · ${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${sanitizeTerminalLine(analysis.model)}`,
+              execution: vision,
+              arguments: `${String(imageCount)} image${imageCount === 1 ? '' : 's'} · ${analysis.provider}/${analysis.model}`,
+              result: analysis.observation === '' ? 'Vision analysis completed.' : analysis.observation,
+            })
+          }
         } else {
+          const rawText = messageText(event.data.content, showReasoning)
           const imageCount = event.data.content.filter(block => block.type === 'image').length
           const text = [rawText, imageCount === 0 ? '' : `${String(imageCount)} image${imageCount === 1 ? '' : 's'} attached`]
             .filter(Boolean)
@@ -559,8 +560,7 @@ function collectTranscriptSources(
     } })
   }
   for (const submission of state.pendingSubmissions) {
-    const promptVisible = submission.durablePromptObserved === true
-      || (submission.requestId !== undefined && visibleQueueRequestIds.has(String(submission.requestId)))
+    const promptVisible = submission.requestId !== undefined && visibleQueueRequestIds.has(String(submission.requestId))
     if (!promptVisible) {
       items.push({ kind: 'supplement', item: {
         kind: 'prompt',

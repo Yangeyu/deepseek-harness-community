@@ -1,7 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
-import type {} from '@vascent/deepseek-harness-vision'
+import { promptImagesFromContent } from '../../session/input.ts'
 import { promptTextFromContent } from '../prompt-text.ts'
 import type { PromptNode, PromptNodeSink } from './types.ts'
 
@@ -24,52 +23,14 @@ function promptText(event: UserMessageEvent): string {
   return '[Message]'
 }
 
-function promptEventFor(
-  events: readonly SessionEvent[],
-  event: SessionEvent,
-): AcceptedPromptEvent | undefined {
-  if (isAcceptedPromptEvent(event)) return event
-  if (event.type !== 'user/message'
-    || event.surfaceOp !== 'append'
-    || event.data.source.kind !== 'community-vision') return undefined
-  const promptId = event.data.source.promptId
-  return events.find((candidate): candidate is AcceptedPromptEvent => (
-    candidate.seq < event.seq
-    && isAcceptedPromptEvent(candidate)
-    && String(candidate.data.id) === promptId
-  ))
-}
-
-function promptAttachments(
-  events: readonly SessionEvent[],
-  prompt: AcceptedPromptEvent,
-  throughSeq: number,
-): ImageAttachmentRef[] {
-  const refs = [
-    ...prompt.data.content.flatMap(block => block.type === 'image' ? [block.attachment] : []),
-    ...events.flatMap((candidate) => {
-      if (candidate.seq <= prompt.seq
-        || candidate.seq > throughSeq
-        || candidate.type !== 'user/message'
-        || candidate.surfaceOp !== 'append'
-        || candidate.data.source.kind !== 'community-vision'
-        || candidate.data.source.promptId !== String(prompt.data.id)) return []
-      return candidate.data.source.attachments
-    }),
-  ]
-  const unique = new Map<string, ImageAttachmentRef>()
-  for (const ref of refs) unique.set(String(ref.attachmentId), ref)
-  return [...unique.values()]
-}
-
 /** Project the latest immutable state of one human Prompt from the Session log. */
 export function projectPromptNode(
   session: Session,
   event: SessionEvent,
 ): PromptNode | undefined {
+  if (!isAcceptedPromptEvent(event)) return undefined
+  const prompt = event
   const events = session.snapshotEvents()
-  const prompt = promptEventFor(events, event)
-  if (prompt === undefined) return undefined
 
   const start = events.findLast(candidate => (
     candidate.seq < prompt.seq && candidate.type === 'turn/start'
@@ -91,7 +52,7 @@ export function projectPromptNode(
   const previous = events.findLast(candidate => (
     candidate.seq < start.seq && candidate.type === 'turn/end'
   ))
-  const attachments = promptAttachments(events, prompt, event.seq)
+  const attachments = promptImagesFromContent(prompt.data.content)
   return {
     promptId: String(prompt.data.id),
     sessionId: String(session.id),
@@ -108,7 +69,7 @@ export function projectPromptNode(
   }
 }
 
-/** Publish immutable Prompt snapshots after canonical input or evidence commits. */
+/** Publish complete immutable Prompt snapshots on canonical user admission. */
 export function installPromptProjection(ctx: Context, sink: PromptNodeSink): void {
   ctx.on('session/event', (session, event) => {
     const prompt = projectPromptNode(session, event)

@@ -1,29 +1,24 @@
+import { randomUUID } from 'node:crypto'
 import type { ModelSelection } from '../../../runtime/session/contracts.ts'
 import type {
   ResolvedImageRoute,
   ResolvedProxyImageRoute,
-  VisionAdmissionRequest,
   VisionAnalysis,
-  VisionConfig,
   VisionRequest,
-  VisionStatus,
 } from '@vascent/deepseek-harness-vision'
+import { visionEvidenceBlock } from '../../../runtime/session/input.ts'
 import type { PreparedPrompt, PromptPreparationContext } from '../../../runtime/session/prompt.ts'
 import { compilePromptDocument } from '../prompt-document.ts'
 import { AttachmentDraftStore } from './drafts.ts'
 
-export interface VisionGateway {
-  readonly config: VisionConfig
-  newAnalysisId(): string
+/** Image preparation is available independently of the optional proxy service. */
+export interface ImageInputGateway {
   resolveImageRoute(provider: string, model: string, signal?: AbortSignal): Promise<ResolvedImageRoute>
-  status(signal?: AbortSignal): Promise<VisionStatus>
-  setMode(mode: VisionConfig['mode']): Promise<void>
   analyze(
     route: ResolvedProxyImageRoute,
     request: VisionRequest,
     signal?: AbortSignal,
   ): Promise<VisionAnalysis>
-  admit(request: VisionAdmissionRequest): void | Promise<void>
 }
 
 export type PreparedPromptSender = (
@@ -37,13 +32,13 @@ interface ActiveImageSubmission {
   restoreDrafts: boolean
 }
 
-/** Owns the only image submission state machine between the composer and Harness. */
+/** Prepare one complete input, then hand it to the same Session submission as text. */
 export class AttachmentCoordinator {
   private active: ActiveImageSubmission | undefined
 
   constructor(
     readonly drafts: AttachmentDraftStore,
-    private readonly vision: VisionGateway,
+    private readonly images: ImageInputGateway,
   ) {}
 
   get busy(): boolean {
@@ -54,33 +49,30 @@ export class AttachmentCoordinator {
     const active = this.active
     if (active === undefined) return
     active.restoreDrafts = restoreDrafts
-    active.abort.abort(new Error('Vision analysis cancelled.'))
+    active.abort.abort(new Error('Image preparation cancelled.'))
   }
 
   async submit(
-    sessionId: string,
     selection: ModelSelection,
     text: string,
     mode: 'queue' | 'steer',
     send: PreparedPromptSender,
-  ): Promise<'native' | 'proxy'> {
-    if (this.active !== undefined) throw new Error('Vision analysis is already in progress.')
+  ): Promise<void> {
+    if (this.active !== undefined) throw new Error('Image preparation is already in progress.')
     const prompt = compilePromptDocument(text, this.drafts.snapshot)
     const images = prompt.images
     if (images.length === 0) throw new Error('No images are attached.')
     const abort = new AbortController()
     const active = { abort, restoreDrafts: true }
     this.active = active
-    let route: 'native' | 'proxy' | undefined
     try {
       await send(prompt.text, mode, async (preparation) => {
         this.drafts.clear()
-        const resolved = await this.vision.resolveImageRoute(selection.provider, selection.model, abort.signal)
+        const resolved = await this.images.resolveImageRoute(selection.provider, selection.model, abort.signal)
+        abort.signal.throwIfAborted()
         if (resolved.strategy === 'disabled') throw new Error(resolved.message)
         if (resolved.strategy === 'native') {
-          route = 'native'
           return {
-            kind: 'content',
             content: prompt.parts.map(part => part.type === 'text'
               ? { type: 'text' as const, text: part.text }
               : {
@@ -91,12 +83,10 @@ export class AttachmentCoordinator {
                 }),
           }
         }
-        route = 'proxy'
-        const analysisId = this.vision.newAnalysisId()
+        const analysisId = randomUUID()
         preparation.setActivity({ kind: 'vision', analysisId, imageCount: images.length })
-        const analysis = await this.vision.analyze(resolved, {
+        const analysis = await this.images.analyze(resolved, {
           analysisId,
-          sessionId,
           userText: prompt.text,
           images: images.map(image => ({
             reference: image.placeholder,
@@ -106,23 +96,8 @@ export class AttachmentCoordinator {
           })),
         }, abort.signal)
         abort.signal.throwIfAborted()
-        return {
-          kind: 'admission',
-          commit: async ({ requestId, clientTimeZone }) => {
-            abort.signal.throwIfAborted()
-            await this.vision.admit({
-              analysis,
-              promptText: prompt.text,
-              mode,
-              rpcId: String(requestId),
-              ...clientTimeZone === undefined ? {} : { clientTimeZone },
-            })
-            active.restoreDrafts = false
-          },
-        }
+        return { content: [{ type: 'text', text: prompt.text }, visionEvidenceBlock(analysis)] }
       })
-      if (route === undefined) throw new Error('Vision did not resolve an image route.')
-      return route
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       if (active.restoreDrafts) {
@@ -134,5 +109,4 @@ export class AttachmentCoordinator {
       if (this.active === active) this.active = undefined
     }
   }
-
 }

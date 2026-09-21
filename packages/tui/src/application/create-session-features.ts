@@ -11,7 +11,7 @@ import { LocalSkillAuthoring } from '../infrastructure/filesystem/local-skill-au
 import { InlineReferenceEditor } from '../infrastructure/terminal/inline-reference-editor.ts'
 import { TerminalSkillDocumentEditor } from '../infrastructure/terminal/skill-document-editor.ts'
 import type { ClipboardImageLoader } from '../modules/composer/attachments/clipboard.ts'
-import type { VisionGateway } from '../modules/composer/attachments/coordinator.ts'
+import type { ImageInputGateway } from '../modules/composer/attachments/coordinator.ts'
 import type { FileReferenceSource } from '../modules/composer/autocomplete.ts'
 import { ComposerHost } from '../modules/composer/host.ts'
 import { ComposerProcess } from '../modules/composer/process.ts'
@@ -47,7 +47,7 @@ export interface SessionFeatureSetOptions {
   readonly showReasoning: boolean
   readonly maxToolOutputLines: number
   readonly thinkingMaxLines: number
-  readonly vision?: VisionGateway
+  readonly images?: ImageInputGateway
   readonly dispatchCommand: (text: string) => Promise<boolean>
   readonly autocompleteItems: () => readonly (AutocompleteItem | SlashCommand)[]
   readonly followTranscript: () => void
@@ -89,7 +89,7 @@ export function createSessionFeatureSet(
       options.theme.imageReference,
       { paddingX: 0, autocompleteMaxVisible: 10 },
     ),
-    ...options.vision === undefined ? {} : { vision: options.vision },
+    ...options.images === undefined ? {} : { images: options.images },
     followTranscript: options.followTranscript,
     openRewind: options.openRewind,
     requestRender: options.requestRender,

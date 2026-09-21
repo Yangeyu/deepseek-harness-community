@@ -27,7 +27,7 @@ const ACTIONS: readonly VisionAction[] = [{
 }, {
   mode: 'disabled',
   label: 'Disabled',
-  description: 'Reject image submissions while leaving ordinary text prompts unchanged.',
+  description: 'Disable proxy analysis. Native image-capable models can still receive images.',
 }]
 
 /** Keyboard-first Vision settings surface backed by the host settings service. */

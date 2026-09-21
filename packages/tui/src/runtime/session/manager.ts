@@ -263,18 +263,9 @@ export class SessionManager {
     try {
       const prepared = typeof contentOrPreparation === 'function'
         ? await contentOrPreparation({ setActivity })
-        : { kind: 'content' as const, content: contentOrPreparation }
+        : { content: contentOrPreparation }
       if (!this.workspace.visible(runtime)) {
         throw new Error('The active session changed while preparing the prompt.')
-      }
-      if (prepared.kind === 'admission') {
-        await prepared.commit({
-          requestId,
-          ...clientTimeZone === undefined ? {} : { clientTimeZone },
-        })
-        if (!this.workspace.owns(runtime)) return
-        runtime.acceptSubmission(pending.key, requestId)
-        return
       }
       const response = await this.transport.prompt({
         requestId,

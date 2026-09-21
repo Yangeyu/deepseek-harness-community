@@ -1,6 +1,7 @@
 import type { HistoryEntry } from '../../runtime/session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
-import type {} from '@vascent/deepseek-harness-vision'
+import { promptTextFromContent } from '../../runtime/execution/prompt-text.ts'
+import { visionEvidenceFromContent } from '../../runtime/session/input.ts'
 import { displayUnknown, sanitizeTerminalLine } from '../../presentation/primitives/text.ts'
 import { messageLabel } from './message-label.ts'
 import {
@@ -346,33 +347,9 @@ export function buildTrajectoryRecords(
         break
       }
       case 'user/message': {
-        const text = messageText(event.data)
         const source = event.data.source
-        const detail = text === '' ? displayUnknown(event.data.content) : text
-        if (source.kind === 'community-vision') {
-          const node = execution.get(visionExecutionKey(source.analysisId))
-          if (node === undefined) break
-          records.push(executionRecord(node, {
-            type: event.type,
-            seq: event.seq,
-            ...at,
-            title: 'Vision analysis',
-            summary: `${source.provider}/${source.model} · ${stateWord(node)}`,
-            detail,
-            payload: {
-              analysisId: source.analysisId,
-              route: { strategy: 'proxy', provider: source.provider, model: source.model },
-              images: source.attachments,
-            },
-            result: {
-              observation: detail,
-              truncated: source.truncated,
-              finishReason: source.finishReason,
-              ...source.usage === undefined ? {} : { usage: source.usage },
-            },
-          }))
-          break
-        }
+        const text = source.kind === 'user' ? promptTextFromContent(event.data.content) : messageText(event.data)
+        const detail = source.kind === 'user' || text !== '' ? text : displayUnknown(event.data.content)
         if (source.kind === 'user') {
           const node = execution.get(promptExecutionKey(String(event.data.id)))
           const input = {
@@ -386,6 +363,30 @@ export function buildTrajectoryRecords(
           records.push(node === undefined
             ? { key: `event:${String(event.seq)}`, kind: 'user', tone: 'info', occurredAt: event.time, ...input }
             : executionRecord(node, input))
+          for (const analysis of visionEvidenceFromContent(event.data.content)) {
+            const vision = execution.get(visionExecutionKey(analysis.analysisId))
+            if (vision === undefined) continue
+            records.push(executionRecord(vision, {
+              type: event.type,
+              seq: event.seq,
+              ...at,
+              title: 'Vision analysis',
+              summary: `${analysis.provider}/${analysis.model} · ${stateWord(vision)}`,
+              detail: analysis.observation,
+              payload: {
+                analysisId: analysis.analysisId,
+                route: { strategy: 'proxy', provider: analysis.provider, model: analysis.model },
+                images: analysis.attachments,
+                references: analysis.references,
+              },
+              result: {
+                observation: analysis.observation,
+                truncated: analysis.truncated,
+                finishReason: analysis.finishReason,
+                ...analysis.usage === undefined ? {} : { usage: analysis.usage },
+              },
+            }))
+          }
           break
         }
         records.push({

@@ -38,6 +38,7 @@ import { HarnessGoalPort } from './infrastructure/harness/goal.ts'
 import { HarnessInteractionSource } from './infrastructure/harness/interactions.ts'
 import { settingsPermissionDefaultGateway } from './infrastructure/harness/permission-default.ts'
 import { HarnessSessionTransport } from './infrastructure/harness/session-transport.ts'
+import { harnessImageInput } from './infrastructure/harness/image-input.ts'
 import { harnessSkillCatalogSource } from './infrastructure/harness/skills.ts'
 import { harnessProviderAuthentication } from './infrastructure/harness/authentication.ts'
 import { harnessSubscriptionUsage } from './infrastructure/harness/subscription-usage.ts'
@@ -93,7 +94,7 @@ export const inject = [
   'settings',
   'authorization',
   'credentials',
-  'vision',
+  'llm',
 ]
 
 /** Mount the terminal application and bind its lifetime to the plugin effect. */
@@ -203,37 +204,41 @@ export function apply(ctx: Context, config: TuiConfig): void {
     },
     subscribe: listener => ctx.on('commands/change', listener),
   }
-  const app = createTuiApplication(
-    host,
-    resolved,
-    runtime,
-    rewind,
-    ctx.memory,
-    {
-      commandSource,
-      authentication: harnessProviderAuthentication(ctx.authorization),
-      usage: harnessSubscriptionUsage(ctx.credentials),
-      vision: ctx.vision,
-      web: ctx.communityWeb,
-      permissionDefault: settingsPermissionDefaultGateway(ctx.settings),
-      startup: invocation.startup,
-      attachments: ctx.attachments,
-    },
-  )
   ctx.effect(() => {
     let active = true
+    let app: ReturnType<typeof createTuiApplication> | undefined
     void (async () => {
       await ctx.get('loader')?.await()
       if (!active) return
+      // Resolve optional capabilities after profile composition, not as startup requirements.
+      const vision = ctx.get('vision')
+      app = createTuiApplication(
+        host,
+        resolved,
+        runtime,
+        rewind,
+        ctx.memory,
+        {
+          commandSource,
+          authentication: harnessProviderAuthentication(ctx.authorization),
+          usage: harnessSubscriptionUsage(ctx.credentials),
+          images: harnessImageInput(ctx.llm, vision),
+          ...vision === undefined ? {} : { vision },
+          web: ctx.communityWeb,
+          permissionDefault: settingsPermissionDefaultGateway(ctx.settings),
+          startup: invocation.startup,
+          attachments: ctx.attachments,
+        },
+      )
       await app.start()
     })().catch((error: unknown) => {
       if (!active) return
       runtime.stderr.write(`dsh tui: ${error instanceof Error ? error.message : String(error)}\n`)
-      void app.dispose().then(() => rewind.close()).finally(() => exit(1))
+      void Promise.resolve(app?.dispose()).then(() => rewind.close()).finally(() => exit(1))
     })
     return async () => {
       active = false
-      await app.dispose()
+      await app?.dispose()
       await rewind.close()
     }
   })

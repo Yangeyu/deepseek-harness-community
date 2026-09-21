@@ -1,7 +1,7 @@
 import { expandAssistantStream } from '@deepseek-ai/dsh-llm'
 import type { HistoryEntry } from '../../session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
-import type {} from '@vascent/deepseek-harness-vision'
+import { visionEvidenceFromContent } from '../../session/input.ts'
 import {
   commandExecutionKey,
   promptExecutionKey,
@@ -188,23 +188,20 @@ export function applyExecutionEntry(entry: HistoryEntry, reducer: ExecutionReduc
       )
       return
     case 'user/message': {
-      const source = event.data.source
-      if (isAcceptedPromptEvent(event)) {
-        const parentKey = reducer.openNodes().findLast(node => node.kind === 'turn')?.key
-        const key = promptExecutionKey(String(event.data.id))
-        reducer.start(key, 'prompt', parentKey, at)
-        reducer.settle(key, 'prompt', parentKey, 'completed', at)
-        return
+      if (!isAcceptedPromptEvent(event)) return
+      const parentKey = reducer.openNodes().findLast(node => node.kind === 'turn')?.key
+      const promptKey = promptExecutionKey(String(event.data.id))
+      reducer.start(promptKey, 'prompt', parentKey, at)
+      reducer.settle(promptKey, 'prompt', parentKey, 'completed', at)
+      for (const analysis of visionEvidenceFromContent(event.data.content)) {
+        const key = visionExecutionKey(analysis.analysisId)
+        const started: ExecutionBoundary = {
+          time: Math.max(0, event.time - analysis.durationMs),
+          source: 'event',
+        }
+        reducer.start(key, 'vision', promptKey, started)
+        reducer.settle(key, 'vision', promptKey, 'completed', at)
       }
-      if (source.kind !== 'community-vision') return
-      const key = visionExecutionKey(source.analysisId)
-      const parentKey = promptExecutionKey(source.promptId)
-      const started: ExecutionBoundary = {
-        time: Math.max(0, event.time - source.durationMs),
-        source: 'event',
-      }
-      reducer.start(key, 'vision', parentKey, started)
-      reducer.settle(key, 'vision', parentKey, 'completed', at)
       return
     }
     default:

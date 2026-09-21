@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { HistoryEntry } from '../../../../src/runtime/session/contracts.ts'
 import type {} from '@deepseek-ai/dsh-commands/types'
-import type {} from '@vascent/deepseek-harness-vision'
+import { visionEvidenceBlock } from '../../../../src/runtime/session/input.ts'
 import {
   aggregateExecution,
   buildExecutionSnapshot,
@@ -532,18 +532,15 @@ describe('execution projection', () => {
           data: {
             id: 'vision-message',
             role: 'user',
-            source: {
-              kind: 'community-vision',
-              promptId: 'missing-prompt',
-              analysisId: 'analysis-1',
-              provider: 'bailian',
-              model: 'qwen',
-              attachments: [],
-              durationMs: 300,
-              finishReason: 'stop',
-              truncated: false,
-            },
-            content: [{ type: 'text', text: 'evidence' }],
+            source: { kind: 'user' },
+            content: [
+              { type: 'text', text: 'inspect image' },
+              visionEvidenceBlock({
+                analysisId: 'analysis-1', provider: 'bailian', model: 'qwen',
+                observation: 'evidence', attachments: [], references: [],
+                durationMs: 300, finishReason: 'stop', truncated: false,
+              }),
+            ],
           },
         },
       }]),
@@ -552,55 +549,33 @@ describe('execution projection', () => {
     })
 
     const vision = durable.get(visionExecutionKey('analysis-1'))
-    expect(durable.ordered()).toHaveLength(1)
-    expect(vision).toMatchObject({ durability: 'durable' })
+    expect(durable.ordered()).toHaveLength(2)
+    expect(vision).toMatchObject({ durability: 'durable', parentKey: promptExecutionKey('vision-message') })
     expect(vision === undefined ? undefined : executionStatus(vision)).toBe('completed')
     expect(vision === undefined ? undefined : executionStartedAt(vision)).toBe(500)
     expect(vision === undefined ? undefined : executionEndedAt(vision)).toBe(800)
   })
 
-  it('models an image prompt once and nests Vision evidence beneath it', () => {
+  it('models one image prompt with every same-message Vision child', () => {
     const snapshot = build([
       { event: { type: 'turn/start', seq: 0, time: 100, data: { turn: 1 } } },
       {
         event: {
-          type: 'user/message',
-          seq: 1,
-          time: 120,
-          surfaceOp: 'append',
+          type: 'user/message', seq: 1, time: 420, surfaceOp: 'append',
           data: {
-            id: 'image-prompt',
-            role: 'user',
-            source: { kind: 'user', rpcId: 'rpc-image' },
-            content: [{ type: 'text', text: 'inspect image' }],
+            id: 'image-prompt', role: 'user', source: { kind: 'user', rpcId: 'rpc-image' },
+            content: [
+              { type: 'text', text: 'inspect images' },
+              ...['analysis-image', 'analysis-second'].map(analysisId => visionEvidenceBlock({
+                analysisId, provider: 'bailian', model: 'qwen',
+                observation: 'vision observation', attachments: [], references: [],
+                durationMs: 300, finishReason: 'stop', truncated: false,
+              })),
+            ],
           },
         },
       },
-      {
-        event: {
-          type: 'user/message',
-          seq: 2,
-          time: 420,
-          surfaceOp: 'append',
-          data: {
-            id: 'vision-evidence',
-            role: 'user',
-            source: {
-              kind: 'community-vision',
-              promptId: 'image-prompt',
-              analysisId: 'analysis-image',
-              provider: 'bailian',
-              model: 'qwen',
-              attachments: [],
-              durationMs: 300,
-              finishReason: 'stop',
-              truncated: false,
-            },
-            content: [{ type: 'text', text: 'vision observation' }],
-          },
-        },
-      },
-      { event: { type: 'turn/end', seq: 3, time: 450, data: { turn: 1, reason: { kind: 'completed' } } } },
+      { event: { type: 'turn/end', seq: 2, time: 450, data: { turn: 1, reason: { kind: 'completed' } } } },
     ])
     const promptKey = promptExecutionKey('image-prompt')
     const visionKey = visionExecutionKey('analysis-image')
@@ -609,6 +584,7 @@ describe('execution projection', () => {
       turnExecutionKey(1),
       promptKey,
       visionKey,
+      visionExecutionKey('analysis-second'),
     ])
     expect(snapshot.get(promptKey)).toMatchObject({
       kind: 'prompt',
@@ -620,6 +596,8 @@ describe('execution projection', () => {
       parentKey: promptKey,
       state: { phase: 'settled', outcome: 'completed' },
     })
+    expect(snapshot.childrenOf(promptKey).map(node => node.key)).toEqual([visionKey, visionExecutionKey('analysis-second')])
+    expect(snapshot.get(visionKey)?.state).toMatchObject({ ended: { seq: 1, time: 420 } })
     expect(snapshot.ordered().filter(node => node.kind === 'prompt')).toHaveLength(1)
     expect(snapshot.diagnostics()).toEqual([])
   })

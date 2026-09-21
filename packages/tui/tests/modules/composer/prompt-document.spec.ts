@@ -16,13 +16,13 @@ describe('inline Prompt content', () => {
   it('orders images by marker position while preserving the visible text', () => {
     const first = { id: 'first', placeholder: '[Image #1]' }
     const second = { id: 'second', placeholder: '[Image #2]' }
-    const text = `before ${second.placeholder} between ${first.placeholder} after`
+    const text = `earlier [Image #9], before ${second.placeholder} between ${first.placeholder} after`
     const compiled = compilePromptDocument(text, [first, second])
 
     expect(compiled.text).toBe(text)
     expect(compiled.images).toEqual([second, first])
     expect(compiled.parts).toEqual([
-      { type: 'text', text: `before ${second.placeholder}` },
+      { type: 'text', text: `earlier [Image #9], before ${second.placeholder}` },
       { type: 'image', image: second },
       { type: 'text', text: ` between ${first.placeholder}` },
       { type: 'image', image: first },
@@ -37,8 +37,6 @@ describe('inline Prompt content', () => {
       .toThrow('Attached image is missing its inline reference: [Image #1]')
     expect(() => compilePromptDocument('[Image #1] then [Image #1]', [first]))
       .toThrow('Image reference appears more than once: [Image #1]')
-    expect(() => compilePromptDocument('[Image #1] and [Image #2]', [first]))
-      .toThrow('Image reference has no attachment: [Image #2]')
   })
 
   it('removes every binding for one image without joining surrounding words', () => {

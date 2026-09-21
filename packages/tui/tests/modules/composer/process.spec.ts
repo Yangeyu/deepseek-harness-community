@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ComposerProcess, type ComposerSessionPort } from '../../../src/modules/composer/process.ts'
 import { composerDraftForSession } from '../../../src/modules/composer/session-draft.ts'
 import type { NewAttachmentDraft } from '../../../src/modules/composer/attachments/drafts.ts'
-import type { VisionGateway } from '../../../src/modules/composer/attachments/coordinator.ts'
+import type { ImageInputGateway } from '../../../src/modules/composer/attachments/coordinator.ts'
 import { createTheme } from '../../../src/presentation/primitives/theme.ts'
 import { buildExecutionSnapshot } from '../../../src/runtime/execution/projection/index.ts'
 import { LifecycleScope } from '../../../src/runtime/lifecycle/scope.ts'
@@ -50,46 +50,31 @@ function png(): NewAttachmentDraft {
   }
 }
 
-function nativeVision(): VisionGateway {
-  const config = {
-    mode: 'auto' as const,
-    proxyProvider: 'proxy',
-    proxyModel: 'vision',
-    maxObservationChars: 12_000,
-    maxTokens: 2_048,
-  }
+function nativeImages(): ImageInputGateway {
   return {
-    config,
-    newAnalysisId: () => 'analysis-1',
     resolveImageRoute: vi.fn(async () => ({
       strategy: 'native' as const,
       provider: 'provider',
       model: 'model',
     })),
-    status: vi.fn(async () => ({
-      config,
-      proxyRegistered: true,
-      proxySupportsImages: true,
-    })),
-    setMode: vi.fn(async () => {}),
+
     analyze: vi.fn(async (_route: ResolvedProxyImageRoute, _request: VisionRequest) => {
       throw new Error('native route must not invoke proxy analysis')
     }),
-    admit: vi.fn(async () => {}),
   }
 }
 
 function fixture(options: {
   color?: boolean
   clipboardImage?: () => Promise<NewAttachmentDraft>
-  vision?: VisionGateway
+  images?: ImageInputGateway
 } = {}) {
   const current = sessionSnapshot()
   const submittedContent: PromptContentPart[][] = []
   const promptWithPreparation = vi.fn<ComposerSessionPort['promptWithPreparation']>(
     async (_text, _mode, prepareContent) => {
       const prepared = await prepareContent({ setActivity: () => {} })
-      if (prepared.kind === 'content') submittedContent.push(prepared.content)
+      submittedContent.push(prepared.content)
     },
   )
   const session: ComposerSessionPort = {
@@ -125,7 +110,7 @@ function fixture(options: {
       createTheme(false).imageReference,
       { paddingX: 0, autocompleteMaxVisible: 10 },
     ),
-    vision: options.vision ?? nativeVision(),
+    images: options.images ?? nativeImages(),
     followTranscript: vi.fn(),
     openRewind: vi.fn(),
     requestRender: vi.fn(),

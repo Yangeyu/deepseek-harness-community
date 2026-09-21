@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { TranscriptModel } from '../../../src/modules/transcript/model.ts'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { visionEvidenceBlock } from '../../../src/runtime/session/input.ts'
 import { state, entry } from './fixtures.ts'
 import { Markdown, Text, stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
 import type {} from '@deepseek-ai/dsh-commands/types'
@@ -794,29 +796,6 @@ describe('TranscriptComponent', () => {
 
   it('hands Vision preparation to durable tool evidence without duplicating the prompt or Activity', () => {
     const model = new TranscriptModel(true, 8)
-    const transitioning = state([entry({
-      event: {
-        type: 'user/message',
-        seq: 0,
-        time: 1,
-        surfaceOp: 'append',
-        data: {
-          id: 'message-user',
-          role: 'user',
-          source: { kind: 'user', rpcId: 'rpc-image' },
-          content: [{ type: 'text', text: 'analyze [Image #1] now' }],
-        },
-      },
-    })], false, [{
-      key: 1,
-      text: 'analyze [Image #1] now',
-      mode: 'queue',
-      intent: 'working',
-      requestId: 'rpc-image' as never,
-      durablePromptObserved: true,
-      activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: 1_000 },
-    }])
-
     const pending = state([], false, [{
       key: 1, text: 'analyze [Image #1] now', mode: 'queue', intent: 'working',
       activity: { kind: 'vision', analysisId: 'analysis-1', imageCount: 1, startedAt: 1_000 },
@@ -826,40 +805,66 @@ describe('TranscriptComponent', () => {
     expect(initial).toMatch(/analyze \[Image #1\] now[\s\S]*Activity · 1 tool/u)
     expect(transcript.animationLine).toBeDefined()
 
-    transcript.setProjection(model.project(transitioning, false))
-    const output = transcript.render(80).map(stripTerminalSequences).join('\n')
-    expect(output.match(/analyze \[Image #1\] now/g)).toHaveLength(1)
-    expect(output).toContain('Activity · 1 tool')
-    expect(transcript.animationLine).toBeDefined()
-
-    const events = [...transitioning.events,
+    const events = [
+      entry({ event: { type: 'turn/start', seq: 0, time: 1_500, data: { turn: 1 } } }),
       entry({ event: { type: 'user/message', seq: 1, time: 1_500, surfaceOp: 'append', data: {
-        id: 'message-vision', role: 'user',
-        source: {
-          kind: 'community-vision', promptId: 'message-user', analysisId: 'analysis-1',
-          provider: 'bailian', model: 'qwen3.7-plus',
-          attachments: [{ attachmentId: 'image-1', mediaType: 'image/png', bytes: 10, width: 2, height: 2 }],
-          durationMs: 500, finishReason: 'stop', truncated: false,
-        },
-        content: [{ type: 'text', text: 'An error dialog is visible.' }],
+        id: 'message-user', role: 'user', source: { kind: 'user', rpcId: 'rpc-image' },
+        content: [
+          { type: 'text', text: 'analyze [Image #1]' },
+          { type: 'text', text: ' now' },
+          visionEvidenceBlock({
+            analysisId: 'analysis-1', provider: 'bailian', model: 'qwen3.7-plus',
+            observation: 'An error dialog is visible.',
+            attachments: [{ attachmentId: AttachmentId('image-1'), mediaType: 'image/png', bytes: 10, width: 2, height: 2 }],
+            references: ['[Image #1]'], durationMs: 500, finishReason: 'stop', truncated: false,
+          }),
+        ],
       } } }),
-      entry({ event: { type: 'turn/start', seq: 2, time: 1_600, data: { turn: 1 } } }),
-      entry({ event: { type: 'step/start', seq: 3, time: 1_600, data: { turn: 1, step: 1 } } }),
+      entry({ event: { type: 'step/start', seq: 2, time: 1_600, data: { turn: 1, step: 1 } } }),
       entry({ event: { type: 'tool/call', seq: 4, time: 1_700, data: {
         turn: 1, step: 1, callId: 'read', name: 'read', arguments: '{}',
       } } }),
     ]
     // Durable evidence replaces the pending source without duplicating the Vision tool.
-    transcript.setProjection(model.project(state(events, true, transitioning.pendingSubmissions), false))
+    transcript.setProjection(model.project(state(events, true), false))
     const tools = transcript.render(80).map(stripTerminalSequences).join('\n')
+    expect(tools.match(/analyze \[Image #1\] now/g)).toHaveLength(1)
     expect(tools.match(/Activity/g)).toHaveLength(1)
     expect(tools).toContain('Activity · 2 tools')
     expect(transcript.animationLine).toBeDefined()
-    transcript.setProjection(model.project(state(events, true, transitioning.pendingSubmissions), true))
+    transcript.setProjection(model.project(state(events, true), true))
     const details = transcript.render(80).map(stripTerminalSequences).join('\n')
     expect(details).toContain('Vision · 1 image · qwen3.7-plus')
     expect(details).toContain('An error dialog is visible.')
     expect(details).toContain('bailian/qwen3.7-plus')
+  })
+
+  it('shows the complete merged user body before every same-message Vision item', () => {
+    const content = [1, 2].flatMap(index => [
+      ...index === 1 ? [] : [{ type: 'text' as const, text: '\n\n' }],
+      { type: 'text' as const, text: `inspect [Image #${String(index)}]` },
+      visionEvidenceBlock({
+        analysisId: `merged-${String(index)}`, provider: 'bailian', model: 'qwen',
+        observation: `Observation ${String(index)}`,
+        attachments: [{ attachmentId: AttachmentId(`image-${String(index)}`), mediaType: 'image/png', bytes: 10, width: 2, height: 2 }],
+        references: [`[Image #${String(index)}]`], durationMs: 500, finishReason: 'stop', truncated: false,
+      }),
+    ])
+    const model = new TranscriptModel(true, 8)
+    const projection = model.project(state([entry({ event: {
+      type: 'user/message', seq: 0, time: 1_500, surfaceOp: 'append',
+      data: { id: 'merged', role: 'user', source: { kind: 'user' }, content },
+    } })]), true)
+
+    expect(projection.items).toMatchObject([
+      { kind: 'prompt', body: 'inspect [Image #1]\n\ninspect [Image #2]' },
+      { kind: 'activity', items: [
+        { kind: 'tool', key: 'vision:merged-1', result: 'Observation 1' },
+        { kind: 'tool', key: 'vision:merged-2', result: 'Observation 2' },
+      ] },
+    ])
+    const output = new TranscriptComponent(projection, createTheme(true)).render(80).map(stripTerminalSequences).join('\n')
+    expect(output).toMatch(/inspect \[Image #1\][\s\S]*inspect \[Image #2\][\s\S]*Observation 1[\s\S]*Observation 2/u)
   })
 
   it('hands a local prompt to a visible queue row without hiding context placement', () => {

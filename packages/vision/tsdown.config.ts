@@ -13,11 +13,9 @@ export default defineConfig({
     onlyBundle: false,
     neverBundle: [
       '@deepseek-ai/cordis',
-      '@deepseek-ai/dsh-agent',
       '@deepseek-ai/dsh-attachment',
       '@deepseek-ai/dsh-fs',
       '@deepseek-ai/dsh-llm',
-      '@deepseek-ai/dsh-session',
       '@deepseek-ai/dsh-settings',
       '@deepseek-ai/dsh-tools',
     ],

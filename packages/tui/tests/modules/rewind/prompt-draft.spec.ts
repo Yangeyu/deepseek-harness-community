@@ -22,7 +22,7 @@ describe('Rewind Prompt attachment restoration', () => {
     const data = Uint8Array.from([0x89, 0x50, 0x4E, 0x47])
     const reader: PromptAttachmentReader = { readImage: vi.fn(async () => ({ ref, data })) }
 
-    const draft = await preparePromptDraft({ text: 'inspect [Image #1]', attachments: [ref] }, reader)
+    const draft = await preparePromptDraft({ text: 'inspect [Image #1]', attachments: [{ reference: '[Image #1]', attachment: ref }] }, reader)
 
     expect(reader.readImage).toHaveBeenCalledWith(ref)
     expect(draft.text).toBe('inspect [Image #1]')
@@ -35,19 +35,20 @@ describe('Rewind Prompt attachment restoration', () => {
     })])
   })
 
-  it('preserves a durable inline image position', async () => {
+  it('restores the bound image reference without binding an earlier historical marker', async () => {
     const ref = attachment()
     const reader: PromptAttachmentReader = {
       readImage: vi.fn(async () => ({ ref, data: new Uint8Array(4) })),
     }
 
     const draft = await preparePromptDraft({
-      text: 'before [Image #1] after',
-      attachments: [ref],
+      text: 'history [Image #1], inspect current [Image #2] after',
+      attachments: [{ reference: '[Image #2]', attachment: ref }],
     }, reader)
 
-    expect(draft.text).toBe('before [Image #1] after')
-    expect(draft.attachments[0]?.placeholder).toBe('[Image #1]')
+    expect(reader.readImage).toHaveBeenCalledWith(ref)
+    expect(draft.text).toBe('history [Image #1], inspect current [Image #2] after')
+    expect(draft.attachments).toEqual([expect.objectContaining({ placeholder: '[Image #2]' })])
   })
 
   it('rejects ambiguous durable image references before restoring the Composer', async () => {
@@ -58,18 +59,18 @@ describe('Rewind Prompt attachment restoration', () => {
 
     await expect(preparePromptDraft({
       text: '[Image #1] then [Image #1]',
-      attachments: [ref],
+      attachments: [{ reference: '[Image #1]', attachment: ref }],
     }, reader)).rejects.toThrow('Image reference appears more than once: [Image #1]')
   })
 
   it('fails before mutation when durable attachment storage is unavailable or inconsistent', async () => {
     const ref = attachment()
-    await expect(preparePromptDraft({ text: 'inspect [Image #1]', attachments: [ref] }, undefined))
+    await expect(preparePromptDraft({ text: 'inspect [Image #1]', attachments: [{ reference: '[Image #1]', attachment: ref }] }, undefined))
       .rejects.toThrow('attachment storage is unavailable')
     const reader: PromptAttachmentReader = {
       readImage: vi.fn(async () => ({ ref: attachment('different'), data: new Uint8Array() })),
     }
-    await expect(preparePromptDraft({ text: 'inspect [Image #1]', attachments: [ref] }, reader))
+    await expect(preparePromptDraft({ text: 'inspect [Image #1]', attachments: [{ reference: '[Image #1]', attachment: ref }] }, reader))
       .rejects.toThrow('no longer matches')
   })
 })

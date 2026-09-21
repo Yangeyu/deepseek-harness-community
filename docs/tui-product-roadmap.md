@@ -72,9 +72,8 @@ and matching Git tags are the release identity.
   new-session, and resumed-session image intake.
 - Add explicit image drafts from files and the system clipboard with a compact,
   keyboard-first attachment rail above the composer.
-- Introduce a public, TUI-independent Vision workspace that resolves one image
-  route per submission: image-capable models continue through official Host
-  admission, while text-only models use a configured proxy.
+- Vision 是独立于 TUI 的可选代理识图服务。Host 适配层每次提交解析一次原生/代理路线；
+  所有准备结果统一交给 Session 提交。原生多模态输入不依赖 Vision，文本模型才需要代理。
 - Use a first-class Bailian adapter for DashScope request/SSE semantics and
   recommend `qwen3.7-plus` as the first proxy route while DeepSeek remains the
   primary coding model.

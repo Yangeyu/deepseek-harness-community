@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { visionEvidenceBlock } from '../../../src/runtime/session/input.ts'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { compactCheckpointSource } from '@deepseek-ai/dsh-compaction/checkpoint'
 import type {} from '@deepseek-ai/dsh-commands/types'
@@ -75,54 +77,47 @@ describe('trajectory records', () => {
     expect(trajectoryParentKey(messages[2]!)).toBe('step:1:1')
   })
 
-  it('turns a supported Vision evidence message into a timed trace record after the user input', () => {
+  it('projects original user text followed by every timed Vision analysis in the same message', () => {
+    const analyses = ['Visible warning banner', 'A second dialog'].map((observation, index) => ({
+      analysisId: `analysis-${String(index + 1)}`, provider: 'bailian', model: 'qwen3.7-plus',
+      observation,
+      attachments: [{ attachmentId: AttachmentId(`image-${String(index + 1)}`), mediaType: 'image/png' as const, bytes: 10, width: 2, height: 2 }],
+      references: [`[Image #${String(index + 1)}]`],
+      durationMs: 1_500, finishReason: 'stop', truncated: false,
+    }))
     const entries = [{
       event: {
-        type: 'user/message',
-        seq: 0,
-        time: 900,
-        surfaceOp: 'append',
+        type: 'user/message', seq: 0, time: 2_500, surfaceOp: 'append',
         data: {
-          id: 'message-user',
-          role: 'user',
-          source: { kind: 'user' },
-          content: [{ type: 'text', text: 'Analyze this image' }],
-        },
-      },
-    }, {
-      event: {
-        type: 'user/message',
-        seq: 1,
-        time: 2_500,
-        surfaceOp: 'append',
-        data: {
-          id: 'message-vision',
-          role: 'user',
-          source: {
-            kind: 'community-vision',
-            promptId: 'message-user',
-            analysisId: 'analysis-1',
-            provider: 'bailian',
-            model: 'qwen3.7-plus',
-            attachments: [],
-            durationMs: 1_500,
-            finishReason: 'stop',
-            truncated: false,
-          },
-          content: [{ type: 'text', text: 'Visible warning banner' }],
+          id: 'message-user', role: 'user', source: { kind: 'user' },
+          content: [
+            visionEvidenceBlock(analyses[0]!),
+            { type: 'text', text: 'Analyze [Image #1]' },
+            { type: 'text', text: ' and [Image #2]' },
+            visionEvidenceBlock(analyses[1]!),
+          ],
         },
       },
     }] as unknown as RuntimeSessionSnapshot['events']
 
     const result = records(entries)
-    expect(result.map(record => record.kind)).toEqual(['user', 'vision'])
-    expect(result[0]).toMatchObject({ execution: { kind: 'prompt', key: 'prompt:message-user' } })
-    expect(result[1]).toEqual(expect.objectContaining({
-      kind: 'vision',
-      title: 'Vision analysis',
-      detail: 'Visible warning banner',
-    }))
-    expect(trajectoryTiming(result[1]!)).toEqual({ status: 'completed', startedAt: 1_000, completedAt: 2_500 })
+    expect(result.map(record => record.kind)).toEqual(['user', 'vision', 'vision'])
+    expect(result[0]).toMatchObject({
+      title: 'User input', summary: 'Analyze [Image #1]',
+      detail: 'Analyze [Image #1] and [Image #2]',
+      execution: { kind: 'prompt', key: 'prompt:message-user' },
+    })
+    for (const [index, analysis] of analyses.entries()) {
+      const record = result[index + 1]!
+      expect(record).toMatchObject({
+        kind: 'vision', title: 'Vision analysis', seq: 0,
+        detail: analysis.observation,
+        payload: { analysisId: analysis.analysisId, images: analysis.attachments, references: analysis.references },
+        result: { observation: analysis.observation, truncated: false, finishReason: 'stop' },
+      })
+      expect(trajectoryParentKey(record)).toBe('prompt:message-user')
+      expect(trajectoryTiming(record)).toEqual({ status: 'completed', startedAt: 1_000, completedAt: 2_500 })
+    }
   })
 
   it('keeps the model Request and Response on Step while exposing its Assistant and Tool children', () => {

@@ -20,7 +20,6 @@ export interface PendingSubmission {
   mode: 'queue' | 'steer'
   intent: 'working' | 'queueing' | 'steering'
   requestId?: SessionRequestId
-  durablePromptObserved?: boolean
   activity?: PendingSubmissionActivity
 }
 
@@ -28,13 +27,6 @@ function userMessageRequestId(entry: HistoryEntry): SessionRequestId | undefined
   const event = entry.event
   if (event.type !== 'user/message' || event.data.source.kind !== 'user') return undefined
   return 'rpcId' in event.data.source ? event.data.source.rpcId : undefined
-}
-
-function visionAnalysisId(entry: HistoryEntry): string | undefined {
-  const event = entry.event
-  return event.type === 'user/message' && event.data.source.kind === 'community-vision'
-    ? event.data.source.analysisId
-    : undefined
 }
 
 /** Reconciles optimistic prompts with durable user-message events. */
@@ -65,11 +57,9 @@ export class SubmissionTracker {
 
   /** Attach the request identity or retire an already durable prompt. */
   accept(key: number, requestId: SessionRequestId): void {
-    const durablePromptObserved = this.observedRequestIds.has(requestId)
     this.pending = this.pending.flatMap((item): PendingSubmission[] => {
       if (item.key !== key) return [item]
-      if (!durablePromptObserved) return [{ ...item, requestId }]
-      return item.activity === undefined ? [] : [{ ...item, requestId, durablePromptObserved: true }]
+      return this.observedRequestIds.has(requestId) ? [] : [{ ...item, requestId }]
     })
     this.pruneObservedRequestIds()
   }
@@ -89,11 +79,6 @@ export class SubmissionTracker {
   observeEvents(entries: readonly HistoryEntry[]): void {
     for (const entry of entries) {
       this.observe(userMessageRequestId(entry))
-      const analysisId = visionAnalysisId(entry)
-      if (analysisId !== undefined) {
-        this.pending = this.pending.filter(item =>
-          item.activity?.kind !== 'vision' || item.activity.analysisId !== analysisId)
-      }
     }
     this.reconcile()
   }
@@ -112,10 +97,8 @@ export class SubmissionTracker {
   }
 
   private reconcile(): void {
-    this.pending = this.pending.flatMap((item): PendingSubmission[] => {
-      if (item.requestId === undefined || !this.observedRequestIds.has(item.requestId)) return [item]
-      return item.activity === undefined ? [] : [{ ...item, durablePromptObserved: true }]
-    })
+    this.pending = this.pending.filter(item =>
+      item.requestId === undefined || !this.observedRequestIds.has(item.requestId))
     this.pruneObservedRequestIds()
   }
 

@@ -1,4 +1,4 @@
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { PromptImage } from '../../runtime/session/input.ts'
 
 /** Whether a prepared rewind can be applied without losing unowned state. */
 export type RewindPlanState = 'safe' | 'mergeable' | 'conflict' | 'unsupported'
@@ -80,7 +80,7 @@ export type CanonicalWorkspaceMutation =
 /** Complete, durable user input restored after a successful Rewind. */
 export interface RewindPromptInput {
   readonly text: string
-  readonly attachments: readonly ImageAttachmentRef[]
+  readonly attachments: readonly PromptImage[]
 }
 
 /** One accepted user prompt projected into the Rewind timeline. */

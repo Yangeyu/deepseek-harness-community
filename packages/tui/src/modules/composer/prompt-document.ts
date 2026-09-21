@@ -36,10 +36,7 @@ export function compilePromptDocument<Image extends InlineImageToken>(
   for (const occurrence of imageMarkerOccurrences(text)) {
     const marker = occurrence.marker
     const image = byMarker.get(marker)
-    if (image === undefined) {
-      if (images.length > 0) throw new Error(`Image reference has no attachment: ${marker}`)
-      continue
-    }
+    if (image === undefined) continue
     if (seen.has(marker)) throw new Error(`Image reference appears more than once: ${marker}`)
     seen.add(marker)
     occurrences.push({ image, index: occurrence.index })

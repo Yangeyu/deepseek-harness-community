@@ -5,7 +5,6 @@ import type {
 } from '@deepseek-ai/dsh-attachment'
 import type { RewindPromptInput } from '../contracts.ts'
 import type { ComposerDraft } from '../../composer/input.ts'
-import { imageMarkers } from '../../composer/image-reference.ts'
 import { compilePromptDocument } from '../../composer/prompt-document.ts'
 import type { AttachmentDraft } from '../../composer/attachments/drafts.ts'
 
@@ -36,27 +35,21 @@ export async function preparePromptDraft(
 ): Promise<ComposerDraft<AttachmentDraft>> {
   if (input.attachments.length === 0) return { text: input.text, attachments: [] }
   if (reader === undefined) throw new Error('Rewind cannot restore images because attachment storage is unavailable.')
-  const stored = await Promise.all(input.attachments.map(attachment => reader.readImage(attachment)))
   const text = input.text
-  const markers = [...new Set(imageMarkers(text))]
-  const attachments = stored.map(({ ref, data }, index): AttachmentDraft => {
-    const expected = input.attachments[index]
-    if (expected === undefined || !sameRef(expected, ref)) {
+  const attachments = await Promise.all(input.attachments.map(async ({ reference, attachment }, index): Promise<AttachmentDraft> => {
+    const { ref, data } = await reader.readImage(attachment)
+    if (!sameRef(attachment, ref)) {
       throw new Error('A Rewind image no longer matches its durable attachment reference.')
-    }
-    const placeholder = markers[index]
-    if (placeholder === undefined) {
-      throw new Error('A Rewind image has no durable inline reference.')
     }
     return {
       id: randomUUID(),
-      placeholder,
+      placeholder: reference,
       name: ref.name ?? fallbackName(ref, index),
       mediaType: ref.mediaType,
       data,
       source: 'rewind',
     }
-  })
+  }))
   compilePromptDocument(text, attachments)
   return { text, attachments }
 }
