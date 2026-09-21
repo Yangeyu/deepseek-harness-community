@@ -30,6 +30,7 @@ const KEY_IDENTITIES: readonly [TerminalKey, KeyId][] = [
   ['tab', Key.tab],
   ['page-up', Key.pageUp],
   ['page-down', Key.pageDown],
+  ['ctrl-g', Key.ctrl('g')],
   ['up', Key.up],
   ['down', Key.down],
   ['left', Key.left],

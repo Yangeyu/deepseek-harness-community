@@ -769,6 +769,30 @@ describe('createApplication integration', () => {
     expect(requestRender).toHaveBeenCalledOnce()
   })
 
+  it('returns from history with Ctrl+G, preserves the draft, and resumes following output', async () => {
+    const app = application()
+    const rows = Array.from({ length: 60 }, (_, index) => `output ${index + 1}`)
+    vi.spyOn(app.transcript, 'render').mockImplementation(() => [...rows])
+    const render = () => app.layout.render(80).map(stripTerminalSequences)
+    expect(render()).toContain('output 60')
+
+    expect(sendInput(app, '\u001b[5~')).toEqual({ consume: true })
+    expect(render().join('\n')).toContain('Viewing history · Ctrl+G to follow')
+    app.composer.editor.setText('unfinished prompt')
+    const history = render()
+    rows.push('output 61')
+    expect(render()).toEqual(history)
+
+    expect(sendInput(app, '\u0007')).toEqual({ consume: true })
+    const latest = render()
+    expect(latest).toContain('output 61')
+    expect(latest.join('\n')).not.toContain('Viewing history')
+    expect(app.composer.editor.getExpandedText()).toBe('unfinished prompt')
+    rows.push('output 62')
+    expect(render()).toContain('output 62')
+    await app.dispose()
+  })
+
   it('renders approval in the composer surface without leaking wheel input to the transcript', () => {
     const app = application()
     const internals = app

@@ -59,6 +59,7 @@ export interface InputConfigurationPort {
 
 export interface InputLayoutPort {
   pageTranscript(direction: -1 | 1): boolean
+  followTranscript(): boolean
   scrollTranscript(direction: -1 | 1): boolean
   transcriptRowAt(screenRow: number, viewportTop: number): number
   preserveTranscriptViewport(): void
@@ -190,6 +191,9 @@ export class InputCoordinator {
     })
     this.actions.register('transcript', 'history.page-down', () => {
       if (layout.pageTranscript(1)) this.options.invalidate()
+    })
+    this.actions.register('transcript', 'history.latest', () => {
+      if (layout.followTranscript()) this.options.invalidate()
     })
     this.actions.register('composer', 'draft.previous', () => composer.navigateDraft('up'))
     this.actions.register('composer', 'draft.next', () => composer.navigateDraft('down'))

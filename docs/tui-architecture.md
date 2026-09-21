@@ -652,6 +652,7 @@ component references while the Session-owned implementations are replaced.
   durable Session content, and provider requests retain canonical `[Image #n]`
   references.
 - Composer 采用无边框背景卡片，框内上下各一行留白；上方状态/附件与底部信息栏直接相邻，通过背景色区分，不额外插入空行。上下辅助信息统一使用 `theme.dim` 弱化，运行指示、Ready 和警告保留强调色。首行 `› ` 提示符，空草稿显示占位文案；移除 Editor 的模拟反色块，以原生竖线光标表示插入位置，保留零宽光标标记供 IME 定位。`showHardwareCursor` 默认开启，显式关闭时隐藏原生光标；屏幕生命周期设置竖线形状，退出时恢复终端默认形状。滚动提示保留在留白行，补全仍位于输入框上方。终端启动后通过 pi-tui 的公开 OSC 11 查询获取背景色，按浅色混黑 4%、深色混白 12% 生成卡片底色；查询无结果时使用深色默认值。
+- 主对话 `Ctrl+G` 调用既有 `followTranscript()` 回到最新并恢复跟随，草稿非空时也可用；沿用原状态栏提示 `Viewing history · Ctrl+G to follow`，不改布局。Surface、交互弹窗和附件栏聚焦时不接管按键；PageUp / PageDown 保留空草稿翻页语义。
 - `composer/view/sparkle.ts` 集中拥有常驻星点算法、颜色混合、时钟和按需计时，`ComposerEditorFrame` 调用 `render(frame, colors)`；Composer 只提供焦点/补全显示条件并绑定释放，动画续帧直接进入 `RenderScheduler`，不重新组装业务快照。效果参照 Codex CLI `rust-v0.154.0`：150ms 续帧，稳定坐标散列，4–7 秒独立闪烁周期。输入、提交和历史会话不终止动效；失焦或补全展开时暂停，恢复显示后续播，作用域释放时取消计时。星点只绘制在卡片未带样式的空白单元格，保护正文、宽字符、占位文案、图片引用及光标。关闭颜色时不启动，不依赖模型或额外动画库；前景亮度根据终端背景推导，pi-tui 暂无公开前景色查询接口。
 - `SurfaceHost` owns one stack of close-identity handles, focus capture and
   restoration, semantic Surface input, and the only active-placement mutation.

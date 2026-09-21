@@ -21,6 +21,7 @@ export type KeymapAction =
   | 'reasoning.cycle'
   | 'history.page-up'
   | 'history.page-down'
+  | 'history.latest'
   | 'draft.previous'
   | 'draft.next'
   | 'run.interrupt'
@@ -120,6 +121,7 @@ const KEYMAP_BINDINGS: readonly KeymapBinding[] = [
   binding('turn.queue', 'tab', WHEN_WORKING),
   binding('history.page-up', 'page-up', WITH_EMPTY_COMPOSER),
   binding('history.page-down', 'page-down', WITH_EMPTY_COMPOSER),
+  binding('history.latest', 'ctrl-g', IN_BASE_SURFACE),
   binding('draft.previous', 'up', IN_BASE_SURFACE),
   binding('draft.next', 'down', IN_BASE_SURFACE),
   binding('run.interrupt', 'escape', WHEN_INTERRUPTIBLE),

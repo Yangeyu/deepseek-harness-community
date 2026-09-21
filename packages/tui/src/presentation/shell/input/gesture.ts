@@ -10,6 +10,7 @@ export type TerminalKey =
   | 'tab'
   | 'page-up'
   | 'page-down'
+  | 'ctrl-g'
   | 'up'
   | 'down'
   | 'left'

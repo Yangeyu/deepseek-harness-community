@@ -122,7 +122,7 @@ export class ShellStatusProcess {
   }
 
   private updateStatus(state: Readonly<RuntimeSessionSnapshot>): void {
-    const history = this.options.followsTranscript() ? '' : ' · Viewing history · PageDown to follow'
+    const history = this.options.followsTranscript() ? '' : ' · Viewing history · Ctrl+G to follow'
     const policy = sessionControlSummary(state.projections)
     const policyStatus = policy === '' ? '' : ` · ${policy}`
     const memoryActivity = this.options.memoryActivity()

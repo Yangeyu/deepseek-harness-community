@@ -50,6 +50,20 @@ describe('keymap', () => {
     })
   })
 
+  it('returns to latest with Ctrl+G while composing, without taking over focused surfaces', () => {
+    for (const raw of ['\u0007', '\u001b[103;5u']) {
+      expect(keymap(raw, { ...working, composerEmpty: false })).toEqual({
+        kind: 'action', action: 'history.latest',
+      })
+      for (const surfaceInput of ['trajectory', 'request', 'text-input', 'approval'] as const) {
+        expect(keymap(raw, { ...idle, surfaceActive: true, surfaceInput })).toEqual({ kind: 'unmatched' })
+      }
+      expect(keymap(raw, { ...idle, interactionActive: true })).toEqual({ kind: 'unmatched' })
+      expect(keymap(raw, { ...idle, attachmentRailFocused: true })).toEqual({ kind: 'unmatched' })
+    }
+    expect(keymap('\u001b[103;5:3u', working)).toEqual({ kind: 'suppressed' })
+  })
+
   it('uses Ctrl+V only and suppresses its Kitty repeat and release events', () => {
     expect(keymap('\u001b[118;5u')).toEqual({
       kind: 'action',
