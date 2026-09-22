@@ -1,62 +1,26 @@
-import type { SessionSummary } from './session/contracts.ts'
+import type { SessionSummary } from '../../runtime/session/contracts.ts'
+import type {
+  HostCommandResult,
+  HostCommandSource,
+  TerminalCommandDecoration,
+  TerminalCommandDefinition,
+  TerminalCommandDescriptor,
+} from './contracts.ts'
+import { commandHelpLine, parseCommand } from './catalog.ts'
 
 type SessionId = SessionSummary['sessionId']
-
-/** Toolkit-neutral command metadata used by help and autocomplete surfaces. */
-export interface TerminalCommandDescriptor {
-  name: string
-  description: string
-  argumentHint?: string
-}
-
-/** TUI-owned command with aliases and a local interaction handler. */
-export interface TerminalCommandDefinition extends TerminalCommandDescriptor {
-  aliases?: readonly string[]
-  /** Opt into status-bar activity while the handler is pending; interaction surfaces omit this. */
-  activityLabel?: string
-  handler(argument: string): void | Promise<void>
-}
-
-export interface HostCommandResult {
-  kind: 'success' | 'error'
-  text?: string
-  sourceEventSeq?: number
-}
-
-/** TUI behavior attached to an existing Host command without replacing it. */
-export interface TerminalCommandDecoration {
-  name: string
-  onBare(): void | Promise<void>
-  /** Runs only after the canonical Host command succeeds. */
-  afterHostSuccess?(argument: string): void | Promise<void>
-}
-
-/** Host-backed command discovery and execution without leaking Cordis into the application. */
-export interface HostCommandSource {
-  list(sessionId: SessionId | undefined): readonly TerminalCommandDescriptor[]
-  execute(sessionId: SessionId, line: string, signal: AbortSignal): Promise<HostCommandResult | undefined>
-  subscribe(listener: () => void): () => void
-}
-
-function parseCommand(text: string): { name: string; argument: string } | undefined {
-  const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text)
-  if (match === null || match[1] === undefined) return undefined
-  return {
-    name: match[1].toLowerCase(),
-    argument: match[2]?.trim() ?? '',
-  }
-}
 
 function descriptorKey(descriptor: TerminalCommandDescriptor): string {
   return [descriptor.name, descriptor.description, descriptor.argumentHint ?? ''].join('\u0000')
 }
 
 /**
- * One command directory for local interaction commands and agent-scoped Host
- * commands. Rendering libraries consume its plain descriptors; resolved Host
- * commands execute through the Host port and never fall through to the model.
+ * Public local/Host command directory, independent of contextual Skill admission.
+ * Owns Host discovery and cancellation; rendering consumes its plain descriptors.
+ * Resolved Host commands never fall through to the model.
  */
 export class TerminalCommandDirectory {
+  private local: readonly TerminalCommandDefinition[] | undefined
   private readonly localByName = new Map<string, TerminalCommandDefinition>()
   private readonly decorations = new Map<string, TerminalCommandDecoration>()
   private readonly executions = new Set<AbortController>()
@@ -67,26 +31,38 @@ export class TerminalCommandDirectory {
   private signature = ''
 
   constructor(
-    private readonly local: readonly TerminalCommandDefinition[],
+    local: readonly TerminalCommandDefinition[] | undefined,
     private readonly source?: HostCommandSource,
     decorations: readonly TerminalCommandDecoration[] = [],
   ) {
-    for (const definition of local) {
-      this.localByName.set(definition.name, definition)
-      for (const alias of definition.aliases ?? []) this.localByName.set(alias, definition)
-    }
     for (const decoration of decorations) this.decorations.set(decoration.name.toLowerCase(), decoration)
+    if (local !== undefined) this.initialize(local)
     this.removeHostListener = source?.subscribe(() => {
       if (this.refreshHost()) this.notify()
     }) ?? (() => {})
     this.refreshHost()
   }
 
+  /** Bind the static local catalog once, after its feature dependencies exist. */
+  initialize(
+    local: readonly TerminalCommandDefinition[],
+    decorations: readonly TerminalCommandDecoration[] = [],
+  ): void {
+    if (this.local !== undefined) throw new Error('Command directory is already initialized')
+    this.local = local
+    for (const definition of local) {
+      this.localByName.set(definition.name, definition)
+      for (const alias of definition.aliases ?? []) this.localByName.set(alias, definition)
+    }
+    for (const decoration of decorations) this.decorations.set(decoration.name.toLowerCase(), decoration)
+    this.notify()
+  }
+
   /** Effective discovery rows, with TUI-local commands shadowing Host names. */
   get descriptors(): readonly TerminalCommandDescriptor[] {
     const localNames = new Set(this.localByName.keys())
     return [
-      ...this.local.map(command => ({
+      ...(this.local ?? []).map(command => ({
         name: command.name,
         description: command.description,
         ...command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint },
@@ -175,10 +151,7 @@ export class TerminalCommandDirectory {
 
   /** Complete help content generated from the same effective discovery rows. */
   helpText(): string {
-    return this.descriptors.map((command) => {
-      const argument = command.argumentHint === undefined ? '' : ` ${command.argumentHint}`
-      return `/${command.name}${argument} · ${command.description}`
-    }).join('\n')
+    return this.descriptors.map(commandHelpLine).join('\n')
   }
 
   dispose(): void {

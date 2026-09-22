@@ -39,12 +39,11 @@ argv → shared CLI contract → help/version/completion/doctor
                            → Harness delegation → exec/config/plugin
 ```
 
-The Host owns durable domain facts. The terminal runtime owns application and
-Session lifetimes, connection state, paging, semantic indexing, effect
-cancellation, and snapshot publication. Feature modules own their local process
-state and workflows. Presentation code owns layout, colors, focus, semantic
-input binding, pointer handling, and scrolling. `application/` is the static
-composition root and public lifecycle facade; it is not a domain owner.
+Host 拥有持久化领域事实。终端 runtime 管理应用与 Session 生命周期、连接状态、分页、
+语义索引、效果取消和快照发布；功能模块拥有各自的本地过程状态与流程；presentation
+负责布局、颜色、焦点、语义输入绑定、指针处理与滚动。`application/` 负责静态装配、
+公开生命周期 facade，以及命令等跨领域交互用例；这些用例协调既有领域能力，不复制其
+状态或接管 Host 的持久化事实。
 
 The in-process TUI has one Host path: `SessionController` and scoped Cordis
 events are adapted once in `infrastructure/harness` to the ports owned by the
@@ -103,7 +102,8 @@ OAuth-only surface; such a prompt fails explicitly rather than displaying a secr
 
 ```text
 src/
-├── application/      # static composition, startup/exit, command routing, facade, TerminalSnapshot
+├── application/      # 静态装配、跨领域用例、启动退出、facade、TerminalSnapshot
+│   └── commands/     # 命令机制与 builtins/ 内置命令集合
 ├── runtime/          # lifecycle kernel, Session runtime, execution projection, dispatch, render scheduling
 ├── modules/          # vertical feature owners: composer, interaction, rewind, transcript, trajectory, etc.
 ├── presentation/
@@ -125,7 +125,7 @@ primitives only when it has a genuinely cross-feature contract.
 The dependency direction is enforced by tests:
 
 ```text
-application (composition only)
+application (静态装配与跨领域用例)
   ├── runtime kernel
   ├── feature modules ──> runtime contracts + presentation primitives
   ├── presentation shell ──> read-only runtime/module selectors
@@ -689,10 +689,27 @@ component references while the Session-owned implementations are replaced.
   `ScopedEffectRunner` binds asynchronous work to that owner's scope. Raw escape
   decoding is confined to `infrastructure/terminal`; contextual gesture
   resolution lives in `presentation/shell/input`.
-- `TerminalCommandDirectory` merges local interaction commands with the
-  effective agent-scoped `ctx.commands` descriptors. Help and autocomplete read
-  the same descriptor list, while a narrow application port executes resolved
-  Host commands and supports bare-invocation UI decorations.
+- `application/commands` 是应用命令子系统，管理机制与具体成员分开组织：
+  `contracts.ts` 定义必要契约，`catalog.ts` 集中候选合并、解析与帮助格式，
+  `directory.ts` 保留公开的 `TerminalCommandDirectory`，`dispatch.ts` 提供上下文路由，
+  `builtins/` 按命令集中元数据、参数处理和完整执行流程；`index.ts` 显式组装成员。
+  机制只依赖契约，不导入具体命令；成员不反向调用组装入口或分发实现。
+- `TerminalCommandDirectory` 拥有本地与 Host 命令目录、别名遮蔽、Host 订阅及执行取消，
+  其已有构造方式与包入口导出保持不变。应用装配先用 `undefined` 本地目录创建机制，
+  创建依赖命令能力的功能实例后，再调用一次 `initialize(local, decorations)` 绑定实际成员，
+  最后启用编辑器与终端交互。该阶段不是运行时动态注册接口，不保留命令动作表或未赋值的
+  功能变量来隐藏构造循环。状态栏的只读选择器延迟到装配完成后求值。
+- `CommandRouter` 负责有效 Slash 候选、Skill 发现回退及命令并发活动；目录类保留独立的
+  本地/Host 执行契约，不承担模型输入准入。完整命令行解析与允许前导空白、排除文件路径的
+  Slash 准入解析有不同契约，不为合并代码而改变行为。帮助与补全使用同一有效候选，命令
+  及别名优先于同名 Skill；已知 Host 命令失败不降级成模型输入。
+- `builtins/copy.ts` 拥有回复筛选、按需分页和剪贴板写入流程；只有需要分页时才捕获
+  Session，每页返回后先检查所有权，再读取历史。`builtins/usage.ts` 查询应用传入的共享
+  `ProviderUsageProcess`，与底栏共用额度快照；成功和失败反馈受发起 Session 与命令生命
+  周期约束。两者均不接管历史存储、渲染或账户刷新机制，也不复制公共活动状态。
+- `builtins/permission.ts` 是 Host 命令的本地增强：无参数时打开配置界面，有参数仍由
+  Host 执行，只有成功后才保存默认值。内置目录保留既有命令顺序、别名以及授权/额度能力的
+  条件启用；Host 动态提供的命令不复制为本地成员。
 - `ComposerAutocompleteProvider` gates `pi-tui`'s combined provider to Slash
   completion only, uses the shared `dsh-file-reference` token grammar, and maps
   candidates from its consumer-owned `FileReferenceSource` port into Editor

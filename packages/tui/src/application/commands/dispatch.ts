@@ -1,14 +1,14 @@
-import type { SkillEntry } from '../runtime/session/contracts.ts'
-import type { LifecycleScope } from '../runtime/lifecycle/scope.ts'
-import type { RuntimeSessionSnapshot } from '../runtime/session/snapshot.ts'
-import type { TerminalCommandDirectory } from '../runtime/commands.ts'
+import type { RuntimeSessionSnapshot } from '../../runtime/session/snapshot.ts'
+import type { SkillEntry } from '../../runtime/session/contracts.ts'
+import type { LifecycleScope } from '../../runtime/lifecycle/scope.ts'
+import type { TerminalCommandDirectory } from './directory.ts'
+import type { SlashCandidate } from './contracts.ts'
 import {
   mergeSlashCatalog,
   resolveLeadingSlash,
   slashAutocompleteRows,
   slashHelpText,
-  type SlashCandidate,
-} from './slash-catalog.ts'
+} from './catalog.ts'
 
 export interface CommandRouterSessionPort {
   readonly current: Readonly<RuntimeSessionSnapshot>
@@ -38,7 +38,7 @@ export interface CommandRouterOptions {
   readonly now?: () => number
 }
 
-/** Owns Slash resolution, command activity, and Session-scoped discovery. */
+/** Owns contextual Skill admission, command activity, and Session-scoped discovery. */
 export class CommandRouter {
   private readonly activities = new Set<CommandActivity>()
   private readonly now: () => number

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   mergeSlashCatalog,
+  parseCommand,
   resolveLeadingSlash,
   slashAutocompleteRows,
   slashHelpText,
-} from '../../src/application/slash-catalog.ts'
+} from '../../../src/application/commands/catalog.ts'
 
 describe('slash catalog', () => {
   const commands = [
@@ -33,6 +34,18 @@ describe('slash catalog', () => {
     ], ['status', 'release', 'trajectory', 'trace'])
 
     expect(catalog.some(row => row.kind === 'skill' && row.name === 'trace')).toBe(false)
+  })
+
+  it('parses complete command arguments without treating prompt admission as execution', () => {
+    expect(parseCommand('/STATUS  first line\nsecond line  ')).toEqual({
+      name: 'status',
+      argument: 'first line\nsecond line',
+    })
+    expect(parseCommand(' /status')).toBeUndefined()
+    expect(resolveLeadingSlash(' /status', mergeSlashCatalog(commands, skills))).toEqual({
+      kind: 'command',
+      candidate: expect.objectContaining({ name: 'status' }),
+    })
   })
 
   it('resolves an exact Skill without rewriting its prompt', () => {

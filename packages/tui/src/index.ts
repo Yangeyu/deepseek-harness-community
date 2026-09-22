@@ -24,7 +24,7 @@ import {
   LocalWorkspaceRewind,
   RewindService,
 } from './modules/rewind/index.ts'
-import type { HostCommandSource } from './runtime/commands.ts'
+import type { HostCommandSource } from './application/commands/contracts.ts'
 import { Config, resolveConfig, type Config as TuiConfig } from './application/config.ts'
 import {
   CliUsageError,
@@ -45,7 +45,7 @@ import { harnessSubscriptionUsage } from './infrastructure/harness/subscription-
 
 export { Config, resolveConfig }
 export type { TuiConfig, TuiRuntime }
-export { TerminalCommandDirectory } from './runtime/commands.ts'
+export { TerminalCommandDirectory } from './application/commands/directory.ts'
 export type {
   RewindAction,
   RewindFilePlan,
@@ -58,7 +58,7 @@ export type {
   HostCommandSource,
   TerminalCommandDefinition,
   TerminalCommandDescriptor,
-} from './runtime/commands.ts'
+} from './application/commands/contracts.ts'
 export type {
   PendingSubmission,
 } from './runtime/session/manager.ts'

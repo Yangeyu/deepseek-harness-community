@@ -1,10 +1,10 @@
-import type { SessionSummary } from '../../src/runtime/session/contracts.ts'
+import type { SessionSummary } from '../../../src/runtime/session/contracts.ts'
 import { describe, expect, it, vi } from 'vitest'
-import {
-  TerminalCommandDirectory,
-  type HostCommandSource,
-  type TerminalCommandDescriptor,
-} from '../../src/runtime/commands.ts'
+import type {
+  HostCommandSource,
+  TerminalCommandDescriptor,
+} from '../../../src/application/commands/contracts.ts'
+import { TerminalCommandDirectory } from '../../../src/application/commands/directory.ts'
 
 function hostSource(initial: readonly TerminalCommandDescriptor[] = []): {
   source: HostCommandSource
@@ -32,6 +32,42 @@ function hostSource(initial: readonly TerminalCommandDescriptor[] = []): {
 }
 
 describe('TerminalCommandDirectory', () => {
+  it('publishes the assembled local catalog and decorations after session binding', async () => {
+    const host = hostSource([
+      { name: 'trace', description: 'Host trace' },
+      { name: 'permission', description: 'Switch permission' },
+    ])
+    const directory = new TerminalCommandDirectory(undefined, host.source)
+    directory.setSession('session-command' as SessionSummary['sessionId'])
+    const changed = vi.fn(() => directory.descriptors.map(command => command.name))
+    directory.subscribe(changed)
+    const trace = vi.fn()
+    const picker = vi.fn()
+
+    directory.initialize([{
+      name: 'trajectory',
+      aliases: ['trace'],
+      description: 'Terminal trace',
+      handler: trace,
+    }], [{ name: 'permission', onBare: picker }])
+
+    expect(changed).toHaveBeenCalledOnce()
+    expect(changed.mock.results[0]?.value).toEqual(['trajectory', 'permission'])
+    await expect(directory.dispatch('/trace current')).resolves.toBe(true)
+    expect(trace).toHaveBeenCalledWith('current')
+    await expect(directory.dispatch('/permission')).resolves.toBe(true)
+    expect(picker).toHaveBeenCalledOnce()
+    expect(host.execute).not.toHaveBeenCalled()
+    directory.dispose()
+  })
+
+  it.each(['constructor', 'initialize'] as const)('accepts static assembly only once via %s', (assembly) => {
+    const directory = new TerminalCommandDirectory(assembly === 'constructor' ? [] : undefined)
+    if (assembly === 'initialize') directory.initialize([])
+    expect(() => directory.initialize([])).toThrow('already initialized')
+    directory.dispose()
+  })
+
   it('builds help and discovery from one merged local and Host catalog', () => {
     const host = hostSource([
       { name: 'compact', description: 'Compact context', argumentHint: '[focus]' },
@@ -99,6 +135,37 @@ describe('TerminalCommandDirectory', () => {
     directory.dispose()
   })
 
+  it.each(['session change', 'dispose'] as const)('cancels pending Host execution on %s', async (reason) => {
+    const host = hostSource([{ name: 'compact', description: 'Compact context' }])
+    host.execute.mockImplementation((_sessionId: unknown, _line: string, signal: AbortSignal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => { reject(signal.reason) }, { once: true })
+      }))
+    const directory = new TerminalCommandDirectory([], host.source)
+    directory.setSession('session-command' as SessionSummary['sessionId'])
+    const pending = directory.dispatch('/compact')
+    const rejected = expect(pending).rejects.toThrow('Host command session changed')
+
+    if (reason === 'session change') directory.setSession(undefined)
+    else directory.dispose()
+
+    await rejected
+    directory.dispose()
+  })
+
+  it('removes source and discovery subscriptions when disposed', () => {
+    const host = hostSource([{ name: 'compact', description: 'Compact context' }])
+    const directory = new TerminalCommandDirectory([], host.source)
+    directory.setSession('session-command' as SessionSummary['sessionId'])
+    const changed = vi.fn()
+    directory.subscribe(changed)
+    directory.dispose()
+
+    host.set([{ name: 'status', description: 'Host status' }])
+    expect(directory.descriptors.map(command => command.name)).toEqual(['compact'])
+    expect(changed).not.toHaveBeenCalled()
+  })
+
   it('executes known Host commands through the Host port instead of model input', async () => {
     const host = hostSource([{ name: 'compact', description: 'Compact context', argumentHint: '[focus]' }])
     const directory = new TerminalCommandDirectory([], host.source)
@@ -126,14 +193,18 @@ describe('TerminalCommandDirectory', () => {
     expect(picker).toHaveBeenCalledOnce()
     expect(host.execute).not.toHaveBeenCalled()
 
-    await expect(directory.dispatch('/permission workspace-write')).resolves.toBe(true)
+    const execution = Promise.withResolvers<{ kind: 'success' }>()
+    host.execute.mockReturnValueOnce(execution.promise)
+    const pending = directory.dispatch('/permission workspace-write')
+    expect(persist).not.toHaveBeenCalled()
+    execution.resolve({ kind: 'success' })
+    await expect(pending).resolves.toBe(true)
     expect(host.execute).toHaveBeenCalledWith(
       sessionId,
       '/permission workspace-write',
       expect.any(AbortSignal),
     )
     expect(persist).toHaveBeenCalledWith('workspace-write')
-    expect(host.execute.mock.invocationCallOrder[0]).toBeLessThan(persist.mock.invocationCallOrder[0] ?? 0)
     directory.dispose()
   })
 

@@ -5,9 +5,11 @@ import type { TuiRuntime } from './contracts.ts'
 import { TuiApplication, type ApplicationRuntime } from './app.ts'
 import { ApplicationExit } from './exit.ts'
 import { ApplicationStartup } from './startup.ts'
-import { CommandRouter } from './command-router.ts'
+import { CommandRouter } from './commands/dispatch.ts'
+import { TerminalCommandDirectory } from './commands/directory.ts'
+import type { HostCommandSource } from './commands/contracts.ts'
+import { createBuiltinCommands } from './commands/index.ts'
 import { InputCoordinator } from './input-coordinator.ts'
-import { createLocalCommands } from './local-commands.ts'
 import { createSessionFeatureSet } from './create-session-features.ts'
 import type { TuiHostPorts } from './host-ports.ts'
 import { createClipboardTextWriter } from '../infrastructure/clipboard/text-writer.ts'
@@ -30,8 +32,6 @@ import { AuthenticationProcess } from '../modules/authentication/process.ts'
 import type { ProviderAuthenticationPort } from '../modules/authentication/contracts.ts'
 import type { ProviderUsagePort } from '../modules/usage/contracts.ts'
 import { ProviderUsageProcess } from '../modules/usage/process.ts'
-import { formatUsage } from '../modules/usage/format.ts'
-import { selectedModel } from '../runtime/session/model-selection.ts'
 import { openAuthorizationUrl } from '../infrastructure/terminal/open-url.ts'
 import { InteractionHost } from '../modules/interaction/host.ts'
 import type { MemoryPort } from '../modules/memory/contracts.ts'
@@ -44,7 +44,6 @@ import { SkillsHost } from '../modules/skills/host.ts'
 import { TaskHost } from '../modules/task/host.ts'
 import { TrajectoryHost } from '../modules/trajectory/host.ts'
 import { TranscriptHost } from '../modules/transcript/host.ts'
-import { latestAssistantText } from '../modules/transcript/model.ts'
 import { createTheme } from '../presentation/primitives/theme.ts'
 import type { ClipboardTextWriter } from '../presentation/shell/input/contracts.ts'
 import { ComposerAnchoredLayout } from '../presentation/shell/layout/composer-layout.ts'
@@ -52,8 +51,6 @@ import { SelectableMainScreen } from '../presentation/shell/screen/selectable-ma
 import type { GitBranchSource } from '../presentation/shell/status/contracts.ts'
 import { ShellStatusProcess } from '../presentation/shell/status/process.ts'
 import { SurfaceHost } from '../presentation/shell/surfaces/surface-host.ts'
-import type { HostCommandSource } from '../runtime/commands.ts'
-import { TerminalCommandDirectory } from '../runtime/commands.ts'
 import { ApplicationMachine } from '../runtime/lifecycle/application-machine.ts'
 import { RenderScheduler } from '../runtime/render-scheduler.ts'
 import { SessionManager } from '../runtime/session/manager.ts'
@@ -161,97 +158,21 @@ export function createApplication(
   const skills = new SkillsHost()
   const trajectory = new TrajectoryHost()
 
-  let commandRouter!: CommandRouter
-  let layout!: ComposerAnchoredLayout
-  let rewindProcess!: RewindProcess
-  let configuration!: ConfigurationProcess
-  let sessionCenter!: SessionCenterProcess
-  let memoryProcess!: MemoryProcess
+  // Create the command mechanisms before features that use Host commands.
+  // Local members are bound once below, after their actual owners exist.
+  const commands = new TerminalCommandDirectory(undefined, commandSource)
+  const commandRouter = new CommandRouter({
+    directory: commands,
+    session,
+    skills,
+    refreshAutocomplete: () => { composer.refreshAutocomplete() },
+    onActivity: () => { shellStatus.refresh() },
+    scope: commandScope,
+  })
   const usage = dependencies.usage === undefined ? undefined : new ProviderUsageProcess(
     dependencies.usage, shellScope, () => { shellStatus.refresh() },
   )
-  let input!: InputCoordinator
-
-  const commands = new TerminalCommandDirectory(
-    createLocalCommands({
-      helpText: () => commandRouter.helpText(),
-      notice: message => { session.notice(message) },
-      currentSession: () => session.current,
-      clear: async () => {
-        layout.followTranscript()
-        await session.clearSession()
-      },
-      create: () => session.newSession(),
-      resume: sessionId => sessionId === undefined
-        ? sessionCenter.open()
-        : sessionCenter.resume(sessionId),
-      selectModel: model => model === undefined
-        ? configuration.openModelSelector()
-        : configuration.selectNamedModel(model),
-      ...dependencies.authentication === undefined ? {} : { connectProvider: async (provider?: string) => {
-        const connected = await authentication!.connect(provider)
-        if (lifecycle.scope.active) session.notice(connected ? 'Provider connected. Use /model to select a model.' : 'Sign-in cancelled.')
-      } },
-      ...usage === undefined ? {} : { showUsage: async () => {
-        const captured = session.captureSession()
-        const provider = selectedModel(session.current.modelCatalog, session.current.projections)?.provider
-        if (provider === undefined) throw new Error('Select a model with /model before checking usage.')
-        let message: string
-        try {
-          const result = await usage.read(provider, commandScope.signal)
-          message = result === undefined ? `Subscription usage is not available for ${provider}.` : formatUsage(result)
-        } catch (error) {
-          message = error instanceof Error ? error.message : String(error)
-        }
-        if (commandScope.active && captured.active) session.notice(message)
-      } },
-      attach: path => composer.attachPath(path).then(() => undefined),
-      pasteImage: () => composer.pasteImage(),
-      copyReply: async () => {
-        let text = latestAssistantText(session.current.events)
-        if (text === undefined && session.current.historyHasMore) {
-          const captured = session.captureSession()
-          while (text === undefined && session.current.historyHasMore) {
-            const loaded = await session.loadEarlierHistory()
-            if (!commandScope.active || !captured.active) return
-            if (!loaded) break
-            text = latestAssistantText(session.current.events)
-          }
-        }
-        if (text === undefined) {
-          session.notice('No completed assistant reply to copy.')
-          return
-        }
-        await copyText(text)
-      },
-      toggleDetails: () => { configuration.setDetails(!configuration.details) },
-      openSkills: () => { skills.open() },
-      openConfiguration: route => configuration.openRoute(route),
-      openTask: () => { taskProcess.open() },
-      openTrajectory: () => { trajectory.open() },
-      openMemory: () => memoryProcess.open(),
-      openRewind: () => { rewindProcess.request() },
-      exit: () => exit.request(0),
-    }),
-    commandSource,
-    [{
-      name: 'permission',
-      onBare: () => configuration.openPermission(),
-      ...permissionDefault === undefined
-        ? {}
-        : {
-            afterHostSuccess: async (preset: string) => {
-              try {
-                await permissionDefault.setDefaultPreset(preset)
-              } catch (error: unknown) {
-                const reason = error instanceof Error ? error.message : String(error)
-                throw new Error(`Permission changed for this session, but its default could not be saved: ${reason}`)
-              }
-            },
-          },
-    }],
-  )
-  const shellStatus = new ShellStatusProcess({
+  const shellStatus: ShellStatusProcess = new ShellStatusProcess({
     title: config.title,
     theme,
     session,
@@ -265,7 +186,7 @@ export function createApplication(
     invalidate: () => { invalidateTerminal() },
     scope: shellScope,
   })
-  layout = new ComposerAnchoredLayout(
+  const layout: ComposerAnchoredLayout = new ComposerAnchoredLayout(
     shellStatus.header,
     transcript,
     shellStatus.status,
@@ -281,7 +202,7 @@ export function createApplication(
     () => { invalidateTerminal() },
     surfaceScope,
   )
-  rewindProcess = new RewindProcess({
+  const rewindProcess = new RewindProcess({
     rewind,
     conversation: {
       rewind: async (plan, onPhase) => String(await session.rewind({
@@ -299,7 +220,7 @@ export function createApplication(
     theme,
     scope: rewindScope,
   })
-  memoryProcess = new MemoryProcess({
+  const memoryProcess = new MemoryProcess({
     memory,
     session,
     surfaces,
@@ -315,7 +236,7 @@ export function createApplication(
     invalidate: () => { invalidateTerminal() },
     openUrl: openAuthorizationUrl,
   })
-  configuration = new ConfigurationProcess({
+  const configuration = new ConfigurationProcess({
     session,
     models: new HarnessModelPort(host.sessions, session),
     commands,
@@ -329,20 +250,49 @@ export function createApplication(
     ...vision === undefined ? {} : { vision },
     ...web === undefined ? {} : { web },
   })
-  sessionCenter = new SessionCenterProcess({
+  const sessionCenter = new SessionCenterProcess({
     session,
     surfaces,
     theme,
     scope: sessionCenterScope,
     invalidate: () => { invalidateTerminal() },
   })
-  commandRouter = new CommandRouter({
-    directory: commands,
+
+  // Assemble concrete command members once, before editor input is enabled.
+  const builtins = createBuiltinCommands({
     session,
+    composer,
+    configuration,
+    sessionCenter,
+    layout,
     skills,
-    refreshAutocomplete: () => { composer.refreshAutocomplete() },
-    onActivity: () => { shellStatus.refresh() },
-    scope: commandScope,
+    task: taskProcess,
+    trajectory,
+    memory: memoryProcess,
+    rewind: rewindProcess,
+    exit,
+    help: commandRouter,
+    clipboardText: copyText,
+    signal: commandScope.signal,
+    ...authentication === undefined ? {} : { authentication },
+    ...usage === undefined ? {} : { usage },
+    ...permissionDefault === undefined ? {} : { permissionDefault },
+  })
+  commands.initialize(builtins.local, builtins.decorations)
+
+  const input = new InputCoordinator({
+    session,
+    composer,
+    interactions,
+    configuration,
+    surfaces,
+    layout,
+    transcript,
+    screen: tui,
+    clipboard: copyText,
+    requestExit: code => exit.request(code),
+    invalidate: () => { shellStatus.refresh() },
+    scope: inputScope,
   })
 
   const sessionFeatureOptions = {
@@ -406,20 +356,6 @@ export function createApplication(
   })
   lifecycle.scope.onDispose(session.registerFeatureParticipant(featureCoordinator))
 
-  input = new InputCoordinator({
-    session,
-    composer,
-    interactions,
-    configuration,
-    surfaces,
-    layout,
-    transcript,
-    screen: tui,
-    clipboard: copyText,
-    requestExit: code => exit.request(code),
-    invalidate: () => { shellStatus.refresh() },
-    scope: inputScope,
-  })
   lifecycle.scope.onDispose(session.onInteraction((event) => {
     if (!lifecycle.active) return
     if (event.type === 'approval') interactions.requestApproval(event.prompt)

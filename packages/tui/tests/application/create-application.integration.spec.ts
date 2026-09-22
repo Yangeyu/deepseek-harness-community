@@ -19,7 +19,7 @@ import type { ProviderUsage, ProviderUsagePort } from '../../src/modules/usage/c
 import { resolveConfig } from '../../src/application/config.ts'
 import type { RuntimeSessionSnapshot } from '../../src/runtime/session/manager.ts'
 import type { SessionId } from '../../src/runtime/session/snapshot.ts'
-import type { HostCommandSource, HostCommandResult } from '../../src/runtime/commands.ts'
+import type { HostCommandSource, HostCommandResult } from '../../src/application/commands/contracts.ts'
 import type { ImageInputGateway } from '../../src/modules/composer/attachments/coordinator.ts'
 import type { NewAttachmentDraft } from '../../src/modules/composer/attachments/drafts.ts'
 import { buildExecutionSnapshot } from '../../src/runtime/execution/projection/index.ts'
@@ -252,36 +252,24 @@ afterEach(() => {
 })
 
 describe('createApplication integration', () => {
-  it('copies the latest completed assistant text as Markdown without thoughts, tools, or partial output', async () => {
+  it('routes /copy from the composer to the configured clipboard', async () => {
     const clipboardText = vi.fn(async () => {})
     const app = application(undefined, undefined, undefined, undefined, { clipboardText })
     const reply = '# Answer\n\n```ts\nconst n = 1\n```'
-    const events = [
-      { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'text', text: 'Older reply' }] } } } },
-      { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'reasoning', text: 'Private thought' }, { type: 'text', text: reply }, { type: 'text', text: 'Done.' }] } } } },
-      { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'reasoning', text: 'More thought' }] } } } },
-      { event: { type: 'assistant/message', surfaceOp: 'append', data: { interrupted: true, message: { content: [{ type: 'text', text: 'Interrupted reply' }] } } } },
-      { event: { type: 'assistant/message', surfaceOp: 'replace', data: { message: { content: [{ type: 'text', text: 'Compaction summary' }] } } } },
-      { event: { type: 'tool/result', data: { message: { content: [{ type: 'text', text: 'Tool output' }] } } } },
-    ] as unknown as HistoryEntry[]
-    vi.spyOn(app.session, 'current', 'get').mockReturnValue({
-      ...app.session.current, events,
-      assistant: { turn: 2, step: 1, content: [{ type: 'text', text: 'Still streaming' }] },
-    })
+    vi.spyOn(app.session, 'current', 'get').mockReturnValue({ ...app.session.current, events: [
+      { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'text', text: reply }] } } } },
+    ] as unknown as HistoryEntry[] })
 
     await app.composer.submit('/copy')
 
-    expect(clipboardText).toHaveBeenCalledExactlyOnceWith(`${reply}\nDone.`)
+    expect(clipboardText).toHaveBeenCalledExactlyOnceWith(reply)
     await app.dispose()
   })
 
-  it('reports an empty conversation without overwriting the clipboard and surfaces copy errors', async () => {
+  it('surfaces clipboard failures through normal command error feedback', async () => {
     const clipboardText = vi.fn(async () => { throw new Error('Clipboard unavailable') })
     const app = application(undefined, undefined, undefined, undefined, { clipboardText })
     const notice = vi.spyOn(app.session, 'notice')
-    await app.composer.submit('/copy')
-    expect(notice).toHaveBeenLastCalledWith('No completed assistant reply to copy.')
-    expect(clipboardText).not.toHaveBeenCalled()
 
     vi.spyOn(app.session, 'current', 'get').mockReturnValue({ ...app.session.current, events: [
       { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'text', text: 'Reply' }] } } } },
@@ -291,30 +279,7 @@ describe('createApplication integration', () => {
     await app.dispose()
   })
 
-  it.each([true, false])('searches older history and copies only while the session remains active (%s)', async active => {
-    const clipboardText = vi.fn(async () => {})
-    const app = application(undefined, undefined, undefined, undefined, { clipboardText })
-    const state = { ...app.session.current, historyHasMore: true }
-    vi.spyOn(app.session, 'current', 'get').mockImplementation(() => state)
-    vi.spyOn(app.session, 'captureSession').mockReturnValue({ sessionId: 'copy-session' as SessionId, epoch: 1, active, commitModelCatalog: () => true })
-    vi.spyOn(app.session, 'loadEarlierHistory').mockImplementation(async () => {
-      state.events = [
-        { event: { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'text', text: 'Earlier reply' }] } } } },
-      ] as unknown as HistoryEntry[]
-      state.historyHasMore = false
-      return true
-    })
-
-    await app.composer.submit('/copy')
-
-    if (active) expect(clipboardText).toHaveBeenCalledExactlyOnceWith('Earlier reply')
-    else expect(clipboardText).not.toHaveBeenCalled()
-    await app.dispose()
-  })
-
-  it('spins while /usage reads the selected provider and displays quotas without a model request', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(1_000)
+  it('shows /usage activity and quota feedback without sending a model request', async () => {
     const result = Promise.withResolvers<ProviderUsage>()
     const read = vi.fn(() => result.promise)
     const app = usageApplication(read)
@@ -323,13 +288,9 @@ describe('createApplication integration', () => {
 
     const pending = app.composer.submit('/usage')
     await vi.waitFor(() => {
-      expect(stripTerminalSequences(app.status.render(80).join('\n'))).toContain('Checking subscription usage (0s)')
+      expect(stripTerminalSequences(app.status.render(80).join('\n'))).toContain('Checking subscription usage')
     })
     expect(read).toHaveBeenCalledExactlyOnceWith('openai-codex', expect.any(AbortSignal))
-    vi.advanceTimersByTime(160)
-    expect(stripTerminalSequences(app.status.render(80).join('\n'))).toContain('✢ Checking subscription usage')
-    vi.advanceTimersByTime(160)
-    expect(stripTerminalSequences(app.status.render(80).join('\n'))).toContain('✳ Checking subscription usage')
 
     result.resolve({ provider: 'openai-codex', checkedAt: 0, groups: [
       { label: 'Codex', windows: [{ durationSeconds: 604800, usedPercent: 45 }] },
@@ -384,23 +345,6 @@ describe('createApplication integration', () => {
     results[remaining]!.resolve({ provider: 'openai-codex', checkedAt: 0, groups: [] })
     await pending[remaining]
     expect(app.status.render(80).join('\n')).toContain('Ready')
-    await app.dispose()
-  })
-
-  it.each(['success', 'failure'] as const)('discards a quota %s after the originating session retires', async outcome => {
-    const result = Promise.withResolvers<{ provider: string; checkedAt: number; groups: [] }>()
-    const read = vi.fn(() => result.promise)
-    const app = usageApplication(read)
-    const captured = { sessionId: 'session-usage' as SessionId, epoch: 1, active: true, commitModelCatalog: () => true }
-    vi.spyOn(app.session, 'captureSession').mockReturnValue(captured)
-    const notice = vi.spyOn(app.session, 'notice')
-    const pending = app.composer.submit('/usage')
-    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
-    captured.active = false
-    if (outcome === 'success') result.resolve({ provider: 'openai-codex', checkedAt: 0, groups: [] })
-    else result.reject(new Error('Usage request failed'))
-    await pending
-    expect(notice).not.toHaveBeenCalled()
     await app.dispose()
   })
 

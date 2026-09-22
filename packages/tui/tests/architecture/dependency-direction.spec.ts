@@ -107,6 +107,26 @@ describe('TUI dependency direction', () => {
     expect(violations).toEqual([])
   })
 
+  it('keeps command mechanisms independent from built-in members and their assembly', () => {
+    const root = 'application/commands/'
+    const members = `${root}builtins/`
+    const violations: string[] = []
+    for (const source of sourceFiles()) {
+      const from = sourcePath(source)
+      if (!from.startsWith(root) || from === `${root}index.ts`) continue
+      for (const specifier of importsOf(source)) {
+        const target = internalTarget(source, specifier)
+        if (target === undefined || !target.startsWith(root)) continue
+        if (target === `${root}index.ts`
+          || (!from.startsWith(members) && target.startsWith(members))
+          || (from.startsWith(members) && !target.startsWith(members) && target !== `${root}contracts.ts`)) {
+          violations.push(`${from} -> ${target}`)
+        }
+      }
+    }
+    expect(violations).toEqual([])
+  })
+
   it('keeps public source entry points explicit', () => {
     const rootFiles = sourceFiles()
       .map(sourcePath)

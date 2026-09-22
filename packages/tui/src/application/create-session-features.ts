@@ -26,7 +26,7 @@ import { TranscriptHost } from '../modules/transcript/host.ts'
 import { TranscriptProcess, type TranscriptDetailsPort } from '../modules/transcript/process.ts'
 import type { TuiTheme } from '../presentation/primitives/theme.ts'
 import type { SurfaceHost } from '../presentation/shell/surfaces/surface-host.ts'
-import type { TerminalCommandDirectory } from '../runtime/commands.ts'
+import type { TerminalCommandDirectory } from './commands/directory.ts'
 import type { LifecycleScope } from '../runtime/lifecycle/scope.ts'
 import type { SessionManager } from '../runtime/session/manager.ts'
 

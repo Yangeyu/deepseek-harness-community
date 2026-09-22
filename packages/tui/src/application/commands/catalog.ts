@@ -1,18 +1,18 @@
-import type { SkillEntry } from '../runtime/session/contracts.ts'
-import type { TerminalCommandDescriptor } from '../runtime/commands.ts'
-
-export type SlashCandidate =
-  | ({ kind: 'command' } & TerminalCommandDescriptor)
-  | ({ kind: 'skill' } & SkillEntry)
-
-export type SlashResolution =
-  | { kind: 'none' }
-  | { kind: 'command'; candidate: Extract<SlashCandidate, { kind: 'command' }> }
-  | { kind: 'skill'; candidate: Extract<SlashCandidate, { kind: 'skill' }> }
-  | { kind: 'unknown'; name: string }
+import type { SkillEntry } from '../../runtime/session/contracts.ts'
+import type { SlashCandidate, SlashResolution, TerminalCommandDescriptor } from './contracts.ts'
 
 function normalizedName(name: string): string {
   return name.trim().replace(/^\//, '').toLowerCase()
+}
+
+/** Parse a complete command line for execution, without accepting leading whitespace. */
+export function parseCommand(text: string): { name: string; argument: string } | undefined {
+  const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text)
+  if (match === null || match[1] === undefined) return undefined
+  return {
+    name: match[1].toLowerCase(),
+    argument: match[2]?.trim() ?? '',
+  }
 }
 
 /** Merge discovery rows while preserving Harness command-over-Skill precedence. */
@@ -39,8 +39,8 @@ export function resolveLeadingSlash(
   text: string,
   candidates: readonly SlashCandidate[],
 ): SlashResolution {
-  // Commands and Skills are one path-free name. A Unix absolute path shares
-  // the leading slash but is ordinary prompt text, not an unknown command.
+  // Unlike complete command execution, prompt admission permits leading whitespace
+  // but excludes paths: a Unix absolute path must remain ordinary model input.
   const match = /^\s*\/([^\s/]+)(?=\s|$)/.exec(text)
   const token = match?.[1]
   if (token === undefined) return { kind: 'none' }
@@ -67,6 +67,12 @@ export function slashAutocompleteRows(candidates: readonly SlashCandidate[]): Te
       })
 }
 
+/** Shared row formatting for directory help and contextual grouped help. */
+export function commandHelpLine(command: TerminalCommandDescriptor): string {
+  const argument = command.argumentHint === undefined ? '' : ` ${command.argumentHint}`
+  return `/${command.name}${argument} · ${command.description}`
+}
+
 /** Grouped help generated from the same effective Slash candidates as autocomplete. */
 export function slashHelpText(candidates: readonly SlashCandidate[]): string {
   const commands = candidates.filter((candidate): candidate is Extract<SlashCandidate, { kind: 'command' }> =>
@@ -75,14 +81,11 @@ export function slashHelpText(candidates: readonly SlashCandidate[]): string {
     candidate.kind === 'skill')
   return [
     'Commands',
-    ...commands.map((command) => {
-      const argument = command.argumentHint === undefined ? '' : ` ${command.argumentHint}`
-      return `/${command.name}${argument} · ${command.description}`
-    }),
+    ...commands.map(commandHelpLine),
     ...skills.length === 0 ? [] : [
       '',
       'Skills',
-      ...skills.map(skill => `/${skill.name} [request] · ${skill.description}`),
+      ...skills.map(skill => commandHelpLine({ ...skill, argumentHint: '[request]' })),
     ],
   ].join('\n')
 }
