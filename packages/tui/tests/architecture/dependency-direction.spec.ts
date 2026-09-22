@@ -135,7 +135,7 @@ describe('TUI dependency direction', () => {
     expect(rootFiles).toEqual(['bailian.ts', 'index.ts', 'memory.ts', 'vision.ts', 'web.ts'])
   })
 
-  it('has one concrete render request and one raw terminal decoder boundary', () => {
+  it('keeps concrete rendering and raw key decoding at their integration boundaries', () => {
     const requestRenderOwners: string[] = []
     const rawKeyOwners: string[] = []
     for (const source of sourceFiles()) {
@@ -144,7 +144,10 @@ describe('TUI dependency direction', () => {
       if (contents.includes('.requestRender(')) requestRenderOwners.push(path)
       if (contents.includes('matchesKey(') || contents.includes('getKeybindings(')) rawKeyOwners.push(path)
     }
-    expect(requestRenderOwners).toEqual(['application/create-application.ts'])
+    expect(requestRenderOwners.sort()).toEqual([
+      'application/create-application.ts',
+      'presentation/shell/screen/selectable-main-screen.ts',
+    ])
     expect(rawKeyOwners.every(path => path.startsWith('infrastructure/terminal/'))).toBe(true)
     expect(rawKeyOwners.sort()).toEqual([
       'infrastructure/terminal/decode-input.ts',

@@ -34,6 +34,34 @@ describe('SelectableMainScreen', () => {
     })
   })
 
+  it('paints only while the terminal is started', async () => {
+    vi.useFakeTimers()
+    const output = terminal()
+    const screen = new SelectableMainScreen(output, false)
+    const text = new Text('ready', 0, 0)
+    screen.addChild(text)
+    try {
+      screen.requestRender()
+      await vi.advanceTimersByTimeAsync(50)
+      expect(output.write).not.toHaveBeenCalled()
+
+      screen.start()
+      await vi.advanceTimersByTimeAsync(50)
+      expect(vi.mocked(output.write).mock.calls.some(([value]) => value.includes('ready'))).toBe(true)
+
+      text.setText('late')
+      screen.requestRender()
+      screen.stop({ preserveScreen: true })
+      vi.mocked(output.write).mockClear()
+      screen.requestRender()
+      await vi.advanceTimersByTimeAsync(50)
+      expect(output.write).not.toHaveBeenCalled()
+    } finally {
+      screen.stop({ preserveScreen: true })
+      vi.useRealTimers()
+    }
+  })
+
   it('owns mouse tracking and the native caret shape across terminal start and stop', () => {
     const output = terminal()
     const screen = new SelectableMainScreen(output, false)

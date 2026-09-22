@@ -212,7 +212,7 @@ function application(
       ...commandSource === undefined ? {} : { commandSource },
     },
   )
-  assembly.tui.requestRender = vi.fn()
+  vi.spyOn(assembly.tui, 'requestRender').mockImplementation(() => {})
   return Object.assign(assembly, {
     start: () => assembly.application.start(),
     dispose: () => assembly.application.dispose(),
@@ -474,7 +474,25 @@ describe('createApplication integration', () => {
     await app.dispose()
   })
 
+  it('rejects non-TTY startup without writing to the terminal', async () => {
+    vi.useFakeTimers()
+    const terminal = quietTerminal()
+    const app = application(undefined, undefined, {
+      stdin: { isTTY: false } as NodeJS.ReadStream,
+    }, undefined, { terminal })
+    vi.mocked(app.tui.requestRender).mockRestore()
+    try {
+      await expect(app.start()).rejects.toThrow('requires an interactive TTY')
+      await vi.advanceTimersByTimeAsync(100)
+      expect(terminal.start).not.toHaveBeenCalled()
+      expect(terminal.write).not.toHaveBeenCalled()
+    } finally {
+      await app.dispose()
+    }
+  })
+
   it('restores the terminal and releases application resources when startup fails', async () => {
+    vi.useFakeTimers()
     const terminal = quietTerminal()
     const removeMemoryActivity = vi.fn()
     const app = application(
@@ -487,16 +505,17 @@ describe('createApplication integration', () => {
       undefined,
       { terminal },
     )
-    const internals = app as unknown as {
-      session: { start(): Promise<void> }
-    }
-    internals.session.start = vi.fn(async () => { throw new Error('Host unavailable') })
+    vi.mocked(app.tui.requestRender).mockRestore()
+    vi.spyOn(app.session, 'start').mockRejectedValue(new Error('Host unavailable'))
 
     await expect(app.start()).rejects.toThrow('Host unavailable')
 
     expect(terminal.stop).toHaveBeenCalledOnce()
     expect(terminal.drainInput).toHaveBeenCalledWith(250, 30)
     expect(removeMemoryActivity).toHaveBeenCalledOnce()
+    vi.mocked(terminal.write).mockClear()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(terminal.write).not.toHaveBeenCalled()
     await app.dispose()
     expect(terminal.stop).toHaveBeenCalledOnce()
     expect(removeMemoryActivity).toHaveBeenCalledOnce()

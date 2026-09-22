@@ -532,7 +532,9 @@ ApplicationScope
 
 `ApplicationMachine` 维护单向阶段：`created -> starting -> running -> stopping -> disposed`，
 根 scope 拥有取消和资源释放。启动失败与正常退出共用可等待的释放路径。
-外部 TUI 的实际 start/stop 由 `ApplicationStartup` 负责。
+外部 TUI 的实际 start/stop 由 `ApplicationStartup` 负责。`SelectableMainScreen` 初始处于
+停止状态，只在启动状态下向 pi-tui 转发刷新请求；首次 start 请求首帧，构造或非 TTY
+启动拒绝不会触发终端绘制。
 
 `SessionManager` owns transport coordination. `SessionWorkspace` owns binding
 transactions and the visible/suspended runtimes. `SessionRuntime` owns the

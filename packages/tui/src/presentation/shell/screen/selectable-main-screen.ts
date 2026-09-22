@@ -12,13 +12,20 @@ import {
   type TextSelectionRelease,
 } from './text-selection.ts'
 
-/** Main-screen renderer with application-controlled text-selection gestures. */
+/** Main-screen renderer with lifecycle-bound redraws and text-selection gestures. */
 export class SelectableMainScreen extends TuiMainScreen {
   private readonly textSelection = new RenderedTextSelection()
   private renderedLines: string[] = []
 
   constructor(terminal: Terminal, showHardwareCursor: boolean) {
     super(terminal, showHardwareCursor)
+    // Terminal ownership begins at start(), not construction.
+    this.stopped = true
+  }
+
+  override requestRender(force = false): void {
+    if (this.stopped) return
+    super.requestRender(force)
   }
 
   override render(width: number): string[] {
