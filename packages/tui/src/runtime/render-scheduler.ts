@@ -10,7 +10,7 @@ const scheduleMicrotask: ScheduleRenderFrame = (render) => {
   return () => { cancelled = true }
 }
 
-/** Coalesces snapshot and presentation invalidations behind one render boundary. */
+/** Coalesces owner-state and presentation invalidations without copying their state. */
 export class RenderScheduler implements DisposableResource {
   private cancelPending: (() => void) | undefined
   private disposed = false

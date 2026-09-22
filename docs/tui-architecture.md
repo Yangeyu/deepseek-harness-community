@@ -26,9 +26,9 @@ Statically composed TUI
   feature modules     composer · interaction · rewind · transcript · trajectory · config/task/skills/session
   presentation shell semantic input · SurfaceHost · viewport/focus · status · pi-tui rendering
       │
-      │ one coalesced TerminalSnapshot commit
+      │ 稳定 invalidate 通知
       ▼
-RenderScheduler → pi-tui
+RenderScheduler（微任务合并刷新请求）→ pi-tui（渲染时读取当前组件）
 ```
 
 The executable has a separate pre-Host boundary:
@@ -40,7 +40,7 @@ argv → shared CLI contract → help/version/completion/doctor
 ```
 
 Host 拥有持久化领域事实。终端 runtime 管理应用与 Session 生命周期、连接状态、分页、
-语义索引、效果取消和快照发布；功能模块拥有各自的本地过程状态与流程；presentation
+语义索引、效果取消和 Session 本地快照发布；功能模块拥有各自的本地过程状态与流程；presentation
 负责布局、颜色、焦点、语义输入绑定、指针处理与滚动。`application/` 负责静态装配、
 公开生命周期 facade，以及命令等跨领域交互用例；这些用例协调既有领域能力，不复制其
 状态或接管 Host 的持久化事实。
@@ -102,7 +102,7 @@ OAuth-only surface; such a prompt fails explicitly rather than displaying a secr
 
 ```text
 src/
-├── application/      # 静态装配、跨领域用例、启动退出、facade、TerminalSnapshot
+├── application/      # 静态装配、跨领域用例、启动退出、facade、渲染通知接线
 │   └── commands/     # 命令机制与 builtins/ 内置命令集合
 ├── runtime/          # lifecycle kernel, Session runtime, execution projection, dispatch, render scheduling
 ├── modules/          # vertical feature owners: composer, interaction, rewind, transcript, trajectory, etc.
@@ -470,11 +470,11 @@ GitHub Release 的恢复继续要求既有产物摘要一致，不覆盖冲突�
     history/projection snapshot; the application owns one control loop beginning
     with queue/projection baselines. Reconnecting and offline phases remain
     explicit degraded states.
-21. Renderer-visible state is committed through one `TerminalSnapshot`. It is a
-    coalesced, read-only composition of runtime, installed feature, and shell
-    slices—not another durable store. Synchronous slice changes become visible
-    together; one snapshot notification is the only path to `RenderScheduler`
-    and the concrete `requestRender` call.
+21. 应用层渲染通知通过稳定的 `invalidate` 直接进入 `RenderScheduler`，在微任务中
+    合并刷新请求，再调用具体 TUI 的 `requestRender`。Session 与模块拥有各自的本地
+    快照及必要订阅；实际渲染读取当前组件，不额外聚合一份全局状态。
+    Session epoch 切换必须在延后渲染前同步安装完整功能集合，禁止混用新旧 epoch；
+    通知合并不替代 Session 一致性、作用域取消或迟到结果拒绝。
 22. Normalized terminal gestures resolve through the fixed contextual keymap,
     then `ActionDispatcher` sends each semantic action to one statically
     registered owner. Duplicate action ownership is an error. Asynchronous
@@ -511,7 +511,7 @@ define another persistence format.
 
 ```text
 ApplicationScope
-├── terminal                TerminalSnapshot · RenderScheduler · terminal lifetime
+├── terminal                RenderScheduler · ApplicationStartup 管理终端生命周期
 ├── session-kernel
 │   ├── control-connection  Session Controller projection stream
 │   └── workspace
@@ -530,9 +530,9 @@ ApplicationScope
 └── shell-status           header, footer, clocks, Git observation
 ```
 
-`ApplicationMachine` is one-way: `created -> starting -> running -> stopping ->
-disposed`. Its root scope is the cancellation and cleanup authority. Startup
-failure enters the same awaited disposal path as normal shutdown.
+`ApplicationMachine` 维护单向阶段：`created -> starting -> running -> stopping -> disposed`，
+根 scope 拥有取消和资源释放。启动失败与正常退出共用可等待的释放路径。
+外部 TUI 的实际 start/stop 由 `ApplicationStartup` 负责。
 
 `SessionManager` owns transport coordination. `SessionWorkspace` owns binding
 transactions and the visible/suspended runtimes. `SessionRuntime` owns the
@@ -562,23 +562,29 @@ Its draft transfers into the first Session. Later Session replacements transfer
 plain draft text but strip image markers and attachments whose durable ownership
 belongs to the previous Session.
 
-The renderer flow is unidirectional:
+渲染更新保持单向，状态归属与通知调度分开：
 
 ```text
-Host/terminal input
-  -> transport event or normalized gesture
-  -> SessionRuntime / semantic Action owner
-  -> scoped Effect when required
-  -> owner-local immutable snapshot
-  -> TerminalSnapshotCoordinator (one microtask commit)
-  -> RenderScheduler
-  -> pi-tui render
+Host/终端输入
+  -> transport 事件或归一化 gesture
+  -> SessionRuntime / semantic Action 所有者
+  -> 按需运行 scoped Effect
+  -> 更新所有者本地状态/快照（Session 切换同步安装完整功能集合）
+  -> 本地订阅或功能 invalidate ─┐
+Composer 动画续帧 requestRender ─┴-> 稳定 invalidate
+  -> RenderScheduler（微任务合并刷新请求）
+  -> pi-tui render（读取当前组件）
 ```
 
-Rendering performs no Host calls, Session transitions, cleanup, or durable
-mutation. Stable Hosts (`ComposerHost`, `InteractionHost`, `SkillsHost`,
-`TaskHost`, `TrajectoryHost`, and `TranscriptHost`) let the shell keep stable
-component references while the Session-owned implementations are replaced.
+装配入口按创建所有者、安装功能集合、接通刷新订阅与激活 shell 的顺序组织。
+`invalidate` 在构造初期即绑定调度器；`createSessionFeatureSet` 用同一个端口连接功能变化
+和 Composer 的 `requestRender` 动画请求。Session、Composer、Transcript 的订阅由终端
+scope 持有；组件安装完成后请求首帧，实际终端输入与输出由应用 start 流程启用。
+
+渲染不执行 Host 调用、Session 切换、清理或持久化变更。稳定 Host（`ComposerHost`、
+`InteractionHost`、`SkillsHost`、`TaskHost`、`TrajectoryHost`、`TranscriptHost`）让 shell
+保持组件引用，而 `SessionFeatureCoordinator` 在同步切换中安装完整的新功能集合；延后渲染
+读取已安装组件。此顺序保证 Session 展示的一致性，不承诺跨所有模块的全局快照事务。
 
 ## Transcript interaction contract
 
@@ -678,13 +684,13 @@ component references while the Session-owned implementations are replaced.
   profile's `ctx.fileReferences`; `HarnessInteractionSource` maps scoped
   Approval and Question waterfalls directly. No Remote response channel,
   second interaction state source, or TUI-owned filesystem index exists.
-- `SessionFeatureCoordinator` swaps Composer, Interaction, Skills, Task,
-  Trajectory, and Transcript together through stable shell Hosts. It implements
-  the same prepare/activate/rollback protocol as `SessionWorkspace` rather than
-  reacting to a later render.
-- `TerminalSnapshotCoordinator` composes all renderer-facing slices at one
-  microtask commit boundary. `RenderScheduler` coalesces those commits into the
-  repository's only concrete `requestRender` call.
+- `SessionFeatureCoordinator` 通过稳定 shell Host 同步切换 Composer、Interaction、Skills、
+  Task、Trajectory 与 Transcript 的完整集合，与 `SessionWorkspace` 共用
+  prepare/activate/rollback 协议。安装在延后渲染前完成，不由 render 观察 Session ID
+  后才补做切换；旧 epoch 的异步结果仍不能写入新集合。
+- `RenderScheduler` 合并所有者状态和展示效果的刷新请求，通过装配回调触发具体 TUI
+  的 `requestRender`，不读取或复制模块状态。实际渲染由各组件读取自己的状态；
+  同一同步调用栈内的更新先完成再渲染，跨异步更新不承诺全局事务。
 - `ActionDispatcher` gives each semantic input action one static owner, and
   `ScopedEffectRunner` binds asynchronous work to that owner's scope. Raw escape
   decoding is confined to `infrastructure/terminal`; contextual gesture
@@ -731,7 +737,7 @@ component references while the Session-owned implementations are replaced.
   references.
 - Composer 采用无边框背景卡片，框内上下各一行留白；上方状态/附件与底部信息栏直接相邻，通过背景色区分，不额外插入空行。上下辅助信息统一使用 `theme.dim` 弱化，运行指示、Ready 和警告保留强调色。首行 `› ` 提示符，空草稿显示占位文案；移除 Editor 的模拟反色块，以原生竖线光标表示插入位置，保留零宽光标标记供 IME 定位。`showHardwareCursor` 默认开启，显式关闭时隐藏原生光标；屏幕生命周期设置竖线形状，退出时恢复终端默认形状。滚动提示保留在留白行，补全仍位于输入框上方。终端启动后通过 pi-tui 的公开 OSC 11 查询获取背景色，按浅色混黑 4%、深色混白 12% 生成卡片底色；查询无结果时使用深色默认值。
 - 主对话 `Ctrl+G` 调用既有 `followTranscript()` 回到最新并恢复跟随，草稿非空时也可用；沿用原状态栏提示 `Viewing history · Ctrl+G to follow`，不改布局。Surface、交互弹窗和附件栏聚焦时不接管按键；PageUp / PageDown 保留空草稿翻页语义。
-- `composer/view/sparkle.ts` 集中拥有常驻星点算法、颜色混合、时钟和按需计时，`ComposerEditorFrame` 调用 `render(frame, colors)`；Composer 只提供焦点/补全显示条件并绑定释放，动画续帧直接进入 `RenderScheduler`，不重新组装业务快照。效果参照 Codex CLI `rust-v0.154.0`：150ms 续帧，稳定坐标散列，4–7 秒独立闪烁周期。输入、提交和历史会话不终止动效；失焦或补全展开时暂停，恢复显示后续播，作用域释放时取消计时。星点只绘制在卡片未带样式的空白单元格，保护正文、宽字符、占位文案、图片引用及光标。关闭颜色时不启动，不依赖模型或额外动画库；前景亮度根据终端背景推导，pi-tui 暂无公开前景色查询接口。
+- `composer/view/sparkle.ts` 集中拥有常驻星点算法、颜色混合、时钟和按需计时，`ComposerEditorFrame` 调用 `render(frame, colors)`；Composer 只提供焦点/补全显示条件并绑定释放，动画续帧保留 Composer 的 `requestRender` API，由 `createSessionFeatureSet` 接到与功能失效共用的 invalidate 端口，再直接进入 `RenderScheduler`，不组装全局业务快照。效果参照 Codex CLI `rust-v0.154.0`：150ms 续帧，稳定坐标散列，4–7 秒独立闪烁周期。输入、提交和历史会话不终止动效；失焦或补全展开时暂停，恢复显示后续播，作用域释放时取消计时。星点只绘制在卡片未带样式的空白单元格，保护正文、宽字符、占位文案、图片引用及光标。关闭颜色时不启动，不依赖模型或额外动画库；前景亮度根据终端背景推导，pi-tui 暂无公开前景色查询接口。
 - `SurfaceHost` owns one stack of close-identity handles, focus capture and
   restoration, semantic Surface input, and the only active-placement mutation.
   `ComposerAnchoredLayout` implements its discriminated `readable` and
@@ -1035,9 +1041,9 @@ history rather than competing with this canonical contract.
 - One complete Session feature set is constructed per committed epoch and
   swapped through stable Hosts. `/clear` has an explicit suspend/rollback path;
   stale Session effects cannot commit after retirement.
-- `TerminalSnapshot` is the single renderer publication boundary, followed by
-  one coalescing `RenderScheduler`. Rendering no longer performs Session cleanup
-  or infers feature lifecycle from an observed Session id.
+- 渲染通知直接进入既有 `RenderScheduler`，只在一处微任务边界合并，不再发布全局
+  渲染快照。Session/模块本地快照继续保留；完整 Session 功能集合在同步切换中安装，
+  实际渲染读取当前组件，不执行 Session 清理，也不从观察到的 Session ID 推断功能生命周期。
 - All terminal keys and pointer sequences pass through terminal normalization,
   contextual semantic resolution, and explicit action ownership. Scoped effects
   centralize cancellation, stale-result rejection, and live error reporting.

@@ -709,11 +709,17 @@ describe('createApplication integration', () => {
       expect(status).toBeGreaterThan(queued)
       expect(frame[status]).toContain('esc: stop & send')
       expect(app.transcript.render(80).join('\n')).not.toContain('STEER THIS STEP')
+      const frames: string[] = []
+      vi.mocked(app.tui.requestRender).mockImplementation(() => {
+        frames.push(app.layout.render(80).map(stripTerminalSequences).join('\n'))
+      })
       await app.session.newSession()
-      const switched = app.layout.render(80).map(stripTerminalSequences).join('\n')
-      expect(switched).toContain('session-2')
-      expect(switched).not.toContain('STEER THIS STEP')
-      expect(switched).not.toContain('QUEUE NEXT TURN')
+      const switchedFrames = frames.filter(output => output.includes('session-2'))
+      expect(switchedFrames.length).toBeGreaterThan(0)
+      for (const output of switchedFrames) {
+        expect(output).not.toContain('STEER THIS STEP')
+        expect(output).not.toContain('QUEUE NEXT TURN')
+      }
     } finally {
       await app.dispose()
     }
@@ -835,6 +841,8 @@ describe('createApplication integration', () => {
 
   it('coalesces hover invalidations when the pointer enters or leaves a fold title', async () => {
     const app = application()
+    await Promise.resolve()
+    vi.mocked(app.tui.requestRender).mockClear()
     const internals = app
     internals.layout.transcriptRowAt = vi.fn(() => 0)
     const handlePointer = vi.fn()
@@ -854,6 +862,7 @@ describe('createApplication integration', () => {
     expect(handlePointer).toHaveBeenNthCalledWith(3, 4, 'move')
     await Promise.resolve()
     expect(requestRender).toHaveBeenCalledOnce()
+    await app.dispose()
   })
 
   it('returns from history with Ctrl+G, preserves the draft, and resumes following output', async () => {

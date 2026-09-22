@@ -176,6 +176,5 @@ describe('TUI dependency direction', () => {
 
     const facade = readFileSync(resolve(sourceRoot, 'application/app.ts'), 'utf8')
     expect(facade).not.toMatch(/modules\/|presentation\/|infrastructure\//u)
-    expect(sourceFiles().map(sourcePath)).toContain('application/snapshot.ts')
   })
 })

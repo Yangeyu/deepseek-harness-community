@@ -58,7 +58,6 @@ import {
   BoundSession,
   SessionFeatureCoordinator,
 } from './session-features.ts'
-import { TerminalSnapshotCoordinator } from './snapshot.ts'
 
 export type TuiMemoryPort = MemoryPort
 export type WebGateway = WebConfigurationPort
@@ -98,7 +97,6 @@ export interface ApplicationAssembly {
   readonly trajectory: TrajectoryHost
   readonly input: InputCoordinator
   readonly tui: SelectableMainScreen
-  readonly snapshot: TerminalSnapshotCoordinator
   readonly render: ShellStatusProcess['refresh']
   readonly requestExit: (code: number) => Promise<void>
 }
@@ -126,6 +124,7 @@ export function createApplication(
     terminal = new ProcessTerminal(),
   } = dependencies
 
+  // Construct the application owners and the shell's stable component hosts.
   const lifecycle = new ApplicationMachine('tui')
   const terminalScope = lifecycle.scope.fork('terminal')
   const rewindScope = lifecycle.scope.fork('rewind')
@@ -139,8 +138,8 @@ export function createApplication(
 
   const theme = createTheme(config.color)
   const tui = new SelectableMainScreen(terminal, config.showHardwareCursor)
-  let invalidateTerminal = (): void => {}
   const renderScheduler = terminalScope.own(new RenderScheduler(() => { tui.requestRender() }))
+  const invalidate = (): void => { renderScheduler.invalidate() }
   const session = new SessionManager(
     lifecycle.scope.fork('session-kernel'),
     host.sessions,
@@ -183,7 +182,7 @@ export function createApplication(
     followsTranscript: () => layout.followsTranscriptTail,
     ...usage === undefined ? {} : { usage },
     gitBranch,
-    invalidate: () => { invalidateTerminal() },
+    invalidate,
     scope: shellScope,
   })
   const layout: ComposerAnchoredLayout = new ComposerAnchoredLayout(
@@ -199,7 +198,7 @@ export function createApplication(
   const surfaces = new SurfaceHost(
     layout,
     tui,
-    () => { invalidateTerminal() },
+    invalidate,
     surfaceScope,
   )
   const rewindProcess = new RewindProcess({
@@ -227,13 +226,13 @@ export function createApplication(
     visibleRows: () => terminal.rows,
     theme,
     onActivity: () => { shellStatus.refresh() },
-    invalidate: () => { invalidateTerminal() },
+    invalidate,
     scope: memoryScope,
   })
   const authentication = dependencies.authentication === undefined ? undefined : new AuthenticationProcess({
     port: dependencies.authentication, surfaces, tui, theme,
     scope: lifecycle.scope.fork('authentication'),
-    invalidate: () => { invalidateTerminal() },
+    invalidate,
     openUrl: openAuthorizationUrl,
   })
   const configuration = new ConfigurationProcess({
@@ -245,7 +244,7 @@ export function createApplication(
     theme,
     visibleRows: () => terminal.rows,
     imageSubmissionBusy: () => composer.current.imageSubmissionBusy,
-    invalidate: () => { invalidateTerminal() },
+    invalidate,
     scope: configurationScope,
     ...vision === undefined ? {} : { vision },
     ...web === undefined ? {} : { web },
@@ -255,7 +254,7 @@ export function createApplication(
     surfaces,
     theme,
     scope: sessionCenterScope,
-    invalidate: () => { invalidateTerminal() },
+    invalidate,
   })
 
   // Assemble concrete command members once, before editor input is enabled.
@@ -324,11 +323,11 @@ export function createApplication(
       input.reconcile()
       shellStatus.refresh()
     },
-    invalidate: () => { invalidateTerminal() },
-    requestRender: () => { renderScheduler.invalidate() },
+    invalidate,
     ...images === undefined ? {} : { images },
   }
 
+  // Install the initial feature set and bind the Session replacement boundary.
   const bootstrapScope = lifecycle.scope.fork('unbound-features')
   const bootstrapFeatures = createSessionFeatureSet(sessionFeatureOptions, bootstrapScope, session)
   const featureCoordinator = new SessionFeatureCoordinator({
@@ -363,34 +362,16 @@ export function createApplication(
     else interactions.resolve(event.resolution)
   }))
 
-  const snapshot = terminalScope.own(new TerminalSnapshotCoordinator({
-    application: () => lifecycle.current,
-    session: () => session.current,
-    composer: () => composer.current,
-    interaction: () => interactions.current,
-    rewind: () => rewindProcess.current,
-    transcript: () => transcript.current,
-    trajectory: () => trajectory.current,
-    configuration: () => configuration.current,
-    task: () => taskProcess.current,
-    skills: () => skills.current,
-    sessionCenter: () => sessionCenter.current,
-    memory: () => memoryProcess.activity,
-    surfaces: () => surfaces.current,
-    focus: () => surfaces.focus,
-  }))
-  invalidateTerminal = () => { snapshot.invalidate() }
-  terminalScope.onDispose(lifecycle.subscribe(() => { snapshot.invalidate() }))
-  terminalScope.onDispose(session.subscribe(() => { snapshot.invalidate() }))
-  terminalScope.onDispose(composer.subscribe(() => { snapshot.invalidate() }))
-  terminalScope.onDispose(transcript.subscribe(() => { snapshot.invalidate() }))
-  terminalScope.onDispose(snapshot.subscribe(() => { renderScheduler.invalidate() }))
-  snapshot.flush()
-
-  shellStatus.start()
+  // Observe the installed owners; synchronous updates settle before the scheduled render.
+  terminalScope.onDispose(session.subscribe(invalidate))
+  terminalScope.onDispose(composer.subscribe(invalidate))
+  terminalScope.onDispose(transcript.subscribe(invalidate))
   tui.addChild(layout)
   tui.setFocus(composer.editor)
+  shellStatus.start()
+  invalidate()
 
+  // Terminal I/O starts only through the public application lifecycle.
   const startup = new ApplicationStartup({
     title: config.title,
     intent: startupIntent,
@@ -403,7 +384,7 @@ export function createApplication(
           void tui.queryTerminalBackgroundColor({ timeoutMs: 200 }).then(background => {
             if (!terminalScope.active) return
             theme.terminalBackground = background
-            renderScheduler.invalidate()
+            invalidate()
           })
         }
       },
@@ -441,7 +422,6 @@ export function createApplication(
     trajectory,
     input,
     tui,
-    snapshot,
     render: state => { shellStatus.refresh(state) },
     requestExit: code => exit.request(code),
   }

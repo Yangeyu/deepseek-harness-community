@@ -33,14 +33,13 @@ Prepare                    Execute                  Review                 Reuse
 permissions · vision  ->  goal · todos · agents -> changes · trace   -> skills · sessions
 ```
 
-The TUI is already strong in the middle of one session: streaming output,
-visual evidence, tool and diff rendering, memory, a unified execution read
-model, and source-attributed Rewind. Its client foundation now has explicit
-Application and Session-epoch lifecycles, fresh Session feature sets, semantic
-input dispatch, one Surface host, and one renderer snapshot boundary. The next
-product work completes the session, parallel-work, review, and reuse loops
-around that execution core; it must extend those owners rather than rebuilding
-another control plane inside a feature.
+TUI 已具备单会话执行的核心能力：流式输出、视觉证据、工具与 Diff 渲染、Memory、
+统一执行读模型及来源明确的 Rewind。客户端基础明确了 Application 与 Session epoch
+生命周期、每个 epoch 的全新功能集合、语义输入分发与统一 SurfaceHost。渲染通知通过
+稳定的 invalidate 直接进入既有 RenderScheduler，仅在一处微任务边界合并；实际渲染
+读取当前组件，不依赖全局快照发布。Session 功能集合在延后渲染前同步安装，旧 epoch
+结果仍被拒绝。后续产品工作围绕执行核心补齐会话、并行工作、审查与复用闭环，扩展
+既有所有者，而不是在功能内部另建控制层。
 
 ## Milestones
 

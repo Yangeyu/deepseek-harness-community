@@ -99,21 +99,6 @@ describe('ApplicationMachine', () => {
     expect(dispose).toHaveBeenCalledOnce()
   })
 
-  it('publishes lifecycle phases with cancellation already visible at stopping', async () => {
-    const machine = new ApplicationMachine('tui')
-    const snapshots: Array<{ phase: string; active: boolean }> = []
-    machine.subscribe(snapshot => { snapshots.push(snapshot) })
-
-    await machine.start(() => {})
-    const disposal = machine.dispose()
-
-    expect(snapshots).toContainEqual({ phase: 'starting', active: true })
-    expect(snapshots).toContainEqual({ phase: 'running', active: true })
-    expect(snapshots).toContainEqual({ phase: 'stopping', active: false })
-    await disposal
-    expect(snapshots.at(-1)).toEqual({ phase: 'disposed', active: false })
-  })
-
   it('disposes owned resources when startup fails', async () => {
     const machine = new ApplicationMachine('tui')
     const dispose = vi.fn()

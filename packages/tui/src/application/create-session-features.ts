@@ -54,7 +54,6 @@ export interface SessionFeatureSetOptions {
   readonly openRewind: () => void
   readonly onInteractionChange: () => void
   readonly invalidate: () => void
-  readonly requestRender: () => void
 }
 
 /** Construct all modules whose mutable state belongs to one Session epoch. */
@@ -92,7 +91,7 @@ export function createSessionFeatureSet(
     ...options.images === undefined ? {} : { images: options.images },
     followTranscript: options.followTranscript,
     openRewind: options.openRewind,
-    requestRender: options.requestRender,
+    requestRender: options.invalidate,
     scope: composerScope,
   })
   const transcript = new TranscriptProcess({
