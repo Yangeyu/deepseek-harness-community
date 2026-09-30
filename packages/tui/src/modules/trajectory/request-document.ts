@@ -74,7 +74,6 @@ function* walk(value: unknown, path: string, sectionKey: string): Iterable<Reque
 function contentBody(content: Message['content'], root: string, key: string): RequestBodyBlock[] {
   return content.flatMap((block, index): RequestBodyBlock[] => {
     const path = `${root}[${index}]`
-    if (block.type === 'tool-result') return contentBody(block.content, `${path}.content`, key)
     const property = block.type === 'text' || block.type === 'reasoning' ? 'text'
       : block.type === 'tool-call' ? 'arguments' : 'type'
     const fieldPath = `${path}.${property}`

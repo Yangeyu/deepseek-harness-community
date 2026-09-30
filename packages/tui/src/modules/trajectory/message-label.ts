@@ -1,3 +1,4 @@
+import type {} from '@deepseek-ai/dsh-compaction'
 import { isCompactCheckpointSource } from '@deepseek-ai/dsh-compaction/checkpoint'
 import type { ContextForm, Message } from '@deepseek-ai/dsh-llm'
 import { sanitizeTerminalLine } from '../../presentation/primitives/text.ts'
@@ -20,10 +21,7 @@ function contentExcerpt(content: Message['content']): string {
     if (block.type === 'text' || block.type === 'reasoning') {
       if (block.text !== '') return messageExcerpt(block.text)
     } else if (block.type === 'tool-call') return `Call ${messageExcerpt(block.name)}`
-    else if (block.type === 'tool-result') {
-      const text = contentExcerpt(block.content)
-      if (text !== '') return text
-    } else return `${messageExcerpt(block.type)} attachment`
+    else return `${messageExcerpt(block.type)} attachment`
   }
   return ''
 }
@@ -37,7 +35,7 @@ export function messageLabel(message: Message): { title: string; summary: string
   else if (source.kind === 'model') title = 'Assistant response'
   else if (source.kind === 'tool') title = 'Tool result'
   else {
-    const producer = source.kind === 'plugin' ? source.plugin : source.kind
+    const producer = source.kind
     const form = 'form' in source ? source.form : undefined
     const category = message.role === 'system' ? 'System instructions'
       : form === undefined ? 'Context' : FORM_TITLES.get(form) ?? 'Context'

@@ -10,22 +10,22 @@ import {
 const sessions: SessionSummary[] = [{
   sessionId: 'running-session' as SessionSummary['sessionId'],
   updatedAt: Date.UTC(2026, 7, 17, 3, 0, 0),
-  running: true,
+  running: true, agentAvailable: true,
   blank: false,
   cwd: '/workspace/app',
-  projections: { asOfSeq: 5, values: { title: 'Ship the auth flow' } },
+  projections: { kind: 'sequenced', asOfSeq: 5, values: { title: 'Ship the auth flow' } },
 }, {
   sessionId: 'blank-session' as SessionSummary['sessionId'],
   parentSessionId: 'running-session' as SessionSummary['sessionId'],
   updatedAt: Date.UTC(2026, 7, 16, 2, 0, 0),
-  running: false,
+  running: false, agentAvailable: true,
   blank: true,
   origin: 'subagent',
-  projections: { asOfSeq: 1, values: { title: null } },
+  projections: { kind: 'sequenced', asOfSeq: 1, values: { title: null } },
 }, {
   sessionId: 'untitled-session' as SessionSummary['sessionId'],
   updatedAt: Date.UTC(2026, 7, 15, 1, 0, 0),
-  running: false,
+  running: false, agentAvailable: true,
   blank: false,
   cwd: '/workspace/tooling',
 }]
@@ -101,19 +101,19 @@ describe('resume session choices', () => {
     const parent: SessionSummary = {
       sessionId: 'parent-session' as SessionSummary['sessionId'],
       updatedAt: 1,
-      running: false,
+      running: false, agentAvailable: true,
       blank: false,
       cwd: '/workspace/app',
-      projections: { asOfSeq: 5, values: { title: 'Ship the auth flow' } },
+      projections: { kind: 'sequenced', asOfSeq: 5, values: { title: 'Ship the auth flow' } },
     }
     const fork: SessionSummary = {
       sessionId: 'fork-session' as SessionSummary['sessionId'],
       parentSessionId: 'parent-session' as SessionSummary['sessionId'],
       updatedAt: 2,
-      running: false,
+      running: false, agentAvailable: true,
       blank: false,
       cwd: '/workspace/app',
-      projections: { asOfSeq: 3, values: { title: 'Ship the auth flow' } },
+      projections: { kind: 'sequenced', asOfSeq: 3, values: { title: 'Ship the auth flow' } },
     }
     expect(sessionChoices([parent, fork], undefined)).toEqual([
       {
@@ -133,7 +133,7 @@ describe('resume session choices', () => {
     const parent: SessionSummary = {
       sessionId: 'parent-session' as SessionSummary['sessionId'],
       updatedAt: 1,
-      running: false,
+      running: false, agentAvailable: true,
       blank: false,
       cwd: '/workspace/app',
     }
@@ -141,7 +141,7 @@ describe('resume session choices', () => {
       sessionId: id as SessionSummary['sessionId'],
       parentSessionId: 'parent-session' as SessionSummary['sessionId'],
       updatedAt: 2 + index,
-      running: false,
+      running: false, agentAvailable: true,
       blank: false,
     }))
     expect(sessionChoices([parent, ...branches, sessions[1]!], undefined)
@@ -154,7 +154,7 @@ describe('resume session choices', () => {
       sessionId: 'fork-session' as SessionSummary['sessionId'],
       parentSessionId: 'origin-session' as SessionSummary['sessionId'],
       updatedAt: 2,
-      running: false,
+      running: false, agentAvailable: true,
       blank: false,
       cwd: '/workspace/app',
     }

@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const require = createRequire(import.meta.url)
 const baseRequire = createRequire(require.resolve('@deepseek-ai/dsh-base/package.json'))
 const { AgentLoop } = await import(pathToFileURL(baseRequire.resolve('@deepseek-ai/dsh-agent-loop')).href) as {
-  AgentLoop: new (ctx: Context, config: { agents: [] }) => unknown
+  AgentLoop: new (ctx: Context, config: { agents: []; maxParallelToolCalls: { get(): number } }) => unknown
 }
 const contexts: Context[] = []
 const directories: string[] = []
@@ -55,7 +55,7 @@ async function fixture(stream: (options: GenerateOptions) => AsyncIterable<Strea
     stream(options: GenerateOptions): AsyncIterable<StreamChunk> { return stream(options) }
   }
   ctx.llm.registerAdapter(['fixture'], new ScriptedAdapter())
-  new AgentLoop(ctx, { agents: [] })
+  new AgentLoop(ctx, { agents: [], maxParallelToolCalls: { get: () => 10 } })
   const memory = new ProjectMemoryService(ctx, {
     root: join(cwd, 'memories'), generateMemories: true, idleDelayMs: 0,
     maxContextBytes: 256,

@@ -76,10 +76,10 @@ function transcriptHostPorts(): TuiHostPorts {
       } }, view: { for: 'call', view: { card: 'generic', title: 'Search project' } } },
       { event: { type: 'tool/result', seq: 1, time: 2, surfaceOp: 'append', data: {
         turn: 1, step: 1, message: {
-          id: 'result-1', role: 'user', source: { kind: 'tool', callId: 'search-1' },
-          content: [{ type: 'tool-result', toolCallId: 'search-1', content: [
+          id: 'result-1', role: 'tool', source: { kind: 'tool', callId: 'search-1' },
+          content: [
             { type: 'text', text: `Matches from ${sessionId}` },
-          ] }],
+          ], toolCallId: 'search-1',
         },
       } } },
     ] as unknown as HistoryEntry[]
@@ -109,7 +109,7 @@ function rewindPort(overrides: Partial<RewindPort> = {}): RewindPort {
   return {
     activate: vi.fn(async () => {}),
     settle: vi.fn(async () => {}),
-    list: vi.fn(() => []),
+    list: vi.fn(async () => []),
     plan: vi.fn(async () => { throw new Error('no test Rewind plan') }),
     restore: vi.fn(async () => async () => {}),
     commit: vi.fn(async () => {}),
@@ -207,6 +207,10 @@ function application(
       gitBranch: (_cwd, onChange) => {
         onChange(undefined)
         return () => {}
+      },
+      permissionCatalog: {
+        catalog: () => ({ options: [{ value: 'workspace-write', name: 'Workspace write' }, { value: 'read-only', name: 'Read only' }], defaultOptions: [], defaultPreset: 'workspace-write' }),
+        subscribe: () => () => {},
       },
       ...dependencies,
       ...commandSource === undefined ? {} : { commandSource },
@@ -1395,13 +1399,9 @@ describe('createApplication integration', () => {
             step: 1,
             message: {
               id: 'tool-result-wait',
-              role: 'user',
+              role: 'tool',
               source: { kind: 'tool', callId: 'call-wait' },
-              content: [{
-                type: 'tool-result',
-                toolCallId: 'call-wait',
-                content: [{ type: 'text', text: 'done' }],
-              }],
+              content: [{ type: 'text', text: 'done' }], toolCallId: 'call-wait',
             },
           },
         },

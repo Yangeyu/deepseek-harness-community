@@ -1,10 +1,11 @@
+import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import { createCopyCommand, type CopyReplySession } from '../../../../src/application/commands/builtins/copy.ts'
 import type { HistoryEntry } from '../../../../src/runtime/session/contracts.ts'
 
 function reply(text: string, extra: Record<string, unknown> = {}): HistoryEntry {
   return { event: { type: 'assistant/message', surfaceOp: 'append', data: {
-    message: { content: [{ type: 'text', text }] }, ...extra,
+    message: createAssistantMessage({ content: [{ type: 'text', text }], source: { provider: 'fixture', model: 'fixture' } }), ...extra,
   } } } as HistoryEntry
 }
 

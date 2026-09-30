@@ -1,3 +1,5 @@
+import { MessageId, ToolCallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import type {} from '@vascent/deepseek-harness-memory'
 import { compactCheckpointSource } from '@deepseek-ai/dsh-compaction/checkpoint'
 import { describe, expect, it } from 'vitest'
 import { RequestDocument } from '../../../src/modules/trajectory/request-document.ts'
@@ -5,8 +7,8 @@ import type { ModelRequestDocument } from '../../../src/runtime/execution/projec
 
 type Message = ModelRequestDocument['request']['messages'][number]
 
-function message(id: string, text: string, role: Message['role'] = 'user', source: Message['source'] = { kind: 'user' }): Message {
-  return { id, role, source, content: [{ type: 'text', text }] } as Message
+function message(id: string, text: string, role: Exclude<Message['role'], 'tool'> = 'user', source: Message['source'] = { kind: 'user' }): Message {
+  return { id: MessageId(id), role, source, content: [{ type: 'text', text }] } as Message
 }
 
 function canonical(messages: readonly Message[], seqs = messages.map((_, index) => index)): ModelRequestDocument {
@@ -23,7 +25,7 @@ describe('RequestDocument', () => {
   it('keeps every canonical message in order, including later System and non-monotonic event seqs', () => {
     const messages = [
       message('first', 'Input'),
-      message('system', 'Later instructions', 'system', { kind: 'plugin', plugin: 'system-prompt' }),
+      message('system', 'Later instructions', 'system', { kind: 'system-prompt' }),
       message('last', 'Reply', 'assistant', { kind: 'model', provider: 'deepseek', model: 'chat' }),
     ]
     const input = canonical(messages, [5, 9, 6])
@@ -43,11 +45,11 @@ describe('RequestDocument', () => {
   it('identifies context by declared source and form without changing its protocol role', () => {
     const messages = [
       message('human', '<system-reminder>human text</system-reminder>'),
-      message('instructions', 'Project rules', 'user', { kind: 'plugin', plugin: 'workspace', form: 'instructions' }),
-      message('catalog', 'Available skills', 'user', { kind: 'plugin', plugin: 'skills', form: 'catalog' }),
-      message('notice', 'Long detailed report', 'user', { kind: 'plugin', plugin: 'worker', form: 'notice', summary: 'Review finished' }),
-      message('memory', '<memory-context>content</memory-context>', 'user', { kind: 'plugin', plugin: 'community-memory' }),
-      message('relay', 'A colleague replied', 'user', { kind: 'plugin', plugin: 'agent', form: 'relay' }),
+      message('instructions', 'Project rules', 'user', { kind: 'workspace', form: 'instructions' }),
+      message('catalog', 'Available skills', 'user', { kind: 'skills', form: 'catalog' }),
+      message('notice', 'Long detailed report', 'user', { kind: 'worker', form: 'notice', summary: 'Review finished' }),
+      message('memory', '<memory-context>content</memory-context>', 'user', { kind: 'community-memory' }),
+      message('relay', 'A colleague replied', 'user', { kind: 'agent', form: 'relay' }),
     ]
     const document = new RequestDocument(canonical(messages))
     const sections = document.sections.filter(section => section.kind === 'message')
@@ -87,16 +89,14 @@ describe('RequestDocument', () => {
   it('uses formal tool-call IDs for tool names and preserves the canonical result role', () => {
     const call = {
       ...message('call', '', 'assistant', { kind: 'model', provider: 'deepseek', model: 'chat' }),
-      content: [{ type: 'tool-call', id: 'call-1', name: 'read', arguments: '{ "path": "src/a.ts" }' }],
+      content: [{ type: 'tool-call', id: ToolCallId('call-1'), name: 'read', arguments: '{ "path": "src/a.ts" }' }],
     } as Message
-    const result = {
-      ...message('result', '', 'user', { kind: 'tool', callId: 'call-1' } as Message['source']),
-      content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'file contents' }] }],
-    } as Message
-    const unknown = message('unknown', 'read: not evidence', 'user', { kind: 'tool', callId: 'absent' } as Message['source'])
+    const result = createToolResultMessage({ callId: ToolCallId('call-1'), content: [{ type: 'text', text: 'file contents' }], isError: false })
+    const unknown = createToolResultMessage({ callId: ToolCallId('absent'), content: [{ type: 'text', text: 'read: not evidence' }], isError: false })
     const document = new RequestDocument(canonical([call, result, unknown]))
     const sections = document.sections.filter(section => section.kind === 'message')
     expect(sections.map(section => section.label)).toEqual(['#1 Assistant response', '#2 Tool result: read', '#3 Tool result'])
+    expect(document.body(sections[1]!.key).map(block => block.field.text)).toEqual(['file contents'])
     expect(document.latestInputKey).toBe(sections[2]!.key)
     expect([...document.fields()].find(field => field.path === 'messages[0].content[0].arguments')!.text)
       .toBe('{ "path": "src/a.ts" }')
@@ -105,7 +105,7 @@ describe('RequestDocument', () => {
   it('visits folded messages, config, schemas and all metadata with real JSON paths', () => {
     const input = canonical([{
       ...message('identity', 'Hidden body'),
-      source: { kind: 'plugin', plugin: 'producer', form: 'notice', summary: 'Source metadata' },
+      source: { kind: 'producer', form: 'notice', summary: 'Source metadata' },
       content: [
         { type: 'text', text: 'Hidden body' },
         { type: 'image', attachment: { attachmentId: 'sha256:metadata', mediaType: 'image/png', bytes: 42, width: 1, height: 1 } },
@@ -195,15 +195,14 @@ describe('RequestDocument', () => {
       content: [
         { type: 'reasoning', text: 'Think first' },
         { type: 'text', text: 'Read the file' },
-        { type: 'tool-call', id: 'call-1', name: 'read', arguments: '{"path":"a.ts"}' },
-        { type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'File contents' }] },
+        { type: 'tool-call', id: ToolCallId('call-1'), name: 'read', arguments: '{"path":"a.ts"}' },
       ],
     } as Message])
     const document = new RequestDocument(input)
     const key = document.sections[1]!.key
     expect(document.body(key).map(block => [block.label, block.field.text])).toEqual([
       ['Thinking', 'Think first'], [undefined, 'Read the file'],
-      ['Tool call · read', '{"path":"a.ts"}'], [undefined, 'File contents'],
+      ['Tool call · read', '{"path":"a.ts"}'],
     ])
     const readable = [...document.body(key).map(block => block.field), ...document.metadata(key)]
     const originals = [...document.sectionFields(key)]

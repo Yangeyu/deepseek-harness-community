@@ -3,7 +3,7 @@ import { link, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   LocalWorkspaceRewind,
   RewindService,
@@ -50,7 +50,7 @@ async function begin(rewind: RewindService, root: string, turn = 1, sessionId = 
 
 async function list(rewind: RewindService, sessionId = 'session') {
   await rewind.settle(sessionId)
-  return rewind.list(sessionId)
+  return (await rewind.list(sessionId))
 }
 
 function record(rewind: RewindService, input: {
@@ -95,6 +95,8 @@ describe('RewindService', () => {
   it('serializes prompt admission before same-turn effects', async () => {
     const root = await workspace()
     const rewind = service()
+    const query = vi.spyOn(histories.get(rewind)!, 'list')
+      .mockRejectedValue(new Error('conversation history is unavailable'))
     const point = admit(rewind, {
       pointId: 'prompt-1',
       sessionId: 'session',
@@ -111,6 +113,8 @@ describe('RewindService', () => {
     })
 
     await point
+    await rewind.settle('session')
+    query.mockRestore()
     const [summary] = await list(rewind)
     expect(summary).toMatchObject({ pointId: 'prompt-1', workspaceFiles: 1 })
   })
@@ -377,8 +381,8 @@ describe('RewindService', () => {
     const plan = await rewind.plan('session', summaries[1]?.pointId ?? '')
     histories.get(rewind)?.fork('session', 'forked', plan.turn)
     await rewind.commit(plan, 'code-and-conversation', 'forked')
-    expect(rewind.list('forked').map(summary => summary.turn)).toEqual([1, 2])
-    expect(rewind.list('session').map(summary => summary.turn)).toEqual([2, 3, 4])
+    expect((await rewind.list('forked')).map(summary => summary.turn)).toEqual([1, 2])
+    expect((await rewind.list('session')).map(summary => summary.turn)).toEqual([2, 3, 4])
   })
 
   it('marks reversible content outside configured byte budgets as unsupported', async () => {

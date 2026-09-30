@@ -1,3 +1,5 @@
+import { SessionSeq } from '@deepseek-ai/dsh-session'
+import { MessageId } from '@deepseek-ai/dsh-llm'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
@@ -68,9 +70,9 @@ function sizes(name: string, fallback: string): number[] {
 
 function user(seq: number, text: string): HistoryEntry {
   return { event: {
-    type: 'user/message', seq, time: 1_700_000_000_000 + seq,
+    type: 'user/message', seq: SessionSeq(seq), time: 1_700_000_000_000 + seq,
     surfaceOp: 'append', data: {
-      id: `bench-user-${String(seq).padStart(6, '0')}`, role: 'user',
+      id: MessageId(`bench-user-${String(seq).padStart(6, '0')}`), role: 'user',
       source: { kind: 'user' }, content: [{ type: 'text', text }],
     },
   } } as HistoryEntry

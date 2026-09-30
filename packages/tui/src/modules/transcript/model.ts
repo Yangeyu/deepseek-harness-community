@@ -200,9 +200,7 @@ function toolArguments(value: string, limit: number): string | undefined {
 
 function rawResultText(entry: HistoryEntry): string {
   if (entry.event.type !== 'tool/result') return ''
-  const result = entry.event.data.message.content[0]
-  if (result?.type !== 'tool-result') return ''
-  return messageText(result.content, true)
+  return messageText(entry.event.data.message.content, true)
 }
 
 function resultBody(view: ToolResultView | undefined, fallback: string, limit: number): string {

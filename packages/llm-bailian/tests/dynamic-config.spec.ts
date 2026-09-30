@@ -1,14 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, resolveConfig } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
-import { FileSettingsProvider } from '@deepseek-ai/dsh-settings-file'
+import Loader from '@deepseek-ai/cordis-plugin-loader'
 import * as Bailian from '../src/index.ts'
 import type { BailianModelConfig } from '../src/config.ts'
 
-const NS = 'llm-bailian'
 const cleanups: Array<() => Promise<void>> = []
 
 function model(name?: string): BailianModelConfig {
@@ -29,34 +25,38 @@ function model(name?: string): BailianModelConfig {
 }
 
 async function boot() {
-  const directory = await mkdtemp(join(tmpdir(), 'dsh-bailian-settings-'))
   const ctx = new Context()
-  cleanups.push(async () => {
-    await ctx.fiber.dispose()
-    await rm(directory, { recursive: true, force: true })
-  })
+  cleanups.push(() => ctx.fiber.dispose())
   await ctx.plugin(LlmRuntime)
-  const settings = await ctx.plugin(FileSettingsProvider, { path: join(directory, 'settings.yaml'), watch: false })
-  await ctx.plugin(Bailian, {
-    baseURL: 'http://127.0.0.1:1',
-    models: { base: model('Composition Base') },
-  })
-  return { ctx, settings }
+  await ctx.plugin(Loader)
+  ctx.loader.builtins.bailian = Bailian
+  const initial = { baseURL: 'http://127.0.0.1:1', models: { base: model('Composition Base') } }
+  const id = await ctx.loader.create({ name: 'cordis:bailian', config: initial })
+  const entry = ctx.loader.resolve(id)
+  const fiber = entry.fiber!
+  await fiber.await()
+  const update = async (patch: Record<string, unknown>) => {
+    const next = { ...initial, ...patch, models: { ...initial.models, ...patch.models as object } }
+    resolveConfig(fiber.runtime!, fiber.ctx.waterfall(fiber, 'internal/config', next, () => next))
+    await entry.update({ config: next })
+    await entry.fiber!.await()
+  }
+  return { ctx, entry, fiber, update }
 }
 
 afterEach(async () => {
   while (cleanups.length > 0) await cleanups.pop()!()
 })
 
-describe('Bailian dynamic settings', () => {
+describe('Bailian live plugin configuration', () => {
   it('applies model additions and retry policy changes without restarting the Provider', async () => {
-    const { ctx } = await boot()
+    const { ctx, entry, fiber, update } = await boot()
     const observed: string[][] = []
     ctx.on('llm/adapters-updated', () => {
       observed.push(ctx.llm.listProviders().map(provider => provider.id))
     })
 
-    await ctx.settings.update(NS, {
+    await update({
       models: { added: model('Settings Model') },
       retryPolicy: {
         mode: 'always',
@@ -85,12 +85,13 @@ describe('Bailian dynamic settings', () => {
       jitterRatio: 0.2,
     })
     expect(observed).toEqual([['bailian']])
+    expect(entry.fiber === fiber).toBe(true)
   })
 
   it('rejects a resolver-invalid update atomically and keeps the last-good snapshot', async () => {
-    const { ctx } = await boot()
+    const { ctx, update } = await boot()
 
-    await expect(ctx.settings.update(NS, {
+    await expect(update({
       baseURL: 'https://rejected.example.invalid/v1',
       models: {
         duplicate: model(),
@@ -106,22 +107,4 @@ describe('Bailian dynamic settings', () => {
     }])
   })
 
-  it('restores composition configuration when optional settings detach', async () => {
-    const { ctx, settings } = await boot()
-    const originalPolicy = ctx.llm.providerRetryPolicy('bailian')
-    await ctx.settings.update(NS, {
-      models: { added: model('Settings Model') },
-      retryPolicy: { mode: 'always' },
-    })
-
-    await settings.dispose()
-
-    await expect(ctx.llm.listModels('bailian')).resolves.toEqual([{
-      provider: 'bailian',
-      id: 'base',
-      name: 'Composition Base',
-      inputModalities: ['text'],
-    }])
-    expect(ctx.llm.providerRetryPolicy('bailian')).toEqual(originalPolicy)
-  })
 })

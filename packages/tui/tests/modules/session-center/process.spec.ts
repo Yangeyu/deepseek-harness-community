@@ -8,7 +8,7 @@ import { emptyRuntimeSessionSnapshot } from '../../../src/runtime/session/runtim
 const candidate: SessionSummary = {
   sessionId: 'session-two' as SessionSummary['sessionId'],
   updatedAt: 1,
-  running: false,
+  running: false, agentAvailable: true,
   blank: false,
   cwd: '/workspace',
 }

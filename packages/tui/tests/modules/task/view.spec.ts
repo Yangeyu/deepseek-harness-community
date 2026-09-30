@@ -10,7 +10,7 @@ function snapshot() {
       { content: 'Design', status: 'completed' as const },
       { content: 'Implement', status: 'in_progress' as const },
     ],
-    running: false,
+    running: false, agentAvailable: true,
     queued: 0,
   }
 }

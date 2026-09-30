@@ -25,6 +25,7 @@ import type { VisionConfigurationPort } from '../modules/configuration/contracts
 import { ComposerHost } from '../modules/composer/host.ts'
 import type {
   PermissionDefaultPort,
+  PermissionCatalogPort,
   WebConfigurationPort,
 } from '../modules/configuration/contracts.ts'
 import { ConfigurationProcess } from '../modules/configuration/process.ts'
@@ -69,6 +70,7 @@ export interface TuiApplicationDependencies {
   images?: ImageInputGateway
   vision?: VisionConfigurationPort
   web?: WebGateway
+  permissionCatalog?: PermissionCatalogPort
   permissionDefault?: PermissionDefaultPort
   startup?: TuiStartupOptions
   clipboardImage?: ClipboardImageLoader
@@ -116,6 +118,7 @@ export function createApplication(
     vision,
     web,
     permissionDefault,
+    permissionCatalog,
     startup: startupIntent = { imagePaths: [], plan: false },
     clipboardImage = imageDraftFromClipboard,
     clipboardText,
@@ -246,6 +249,7 @@ export function createApplication(
     imageSubmissionBusy: () => composer.current.imageSubmissionBusy,
     invalidate,
     scope: configurationScope,
+    ...permissionCatalog === undefined ? {} : { permissionCatalog },
     ...vision === undefined ? {} : { vision },
     ...web === undefined ? {} : { web },
   })

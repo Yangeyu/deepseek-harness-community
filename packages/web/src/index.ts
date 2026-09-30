@@ -1,6 +1,6 @@
-import { Context, Service } from '@deepseek-ai/cordis'
+import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
 import { credentialRef, type CredentialInfo } from '@deepseek-ai/dsh-credentials'
-import type { SettingsScope } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 import { WebError, type WebSearchProvider } from '@deepseek-ai/dsh-web'
 import {
   AUTOMATIC_SEARCH_PROVIDER_ID,
@@ -10,7 +10,7 @@ import {
   type ResolvedCommunityWebConfig,
   type WebSearchSelection,
 } from './config.ts'
-import { createDeepSeekSearchProvider, deepSeekSearchRouteStatus } from './deepseek-search.ts'
+import { createDeepSeekSearchProvider, deepSeekSearchRouteStatus, deepSeekSearchAccountToken } from './deepseek-search.ts'
 import type { WebExtractProvider, WebExtractRequest, WebExtractResult } from './extract.ts'
 import {
   ProviderCatalog,
@@ -27,7 +27,6 @@ import { createWebExtractTool } from './tool.ts'
 export {
   AUTOMATIC_SEARCH_PROVIDER_ID,
   COMMUNITY_SEARCH_PROVIDER_ID,
-  CommunityWebConfigSchema as Config,
   DEFAULT_TAVILY_API_KEY_ENV,
   DEFAULT_TAVILY_EXTRACT_ENDPOINT,
   DEFAULT_TAVILY_SEARCH_ENDPOINT,
@@ -54,6 +53,7 @@ export {
 export { DEEPSEEK_PROVIDER_ID } from '@deepseek-ai/dsh-web-search-deepseek'
 export { createWebExtractTool, WEB_EXTRACT_TIMEOUT_MS, WEB_EXTRACT_TOOL_NAME } from './tool.ts'
 
+export const Config = CommunityWebConfigSchema.volatile()
 export const name = 'community-web'
 export const COMMUNITY_WEB_SETTINGS_NAMESPACE = 'community-web'
 
@@ -109,9 +109,8 @@ function providerReadiness(
 /** Registers community providers while leaving selection and model tools with official Harness services. */
 export class CommunityWebService extends Service {
   static inject = ['credentials', 'settings', 'systemPrompt', 'tools', 'web']
-  static Config = CommunityWebConfigSchema
+  static Config = Config
 
-  private readonly settings: SettingsScope<CommunityWebConfig>
   private readonly tavily: TavilyClient
   private readonly tavilySearch: TavilySearchProvider
   private readonly deepSeekSearch: WebSearchProvider
@@ -119,12 +118,8 @@ export class CommunityWebService extends Service {
   private readonly searchProviders: ProviderCatalog<WebSearchProvider>
   private readonly extractProviders: ProviderCatalog<WebExtractProvider>
 
-  constructor(ctx: Context, config: CommunityWebConfig) {
+  constructor(ctx: Context, private readonly options: Volatile<CommunityWebConfig>) {
     super(ctx, 'communityWeb')
-    this.settings = ctx.settings.register(COMMUNITY_WEB_SETTINGS_NAMESPACE, CommunityWebConfigSchema, {
-      base: config,
-      applies: 'live',
-    })
     this.tavily = new TavilyClient(() => this.tavilyClientOptions())
     this.tavilySearch = new TavilySearchProvider(this.tavily, () => this.tavilySearchOptions())
     this.deepSeekSearch = createDeepSeekSearchProvider(ctx)
@@ -167,7 +162,7 @@ export class CommunityWebService extends Service {
   }
 
   get config(): ResolvedCommunityWebConfig {
-    return resolveCommunityWebConfig(this.settings.get())
+    return resolveCommunityWebConfig(this.options.get())
   }
 
   async status(signal?: AbortSignal): Promise<CommunityWebStatus> {
@@ -196,7 +191,7 @@ export class CommunityWebService extends Service {
     if (searchProvider !== AUTOMATIC_SEARCH_PROVIDER_ID && !this.searchProviders.has(searchProvider)) {
       throw new WebError(`web search provider "${searchProvider}" is not registered`, 'WEB_PROVIDER_CONFIGURED_MISSING')
     }
-    await this.settings.update({ searchProvider })
+    await this.ctx.settings.update(COMMUNITY_WEB_SETTINGS_NAMESPACE, { searchProvider })
   }
 
   registerSearchProvider(registration: CommunityWebProviderRegistration<WebSearchProvider>): () => void {
@@ -255,6 +250,17 @@ export class CommunityWebService extends Service {
 
   private async deepSeekReadiness(signal?: AbortSignal): Promise<CommunityWebProviderReadiness> {
     const route = deepSeekSearchRouteStatus(this.ctx)
+    const accountToken = await deepSeekSearchAccountToken(this.ctx, `${route.baseURL.replace(/\/$/u, '')}/messages`)
+    signal?.throwIfAborted()
+    if (accountToken !== undefined && accountToken.length > 0) {
+      const host = endpointHost(route.baseURL)
+      return {
+        ...host === undefined ? {} : { endpointHost: host },
+        credentialRef: 'DeepSeek account',
+        credentialConfigured: true, credentialSource: 'DeepSeek account', credentialWritable: false,
+        available: this.deepSeekSearch.available(),
+      }
+    }
     const credential = await this.ctx.credentials.describe(credentialRef(route.apiKeyRef))
     signal?.throwIfAborted()
     return providerReadiness(

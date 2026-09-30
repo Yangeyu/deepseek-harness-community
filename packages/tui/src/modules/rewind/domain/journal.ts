@@ -354,6 +354,11 @@ export class RewindJournal {
     return { recorded: true, workspaceRoot: point.workspaceRoot }
   }
 
+  /** Whether this turn already belongs to the active effect lineage. */
+  ownsTurn(sessionId: string, turn: number): boolean {
+    return this.pointFor(sessionId, turn) !== undefined
+  }
+
   /** Active effect metadata used only to annotate canonical Session checkpoints. */
   activePoints(sessionId: string): RewindPointSnapshot[] {
     const timeline = this.timelineForOwner(sessionId)

@@ -24,18 +24,20 @@
     mode: !!js process.env.DSH_TOOLS_MODE
 
 # Keep the official search/fetch tool contract while delegating search policy
-# to one live settings-backed adapter. Safe HTTP fetching stays upstream-owned.
+# to one live Config-backed adapter. Safe HTTP fetching stays upstream-owned.
 - id: web
   config:
     searchProvider: community-web
     fetchProvider: http
 
 - insert:
-    - id: authorization
-      name: '@deepseek-ai/dsh-authorization'
+    - id: community-browser
+      name: './browser.js'
+      disabled: !!js process.env.DSH_BROWSER_USE !== '1'
 
-    - id: code-runtime
-      name: '@deepseek-ai/dsh-code-runtime-worker-thread'
+    - id: computer-use-native
+      name: './computer.js'
+      disabled: !!js process.env.DSH_COMPUTER_USE !== '1'
 
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
@@ -48,7 +50,7 @@
     # Provider connection and served model capabilities are explicit here;
     # agent-default-model independently selects one registered model.
     - id: llm-bailian
-      name: '@vascent/deepseek-harness-tui/bailian'
+      name: './bailian.js'
       config:
         baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
         models:
@@ -89,7 +91,7 @@
                   enableThinking: true
 
     - id: memory
-      name: '@vascent/deepseek-harness-tui/memory'
+      name: './memory.js'
       config:
         # yaml-language-server-disable Unresolved tag
         root: !!js dshHomePath('memories')
@@ -103,14 +105,14 @@
         extractionMaxInputBytes: 32768
 
     - id: vision
-      name: '@vascent/deepseek-harness-tui/vision'
+      name: './vision.js'
       config:
         mode: auto
         proxyProvider: bailian
         proxyModel: qwen3.7-plus
 
     - id: community-web
-      name: '@vascent/deepseek-harness-tui/web'
+      name: './web.js'
       config:
         searchProvider: auto
         extractProvider: community-tavily
@@ -144,7 +146,7 @@
       name: '@deepseek-ai/dsh-cordis-host-runner'
 
     - id: terminal
-      name: '@vascent/deepseek-harness-tui'
+      name: './index.js'
       config:
         historyMessages: 200
         rewindHistory: 20

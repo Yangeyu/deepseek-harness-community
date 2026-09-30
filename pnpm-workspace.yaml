@@ -6,10 +6,14 @@ packages:
 # `catalog:dsh`, and `pnpm pack` writes the concrete version into the artifact.
 catalogs:
   dsh:
-    '@deepseek-ai/dsh': &dsh-runtime-version 0.1.5-rc.2
+    '@deepseek-ai/dsh': &dsh-runtime-version 0.2.0-rc.2
+    '@deepseek-ai/dsh-browser-use': *dsh-runtime-version
+    '@deepseek-ai/dsh-computer-use': *dsh-runtime-version
+    '@deepseek-ai/dsh-experimental-browser-use-runtime': *dsh-runtime-version
+    '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native': *dsh-runtime-version
     '@deepseek-ai/dsh-agent': *dsh-runtime-version
     '@deepseek-ai/dsh-agent-default-model': *dsh-runtime-version
-    '@deepseek-ai/dsh-agent-presets': *dsh-runtime-version
+    '@deepseek-ai/dsh-agent-preset-registry': *dsh-runtime-version
     '@deepseek-ai/dsh-anonymous-user-id': *dsh-runtime-version
     '@deepseek-ai/dsh-api-session-controller': *dsh-runtime-version
     '@deepseek-ai/dsh-attachment': *dsh-runtime-version
@@ -17,14 +21,15 @@ catalogs:
     '@deepseek-ai/dsh-authorization': *dsh-runtime-version
     '@deepseek-ai/dsh-base': *dsh-runtime-version
     '@deepseek-ai/dsh-bash-local': *dsh-runtime-version
-    '@deepseek-ai/dsh-code-runtime-worker-thread': *dsh-runtime-version
-    '@deepseek-ai/dsh-code-runtime': *dsh-runtime-version
+    '@deepseek-ai/dsh-ptc-runtime-node': *dsh-runtime-version
+    '@deepseek-ai/dsh-ptc-runtime': *dsh-runtime-version
     '@deepseek-ai/dsh-client-connection': *dsh-runtime-version
     '@deepseek-ai/dsh-client-file-upload': *dsh-runtime-version
     '@deepseek-ai/dsh-commands': *dsh-runtime-version
     '@deepseek-ai/dsh-compaction': *dsh-runtime-version
     '@deepseek-ai/dsh-cordis-host-runner': *dsh-runtime-version
     '@deepseek-ai/dsh-credentials': *dsh-runtime-version
+    '@deepseek-ai/dsh-deepseek-account': *dsh-runtime-version
     '@deepseek-ai/dsh-file-reference': *dsh-runtime-version
     '@deepseek-ai/dsh-file-reference-local': *dsh-runtime-version
     '@deepseek-ai/dsh-fs': *dsh-runtime-version
@@ -48,7 +53,6 @@ catalogs:
     '@deepseek-ai/dsh-session-title-llm': *dsh-runtime-version
     '@deepseek-ai/dsh-session-query': *dsh-runtime-version
     '@deepseek-ai/dsh-settings': *dsh-runtime-version
-    '@deepseek-ai/dsh-settings-file': *dsh-runtime-version
     '@deepseek-ai/dsh-shell': *dsh-runtime-version
     '@deepseek-ai/dsh-spill': *dsh-runtime-version
     '@deepseek-ai/dsh-subagent-in-process-driver': *dsh-runtime-version
@@ -77,6 +81,11 @@ allowBuilds:
   protobufjs: false
 
 linkWorkspacePackages: true
+
+# The Host must load built profile bundles, never hoisted source manifests.
+hoistPattern:
+  - '*'
+  - '!@vascent/*'
 
 strictPeerDependencies: true
 

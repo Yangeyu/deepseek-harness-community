@@ -31,6 +31,13 @@ dscode
 
 The first launch creates or updates the `tui` Harness profile under `~/.dsh`; later launches start immediately. Set `DASHSCOPE_API_KEY` for the bundled Bailian route or `DEEPSEEK_API_KEY` for DeepSeek Official before beginning a model-backed session. `web_search` automatically uses Tavily when `TAVILY_API_KEY` is configured and otherwise uses DeepSeek Official; `web_extract` uses Tavily. `/config web` changes the persisted search policy and reports every provider without displaying credential values. For image understanding with a text-only route, the bundle uses `bailian/qwen3.7-plus`; `/config vision` selects its routing mode. `DSH_HOME` continues to override the Harness data directory.
 
+Browser Use and Computer Use are bundled as opt-in experimental capabilities.
+`DSH_BROWSER_USE=1 DSH_COMPUTER_USE=1 dscode` enables daily Chrome attachment
+through Chrome DevTools MCP and desktop tools through the official Cua Driver Native
+provider. Chrome requires remote debugging and its connection consent; screenshots
+require an image-capable model. See [configuration](guides/docs/configuration.md#6-browser-use-与-computer-use)
+for persistent activation, permissions, and session ownership.
+
 The TUI has no React dependency. The official `@deepseek-ai/dsh` executable is
 the profile/plugin manager used by the launcher and currently brings its Web UI
 and React graph transitively; removing that graph would require replacing the

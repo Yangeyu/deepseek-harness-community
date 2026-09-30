@@ -151,9 +151,7 @@ describe('TranscriptModel', () => {
     const model = new TranscriptModel(true, 8)
     const result = (text: string) => entry({ event: {
       type: 'tool/result', seq: 1, time: 1_100, surfaceOp: 'append', data: {
-        turn: 1, step: 1, message: { source: { kind: 'tool', callId: 'old' }, content: [
-          { type: 'tool-result', content: [{ type: 'text', text }] },
-        ] },
+        turn: 1, step: 1, message: { source: { kind: 'tool', callId: 'old' }, content: [{ type: 'text', text }] },
       },
     } })
     const old = call(0, 'old', '/old')

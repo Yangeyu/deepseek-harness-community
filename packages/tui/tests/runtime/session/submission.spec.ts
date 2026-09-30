@@ -1,3 +1,4 @@
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { InboxWireState } from '@deepseek-ai/dsh-agent'
@@ -36,7 +37,7 @@ function queued(requestId?: SessionRequestId): QueuedInboxItem {
 }
 
 function turnEnd(turn: number): HistoryEntry {
-  return { event: { type: 'turn/end', seq: 2, time: 2, data: { turn, reason: { kind: 'aborted', reason: 'interrupted' } } } } as unknown as HistoryEntry
+  return { event: { type: 'turn/end', seq: SessionSeq(2), time: 2, data: { turn, reason: { kind: 'aborted', reason: 'interrupted' } } } } as unknown as HistoryEntry
 }
 
 describe('SubmissionTracker', () => {
@@ -116,7 +117,7 @@ describe('SubmissionTracker', () => {
     })
     const inbox = { 'next-turn': [message], 'next-step': [] } as unknown as InboxWireState
     const admissionEvent = { event: {
-      type: 'agent/inbox/spliced', seq: 1, time: 1,
+      type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
       data: { target: 'next-turn', start: 0, inserted: [message] },
     } } as HistoryEntry
     const snapshots: { local: number; inline: number }[] = []
@@ -132,7 +133,7 @@ describe('SubmissionTracker', () => {
     unsubscribe()
 
     const replaced = { event: {
-      ...admissionEvent.event, seq: 2, time: 2,
+      ...admissionEvent.event, seq: SessionSeq(2), time: 2,
       data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [message] },
     } } as HistoryEntry
     expect(runtime.appendEvent(replaced)).toBe('appended')

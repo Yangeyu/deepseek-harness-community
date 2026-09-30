@@ -25,6 +25,14 @@
     "./web": {
       "types": "./dist/web.d.ts",
       "default": "./dist/web.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
+    },
+    "./computer": {
+      "types": "./dist/computer.d.ts",
+      "default": "./dist/computer.js"
     }
   },
   "license": "MIT",
@@ -42,12 +50,15 @@
   },
   "dependencies": {
     "@deepseek-ai/dsh-agent-default-model": "catalog:dsh",
-    "@deepseek-ai/dsh-agent-presets": "catalog:dsh",
+    "@deepseek-ai/dsh-agent-preset-registry": "catalog:dsh",
     "@deepseek-ai/dsh-api-session-controller": "catalog:dsh",
-    "@deepseek-ai/dsh-code-runtime-worker-thread": "catalog:dsh",
+    "@deepseek-ai/dsh-browser-use": "catalog:dsh",
     "@deepseek-ai/dsh-commands": "catalog:dsh",
     "@deepseek-ai/dsh-compaction": "catalog:dsh",
+    "@deepseek-ai/dsh-computer-use": "catalog:dsh",
     "@deepseek-ai/dsh-cordis-host-runner": "catalog:dsh",
+    "@deepseek-ai/dsh-experimental-browser-use-runtime": "catalog:dsh",
+    "@deepseek-ai/dsh-experimental-computer-use-cua-driver-native": "catalog:dsh",
     "@deepseek-ai/dsh-file-reference-local": "catalog:dsh",
     "@deepseek-ai/dsh-goal": "catalog:dsh",
     "@deepseek-ai/dsh-home-paths": "catalog:dsh",
@@ -57,17 +68,20 @@
     "@deepseek-ai/dsh-session-query": "catalog:dsh",
     "@deepseek-ai/dsh-session-stats": "catalog:dsh",
     "@deepseek-ai/dsh-workspace": "catalog:dsh",
-    "@deepseek-ai/schemastery": "^3.18.2",
-    "@earendil-works/pi-ai": "0.85.1",
+    "@deepseek-ai/schemastery": "~3.18.4",
+    "@earendil-works/pi-ai": "0.87.1",
     "@earendil-works/pi-tui": "^0.84.2",
+    "chrome-devtools-mcp": "1.9.0",
     "cli-highlight": "^2.1.11",
     "diff": "^9.0.0",
-    "yaml": "^2.4.2"
+    "yaml": "^2.4.2",
+    "zod": "^4.5.4"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/cordis": "~4.0.4",
     "@deepseek-ai/dsh-agent": "catalog:dsh",
     "@deepseek-ai/dsh-attachment": "catalog:dsh",
+    "@deepseek-ai/dsh-authorization": "catalog:dsh",
     "@deepseek-ai/dsh-base": "catalog:dsh",
     "@deepseek-ai/dsh-credentials": "catalog:dsh",
     "@deepseek-ai/dsh-file-reference": "catalog:dsh",
@@ -83,8 +97,7 @@
     "@deepseek-ai/dsh-tools": "catalog:dsh",
     "@deepseek-ai/dsh-util-values": "catalog:dsh",
     "@deepseek-ai/dsh-web": "catalog:dsh",
-    "@deepseek-ai/dsh-web-search-deepseek": "catalog:dsh",
-    "@deepseek-ai/dsh-authorization": "catalog:dsh"
+    "@deepseek-ai/dsh-web-search-deepseek": "catalog:dsh"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -143,10 +156,11 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/cordis": "~4.0.4",
     "@deepseek-ai/dsh-agent": "catalog:dsh",
     "@deepseek-ai/dsh-api-session-controller": "catalog:dsh",
     "@deepseek-ai/dsh-attachment": "catalog:dsh",
+    "@deepseek-ai/dsh-authorization": "catalog:dsh",
     "@deepseek-ai/dsh-base": "catalog:dsh",
     "@deepseek-ai/dsh-credentials": "catalog:dsh",
     "@deepseek-ai/dsh-file-reference": "catalog:dsh",
@@ -168,7 +182,6 @@
     "oxlint": "1.76.0",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8",
-    "@deepseek-ai/dsh-authorization": "catalog:dsh"
+    "vitest": "^4.1.8"
   }
 }

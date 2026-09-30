@@ -24,7 +24,7 @@ function models(): ModelDirectorySnapshot {
 function snapshot() {
   return {
     models: models(),
-    permissions: {
+    permissions: { defaultOptions: [], defaultPreset: 'workspace-write',
       currentValue: 'workspace-write',
       options: [
         { value: 'workspace-write', name: 'Workspace write' },

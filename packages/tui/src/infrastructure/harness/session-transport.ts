@@ -239,11 +239,11 @@ export class HarnessSessionTransport implements SessionTransport {
         return view === undefined ? undefined : { for: 'call', view }
       }
       if (event.type !== 'tool/result') return undefined
-      const [result] = event.data.message.content
+      const result = event.data.message
       const call = argumentsFor(String(event.data.message.source.callId))
       if (call === undefined) return undefined
       const view = this.definition(call.name, sessionId)?.presentResult?.(call.args, {
-        content: result.content,
+        content: [...result.content],
         isError: result.isError === true,
         ...event.data.meta === undefined ? {} : { meta: event.data.meta },
       })

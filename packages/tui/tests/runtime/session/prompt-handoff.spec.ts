@@ -162,7 +162,7 @@ describe('prompt handoff', () => {
 
   it('seeds inbox once at the snapshot cut and keeps context positions while older history is loaded', () => {
     const context = createUserMessage({ content: [{ type: 'text', text: 'hidden context' }],
-      source: { kind: 'plugin', plugin: 'test', form: 'instructions', summary: 'context' } })
+      source: { kind: 'test', form: 'instructions', summary: 'context' } })
     const message = createUserMessage({ content: [{ type: 'text', text: 'visible' }], source: { kind: 'user' } })
     const admission = entry(3, 'agent/inbox/spliced', inboxSplice([context, message]))
     const { runtime, emit } = fixture([admission], [context, message])

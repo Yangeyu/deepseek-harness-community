@@ -1,7 +1,7 @@
 export { RewindService, type RewindServiceOptions } from './application/service.ts'
 export { RewindTransaction, type RewindTransactionPhase } from './application/transaction.ts'
 export { installRewindWorkspaceAdapter } from './adapters/host.ts'
-export { HostRewindConversationHistory, rewindPointsFromSession } from './adapters/conversation.ts'
+export { HostRewindConversationHistory } from './adapters/conversation.ts'
 export { HostRewindFork } from './adapters/fork.ts'
 export { installRewindPromptAdapter, rewindPointFromPrompt } from './adapters/prompt.ts'
 export { FileRewindRepository, type FileRewindRepositoryOptions } from './adapters/file-repository.ts'

@@ -3,7 +3,7 @@ import type {
   ModelReasoningEffort,
 } from '../../runtime/session/contracts.ts'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
-import type { PermissionSelect } from '@deepseek-ai/dsh-permission-presets/client'
+import type { PermissionSelection, PermissionCatalog } from '@deepseek-ai/dsh-permission-presets/client'
 import type { PlanProjection } from '@deepseek-ai/dsh-plan-mode/client'
 import type { VisionStatus } from '@vascent/deepseek-harness-vision'
 import type { CommunityWebStatus } from '@vascent/deepseek-harness-web'
@@ -16,7 +16,7 @@ import type {} from '@deepseek-ai/dsh-plan-mode/client'
 
 export interface ConfigurationSnapshot {
   models: ModelDirectorySnapshot | undefined
-  permissions?: PermissionSelect
+  permissions?: PermissionSelection & PermissionCatalog
   plan?: PlanProjection
   vision?: VisionStatus
   web?: CommunityWebStatus | null
@@ -47,10 +47,12 @@ export function configurationSnapshot(
   detailsExpanded: boolean,
   vision?: VisionStatus,
   web?: CommunityWebStatus | null,
+  permissionCatalog?: PermissionCatalog,
 ): ConfigurationSnapshot {
   return {
     models: modelDirectorySnapshot(catalog, projections),
-    ...hasProjection(projections, 'permissions') ? { permissions: projections.permissions } : {},
+    ...hasProjection(projections, 'permissions') && permissionCatalog !== undefined
+      ? { permissions: { ...projections.permissions, ...permissionCatalog } } : {},
     ...hasProjection(projections, 'plan') ? { plan: projections.plan } : {},
     ...vision === undefined ? {} : { vision },
     ...web === undefined ? {} : { web },
@@ -155,7 +157,7 @@ export function configurationRows(snapshot: ConfigurationSnapshot): readonly Con
 export function sessionControlSummary(projections: Partial<SessionProjectionMap>): string {
   const snapshot = configurationSnapshot(undefined, projections, false)
   const parts: string[] = []
-  if (snapshot.permissions !== undefined) parts.push(snapshot.permissions.currentValue)
+  if (projections.permissions !== undefined) parts.push(projections.permissions.currentValue)
   if (snapshot.plan !== undefined && (snapshot.plan.active || snapshot.plan.pending)) {
     parts.push(snapshot.plan.pending
       ? `Plan ${snapshot.plan.active ? 'active' : 'off'} → pending`

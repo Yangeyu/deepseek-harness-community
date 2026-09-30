@@ -29,14 +29,9 @@ export function toolEvents(completed: boolean, firstSeq = 3): RuntimeSessionSnap
         step: 1,
         message: {
           id: 'result-1',
-          role: 'user',
+          role: 'tool',
           source: { kind: 'tool', callId: 'call-1' },
-          content: [{
-            type: 'tool-result',
-            toolCallId: 'call-1',
-            content: [{ type: 'text', text: 'NAVIGATION_OK' }],
-            isError: false,
-          }],
+          content: [{ type: 'text', text: 'NAVIGATION_OK' }], toolCallId: 'call-1', isError: false,
         },
       },
     },
@@ -76,14 +71,9 @@ export function timedTraceEvents(): RuntimeSessionSnapshot['events'] {
         step: 1,
         message: {
           id: `result-${callId}`,
-          role: 'user',
+          role: 'tool',
           source: { kind: 'tool', callId },
-          content: [{
-            type: 'tool-result',
-            toolCallId: callId,
-            content: [{ type: 'text', text: `${title} complete` }],
-            isError: false,
-          }],
+          content: [{ type: 'text', text: `${title} complete` }], toolCallId: callId, isError: false,
         },
       },
     },

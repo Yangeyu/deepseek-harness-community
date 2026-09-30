@@ -70,12 +70,6 @@ describe('decodeWorkspaceMutation', () => {
         session: {
           id: 'session-1',
           header: { cwd: '/workspace' },
-          snapshotEvents: () => [{
-            type: 'tool/call',
-            seq: 3,
-            time: 3,
-            data: { turn: 2, step: 1, callId: 'call-1', name: 'root', arguments: '{}' },
-          }],
         },
       },
     } as unknown as ToolExecution
@@ -85,6 +79,10 @@ describe('decodeWorkspaceMutation', () => {
       content: Object.freeze([]),
     }) as unknown as ToolExecutionResult
 
+    ctx.provide('sessionProjections', {
+      stateOf: () => ({ openTurnStartSeq: 2, lastTurn: 2 }),
+    } as never)
+    await ctx.waterfall('tools/pre-execute', exec, async () => ({ kind: 'allow' }))
     ctx.emit('fs/observed', target, { kind: 'present', version: 'v1' as never }, exec)
     ctx.emit('tools/result', exec, result)
 

@@ -1,6 +1,6 @@
-import type { AttachmentStore, ImageRequestPolicy } from '@deepseek-ai/dsh-attachment'
+import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { contentHasImage, LlmError } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, GenerateOptions, Message, ToolResultBlock } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, GenerateOptions, Message, ToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { ResolvedBailianModel } from './config.ts'
 import { resolveMaxTokens, resolveReasoningLevel } from './model.ts'
 import type { WireContentPart, WireMessage, WireRequest } from './types.ts'
@@ -12,7 +12,7 @@ function textOf(blocks: readonly ContentBlock[]): string {
 async function imagePart(
   attachment: Extract<ContentBlock, { type: 'image' }>['attachment'],
   attachments: AttachmentStore | undefined,
-  policy: ImageRequestPolicy | undefined,
+  policy: ResolvedBailianModel['imageRequestPolicy'],
   signal: AbortSignal | undefined,
 ): Promise<WireContentPart> {
   if (attachments === undefined) {
@@ -21,7 +21,12 @@ async function imagePart(
   if (policy === undefined) {
     throw new LlmError('Bailian image input requires a model request-image policy', 'UNSUPPORTED_CONTENT')
   }
-  const request = await attachments.readImageRequest(attachment, policy, signal)
+  const scale = Math.min(1, Math.sqrt(policy.maxPixels / (attachment.width * attachment.height)))
+  const request = await attachments.readImageRequest(attachment, {
+    width: Math.max(1, Math.floor(attachment.width * scale)),
+    height: Math.max(1, Math.floor(attachment.height * scale)),
+    maxBytes: policy.maxBytes,
+  }, signal)
   return {
     type: 'image_url',
     image_url: { url: `data:${request.mediaType};base64,${Buffer.from(request.data).toString('base64')}` },
@@ -31,7 +36,7 @@ async function imagePart(
 async function imageParts(
   blocks: readonly ContentBlock[],
   attachments: AttachmentStore | undefined,
-  policy: ImageRequestPolicy | undefined,
+  policy: ResolvedBailianModel['imageRequestPolicy'],
   signal: AbortSignal | undefined,
 ): Promise<WireContentPart[]> {
   const images = blocks.filter(block => block.type === 'image')
@@ -42,7 +47,7 @@ async function imageParts(
 async function orderedContentParts(
   blocks: readonly ContentBlock[],
   attachments: AttachmentStore | undefined,
-  policy: ImageRequestPolicy | undefined,
+  policy: ResolvedBailianModel['imageRequestPolicy'],
   signal: AbortSignal | undefined,
 ): Promise<WireContentPart[]> {
   const parts = await Promise.all(blocks.map(async (block): Promise<WireContentPart | undefined> => {
@@ -58,7 +63,7 @@ async function orderedContentParts(
 async function userContent(
   blocks: readonly ContentBlock[],
   attachments: AttachmentStore | undefined,
-  policy: ImageRequestPolicy | undefined,
+  policy: ResolvedBailianModel['imageRequestPolicy'],
   signal: AbortSignal | undefined,
 ): Promise<string | WireContentPart[]> {
   if (!blocks.some(block => block.type === 'image')) return textOf(blocks)
@@ -91,12 +96,12 @@ function assistantMessage(message: Message): WireMessage {
 async function serializeMessages(
   options: GenerateOptions,
   attachments: AttachmentStore | undefined,
-  policy: ImageRequestPolicy | undefined,
+  policy: ResolvedBailianModel['imageRequestPolicy'],
   signal: AbortSignal | undefined,
 ): Promise<WireMessage[]> {
   const wire: WireMessage[] = []
   if (options.system !== undefined) wire.push({ role: 'system', content: options.system })
-  const pendingImages: ToolResultBlock[] = []
+  const pendingImages: ToolResultMessage[] = []
 
   const flushImages = async (): Promise<void> => {
     for (const result of pendingImages) {
@@ -111,29 +116,24 @@ async function serializeMessages(
 
   for (const message of options.messages) {
     signal?.throwIfAborted()
-    if (message.role === 'user') {
-      const results = message.content.filter(block => block.type === 'tool-result')
-      if (results.length > 0) {
-        for (const result of results) {
-          const resultText = textOf(result.content)
-          const hasImages = contentHasImage(result.content)
-          wire.push({
-            role: 'tool',
-            tool_call_id: result.toolCallId,
-            content: resultText.length > 0
-              ? resultText
-              : hasImages ? 'Image result attached in the following user message.' : '',
-          })
-          if (hasImages) pendingImages.push(result)
-        }
-        continue
-      }
+    if (message.role === 'tool') {
+      const resultText = textOf(message.content)
+      const hasImages = contentHasImage(message.content)
+      wire.push({
+        role: 'tool',
+        tool_call_id: message.toolCallId,
+        content: resultText.length > 0
+          ? resultText
+          : hasImages ? 'Image result attached in the following user message.' : '',
+      })
+      if (hasImages) pendingImages.push(message)
+      continue
     }
 
     await flushImages()
     if (message.role === 'assistant') {
       wire.push(assistantMessage(message))
-    } else if (message.role === 'system') {
+    } else if (message.role === 'system' || message.role === 'developer') {
       if (contentHasImage(message.content)) {
         throw new LlmError('Bailian system messages do not support image blocks', 'UNSUPPORTED_CONTENT')
       }

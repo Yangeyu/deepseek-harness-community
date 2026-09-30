@@ -7,14 +7,13 @@ import {
   AttachmentId,
   type AttachmentStore,
   type ImageAttachmentRef,
-  type ImageRequestPolicy,
+  type ImageRequestTarget,
 } from '@deepseek-ai/dsh-attachment'
-import LlmRuntime, { BlockAssembler, createAssistantMessage, createToolResultMessage, createUserMessage, ReasoningEffortId, type StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { BlockAssembler, createAssistantMessage, createDeveloperMessage, createToolResultMessage, createUserMessage, ReasoningEffortId, type StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
 import {
   BailianAdapter,
   BAILIAN_PROVIDER_ID,
   DEFAULT_REQUEST_IMAGE_MAX_BYTES,
-  DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET,
   resolveBailianConfig,
   type BailianModelConfig,
 } from '../src/index.ts'
@@ -138,10 +137,10 @@ function user(text: string) {
 
 function attachmentStore(
   data: (ref: ImageAttachmentRef) => Uint8Array | Promise<Uint8Array>,
-  observed?: (policy: ImageRequestPolicy) => void,
+  observed?: (policy: ImageRequestTarget) => void,
 ): AttachmentStore {
   return {
-    readImageRequest: async (ref: ImageAttachmentRef, policy: ImageRequestPolicy) => {
+    readImageRequest: async (ref: ImageAttachmentRef, policy: ImageRequestTarget) => {
       observed?.(policy)
       const bytes = await data(ref)
       return {
@@ -169,7 +168,7 @@ describe('Bailian wire contract', () => {
       model: 'deepseek-v4-pro-0813',
       reasoningEffort: ReasoningEffortId('max'),
       system: 'system prompt',
-      messages: [user('hello')],
+      messages: [createDeveloperMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'developer instruction' }] }), user('hello')],
       maxTokens: 123,
       stop: ['END'],
     }))
@@ -188,6 +187,7 @@ describe('Bailian wire contract', () => {
     expect(requests[0]?.headers['user-agent']).toBeTruthy()
     expect(requests[0]?.body.messages).toEqual([
       { role: 'system', content: 'system prompt' },
+      { role: 'system', content: 'developer instruction' },
       { role: 'user', content: 'hello' },
     ])
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
@@ -253,8 +253,9 @@ describe('Bailian wire contract', () => {
     const secondRef: ImageAttachmentRef = {
       ...firstRef,
       attachmentId: AttachmentId('image-2'),
+      width: 4096, height: 4096,
     }
-    const policies: ImageRequestPolicy[] = []
+    const policies: ImageRequestTarget[] = []
     const attachments = attachmentStore(
       ref => Uint8Array.from([String(ref.attachmentId) === 'image-1' ? 1 : 2]),
       policy => policies.push(policy),
@@ -292,8 +293,8 @@ describe('Bailian wire contract', () => {
       ],
     }])
     expect(policies).toEqual([
-      { maxPixels: DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET, maxBytes: DEFAULT_REQUEST_IMAGE_MAX_BYTES },
-      { maxPixels: DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET, maxBytes: DEFAULT_REQUEST_IMAGE_MAX_BYTES },
+      { width: 2048, height: 2048, maxBytes: DEFAULT_REQUEST_IMAGE_MAX_BYTES },
+      { width: 1, height: 1, maxBytes: DEFAULT_REQUEST_IMAGE_MAX_BYTES },
     ])
   })
 

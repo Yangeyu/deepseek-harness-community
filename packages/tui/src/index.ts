@@ -1,3 +1,4 @@
+import type {} from '@deepseek-ai/dsh-permission-presets'
 /**
  * Third-party terminal profile bundle for DeepSeek Harness. The composition
  * root adapts in-process Host services to consumer-owned application ports and
@@ -80,6 +81,7 @@ export const name = 'community-tui'
 export const inject = [
   'sessionController',
   'sessionQuery',
+  'sessionProjections',
   'agentDefaultModel',
   'workspaceRegistry',
   'fileReferences',
@@ -92,6 +94,7 @@ export const inject = [
   'communityWeb',
   'memory',
   'settings',
+  'permissionPresets',
   'authorization',
   'credentials',
   'llm',
@@ -225,7 +228,11 @@ export function apply(ctx: Context, config: TuiConfig): void {
           images: harnessImageInput(ctx.llm, vision),
           ...vision === undefined ? {} : { vision },
           web: ctx.communityWeb,
-          permissionDefault: settingsPermissionDefaultGateway(ctx.settings),
+          permissionDefault: settingsPermissionDefaultGateway(ctx.settings, ctx.permissionPresets),
+          permissionCatalog: {
+            catalog: () => ctx.permissionPresets.catalog(),
+            subscribe: listener => ctx.on('permission-presets/catalog-changed', listener),
+          },
           startup: invocation.startup,
           attachments: ctx.attachments,
         },

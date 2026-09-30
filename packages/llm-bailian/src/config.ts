@@ -1,5 +1,4 @@
 import z from '@deepseek-ai/schemastery'
-import type { ImageRequestPolicy } from '@deepseek-ai/dsh-attachment'
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import {
   resolveRetryPolicy,
@@ -124,7 +123,7 @@ export interface ResolvedBailianModel {
   readonly defaultMaxTokens?: number
   readonly maxTokensField: BailianMaxTokensField
   readonly input: readonly BailianInputModality[]
-  readonly imageRequestPolicy?: Readonly<ImageRequestPolicy>
+  readonly imageRequestPolicy?: Readonly<{ maxPixels: number; maxBytes: number }>
   readonly reasoning: false | ResolvedBailianReasoningPolicy
 }
 

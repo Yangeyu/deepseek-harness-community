@@ -28,13 +28,10 @@ describe('CommunityWebService', () => {
     const section = vi.fn(() => () => {})
     ctx.provide('systemPrompt', { section } as unknown as Context['systemPrompt'])
     let currentConfig: Record<string, unknown> = {}
-    const update = vi.fn(async (patch: object) => { currentConfig = { ...currentConfig, ...patch } })
+    const update = vi.fn(async (_namespace: string, patch: object) => { currentConfig = { ...currentConfig, ...patch } })
     ctx.provide('settings', {
-      register: (_namespace: unknown, _schema: unknown, options: { base: unknown }) => {
-        currentConfig = options.base as Record<string, unknown>
-        return { get: () => currentConfig, update }
-      },
-      get: () => undefined,
+      update,
+      describe: () => [],
     } as unknown as Context['settings'])
     ctx.provide('credentials', {
       resolve: vi.fn(async () => ({ value: 'must-not-appear', source: 'env' })),
@@ -45,7 +42,7 @@ describe('CommunityWebService', () => {
       })),
     } as unknown as Context['credentials'])
 
-    const service = new CommunityWebService(ctx, {})
+    const service = new CommunityWebService(ctx, { get: () => currentConfig })
     expect(registerSearchProvider.mock.calls[0]?.[0]).toMatchObject({ id: COMMUNITY_SEARCH_PROVIDER_ID })
     expect(registerTool.mock.calls[0]?.[0]).toMatchObject({ name: 'web_extract' })
     expect(section).toHaveBeenCalledWith(expect.objectContaining({ name: 'tool:web_extract' }))
@@ -94,7 +91,7 @@ describe('CommunityWebService', () => {
     expect(JSON.stringify(status)).not.toContain('must-not-appear')
 
     await service.setSearchProvider(DEEPSEEK_PROVIDER_ID)
-    expect(update).toHaveBeenCalledWith({ searchProvider: DEEPSEEK_PROVIDER_ID })
+    expect(update).toHaveBeenCalledWith('community-web', { searchProvider: DEEPSEEK_PROVIDER_ID })
     await expect(service.status()).resolves.toMatchObject({
       search: { selection: DEEPSEEK_PROVIDER_ID, activeProviderId: DEEPSEEK_PROVIDER_ID },
     })
@@ -129,11 +126,7 @@ describe('CommunityWebService', () => {
     ctx.provide('tools', { register: () => () => {} } as unknown as Context['tools'])
     ctx.provide('systemPrompt', { section: () => () => {} } as unknown as Context['systemPrompt'])
     ctx.provide('settings', {
-      register: (_namespace: unknown, _schema: unknown, options: { base: unknown }) => ({
-        get: () => options.base,
-        update: async () => {},
-      }),
-      get: () => undefined,
+      describe: () => [],
     } as unknown as Context['settings'])
     ctx.provide('credentials', {
       resolve: vi.fn(async () => undefined),
@@ -143,7 +136,7 @@ describe('CommunityWebService', () => {
       })),
     } as unknown as Context['credentials'])
 
-    const status = await new CommunityWebService(ctx, {}).status()
+    const status = await new CommunityWebService(ctx, { get: () => ({}) }).status()
 
     expect(status.search).toMatchObject({
       selection: AUTOMATIC_SEARCH_PROVIDER_ID,
@@ -159,25 +152,13 @@ describe('CommunityWebService', () => {
     ctx.provide('web', { registerSearchProvider: () => () => {} } as unknown as Context['web'])
     ctx.provide('tools', { register: () => () => {} } as unknown as Context['tools'])
     ctx.provide('systemPrompt', { section: () => () => {} } as unknown as Context['systemPrompt'])
-    let currentConfig: Record<string, unknown> = {}
-    ctx.provide('settings', {
-      register: (_namespace: unknown, _schema: unknown, options: { base: unknown }) => ({
-        get: () => {
-          if (Object.keys(currentConfig).length === 0) currentConfig = options.base as Record<string, unknown>
-          return currentConfig
-        },
-        update: async (patch: object) => { currentConfig = { ...currentConfig, ...patch } },
-      }),
-      get: () => undefined,
-    } as unknown as Context['settings'])
+    let currentConfig = { extractProvider: 'test-extract', extractMaxOutputChars: 5 }
+    ctx.provide('settings', { describe: () => [] } as unknown as Context['settings'])
     ctx.provide('credentials', {
       resolve: vi.fn(async () => undefined),
       describe: vi.fn(async () => ({ configured: false, writable: true })),
     } as unknown as Context['credentials'])
-    const service = new CommunityWebService(ctx, {
-      extractProvider: 'test-extract',
-      extractMaxOutputChars: 5,
-    })
+    const service = new CommunityWebService(ctx, { get: () => currentConfig })
     const extract = vi.fn(async () => ({
       url: 'https://example.com/',
       content: '123456',

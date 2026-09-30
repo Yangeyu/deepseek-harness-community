@@ -21,8 +21,7 @@ agent loop, permission system, task model, or plugin format.
 5. **Optional capabilities degrade cleanly.** A missing projection or Host capability means
    that feature is unavailable in the active composition, not that the session
    is corrupt.
-6. **Developer preview requires explicit cutovers.** Harness is still evolving
-   below `0.2.0`; each selected runtime train is integrated through narrow
+6. **Developer preview requires explicit cutovers.** Harness remains a pre-release runtime; each selected runtime train is integrated through narrow
    ports and contract tests, and superseded paths are deleted rather than kept
    as version fallbacks.
 

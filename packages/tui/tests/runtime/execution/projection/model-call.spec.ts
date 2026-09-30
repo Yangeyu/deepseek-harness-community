@@ -46,11 +46,11 @@ describe('canonical Request document', () => {
   it('keeps canonical compaction order and exact provenance without merging repeated text', () => {
     const checkpoint = {
       ...message('checkpoint', 'Summary'),
-      source: { kind: 'plugin', plugin: 'compact', compactionId: 'compact-1' },
+      source: { kind: 'compact-checkpoint', compactionId: 'compact-1' },
     }
     const events = entries([
       { type: 'step/start', data: { turn: 1, step: 1 } },
-      { type: 'system/message', surfaceOp: 'append', data: { message: { ...message('system', 'Instructions', 'system'), source: { kind: 'plugin', plugin: 'system-prompt' } } } },
+      { type: 'system/message', surfaceOp: 'append', data: { message: { ...message('system', 'Instructions', 'system'), source: { kind: 'system-prompt' } } } },
       { type: 'user/message', surfaceOp: 'append', data: message('old-input', 'Repeated text') },
       { type: 'assistant/message', surfaceOp: 'append', data: { turn: 1, step: 1, stream: [], message: message('old-answer', 'Old answer', 'assistant') } },
       { type: 'step/end', data: { turn: 1, step: 1 } },

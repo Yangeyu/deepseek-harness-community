@@ -64,7 +64,7 @@ describe('trajectory records', () => {
       source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }],
     }), { surfaceOp: 'append' })
     session.append('user/message', createUserMessage({
-      source: { kind: 'plugin', plugin: 'workspace', form: 'instructions' },
+      source: { kind: 'workspace', form: 'instructions' },
       content: [{ type: 'text', text: 'Project conventions' }],
     }), { surfaceOp: 'append' })
     const messages = records(session.snapshotEvents().map(event => ({ event }))).filter(record => record.type === 'user/message')

@@ -144,7 +144,7 @@ describe('inspect_image', () => {
     expect(rendered[0]).toHaveProperty('type', 'text')
     expect(deferContext).toHaveBeenCalledOnce()
     expect(deferContext.mock.calls[0]?.[0]).toMatchObject({
-      source: { kind: 'plugin', plugin: 'community-vision' },
+      source: { kind: 'community-vision' },
       content: [{ type: 'text', text: expect.stringContaining('<vision-observation') }],
     })
   })

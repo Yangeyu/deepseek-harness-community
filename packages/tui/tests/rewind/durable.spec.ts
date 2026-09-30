@@ -105,7 +105,7 @@ describe('durable Rewind lifecycle', () => {
 
     const resumed = service(storageRoot, conversation)
     await resumed.activate('session', workspaceRoot)
-    const [point] = resumed.list('session')
+    const [point] = (await resumed.list('session'))
     const plan = await resumed.plan('session', point?.pointId ?? '')
 
     expect(plan.state).toBe('safe')
@@ -144,7 +144,7 @@ describe('durable Rewind lifecycle', () => {
 
     const resumed = service(storageRoot, conversation)
     await resumed.activate('session', workspaceRoot)
-    const [point] = resumed.list('session')
+    const [point] = (await resumed.list('session'))
     const plan = await resumed.plan('session', point?.pointId ?? '')
 
     expect(plan).toMatchObject({ state: 'safe', files: [{ path: realpathSync(path), state: 'safe' }] })
@@ -163,7 +163,7 @@ describe('durable Rewind lifecycle', () => {
     await writeFile(join(workspaceRoot, 'a.txt'), 'after\n')
     record(first, workspaceRoot, 2, 'before\n', 'after\n')
     await first.settle('session')
-    const points = first.list('session')
+    const points = (await first.list('session'))
     const plan = await first.plan('session', points[1]?.pointId ?? '')
     expect(plan.codeScope).toBe('backward')
     conversation.fork('session', 'forked', plan.turn)
@@ -172,15 +172,15 @@ describe('durable Rewind lifecycle', () => {
 
     const resumed = service(storageRoot, conversation)
     await resumed.activate('forked', workspaceRoot)
-    expect(resumed.list('forked').map(point => point.turn)).toEqual([1])
-    expect(resumed.list('session').map(point => point.turn)).toEqual([1, 2])
+    expect((await resumed.list('forked')).map(point => point.turn)).toEqual([1])
+    expect((await resumed.list('session')).map(point => point.turn)).toEqual([1, 2])
     await begin(resumed, workspaceRoot, 3, 'forked')
-    expect(resumed.list('forked').map(point => point.turn)).toEqual([1, 3])
+    expect((await resumed.list('forked')).map(point => point.turn)).toEqual([1, 3])
     await resumed.close()
 
     const reopened = service(storageRoot, conversation)
     await reopened.activate('forked', workspaceRoot)
-    expect(reopened.list('forked').map(point => point.turn)).toEqual([1, 3])
+    expect((await reopened.list('forked')).map(point => point.turn)).toEqual([1, 3])
     await reopened.close()
   })
 
@@ -192,13 +192,13 @@ describe('durable Rewind lifecycle', () => {
     await begin(first, workspaceRoot, 1)
     await begin(first, workspaceRoot, 1, 'other')
 
-    expect(first.list('session')).toHaveLength(1)
-    expect(first.list('other')).toHaveLength(1)
+    expect((await first.list('session'))).toHaveLength(1)
+    expect((await first.list('other'))).toHaveLength(1)
 
     record(first, workspaceRoot, 1, 'before\n', 'after\n', 'other')
     await first.settle('other')
-    expect(first.list('session')).toHaveLength(1)
-    expect(first.list('other')).toHaveLength(1)
+    expect((await first.list('session'))).toHaveLength(1)
+    expect((await first.list('other'))).toHaveLength(1)
     await first.close()
   })
 
@@ -281,7 +281,7 @@ describe('durable Rewind lifecycle', () => {
 
     const reopened = service(storageRoot, conversation)
     await reopened.activate('session', workspaceRoot)
-    expect(reopened.list('session').map(point => point.turn)).toEqual([1, 2, 3])
+    expect((await reopened.list('session')).map(point => point.turn)).toEqual([1, 2, 3])
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({ name: 'RewindRepositoryConflictError' }))
     await reopened.close()
   })

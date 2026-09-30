@@ -132,7 +132,7 @@ describe('TUI dependency direction', () => {
       .map(sourcePath)
       .filter(path => !path.includes('/'))
       .sort()
-    expect(rootFiles).toEqual(['bailian.ts', 'index.ts', 'memory.ts', 'vision.ts', 'web.ts'])
+    expect(rootFiles).toEqual(['bailian.ts', 'browser.ts', 'computer.ts', 'index.ts', 'memory.ts', 'vision.ts', 'web.ts'])
   })
 
   it('keeps concrete rendering and raw key decoding at their integration boundaries', () => {

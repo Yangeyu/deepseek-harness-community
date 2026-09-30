@@ -59,13 +59,13 @@ function fixture(options: {
   const readImage = vi.fn(async () => ({ ref: attachment, data: new Uint8Array([1]) }))
   const register = vi.fn((_tool: ToolDefinition) => () => {})
   ctx.provide('settings', {
-    register: () => ({ get: () => currentConfig, update: async (patch: Partial<VisionConfig>) => { currentConfig = { ...currentConfig, ...patch } } }),
+    update: async (_namespace: string, patch: Partial<VisionConfig>) => { currentConfig = { ...currentConfig, ...patch } },
   } as unknown as Context['settings'])
   ctx.provide('llm', { resolveModelInfo, stream } as unknown as Context['llm'])
   ctx.provide('attachments', { saveImages, readImage } as unknown as Context['attachments'])
   ctx.provide('fs', {} as Context['fs'])
   ctx.provide('tools', { register } as unknown as Context['tools'])
-  const service = new VisionService(ctx, currentConfig)
+  const service = new VisionService(ctx, { get: () => currentConfig })
   const tool = register.mock.calls[0]![0]
   return { service, tool, resolveModelInfo, stream, saveImages, readImage }
 }

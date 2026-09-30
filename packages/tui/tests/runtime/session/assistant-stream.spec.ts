@@ -52,7 +52,7 @@ describe('Session assistant presentation', () => {
     const session = Session.create(SessionId('stream'))
     session.append('step/start', { turn: 1, step: 1 })
     session.append('request/header', { reason: 'initial', header: { config: { provider: 'test', model: 'test' } } })
-    session.append('system/message', { turn: 1, step: 1, message: createSystemMessage('System instructions', 'test') }, { surfaceOp: 'append' })
+    session.append('system/message', { turn: 1, step: 1, message: createSystemMessage('System instructions') }, { surfaceOp: 'append' })
     const prompt = session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Question' }] }), { surfaceOp: 'append' })
     value.hydrate({ events: session.snapshotEvents().map(event => ({ event })), hasMore: false }, prompt.seq)
     value.acceptAssistantFrame({ type: 'start', attemptId, revision: 1, startedAfterSeq: prompt.seq, turn: 1, step: 1 })

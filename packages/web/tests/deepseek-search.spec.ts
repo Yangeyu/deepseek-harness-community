@@ -5,16 +5,21 @@ import { createDeepSeekSearchProvider, deepSeekSearchRouteStatus } from '../src/
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('official DeepSeek search adapter', () => {
-  it('reuses official provider execution with its registered settings and credential reference', async () => {
+  it.each(['api-key', 'account'])('uses official search transport and %s credentials with live settings', async auth => {
     const ctx = new Context()
     ctx.provide('settings', {
-      get: () => ({
+      describe: () => [{ ns: 'web-search-deepseek', value: {
         apiKeyEnv: 'CUSTOM_DEEPSEEK_KEY',
         baseURL: 'https://search.example/anthropic/v1',
         model: 'deepseek-search-model',
         maxUses: 3,
-      }),
+      } }],
     } as unknown as Context['settings'])
+    const resolveToken = vi.fn(async () => 'account-test-token')
+    if (auth === 'account') {
+      ctx.provide('agents', { currentInitiator: () => ({ session: { append() {}, requestContext: () => ({ provider: 'deepseek-account' }) } }) } as never)
+      ctx.provide('deepseekAccount', { resolveToken } as never)
+    }
     const resolve = vi.fn(async () => ({ value: 'deepseek-secret', source: 'env' }))
     ctx.provide('credentials', { resolve } as unknown as Context['credentials'])
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify({
@@ -48,8 +53,14 @@ describe('official DeepSeek search adapter', () => {
       truncated: false,
     })
 
-    expect(resolve).toHaveBeenCalledOnce()
+    if (auth === 'api-key') expect(resolve).toHaveBeenCalledOnce()
+    else {
+      expect(resolve).not.toHaveBeenCalled()
+      expect(resolveToken).toHaveBeenCalledWith('https://search.example/anthropic/v1/messages')
+    }
     const [endpoint, init] = fetch.mock.calls[0] ?? []
+    const headers = new Headers(init?.headers)
+    expect(headers.get(auth === 'account' ? 'x-dsh-auth-token' : 'x-api-key')).toBe(auth === 'account' ? 'account-test-token' : 'deepseek-secret')
     expect(String(endpoint)).toBe('https://search.example/anthropic/v1/messages')
     expect(JSON.parse(String(init?.body))).toMatchObject({
       model: 'deepseek-search-model',

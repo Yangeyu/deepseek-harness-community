@@ -1,6 +1,7 @@
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { projectPromptNodes } from '../../src/runtime/execution/projection/index.ts'
+import type { SessionHeader, SessionEvent } from '@deepseek-ai/dsh-session'
 import { describe, expect, it } from 'vitest'
-import { rewindPointFromPrompt, rewindPointsFromSession } from '../../src/modules/rewind/index.ts'
+import { rewindPointFromPrompt } from '../../src/modules/rewind/index.ts'
 
 describe('Rewind Prompt adapter', () => {
   it('preserves lifecycle identity, time, and conversation boundary', () => {
@@ -70,13 +71,9 @@ describe('Rewind Prompt adapter', () => {
         },
       },
     ] as unknown as SessionEvent[]
-    const session = {
-      id: 'session-1',
-      header: { cwd: '/workspace' },
-      snapshotEvents: () => events,
-    } as unknown as Session
+    const header = { id: 'session-1', cwd: '/workspace' } as SessionHeader
 
-    expect(rewindPointsFromSession(session)).toEqual([
+    expect(projectPromptNodes(header, events).flatMap(prompt => rewindPointFromPrompt(prompt) ?? [])).toEqual([
       expect.objectContaining({ pointId: 'prompt-1', turn: 1, input: { text: 'first', attachments: [] } }),
       expect.objectContaining({ pointId: 'prompt-2', turn: 2, previousTurnEndSeq: 2 }),
     ])

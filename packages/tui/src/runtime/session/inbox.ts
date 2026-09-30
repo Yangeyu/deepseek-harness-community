@@ -9,7 +9,7 @@ function queueItem(message: UserMessage, target: InboxTarget): QueuedInboxItem {
     id: message.id,
     placement: target === 'next-turn' ? 'queued' : source.kind === 'user' ? 'steering' : 'context',
     ...source.kind === 'user' && 'rpcId' in source ? { rpcId: source.rpcId } : {},
-    message: { id: message.id, content: message.content as unknown as QueuedInboxItem['message']['content'] },
+    message: { id: message.id, content: message.content },
   }
 }
 

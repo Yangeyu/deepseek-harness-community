@@ -1,4 +1,4 @@
-import { Context, Service } from '@deepseek-ai/cordis'
+import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import {
   BlockAssembler,
@@ -6,7 +6,7 @@ import {
   type ContentBlock,
   type LlmFailure,
 } from '@deepseek-ai/dsh-llm'
-import type { SettingsScope } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { VisionConfigSchema } from './config.ts'
 import {
@@ -28,7 +28,7 @@ import type {
   VisionStatus,
 } from './types.ts'
 
-export { VisionConfigSchema as Config }
+export const Config = VisionConfigSchema.volatile()
 export type {
   ResolvedImageRoute,
   ResolvedProxyImageRoute,
@@ -78,13 +78,10 @@ interface VisionInference extends VisionResultMetadata {
 /** Proxy image analysis and inspection built on official media services. */
 export class VisionService extends Service {
   static inject = ['attachments', 'fs', 'llm', 'settings', 'tools']
-  static Config = VisionConfigSchema
+  static Config = Config
 
-  private readonly settings: SettingsScope<VisionConfig>
-
-  constructor(ctx: Context, config: VisionConfig) {
+  constructor(ctx: Context, private readonly options: Volatile<VisionConfig>) {
     super(ctx, 'vision')
-    this.settings = ctx.settings.register(VISION_NAMESPACE, VisionConfigSchema, { base: config, applies: 'live' })
     ctx.tools.register(createInspectImageTool({
       attachments: ctx.attachments,
       fs: ctx.fs,
@@ -95,7 +92,7 @@ export class VisionService extends Service {
   }
 
   get config(): VisionConfig {
-    return this.settings.get()
+    return this.options.get()
   }
 
   /** Resolve only the configured proxy; callers own native image submission. */
@@ -146,7 +143,7 @@ export class VisionService extends Service {
   }
 
   async setMode(mode: VisionConfig['mode']): Promise<void> {
-    await this.settings.update({ mode })
+    await this.ctx.settings.update(VISION_NAMESPACE, { mode })
   }
 
   async analyze(
@@ -224,7 +221,7 @@ export class VisionService extends Service {
       provider: route.provider,
       model: route.model,
       system: VISION_SYSTEM_PROMPT,
-      messages: [createUserMessage({ content, source: { kind: 'plugin', plugin: PLUGIN_NAME } })],
+      messages: [createUserMessage({ content, source: { kind: PLUGIN_NAME } })],
       maxTokens: route.maxTokens,
       ...signal === undefined ? {} : { signal },
     })) assembler.push(chunk)
@@ -287,3 +284,9 @@ export class VisionService extends Service {
 }
 
 export default VisionService
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'community-vision': { readonly kind: 'community-vision' } & import('@deepseek-ai/dsh-llm').ContextFormed
+  }
+}

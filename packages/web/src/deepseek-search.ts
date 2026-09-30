@@ -1,3 +1,4 @@
+import type {} from '@deepseek-ai/dsh-deepseek-account'
 import type {} from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
@@ -32,10 +33,10 @@ export interface DeepSeekSearchRouteStatus {
   literalCredentialConfigured: boolean
 }
 
-function settingsConfig(ctx: Context): DeepSeekSearchConfig {
-  const value = ctx.settings.get(WEB_SEARCH_DEEPSEEK_SETTINGS_NAMESPACE)
+function settingsConfig(ctx: Context): Partial<{ [K in keyof DeepSeekSearchConfig]: ReturnType<DeepSeekSearchConfig[K]['get']> }> {
+  const value = ctx.settings.describe().find(entry => entry.ns === WEB_SEARCH_DEEPSEEK_SETTINGS_NAMESPACE)?.value
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as DeepSeekSearchConfig
+    ? value as Partial<{ [K in keyof DeepSeekSearchConfig]: ReturnType<DeepSeekSearchConfig[K]['get']> }>
     : {}
 }
 
@@ -57,6 +58,12 @@ function resolveRoute(ctx: Context): ResolvedDeepSeekSearchRoute {
   }
 }
 
+/** Follow the upstream account route and let the account service enforce the endpoint allowlist. */
+export async function deepSeekSearchAccountToken(ctx: Context, endpoint: string): Promise<string | undefined> {
+  if (ctx.get('agents')?.currentInitiator()?.session.requestContext()?.provider !== 'deepseek-account') return undefined
+  return ctx.get('deepseekAccount')?.resolveToken(endpoint)
+}
+
 /** Reuse the official DeepSeek search transport while keeping selection in the community policy layer. */
 export function createDeepSeekSearchProvider(ctx: Context): DeepSeekSearchProvider {
   return new DeepSeekSearchProvider(() => {
@@ -64,6 +71,7 @@ export function createDeepSeekSearchProvider(ctx: Context): DeepSeekSearchProvid
     const apiKeyRef = credentialRef(route.apiKeyRef)
     return {
       ...route.apiKey === undefined ? {} : { apiKey: route.apiKey },
+      resolveAccountToken: endpoint => deepSeekSearchAccountToken(ctx, endpoint),
       resolveApiKey: async () => (await ctx.credentials.resolve(apiKeyRef))?.value,
       apiKeyEnv: apiKeyRef,
       baseURL: route.baseURL,

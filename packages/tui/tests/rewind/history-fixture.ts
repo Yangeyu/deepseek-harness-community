@@ -13,13 +13,13 @@ export class TestRewindConversationHistory implements RewindConversationHistory 
     this.sessions.set(point.sessionId, points)
   }
 
-  list(sessionId: string): readonly RewindPointInput[] {
+  async list(sessionId: string): Promise<readonly RewindPointInput[]> {
     return [...(this.sessions.get(sessionId)?.values() ?? [])]
       .sort((left, right) => left.promptSeq - right.promptSeq)
   }
 
   fork(sourceSessionId: string, targetSessionId: string, beforeTurn: number): void {
-    for (const point of this.list(sourceSessionId)) {
+    for (const point of (this.sessions.get(sourceSessionId)?.values() ?? [])) {
       if (point.turn >= beforeTurn) continue
       this.record({ ...point, sessionId: targetSessionId })
     }

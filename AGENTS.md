@@ -9,6 +9,7 @@
 | 文档 | 何时读它 |
 |---|---|
 | `docs/tui-architecture.md` | 架构、所有权边界、设计惯例、已落地版本的实现契约 |
+| `docs/tui-upstream-capabilities-plan.md` | DSH 0.2.0-rc.2 全面接入的执行范围、进度与验收（实施中） |
 | `docs/tui-product-roadmap.md` | 里程碑与规划现状 |
 | `docs/tui-rendering-request-inspection-design.md` | 长历史渲染、Trace Request 结构化查看与搜索定位的分阶段设计及验收门槛（实施中） |
 | `docs/tui-v0.1.x-design.md`（仅目标版本设计期存在） | 在途版本的生命周期/协议设计细节；版本落地后并入 architecture 并删除，历史只留 git |

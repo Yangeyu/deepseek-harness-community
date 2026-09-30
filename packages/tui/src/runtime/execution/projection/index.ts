@@ -18,7 +18,7 @@ export type {
   StepModelCall,
 } from './model-call.ts'
 
-export { installPromptProjection, isAcceptedPromptEvent, projectPromptNode } from './host.ts'
+export { installPromptProjection, isAcceptedPromptEvent, projectPromptNodes } from './host.ts'
 export {
   commandExecutionKey,
   promptExecutionKey,

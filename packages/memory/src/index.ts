@@ -168,32 +168,8 @@ function textOf(blocks: readonly ContentBlock[]): string {
 }
 
 function latestPublishedMemory(agent: Agent): string | undefined {
-  const surface = new Set(agent.session.surface.nodes)
-  const event = agent.session.snapshotEvents().findLast(candidate => candidate.type === 'user/message'
-    && surface.has(candidate.seq)
-    && candidate.data.source.kind === 'plugin'
-    && candidate.data.source.plugin === PLUGIN_NAME)
-  return event?.type === 'user/message' ? textOf(event.data.content).trim() : undefined
-}
-
-function learningInputForTurn(session: Session, turn: number, maxBytes: number): ReturnType<typeof buildLearningInput> {
-  const events = session.snapshotEvents()
-  const start = events.findIndex(event => event.type === 'turn/start' && event.data.turn === turn)
-  if (start === -1) return undefined
-  const rows: LearningRow[] = []
-  for (const event of events.slice(start + 1)) {
-    if (event.type === 'turn/end' && event.data.turn === turn) break
-    if (event.type === 'user/message' && event.data.source.kind === 'user') {
-      const text = textOf(event.data.content)
-      if (text !== '') rows.push({ role: 'user', text })
-    }
-    if (event.type === 'assistant/message' && event.data.turn === turn) {
-      const text = textOf(event.data.message.content)
-      if (text !== '') rows.push({ role: 'assistant', text })
-    }
-  }
-  // Reserve the surrounding array for a batch containing this complete turn.
-  return buildLearningInput(turn, rows, maxBytes - 2)
+  const message = agent.session.deriveMessages().findLast(message => message.source.kind === PLUGIN_NAME)
+  return message === undefined ? undefined : textOf(message.content).trim()
 }
 
 async function whenIdle(agent: Agent, signal: AbortSignal): Promise<void> {
@@ -222,7 +198,7 @@ function extractionPrompt(candidate: LearningCandidate): UserMessage {
   ].join('\n')
   return createUserMessage({
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: PLUGIN_NAME },
+    source: { kind: PLUGIN_NAME },
   })
 }
 
@@ -484,7 +460,7 @@ export class ProjectMemoryService extends Service {
             ...decision.messages,
             createUserMessage({
               content: [{ type: 'text', text: MEMORY_CLEARED }],
-              source: { kind: 'plugin', plugin: PLUGIN_NAME },
+              source: { kind: PLUGIN_NAME },
             }),
           ],
         }
@@ -509,8 +485,7 @@ export class ProjectMemoryService extends Service {
           createUserMessage({
             content: [{ type: 'text', text }],
             source: {
-              kind: 'plugin',
-              plugin: PLUGIN_NAME,
+              kind: PLUGIN_NAME,
               form: 'snapshot',
               sections: [{ name: 'memory', text }],
             },
@@ -524,18 +499,32 @@ export class ProjectMemoryService extends Service {
     this.ctx.on('agent/disposed', ({ agent }) => {
       this.learningQueues.get(String(agent.id))?.controller.abort(new Error('memory source agent disposed'))
     })
+    const turns = new WeakMap<Session, { turn: number; rows: LearningRow[] }>()
     this.ctx.on('session/event', (session, event) => {
       if (this.lifecycle.signal.aborted || session.header.origin === 'subagent') return
       if (event.type === 'turn/start') {
         this.learningQueues.get(String(session.id))?.attempt?.abort(new Error('memory learning yields to foreground work'))
+        turns.set(session, { turn: event.data.turn, rows: [] })
         return
       }
-      if (event.type !== 'turn/end' || event.data.reason.kind !== 'completed') return
+      const turn = turns.get(session)
+      if (turn === undefined) return
+      if (event.type === 'user/message' && event.data.source.kind === 'user') {
+        const text = textOf(event.data.content)
+        if (text !== '') turn.rows.push({ role: 'user', text })
+      }
+      if (event.type === 'assistant/message' && event.data.turn === turn.turn) {
+        const text = textOf(event.data.message.content)
+        if (text !== '') turn.rows.push({ role: 'assistant', text })
+      }
+      if (event.type !== 'turn/end') return
+      turns.delete(session)
+      if (event.data.reason.kind !== 'completed') return
       const agent = this.ctx.agents.get(session.id)
       if (agent === undefined) return
-      const transcript = learningInputForTurn(session, event.data.turn, this.config.extractionMaxInputBytes)
+      const transcript = buildLearningInput(turn.turn, turn.rows, this.config.extractionMaxInputBytes - 2)
       if (transcript === undefined) return
-      this.enqueueLearning({ agent, sessionId: String(session.id), turn: event.data.turn, cwd: session.header.cwd ?? process.cwd(), transcript })
+      this.enqueueLearning({ agent, sessionId: String(session.id), turn: turn.turn, cwd: session.header.cwd ?? process.cwd(), transcript })
     })
   }
 
@@ -679,3 +668,9 @@ export class ProjectMemoryService extends Service {
 }
 
 export default ProjectMemoryService
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'community-memory': { readonly kind: 'community-memory' } & import('@deepseek-ai/dsh-llm').ContextFormed
+  }
+}

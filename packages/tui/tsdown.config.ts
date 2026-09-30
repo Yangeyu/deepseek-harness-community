@@ -1,9 +1,10 @@
+import { parse } from 'yaml'
 import { defineConfig } from 'tsdown'
 import { copyFile, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/bailian.ts', 'src/memory.ts', 'src/vision.ts', 'src/web.ts'],
+  entry: ['src/index.ts', 'src/bailian.ts', 'src/memory.ts', 'src/vision.ts', 'src/web.ts', 'src/browser.ts', 'src/computer.ts'],
   outDir: 'dist',
   format: ['esm'],
   platform: 'node',
@@ -15,6 +16,7 @@ export default defineConfig({
     async 'build:done'({ options }) {
       const source = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
       const root = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'))
+      const workspace = parse(await readFile(new URL('../../pnpm-workspace.yaml', import.meta.url), 'utf8'))
       const exports = Object.fromEntries(Object.entries(source.exports).map(([key, value]) => [
         key, Object.fromEntries(Object.entries(value as Record<string, string>).map(([condition, path]) => [condition, path.replace('./dist/', './')])),
       ]))
@@ -23,6 +25,7 @@ export default defineConfig({
         name: source.name, version: root.version, private: true, type: 'module',
         main: './index.js', exports,
         dsh: source.dsh,
+        peerDependencies: { '@deepseek-ai/dsh': workspace.catalogs.dsh['@deepseek-ai/dsh'] },
       }, null, 2) + '\n')
     },
   },
@@ -30,6 +33,11 @@ export default defineConfig({
     onlyBundle: false,
     neverBundle: [
       '@deepseek-ai/cordis',
+      '@deepseek-ai/dsh-experimental-browser-use-runtime',
+      '@deepseek-ai/dsh-browser-use',
+      '@deepseek-ai/dsh-computer-use',
+      '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native',
+      'chrome-devtools-mcp',
       '@deepseek-ai/dsh-agent',
       '@deepseek-ai/dsh-api-session-controller',
       '@deepseek-ai/dsh-attachment',

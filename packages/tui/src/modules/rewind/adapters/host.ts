@@ -1,3 +1,5 @@
+import type {} from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import type { Context } from '@deepseek-ai/cordis'
 import type { FsObservation, FsTarget } from '@deepseek-ai/dsh-fs'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
@@ -47,16 +49,14 @@ export function decodeWorkspaceMutation(
   return { kind: 'reversible', targetKey: String(target.targetKey), path: value.path, before: value.before, after: value.after }
 }
 
-function sourceFor(exec: Readonly<ToolExecution>): MutationSource | undefined {
+function sourceFor(ctx: Context, exec: Readonly<ToolExecution>): MutationSource | undefined {
   const agent = exec.agent
   if (agent === undefined) return undefined
-  const call = agent.session.snapshotEvents().findLast(event => (
-    event.type === 'tool/call' && String(event.data.callId) === String(exec.rootCallId)
-  ))
-  if (call === undefined || call.type !== 'tool/call') return undefined
+  const boundary = ctx.sessionProjections.stateOf(agent.session, 'turnBoundary')
+  if (boundary === undefined || boundary.openTurnStartSeq === null) return undefined
   return {
     sessionId: String(agent.session.id),
-    turn: call.data.turn,
+    turn: boundary.lastTurn,
     callId: String(exec.callId),
     rootCallId: String(exec.rootCallId),
     sourceRoot: agent.session.header.cwd ?? process.cwd(),
@@ -66,6 +66,12 @@ function sourceFor(exec: Readonly<ToolExecution>): MutationSource | undefined {
 /** Attribute normalized filesystem outcomes to their originating Agent turn. */
 export function installRewindWorkspaceAdapter(ctx: Context, sink: RewindWorkspaceSink): void {
   const observed = new WeakMap<object, { readonly target: FsTarget; readonly order: number }>()
+  const sources = new WeakMap<object, MutationSource>()
+  ctx.on('tools/pre-execute', (exec, next) => {
+    const source = sourceFor(ctx, exec)
+    if (source !== undefined) sources.set(exec, source)
+    return next()
+  })
   let mutationOrder = 0
   ctx.on('fs/observed', (target: FsTarget, observation: FsObservation, actor: object | undefined) => {
     if (actor !== undefined && observation.kind === 'present') {
@@ -76,8 +82,9 @@ export function installRewindWorkspaceAdapter(ctx: Context, sink: RewindWorkspac
   ctx.on('tools/result', (exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) => {
     const observation = observed.get(exec)
     observed.delete(exec)
+    const source = sources.get(exec)
+    sources.delete(exec)
     if (observation === undefined || result.isError) return
-    const source = sourceFor(exec)
     const outcome = decodeWorkspaceMutation(observation.target, result.value)
     if (source === undefined || outcome === undefined) return
     sink.recordWorkspaceMutation({ ...source, ...outcome, order: observation.order })

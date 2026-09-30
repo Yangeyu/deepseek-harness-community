@@ -1,3 +1,4 @@
+import { queueFromInbox } from '../../../src/runtime/session/inbox.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -30,7 +31,7 @@ import { SessionRuntime } from '../../../src/runtime/session/runtime.ts'
 const require = createRequire(import.meta.url)
 const baseRequire = createRequire(require.resolve('@deepseek-ai/dsh-base/package.json'))
 const { AgentLoop } = await import(pathToFileURL(baseRequire.resolve('@deepseek-ai/dsh-agent-loop')).href) as {
-  AgentLoop: new (ctx: Context, config: { agents: [] }) => unknown
+  AgentLoop: new (ctx: Context, config: { agents: []; maxParallelToolCalls: { get(): number } }) => unknown
 }
 
 const { default: JsonlSessionPersistence } = await import(pathToFileURL(baseRequire.resolve('@deepseek-ai/dsh-session-persistence-jsonl')).href) as {
@@ -76,6 +77,7 @@ async function fixture(root?: string) {
   ctx.provide('tools', { get: () => undefined, register() {} } as never)
   ctx.provide('llm', {
     listProviders: () => [{ id: 'fixture' }],
+    listModels: async () => ['no-network', 'pending', 'later', 'current'].map(id => ({ id, provider: 'fixture' })),
     resolveModelInfo: async (provider: string, model: string) => ({ provider, id: model, inputModalities: ['text', 'image'] }),
     async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {
       proxyRequests.push(request)
@@ -119,7 +121,7 @@ async function fixture(root?: string) {
       maxImagePixels: 1, maxImageDimension: 1, mediaTypes: ['image/png'],
     },
   } as never)
-  ctx.provide('workspaceRegistry', { list: () => [] } as never)
+  ctx.provide('workspaceRegistry', { list: () => [], archivedSessionIds: [] } as never)
   ctx.provide('sessionQuery', {
     async observeSession(id: SessionId) {
       const session = ctx.sessions.get(id)!
@@ -130,7 +132,7 @@ async function fixture(root?: string) {
       }
     },
   } as never)
-  new AgentLoop(ctx, { agents: [] })
+  new AgentLoop(ctx, { agents: [], maxParallelToolCalls: { get: () => 10 } })
   const controller = new SessionController(ctx, { nativeOpen: false })
   const source = (await ctx.agents.create({
     sessionId: SessionId('source'), meta: { cwd: '/workspace' }, agentOptions: { provider: 'fixture', model: 'no-network' },
@@ -157,7 +159,7 @@ async function queue(controller: SessionController, id: SessionId) {
   try {
     const frame = await iterator.next()
     if (frame.done || frame.value.type !== 'baseline') throw new Error('expected control baseline')
-    return frame.value.value.queues[id]!
+    return queueFromInbox(frame.value.value.projections[id]?.values.inbox)
   } finally {
     abort.abort()
     await iterator.return?.()
@@ -316,7 +318,7 @@ describe('TUI interrupt', () => {
       await entered.promise
       stop()
       const context = createUserMessage({
-        content: [{ type: 'text', text: 'CONTEXT' }], source: { kind: 'plugin', plugin: 'fixture' },
+        content: [{ type: 'text', text: 'CONTEXT' }], source: { kind: 'fixture' },
       })
       const first = message('FIRST')
       const second = message('SECOND')
@@ -381,8 +383,7 @@ describe('complete image input', () => {
       const native = host.source.inbox.nextStep[1]!.content.find(block => block.type === 'image')!
 
       const config = { mode: 'proxy' as const, proxyProvider: 'fixture', proxyModel: 'vision', maxObservationChars: 12000, maxTokens: 2048 }
-      host.ctx.provide('settings', { register: () => ({ get: () => config }) } as never)
-      const vision = new VisionService(host.ctx, config)
+      const vision = new VisionService(host.ctx, { get: () => config })
       const proxyDrafts = new AttachmentDraftStore()
       for (const name of ['before.png', 'after.png']) {
         proxyDrafts.complete(proxyDrafts.reserve(), { mediaType: 'image/png', name, data: png, source: 'file' })
@@ -409,7 +410,7 @@ describe('complete image input', () => {
         observation: '[Image #3] shows the old layout; [Image #4] shows the new layout.',
       })
       expect(host.proxyRequests).toHaveLength(1)
-      expect(host.requests[2]!.messages.findLast(message => message.source.kind === 'user')?.content).toEqual(content)
+      expect(host.requests[2]!.messages.findLast(message => message.source?.kind === 'user')?.content).toEqual(content)
       expect(await queue(host.controller, host.source.id)).toEqual([])
       await host.ctx.fiber.dispose()
 
@@ -445,7 +446,7 @@ describe('rewind fork inbox isolation', () => {
       host = await fixture(root)
       host.source.inbox.splice('next-turn', 0, 0, [message('QUEUED')])
       host.source.inbox.splice('next-step', 0, 0, [message('STEERING'), createUserMessage({
-        content: [{ type: 'text', text: 'CONTEXT' }], source: { kind: 'plugin', plugin: 'fixture' },
+        content: [{ type: 'text', text: 'CONTEXT' }], source: { kind: 'fixture' },
       })])
       const sourceEvents = host.source.session.snapshotEvents()
       const sourceQueue = await queue(host.controller, host.source.id)
@@ -469,7 +470,7 @@ describe('rewind fork inbox isolation', () => {
       new SessionStore(reader)
       new SessionProjectionRegistry(reader)
       new SystemPrompt(reader, { includeHarnessIdentity: false, includeRuntimeContext: false })
-      new AgentLoop(reader, { agents: [] })
+      new AgentLoop(reader, { agents: [], maxParallelToolCalls: { get: () => 10 } })
       await reader.agents.create({ sessionId: SessionId('projection-reader') })
       await using handle = await storage.open(child.sessionId, 'read')
       const loaded = await handle.read()
@@ -490,7 +491,7 @@ describe('rewind fork inbox isolation', () => {
     try {
       host.source.inbox.splice('next-turn', 0, 0, [message('OLD')])
       const fresh = createUserMessage({
-        content: [{ type: 'text', text: 'FRESH' }], source: { kind: 'plugin', plugin: 'fixture' },
+        content: [{ type: 'text', text: 'FRESH' }], source: { kind: 'fixture' },
       })
       preset(host.ctx, agent => { agent.inject(fresh) })
       const seen = observeCreation(host.ctx)
@@ -525,7 +526,7 @@ describe('rewind fork inbox isolation', () => {
     }
   })
 
-  it('honors inherited pending selection on first Controller prompt and later switches exactly once', async () => {
+  it('starts a fork with the current default and applies later Controller selections once', async () => {
     const host = await fixture()
     try {
       host.source.session.append('model/selection', { provider: 'fixture', model: 'pending' })
@@ -534,11 +535,7 @@ describe('rewind fork inbox isolation', () => {
       await host.transport.selectModel(child.sessionId, { provider: 'fixture', model: 'later' })
       await prompt(host, child.sessionId, 'SECOND')
       await prompt(host, child.sessionId, 'THIRD')
-      expect(host.configs.map(config => config.model)).toEqual(['pending', 'later', 'later'])
-      const switches = host.ctx.sessions.get(child.sessionId)!.snapshotEvents()
-        .filter(event => event.type === 'user/message' && event.data.source.kind === 'plugin'
-          && event.data.source.plugin === 'model-selection')
-      expect(switches).toHaveLength(2)
+      expect(host.configs.map(config => config.model)).toEqual(['no-network', 'later', 'later'])
       expect(host.errors).toEqual([])
     } finally {
       await host.ctx.fiber.dispose()

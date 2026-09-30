@@ -83,30 +83,22 @@ function output() {
   }
 }
 
-test('seedConfigExamples seeds both guides once, keeps them, and tolerates absence', async () => {
+test('seedConfigExamples seeds the patch guide once, keeps user edits, and tolerates absence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-tui-seed-'))
   const examples = join(root, 'examples')
   await mkdir(examples)
-  await writeFile(join(examples, 'settings.yaml.example'), '# settings guide\n')
   await writeFile(join(examples, 'cordis.patch.yml.example'), '# patch guide\n')
 
   const home = join(root, 'home')
-  assert.equal(seedConfigExamples(home, examples), 2)
-  assert.equal(await readFile(join(home, 'settings.yaml.example'), 'utf8'), '# settings guide\n')
+  assert.equal(seedConfigExamples(home, examples), 1)
   assert.equal(await readFile(join(home, 'cordis.patch.yml.example'), 'utf8'), '# patch guide\n')
 
-  // Never overwrites user-edited guides; partially seeded homes only receive the missing file.
-  await writeFile(join(home, 'settings.yaml.example'), '# edited\n')
+  // Never overwrite user edits.
+  await writeFile(join(home, 'cordis.patch.yml.example'), '# edited\n')
   assert.equal(seedConfigExamples(home, examples), 0)
-  assert.equal(await readFile(join(home, 'settings.yaml.example'), 'utf8'), '# edited\n')
+  assert.equal(await readFile(join(home, 'cordis.patch.yml.example'), 'utf8'), '# edited\n')
 
-  const partial = join(root, 'partial')
-  await mkdir(partial, { recursive: true })
-  await writeFile(join(partial, 'cordis.patch.yml.example'), '# kept\n')
-  assert.equal(seedConfigExamples(partial, examples), 1)
-  assert.equal(await readFile(join(partial, 'cordis.patch.yml.example'), 'utf8'), '# kept\n')
-
-  // A missing examples directory (old installations) seeds nothing and never throws.
+  // A missing examples directory does not block startup.
   assert.equal(seedConfigExamples(join(root, 'other-home'), join(root, 'missing-examples')), 0)
 })
 
@@ -252,7 +244,7 @@ test('the first seed prints a one-time onboarding notice once', async () => {
   assert.equal(await main(['sessions'], { ...options, stderr: first.stream }), 0)
   assert.equal(launches, 1)
   assert.match(first.read(), /reference config guides/)
-  assert.match(first.read(), /settings\.yaml\.example/)
+  assert.match(first.read(), /cordis\.patch\.yml\.example/)
 
   const quiet = output()
   assert.equal(await main(['sessions'], {

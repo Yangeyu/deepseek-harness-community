@@ -1,18 +1,16 @@
-import {
-  PERMISSION_SETTINGS_NAMESPACE,
-  type PermissionSettings,
-} from '@deepseek-ai/dsh-permission-presets'
-import type { SettingsProvider } from '@deepseek-ai/dsh-settings'
+import type { SettingsForms } from '@deepseek-ai/dsh-settings'
+import type { PermissionPresetService } from '@deepseek-ai/dsh-permission-presets'
 import type { PermissionDefaultPort } from '../../modules/configuration/contracts.ts'
 
-/** Write through the official Permission Settings namespace. */
+/** Save configured presets; process contributions such as auto only apply to this Session. */
 export function settingsPermissionDefaultGateway(
-  settings: Pick<SettingsProvider, 'update'>,
+  settings: Pick<SettingsForms, 'update'>,
+  permissions: Pick<PermissionPresetService, 'catalog'>,
 ): PermissionDefaultPort {
   return {
-    setDefaultPreset: preset => settings.update(
-      PERMISSION_SETTINGS_NAMESPACE,
-      { defaultPreset: preset } satisfies PermissionSettings,
-    ),
+    async setDefaultPreset(preset) {
+      if (!permissions.catalog().defaultOptions.some(option => option.value === preset)) return
+      await settings.update('permission', { defaultPreset: preset })
+    },
   }
 }

@@ -11,7 +11,7 @@ dscode（DeepSeek Harness Community 终端）环境与运行故障的诊断参�
    - `tui-bundle`：本安装的社区 bundle 能否解析
    - `profile`：profile 是否指向本安装（见下节）
    - `terminal` / `workspace` / `clipboard`：运行环境基本能力
-3. **配置**：read `settings.yaml` 相关段（schema 与语义见 `guides/docs/configuration.md`）。
+3. **配置**：运行 `dscode config show` 并 read 当前 profile 的 `cordis.patch.yml`（schema 与语义见 `guides/docs/configuration.md`）。
 
 ## 1. 症状 → 排查
 
@@ -56,3 +56,11 @@ dscode（DeepSeek Harness Community 终端）环境与运行故障的诊断参�
 - 不手工编辑 `~/.dsh/profiles/*/node_modules` 或回退链接目录。
 - 不在用户数据上做破坏性实验；疑似上游 bug 先最小复现（clean DSH_HOME）再上报。
 - 凭证问题只引导用户设置环境变量，绝不触碰/转储密钥值。
+
+## Browser Use / Computer Use
+
+- 没有 `mcp__chrome-devtools-mcp__*` / `cua_driver_native__*` 工具：先核对当前 profile 的 `community-browser` / `computer-use-native` 是否启用。环境变量开关只影响本次启动；启用后重启并新建/恢复会话。
+- Chrome 无法连接：确认日常 Chrome 正在运行、版本不低于 144、`chrome://inspect/#remote-debugging` 已启用，并允许 Chrome 自己弹出的连接确认。旧的 `DevToolsActivePort` 文件并不能证明当前端口可用。
+- 一个会话能操作 Chrome，另一个没有工具：同一进程内日常浏览器连接由一个活动 Session 独占。释放该会话后，新建或恢复目标会话；现有被阻塞会话不会自动接管。
+- 桌面权限不足或截图失败：使用 `check_permissions` 的 `prompt: false` 读取当前宿主权限；macOS 权限属于启动 dscode 的终端/宿主。授予权限后重启宿主。原生包依赖可选平台二进制，不要使用 `--omit=optional` 安装。
+- 模型收到图片不可用诊断：当前路线没有声明原生图片输入。切换到可用的图文模型后重试；Vision 代理不会自动转换 Browser/Computer 工具结果里的截图。

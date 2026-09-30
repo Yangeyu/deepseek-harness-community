@@ -1,3 +1,4 @@
+import type { PermissionCatalog } from '@deepseek-ai/dsh-permission-presets/client'
 import type {
   ModelCatalog,
   ModelCatalogFailure,
@@ -40,4 +41,10 @@ export interface ConfigurationCommandPort {
 /** Durable permission preset applied by the Host to future Sessions. */
 export interface PermissionDefaultPort {
   setDefaultPreset(preset: string): Promise<void>
+}
+
+/** Process-wide choices are independent of each Session's durable selection. */
+export interface PermissionCatalogPort {
+  catalog(): PermissionCatalog
+  subscribe(listener: () => void): () => void
 }

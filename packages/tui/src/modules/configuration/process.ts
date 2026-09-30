@@ -16,6 +16,7 @@ import type {
   ConfigurationCommandPort,
   ModelDirectorySnapshot,
   ModelPort,
+  PermissionCatalogPort,
   VisionConfigurationPort,
   WebConfigurationPort,
 } from './contracts.ts'
@@ -40,6 +41,7 @@ export interface ConfigurationSurfacePort {
 
 export interface ConfigurationProcessOptions {
   readonly session: ConfigurationSessionPort
+  readonly permissionCatalog?: PermissionCatalogPort
   readonly models: ModelPort
   readonly commands: ConfigurationCommandPort
   readonly surfaces: ConfigurationSurfacePort
@@ -67,6 +69,12 @@ export class ConfigurationProcess {
     this.effects = new ScopedEffectRunner(options.scope, (error) => {
       options.session.notice(error instanceof Error ? error.message : String(error))
     })
+    if (options.permissionCatalog !== undefined) {
+      options.scope.onDispose(options.permissionCatalog.subscribe(() => {
+        this.configView?.setSnapshot(this.snapshot())
+        options.invalidate()
+      }))
+    }
     this.visionStatus = options.vision === undefined ? undefined : {
       config: options.vision.config,
       proxyRegistered: false,
@@ -334,6 +342,7 @@ export class ConfigurationProcess {
       this.details,
       this.visionStatus,
       this.options.web === undefined ? undefined : this.webStatus ?? null,
+      this.options.permissionCatalog?.catalog(),
     )
   }
 

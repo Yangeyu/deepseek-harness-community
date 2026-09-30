@@ -97,7 +97,7 @@ export interface RewindPointInput {
 
 /** Canonical Prompt checkpoints projected from the active Session log. */
 export interface RewindConversationHistory {
-  list(sessionId: string): readonly RewindPointInput[]
+  list(sessionId: string): Promise<readonly RewindPointInput[]>
 }
 
 /** Lightweight row for one user-turn rewind boundary. */
@@ -147,7 +147,7 @@ export type RewindCompensation = () => Promise<void>
 export interface RewindPort {
   activate(sessionId: string, workspaceRoot: string): Promise<void>
   settle(sessionId: string): Promise<void>
-  list(sessionId: string): RewindPointSummary[]
+  list(sessionId: string): Promise<RewindPointSummary[]>
   plan(sessionId: string, pointId: string): Promise<RewindPlan>
   restore(plan: RewindPlan): Promise<RewindCompensation>
   commit(plan: RewindPlan, action: RewindAction, targetSessionId?: string): Promise<void>

@@ -25,9 +25,7 @@ function parentBoundary(entry: HistoryEntry): ExecutionBoundary {
 
 function toolResultFailed(entry: HistoryEntry): boolean {
   if (entry.event.type !== 'tool/result') return false
-  return entry.event.data.error !== undefined || entry.event.data.message.content.some(
-    block => block.type === 'tool-result' && block.isError === true,
-  )
+  return entry.event.data.error !== undefined || entry.event.data.message.isError === true
 }
 
 function declareStepParent(reducer: ExecutionReducer, turn: number, step: number): void {

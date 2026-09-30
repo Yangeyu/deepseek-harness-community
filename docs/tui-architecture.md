@@ -171,6 +171,8 @@ refer to `catalog:dsh`; changing that scalar followed by ordinary
 private parts of one distribution, so they intentionally bind to the same
 exact runtime rather than maintaining separately published compatibility
 ranges. `pnpm pack` resolves the catalog protocol in the public root manifest.
+内部 bundle 使用相对产物入口，生成的 manifest 从同一 catalog 声明运行时 peer。
+工作区禁止 hoist 社区源码包，避免上游安装优先解析把源码清单当作可运行插件。
 Official base services that resolve from the profile root remain explicit host
 dependencies even when the community patch does not configure them.
 
@@ -183,10 +185,10 @@ runtime closure.
 
 ## Upstream DSH alignment and community extension ownership
 
-当前统一使用 `@deepseek-ai/dsh@0.1.5-rc.2`。工作区 catalog 是唯一版本来源，
+当前统一使用 `@deepseek-ai/dsh@0.2.0-rc.2`。工作区 catalog 是唯一版本来源，
 直接 DSH 依赖共享同一精确版本，lockfile 解析对应的传递依赖与 peer 图。
 
-Session V3 keeps `system/message` on the model-visible surface and stores each
+Session V4 keeps `system/message` on the model-visible surface and stores each
 Assistant attempt as one `assistant/message` or `assistant/attempt` settlement
 with its compact timed stream. The TUI opts into Controller `assistant-stream`
 frames for live output. `SessionRuntime` owns that process-local presentation for
@@ -203,6 +205,50 @@ work; text deltas and animation ticks reuse that history projection.
 The Controller requires the official Connection registry and file-upload service.
 The community bundle mounts both; without a Web server the Connection registry
 provides no HTTP listener. The TUI continues to call the Controller in-process.
+
+### 当前上游契约
+
+- DeepSeek 搜索复用上游公开 `DeepSeekSearchProvider`，读取上游插件的有效配置；账户路线通过账户服务的目标地址校验取 token，其余路线使用 API key。上游 WebRuntime 尚未提供按 provider ID 调用接口，社区选择器保留这一职责明确的适配边界。
+- Config 是运行值的唯一所有者。百炼、Vision、Web 使用 Volatile Config；Settings Forms 仅投影可编辑字段，经 Config Editor 写当前 profile patch。百炼在 Loader 配置验收时检查跨字段约束，模型请求绑定一份完整配置快照。直接编辑 patch 的生效方式见用户配置指南。
+- V4 工具结果是独立 `role: tool` 消息，`toolCallId`、`isError` 在消息顶层，正文直接位于 `content`。请求序列化、Transcript、工具 presenter 和 Request 检查共用这一结构；developer 消息按 provider 能力编码。
+- 插件来源通过 `MessageSourceMap` 声明自己的 kind；Memory 与 Vision 分别使用 `community-memory`、`community-vision`。
+- 权限可选项与默认值来自进程级 `permissionPresets.catalog()`，会话投影只持有 `currentValue`；目录事件刷新已打开的配置视图。默认值写 `permission` 条目，运行时贡献不写成默认。
+- Session Controller 的 inbox 投影是排队状态来源。会话列表沿用上游 SessionSummary 与其投影提示；PTC 执行由 base 的 `ptc-runtime` / `workflow-ptc` 装配，不再额外挂载执行器。
+- Prompt 的实时边界由 Host Projection Registry 折叠固定大小状态；Rewind 的异步历史列表通过 Session Query 读取同一事实并释放 observation。文件变更在工具执行前读取上游 `turnBoundary`，将回合与根调用身份绑定到本次执行。结果归入已准入回合的变更日志；仅在当前回合尚未归属活动回退链时，通过 Query 恢复检查点并接管归属，避免每次文件变更重新扫描历史。
+- Memory 从 canonical messages 判断已注入内容；只收集当前回合的用户与 assistant 文本，回合结束即释放收集状态。学习的前台优先、取消和工具写入语义保持一致。
+
+### Browser Use 与 Computer Use
+
+社区 bundle 提供两个独立启用的实验性入口：`community-browser` 与
+`computer-use-native`。开关只决定是否装配，不在运行失败后切换其他驱动。
+默认关闭，可通过 `DSH_BROWSER_USE=1` / `DSH_COMPUTER_USE=1` 单次启用，或在
+profile patch 设置相应条目的 `disabled: false` 并重启。
+
+- `src/browser.ts` 组合上游 BrowserUse registry 与公开 `mountSessionMcp`。
+  Chrome DevTools MCP 版本固定为当前官方 provider 使用的版本；仅补充其 DSH
+  配置尚未暴露的 `--autoConnect` 启动参数，连接用户日常 Chrome。禁用使用统计
+  和 CrUX 外部请求。工具目录、串行执行、Session 独占、取消、MCP 资源及释放均
+  归上游运行时，不复制浏览器生命周期。关闭连接保留外部 Chrome。
+- `src/computer.ts` 只组合上游 ComputerUse registry 与 Cua Driver Native。
+  平台二进制、工具 schema、桌面权限、截图与关闭语义由官方 provider/SDK 负责。
+  桌面由系统共享；多个 Session 不拥有隔离桌面。已送达的输入不随取消或 Rewind 撤销。
+- 两个入口相对 bundle 解析其依赖，开发与打包使用同一装配；不依赖 pnpm 的
+  间接 hoist 才能找到插件。工具及图像结果走现有 V4 执行/附件/展示链路。
+  模型原生图片能力仍是工具截图的准入条件，Vision 不自动代理工具截图。
+
+### 上游能力在终端中的边界
+
+| 能力 | 当前终端集成 |
+|---|---|
+| Config Editor / Settings / 权限目录 | 配置热更新、profile 持久化与进程目录已接入 |
+| PTC / workflow | 直接使用 base 的 Node 执行器和 workflow 工具 |
+| MCP 资源、指令 | base 提供通用能力；Browser 连接由官方 runtime 限定 Session 归属 |
+| 图片卸载压缩、Session Query/投影缓存 | 由 base 装配；社区消费规范消息与投影，不另建存储 |
+| 插件管理 | 沿上游 CLI、Settings 与模型工具；不额外提供第二套包管理 |
+| Browser / Computer | 随包可选启用，具体宿主权限与连接由实际运行验证 |
+| DeepSeek 账户 | base 包含账户服务与模型路线；账户登录要求 Web/Desktop callback origin，终端尚未实现该交互面，`/connect` 继续提供已接入的 Codex 流程 |
+| HMR | 社区部署关闭文件 HMR，源码构建后重启；运行中受支持的 Config 热更新由 Loader 处理 |
+| Web/Desktop UI | 属于其他 profile，不并入 TUI |
 
 ### 中断后发送 steering
 
@@ -291,9 +337,9 @@ spinner 仍只属于全局状态栏，`Ctrl+G` 回到最新提示仍在同一状
 | Bailian | Provider capabilities and DashScope request/response translation. |
 | Memory | Durable Markdown facts, direct Session reads, and persona-prefix registration for its learning Agent. |
 | Vision | 代理模型路由、结构化观察结果与 `inspect_image`；不提交 Session 消息。原生能力由 Host 提供，图片存储由官方 Attachment 服务负责。 |
-| Web | Tavily adapters and settings-backed provider selection; official Web tools own search/fetch contracts. |
+| Web | Tavily adapters and Config-backed provider selection; official Web tools own search/fetch contracts. |
 
-Upstream owns migration of older sessions to V3. Opening an existing session with
+Upstream owns migration of older sessions to V4. Opening an existing session with
 this runtime can migrate it; the older runtime cannot read the migrated format.
 Upgrade validation uses an isolated `DSH_HOME`. Development remains build-and-run
 with manual restart via `npm run dev`.
@@ -774,7 +820,7 @@ scope 持有；组件安装完成后请求首帧，实际终端输入与输出�
   代理附件由 Vision 调用官方存储保存、本地读取时再次校验；上游 Controller 的附件授权
   不扫描文本中的引用，因此不把这份文本契约冒充原生图片附件授权。
 - Bailian composition resolves one configuration snapshot after each accepted
-  settings change; Settings owns validation and last-good fallback.
+  Config update; Loader validation rejects invalid updates before publishing Volatile values.
   `BailianAdapter` binds resolved model metadata and request dispatch through
   `prepareCall`, so a live settings change cannot combine one generation's
   capabilities with another generation's endpoint or credential reference.
@@ -1112,7 +1158,7 @@ service/store 的 `write` 与 `forget` 返回表示文件是否改变的 `boolea
   store before atomic replacement. Missing files use deployment defaults;
   unreadable or malformed files fail explicitly. Restoring the same session id
   restores its selection. New ids, including forks, use deployment defaults.
-- 当前 rc1 Session append API 不能将下游事件标记为 `ignorable`，持久化也拒绝未知 required 事件，因此 Memory policy 由社区 Host 服务文件持有，不包含在单独的 Session-log 导出中。回退代码或会话不改写长期记忆和已保存的会话开关。
+- 当前 Session append API 不能将下游事件标记为 `ignorable`，持久化也拒绝未知 required 事件，因此 Memory policy 由社区 Host 服务文件持有，不包含在单独的 Session-log 导出中。回退代码或会话不改写长期记忆和已保存的会话开关。
 - `policy()` and `setPolicy()` are asynchronous. The TUI sends a partial change
   and displays the acknowledged result or pending state. After a failed change,
   it reads the current Host policy and displays it alongside the operation error.

@@ -143,7 +143,7 @@ class FakeSessionTransport implements SessionTransport {
 
   forkSession(): Promise<{ readonly sessionId: SessionId }> {
     const forked = sessionId('session-forked')
-    this.summaries.push({ sessionId: forked, updatedAt: Date.now(), running: false, blank: false, cwd: '/workspace' })
+    this.summaries.push({ sessionId: forked, updatedAt: Date.now(), running: false, agentAvailable: true, blank: false, cwd: '/workspace' })
     return Promise.resolve({ sessionId: forked })
   }
 
@@ -407,7 +407,7 @@ describe('SessionManager', () => {
     transport.projections.set('session-1', baseline(3, {
       modelSelection: { lastUsed: transport.modelCatalogValue.default, next: selection },
     }))
-    transport.summaries.push({ sessionId: sessionId(target), updatedAt: 0, running: false, blank: false })
+    transport.summaries.push({ sessionId: sessionId(target), updatedAt: 0, running: false, agentAvailable: true, blank: false })
     const { manager } = await startFixture(transport)
 
     await manager.rewind({

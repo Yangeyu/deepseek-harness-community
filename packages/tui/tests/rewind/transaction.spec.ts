@@ -19,7 +19,7 @@ function rewindPort(overrides: Partial<RewindPort> = {}): RewindPort {
   return {
     activate: vi.fn(async () => {}),
     settle: vi.fn(async () => {}),
-    list: vi.fn(() => []),
+    list: vi.fn(async () => []),
     plan: vi.fn(async () => plan()),
     restore: vi.fn(async () => async () => {}),
     commit: vi.fn(async () => {}),
@@ -30,7 +30,7 @@ function rewindPort(overrides: Partial<RewindPort> = {}): RewindPort {
 
 describe('RewindTransaction', () => {
   it('settles workspace ingestion before listing points', async () => {
-    const rewind = rewindPort({ list: vi.fn(() => []) })
+    const rewind = rewindPort({ list: vi.fn(async () => []) })
     const transaction = new RewindTransaction(rewind, { rewind: vi.fn(async () => 'forked') })
 
     await transaction.list('session', '/workspace')

@@ -162,7 +162,7 @@ export function createInspectImageTool(options: InspectImageToolOptions): ToolDe
       if (exec.parent !== undefined) {
         exec.deferContext(createUserMessage({
           content: inspectionContent(value),
-          source: { kind: 'plugin', plugin: PLUGIN_NAME },
+          source: { kind: PLUGIN_NAME },
         }))
       }
       return value

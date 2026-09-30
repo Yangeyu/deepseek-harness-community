@@ -115,25 +115,30 @@ export class RewindService implements RewindPort, RewindPointSink, RewindWorkspa
   }
 
   private async ingestWorkspaceMutation(input: WorkspaceMutationInput): Promise<void> {
-    const history = this.points(input.sessionId)
-    const point = history.find(candidate => candidate.turn === input.turn)
-    if (point === undefined) return
-    try {
-      await this.activate(input.sessionId, point.workspaceRoot)
-    } catch {
-      // Keep process-local Rewind available when durable state cannot be loaded.
+    let claimedRoot: string | undefined
+    if (!this.journal.ownsTurn(input.sessionId, input.turn)) {
+      const history = await this.points(input.sessionId)
+      const point = history.find(candidate => candidate.turn === input.turn)
+      if (point === undefined) return
+      try {
+        await this.activate(input.sessionId, point.workspaceRoot)
+      } catch {
+        // Keep process-local Rewind available when durable state cannot be loaded.
+      }
+      const claimed = this.journal.claim(input.sessionId, history)
+      if (claimed.changed) claimedRoot = claimed.workspaceRoot
     }
     const canonical = this.workspace.canonicalizeMutation(input)
-    const claimed = this.journal.claim(input.sessionId, history)
     const result = this.journal.recordWorkspaceMutation(input, canonical)
-    if (claimed.changed || result.recorded) {
+    const changedRoot = result.workspaceRoot ?? claimedRoot
+    if (changedRoot !== undefined) {
       this.prepared.clear()
-      void this.persist(result.workspaceRoot ?? claimed.workspaceRoot)
+      void this.persist(changedRoot)
     }
   }
 
-  list(sessionId: string): RewindPointSummary[] {
-    const points = this.points(sessionId)
+  async list(sessionId: string): Promise<RewindPointSummary[]> {
+    const points = await this.points(sessionId)
     if (points.length === 0) throw new Error('no rewind point is available for this session')
     const effectsByPoint = new Map(this.journal.activePoints(sessionId).map(point => [point.id, point]))
     return points.map((point) => {
@@ -155,7 +160,7 @@ export class RewindService implements RewindPort, RewindPointSink, RewindWorkspa
 
   async plan(sessionId: string, pointId: string): Promise<RewindPlan> {
     this.invalidatePrepared(sessionId)
-    const point = this.points(sessionId).find(candidate => candidate.pointId === pointId)
+    const point = (await this.points(sessionId)).find(candidate => candidate.pointId === pointId)
     if (point === undefined) throw new Error('the selected rewind point is no longer available')
     const selected = this.journal.selectEffects(sessionId, pointId)
     const code = this.codeSelection(point.workspaceRoot, selected)
@@ -250,9 +255,9 @@ export class RewindService implements RewindPort, RewindPointSink, RewindWorkspa
     }
   }
 
-  private points(sessionId: string): RewindPointInput[] {
+  private async points(sessionId: string): Promise<RewindPointInput[]> {
     const unique = new Map<string, RewindPointInput>()
-    for (const point of this.conversationHistory.list(sessionId)) {
+    for (const point of await this.conversationHistory.list(sessionId)) {
       if (point.sessionId !== sessionId) {
         throw new Error('the active conversation history contains a foreign Rewind checkpoint')
       }

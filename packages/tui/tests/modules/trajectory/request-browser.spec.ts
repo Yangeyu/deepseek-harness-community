@@ -1,3 +1,5 @@
+import { MessageId } from '@deepseek-ai/dsh-llm'
+import type {} from '@vascent/deepseek-harness-memory'
 import { compactCheckpointSource } from '@deepseek-ai/dsh-compaction/checkpoint'
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -13,8 +15,8 @@ type Message = ModelRequestDocument['request']['messages'][number]
 const scopes: LifecycleScope[] = []
 afterEach(async () => { await Promise.all(scopes.splice(0).map(scope => scope.dispose())); vi.restoreAllMocks() })
 
-function message(id: string, text: string, role: Message['role'] = 'user', source: Message['source'] = { kind: 'user' }): Message {
-  return { id, role, source, content: [{ type: 'text', text }] } as Message
+function message(id: string, text: string, role: Exclude<Message['role'], 'tool'> = 'user', source: Message['source'] = { kind: 'user' }): Message {
+  return { id: MessageId(id), role, source, content: [{ type: 'text', text }] } as Message
 }
 
 function available(messages = [message('input', 'Natural first line\nNatural second line')], extra = {}): Extract<ModelRequestAvailability, { status: 'available' }> {
@@ -60,9 +62,9 @@ describe('RequestBrowser', () => {
     const { browser } = setup()
     const descriptor = available([
       message('old', 'Older input'),
-      message('middle', 'Instructions in actual order', 'system', { kind: 'plugin', plugin: 'system-prompt' }),
+      message('middle', 'Instructions in actual order', 'system', { kind: 'system-prompt' }),
       message('latest', 'Newest human input'),
-      message('tail', 'Trailing instructions', 'system', { kind: 'plugin', plugin: 'system-prompt' }),
+      message('tail', 'Trailing instructions', 'system', { kind: 'system-prompt' }),
     ])
     await browser.open(descriptor)
     expect(text(browser)).toContain('› ▾ #3 User input')

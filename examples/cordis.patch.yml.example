@@ -1,27 +1,36 @@
 # ==============================================================================
 # dscode patch 层示例（本文件是参考模板，不会被加载）
 #
-# 安装 dscode 后首次运行时，本文件与 settings.yaml.example 会一起被放到
-# 配置根目录（默认 ~/.dsh，可用环境变量 DSH_HOME 移动）里做用户引导。
-# 真正生效的是同目录的 cordis.patch.yml —— 本文件可以随便改、随便删。
-# ==============================================================================
+# 首次运行放入 $DSH_HOME（默认 ~/.dsh）。模板本身不生效。
+# 把需要的条目去掉注释后加入 profiles/<name>/cordis.patch.yml。
 #
-# ── 分层与优先级（从低到高）────────────────────────────────────────────
-# 1. bundle 层：@deepseek-ai/dsh-base 与 @vascent/deepseek-harness-tui 自带的默认行
-# 2. profile 层：profiles/<name>/cordis.patch.yml（只影响该 profile）
-# 3. 家级层：本目录的 cordis.patch.yml（影响所有 profile，机器级偏好放这里）
-# 4. 一次性覆盖：dscode --patch <file>（临时叠加，级别最高者后写）
+# 合成优先级：bundle 默认 → profile patch → $DSH_HOME/cordis.patch.yml → --patch。
+# 条目通过 id 定位服务；config 整体替换该条目的继承配置，
+# 缺失字段使用插件 schema 默认值。手写时应保留仍需使用的已有字段。
+# /config、/vision、/web 通过上游 Settings 更新同一个 profile patch，Volatile
+# 字段即时生效。直接编辑文件后重启 dscode；社区 profile 不启用文件 HMR。
+# 凭证只写环境变量引用名，密钥通过环境变量或 Harness 凭据库提供。
 #
-# ── 怎么用 ──────────────────────────────────────────────────────────────
-# 把需要的条目（去掉行首 "# "）复制进同目录 cordis.patch.yml，重启 dscode
-# 生效。条目按 id 定位某一行服务，config 会【整体替换】该行配置，缺失的键
-# 回落到该服务的内置默认值。
+# - id: agent-default-model
+#   config:
+#     provider: bailian
+#     model: deepseek-v4-pro-0813
+#     reasoningEffort: high
 #
-# ── 什么时候才用 patch 层 ──────────────────────────────────────────────
-# settings.yaml 能配的（模型、vision、web、键位、权限）一律优先用
-# settings.yaml —— 热更新、不重启。patch 层留给 settings 不覆盖的深水区，
-# 例如按机器资源主动收紧附件准入上限。
-
+# - id: permission
+#   config:
+#     defaultPreset: workspace-write
+#
+# - id: community-web
+#   config:
+#     searchProvider: auto                 # auto | community-tavily | deepseek-official
+#     extractProvider: community-tavily
+#     tavilyApiKeyEnv: TAVILY_API_KEY
+#     tavilySearchDepth: basic
+#     tavilyExtractDepth: basic
+#     tavilyTimeoutSeconds: 30
+#     extractMaxOutputChars: 60000
+#
 # ────────────────────────────────────────────────────────────────────────
 # 附件资源上限（attachment-local 服务）
 # ────────────────────────────────────────────────────────────────────────
@@ -49,7 +58,7 @@
 #     color: true                          # 彩色输出
 
 # ────────────────────────────────────────────────────────────────────────
-# Vision 线路（与 settings.yaml 的 vision 段同构；patch 层会覆盖补丁默认）
+# Vision 图片路线
 # ────────────────────────────────────────────────────────────────────────
 # - id: vision
 #   config:
@@ -58,8 +67,9 @@
 #     proxyModel: qwen3.7-plus
 
 # ────────────────────────────────────────────────────────────────────────
-# 首类 Bailian 模型表（与 settings.yaml 的 llm-bailian 段同构）
+# 首类 Bailian 模型表
 # ────────────────────────────────────────────────────────────────────────
+# 下例替换完整模型表，仅保留列出的模型；按需补齐其他模型。
 # - id: llm-bailian
 #   config:
 #     baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
@@ -76,6 +86,16 @@
 #             low: { enableThinking: true, reasoningEffort: low }
 #             high: { enableThinking: true, reasoningEffort: high }
 #             max: { enableThinking: true, reasoningEffort: max }
+
+# ────────────────────────────────────────────────────────────────────────
+# Browser / Computer Use（实验性；启用后重启）
+# ────────────────────────────────────────────────────────────────────────
+# 日常 Chrome：先在 chrome://inspect/#remote-debugging 开启调试并允许连接。
+# - id: community-browser
+#   disabled: false
+# 桌面：需宿主辅助功能/屏幕录制权限；截图需当前模型原生支持图片输入。
+# - id: computer-use-native
+#   disabled: false
 
 # 模板本身是空补丁列表；把上面的条目复制进 cordis.patch.yml 即成为生效配置。
 []

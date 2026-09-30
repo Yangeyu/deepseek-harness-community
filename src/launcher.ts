@@ -18,9 +18,8 @@ import { diagnose, formatDoctorReport } from './doctor.ts'
 const DEFAULT_PROFILE = 'tui'
 const HEADLESS_PROFILE = 'headless'
 const TUI_PACKAGE = '@vascent/deepseek-harness-tui'
-const SETTINGS_EXAMPLE_FILENAME = 'settings.yaml.example'
 const PATCH_EXAMPLE_FILENAME = 'cordis.patch.yml.example'
-const EXAMPLE_FILENAMES = [SETTINGS_EXAMPLE_FILENAME, PATCH_EXAMPLE_FILENAME]
+const EXAMPLE_FILENAMES = [PATCH_EXAMPLE_FILENAME]
 const require = createRequire(import.meta.url)
 
 interface ProfileManifest {
@@ -34,16 +33,7 @@ interface ProfileManifest {
 type RunPlugin = (args: readonly string[]) => Promise<number>
 type WriteText = (text: string) => unknown
 
-/**
- * Seed the commented example configuration guides into the Harness home the
- * first time they are missing there. These are guidance-only reference files
- * (`settings.yaml.example` teaches the settings document; `cordis.patch.yml.example`
- * teaches the patch layers) and are never loaded, so existing files are never
- * overwritten and users may edit or delete them freely.
- * @param home - the resolved Harness home (`DSH_HOME` or `~/.dsh`).
- * @param examplesDirectory - the installation directory shipping the example files.
- * @returns the number of guide files written (0 when everything already exists or no source).
- */
+/** Seed the reference patch once; user edits are never overwritten. */
 export function seedConfigExamples(home: string, examplesDirectory: string): number {
   let seeded = 0
   for (const filename of EXAMPLE_FILENAMES) {
@@ -290,9 +280,8 @@ export async function main(args: readonly string[], options: LauncherOptions = {
     if (seededGuides > 0) {
       stderr.write(
         'dscode: first run — wrote reference config guides into your home:\n'
-        + `dscode:   ${join(home, SETTINGS_EXAMPLE_FILENAME)} (how to edit settings.yaml; hot-reloaded)\n`
         + `dscode:   ${join(home, PATCH_EXAMPLE_FILENAME)} (profile/patch-layer overrides)\n`
-        + 'dscode: These guides are inert examples; edit settings.yaml to apply changes.\n',
+        + 'dscode: These guides are inert examples; edit your profile cordis.patch.yml or use /config to apply changes.\n',
       )
     }
 

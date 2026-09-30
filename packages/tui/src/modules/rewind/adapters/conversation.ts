@@ -1,28 +1,20 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { projectPromptNode } from '../../../runtime/execution/projection/index.ts'
+import type { SessionId } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-session-query'
+import { projectPromptNodes } from '../../../runtime/execution/projection/index.ts'
 import type { RewindConversationHistory, RewindPointInput } from '../contracts.ts'
 import { rewindPointFromPrompt } from './prompt.ts'
 
-/** Rebuild every turn-entry checkpoint from the canonical append-only Session log. */
-export function rewindPointsFromSession(session: Session): readonly RewindPointInput[] {
-  const points = new Map<string, RewindPointInput>()
-  for (const event of session.snapshotEvents()) {
-    const prompt = projectPromptNode(session, event)
-    if (prompt === undefined) continue
-    const point = rewindPointFromPrompt(prompt)
-    if (point !== undefined) points.set(point.pointId, point)
-  }
-  return [...points.values()].sort((left, right) => left.promptSeq - right.promptSeq)
-}
-
-/** Read Prompt checkpoints from the canonical, already-loaded Host Session log. */
+/** Query owns live and persisted history; Rewind only derives its conversation checkpoints. */
 export class HostRewindConversationHistory implements RewindConversationHistory {
   constructor(private readonly ctx: Context) {}
 
-  list(sessionId: string): readonly RewindPointInput[] {
-    const session = this.ctx.agents.get(sessionId as SessionId)?.session
-    if (session === undefined) throw new Error('the active conversation history is unavailable')
-    return rewindPointsFromSession(session)
+  async list(sessionId: string): Promise<readonly RewindPointInput[]> {
+    using observation = await this.ctx.sessionQuery.observeSession(sessionId as SessionId)
+    return projectPromptNodes(observation.header, observation.events)
+      .flatMap(prompt => {
+        const point = rewindPointFromPrompt(prompt)
+        return point === undefined ? [] : [point]
+      })
   }
 }
