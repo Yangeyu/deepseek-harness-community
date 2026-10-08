@@ -18,6 +18,7 @@ function mountBrowser(ctx: Context): void {
     exclusive: true,
     command: process.execPath,
     args: [
+      fileURLToPath(new URL('./browser-mcp.js', import.meta.url)),
       fileURLToPath(import.meta.resolve('chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js')),
       '--autoConnect',
       '--no-usage-statistics',

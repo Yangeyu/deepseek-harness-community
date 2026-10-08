@@ -225,10 +225,20 @@ provides no HTTP listener. The TUI continues to call the Controller in-process.
 profile patch 设置相应条目的 `disabled: false` 并重启。
 
 - `src/browser.ts` 组合上游 BrowserUse registry 与公开 `mountSessionMcp`。
-  Chrome DevTools MCP 版本固定为当前官方 provider 使用的版本；仅补充其 DSH
+  Chrome DevTools MCP 版本固定为当前官方 provider 使用的版本；补充其 DSH
   配置尚未暴露的 `--autoConnect` 启动参数，连接用户日常 Chrome。禁用使用统计
   和 CrUX 外部请求。工具目录、串行执行、Session 独占、取消、MCP 资源及释放均
   归上游运行时，不复制浏览器生命周期。关闭连接保留外部 Chrome。
+- `infrastructure/browser` 在 stdio MCP 边界为 `click` / `hover` 添加网页 AI 光标。
+  适配器在同一次运行时调用内，通过公开 `evaluate_script` 显示目标提示、执行原工具、
+  按结果结束提示；内部请求不进入模型工具结果。初始化、工具目录、资源、通知与原始
+  工具结果透传，取消同时终止准备中的提示，避免取消后才发出点击。
+  光标为不可交互、对无障碍树隐藏的 Shadow DOM 浮层，跟随目标可见区域中心；
+  外观采用黑色箭头、白色描边和蓝色柔光，无文字标签；点击成功后轻微收缩并淡出，
+  失败或取消时移除，截图前清除。页面导航自然销毁浮层，
+  连接异常中断时由页面内的五秒期限清理。提示失败不改变原工具的执行结果。
+  当前只覆盖顶层网页的元素点击与悬停；iframe、拖拽轨迹、浏览器工具栏不绘制提示。
+  光标表示操作目标，不承诺等同于浏览器实际输入落点，也不跟随用户自己的鼠标。
 - `src/computer.ts` 只组合上游 ComputerUse registry 与 Cua Driver Native。
   平台二进制、工具 schema、桌面权限、截图与关闭语义由官方 provider/SDK 负责。
   桌面由系统共享；多个 Session 不拥有隔离桌面。已送达的输入不随取消或 Rewind 撤销。

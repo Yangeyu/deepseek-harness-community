@@ -4,7 +4,11 @@ import { copyFile, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/bailian.ts', 'src/memory.ts', 'src/vision.ts', 'src/web.ts', 'src/browser.ts', 'src/computer.ts'],
+  entry: {
+    index: 'src/index.ts', bailian: 'src/bailian.ts', memory: 'src/memory.ts',
+    vision: 'src/vision.ts', web: 'src/web.ts', browser: 'src/browser.ts', computer: 'src/computer.ts',
+    'browser-mcp': 'src/infrastructure/browser/browser-mcp.ts',
+  },
   outDir: 'dist',
   format: ['esm'],
   platform: 'node',
