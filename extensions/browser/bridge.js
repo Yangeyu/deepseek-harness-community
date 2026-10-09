@@ -19,6 +19,7 @@ export class BrowserBridge {
       if (!session || session.closed) return
       if (reason === 'target_closed') {
         const target = session.tabs.get(source.tabId)
+        clearInterval(target?.timer)
         session.tabs.delete(source.tabId)
         this.owners.delete(source.tabId)
         if (target) this.event(session, 'Target.detachedFromTarget', { sessionId: target.sessionId, targetId: target.targetId })
@@ -68,7 +69,9 @@ export class BrowserBridge {
           throw new Error('Browser task ended')
         }
         const { targetInfo } = await this.chrome.debugger.sendCommand({ tabId }, 'Target.getTargetInfo')
+        if (session.closed) throw new Error('Browser task ended')
         target.targetId = targetInfo.targetId
+        target.timer = setInterval(() => { void this.cursor(target, 'renew()') }, 5000)
         this.event(session, 'Target.attachedToTarget', {
           sessionId: target.sessionId, targetInfo: { ...targetInfo, attached: true }, waitingForDebugger: false,
         })
@@ -87,6 +90,36 @@ export class BrowserBridge {
     const target = [...session.tabs.values()].find(tab => tab.targetId === targetId)
     if (!target) throw new Error('Tab is not owned by this browser task')
     return target
+  }
+
+  async cursor(target, expression) {
+    let timer
+    try {
+      await Promise.race([
+        this.chrome.debugger.sendCommand({ tabId: target.tabId }, 'Runtime.evaluate', {
+          expression: `document.querySelector('[data-dsh-ai-cursor]')?.cursor?.${expression}`,
+          awaitPromise: true, returnByValue: true,
+        }),
+        new Promise(resolve => { timer = setTimeout(resolve, 800) }),
+      ])
+    } catch { /* Visual failure must not replace Playwright's action result. */ }
+    finally { clearTimeout(timer) }
+  }
+
+  async pointerInput(session, target, params) {
+    // Playwright can send move/down/up concurrently. Keep the actual input behind
+    // its visual arrival, using the exact viewport coordinates chosen by Playwright.
+    const input = (target.input ?? Promise.resolve()).then(async () => {
+      const ownsTarget = () => !session.closed && session.tabs.get(target.tabId) === target
+      if (!ownsTarget()) throw new Error('Browser task ended')
+      if ((params.type === 'mouseMoved' || params.type === 'mousePressed') && Number.isFinite(params.x) && Number.isFinite(params.y)) {
+        await this.cursor(target, `move(${params.x},${params.y},${!params.buttons})`)
+      }
+      if (!ownsTarget()) throw new Error('Browser task ended')
+      return this.chrome.debugger.sendCommand({ tabId: target.tabId }, 'Input.dispatchMouseEvent', params)
+    })
+    target.input = input.catch(() => {})
+    return input
   }
 
   async command(session, { method, params = {}, sessionId }) {
@@ -117,6 +150,7 @@ export class BrowserBridge {
       const tabId = root?.tabId ?? session.children.get(sessionId)
       if (tabId === undefined || this.owners.get(tabId) !== session.client) throw new Error('Unknown browser target session')
       const target = { tabId, ...(!root ? { sessionId } : {}) }
+      if (method === 'Input.dispatchMouseEvent' && root) return this.pointerInput(session, root, params)
       if (method === 'Page.close' && root) {
         return this.command(session, { method: 'Target.closeTarget', params: { targetId: root.targetId } })
       }
@@ -145,6 +179,7 @@ export class BrowserBridge {
         const target = this.target(session, params.targetId)
         await this.chrome.tabs.remove(target.tabId)
         if (session.tabs.delete(target.tabId)) {
+          clearInterval(target.timer)
           this.owners.delete(target.tabId)
           this.event(session, 'Target.detachedFromTarget', { sessionId: target.sessionId, targetId: target.targetId })
         }
@@ -163,8 +198,10 @@ export class BrowserBridge {
     if (!session || session.closed) return
     session.closed = true
     await Promise.all([...session.tabs.values()].map(async target => {
-      await this.chrome.debugger.detach({ tabId: target.tabId }).catch(() => {})
+      clearInterval(target.timer)
       await target.ready?.catch(() => {})
+      await this.cursor(target, 'dispose()')
+      await this.chrome.debugger.detach({ tabId: target.tabId }).catch(() => {})
       if (this.owners.get(target.tabId) === client) this.owners.delete(target.tabId)
     }))
     session.tabs.clear()

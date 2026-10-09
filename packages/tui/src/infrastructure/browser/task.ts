@@ -11,39 +11,20 @@ class BrowserTask {
   private readonly owner = randomUUID()
   private readonly controller = new AbortController()
   private readonly pending = new Set<Promise<void>>()
-  private readonly timer: NodeJS.Timeout
-  private visible = false
   closing?: Promise<void>
 
-  constructor(private readonly ctx: Context, private readonly exec: ToolDispatchExecution) {
-    this.timer = setInterval(() => {
-      if (this.visible) void this.visual('pulse', undefined, undefined, true)
-    }, 5000).unref()
+  constructor(private readonly ctx: Context, private readonly exec: ToolDispatchExecution) {}
+
+  show(signal: AbortSignal): Promise<void> {
+    return this.visual('show', signal)
   }
 
-  async show(signal: AbortSignal, target?: string): Promise<void> {
-    this.visible = true
-    await this.visual('show', signal, target)
-  }
-
-  async clear(): Promise<void> {
-    if (!this.visible) return
-    this.visible = false
-    await this.visual('release', undefined, undefined, true)
-  }
-
-  visual(phase: CursorCommand['phase'], signal?: AbortSignal, target?: string, allPages = false): Promise<void> {
-    const script = cursorScript({ phase, owner: this.owner, expiresAt: Date.now() + 2000 })
-    const name = allPages ? 'browser_run_code_unsafe' : 'browser_evaluate'
-    // This fixed script touches only our own overlay, including on previously selected tabs.
-    const args = allPages
-      ? { code: `async (page) => { await Promise.all(page.context().pages().map(p => p.evaluate(${script}).catch(() => {}))); }` }
-      : { function: script, ...(target ? { target } : {}) }
+  visual(phase: CursorCommand['phase'], signal?: AbortSignal): Promise<void> {
+    const args = { function: cursorScript({ phase, owner: this.owner, expiresAt: Date.now() + 2000 }) }
     const combined = AbortSignal.any([
-      ...(phase === 'release' ? [] : [this.controller.signal]),
-      ...(signal ? [signal] : []), AbortSignal.timeout(2000),
+      this.controller.signal, ...(signal ? [signal] : []), AbortSignal.timeout(2000),
     ])
-    const task = this.execute(name, args, combined).then(() => {}, () => {})
+    const task = this.execute('browser_evaluate', args, combined).then(() => {}, () => {})
     this.pending.add(task)
     void task.finally(() => this.pending.delete(task))
     return task
@@ -67,10 +48,8 @@ class BrowserTask {
 
   finish(disconnect = true): Promise<void> {
     return this.closing ??= (async () => {
-      clearInterval(this.timer)
       this.controller.abort()
       await Promise.all(this.pending)
-      await this.clear()
       if (disconnect) await this.execute('browser_close', {}, AbortSignal.timeout(5000))
     })()
   }
@@ -112,15 +91,14 @@ export function mountBrowserTasks(ctx: Context): void {
       task = new BrowserTask(ctx, exec)
       tasks.set(exec.agent, task)
     }
-    const args = exec.arguments as { target?: string; action?: string }
+    const args = exec.arguments as { action?: string }
     const pointer = name === 'browser_click' || name === 'browser_hover'
     const screenshot = name === 'browser_take_screenshot'
     const closeTab = name === 'browser_tabs' && args.action === 'close'
     const discovery = name === 'browser_list_user_tabs'
     try {
-      if (pointer) await task.show(exec.signal, args.target)
+      if (pointer) await task.show(exec.signal)
       if (screenshot) await task.visual('suspend', exec.signal)
-      if (closeTab) await task.clear()
       exec.signal.throwIfAborted()
       const result = await next()
       if (!result.isError && !closeTab && !discovery) await task.show(exec.signal)

@@ -35,16 +35,16 @@ async function fixture() {
   const action = vi.fn(async () => [{ type: 'text' as const, text: 'Clicked' }])
   const disconnect = vi.fn(async () => {})
   let prepare: ((signal: AbortSignal) => Promise<void>) | undefined
-  for (const name of ['list_user_tabs', 'click', 'take_screenshot', 'evaluate', 'run_code_unsafe', 'close']) {
+  for (const name of ['list_user_tabs', 'click', 'take_screenshot', 'evaluate', 'close']) {
     ctx.tools.register(defineContentToolFixture({
       name: `mcp__playwright__browser_${name}`, description: name,
       parameters: {
-        target: { type: 'string' }, function: { type: 'string' }, code: { type: 'string' },
+        target: { type: 'string' }, function: { type: 'string' },
       },
       async execute(args, exec) {
         if (name === 'list_user_tabs') return []
-        if (name === 'evaluate' || name === 'run_code_unsafe') {
-          const command = JSON.parse((args.function ?? args.code)!.match(/\)\((\{"phase".*?\}), target\)/s)![1]!) as CursorCommand
+        if (name === 'evaluate') {
+          const command = JSON.parse(args.function!.match(/\)\((\{"phase".*?\})\)/s)![1]!) as CursorCommand
           commands.push(command)
           if (command.phase === 'show') await prepare?.(exec.signal)
           return []
@@ -69,29 +69,21 @@ async function fixture() {
   return { ctx, handle, call, commands, action, disconnect, prepare: (fn: typeof prepare) => { prepare = fn } }
 }
 
-it('keeps feedback through thinking and screenshots, and releases it on the actual turn boundary', async () => {
+it('keeps feedback through actions and screenshots, and disconnects on the actual turn boundary', async () => {
   const f = await fixture()
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
   await f.call('list_user_tabs')
   expect(f.commands).toEqual([])
   expect((await f.call()).content).toEqual([{ type: 'text', text: 'Clicked' }])
-  await vi.advanceTimersByTimeAsync(16000)
-  expect(f.commands.filter(command => command.phase === 'pulse')).toHaveLength(3)
-  expect(f.commands.some(command => command.phase === 'release')).toBe(false)
   expect((await f.call('take_screenshot')).content).toEqual([{ type: 'text', text: 'Screenshot result' }])
   expect(f.commands.at(-1)?.phase).toBe('resume')
 
   const owner = f.commands[0]!.owner
   f.handle.agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-  await vi.waitFor(() => expect(f.commands.at(-1)).toMatchObject({ phase: 'release', owner }))
   await vi.waitFor(() => expect(f.disconnect).toHaveBeenCalledTimes(1))
-  const settled = f.commands.length
-  await vi.advanceTimersByTimeAsync(16000)
-  expect(f.commands).toHaveLength(settled)
   await f.call()
   expect(f.commands.at(-1)!.owner).not.toBe(owner)
   await f.handle.dispose()
-  await vi.waitFor(() => expect(f.commands.at(-1)?.phase).toBe('release'))
+  await vi.waitFor(() => expect(f.disconnect).toHaveBeenCalledTimes(2))
 })
 
 it('preserves action errors when visuals fail and prevents a click cancelled during preparation', async () => {
@@ -113,7 +105,7 @@ it('preserves action errors when visuals fail and prevents a click cancelled dur
   cancel.abort()
   expect((await cancelled).isError).toBe(true)
   expect(f.action).toHaveBeenCalledTimes(1)
-  expect(f.commands.at(-1)?.phase).toBe('release')
+  expect(f.disconnect).toHaveBeenCalledTimes(1)
 })
 
 it('waits for the previous task to disconnect before admitting a new turn', async () => {

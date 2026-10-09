@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import { chromium } from 'playwright'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { cursorScript } from '../packages/tui/src/infrastructure/browser/page-cursor.ts'
 
 if (process.platform !== 'darwin') throw new Error('This isolated native-host smoke currently targets macOS Chrome for Testing.')
 const directory = await mkdtemp(join(tmpdir(), 'dscode-background-'))
@@ -17,6 +18,19 @@ const nativeName = `com.dscode.smoke_${process.pid}`
 const nativeManifests = [join(directory, 'profile', 'NativeMessagingHosts', `${nativeName}.json`)]
 const server = createServer((request, response) => {
   response.setHeader('content-type', 'text/html')
+  if (request.url === '/cursor') {
+    response.end(`<style>body{margin:0;height:2200px}button{position:absolute;width:80px;height:40px}
+      #near{left:calc(58vw + 60px);top:55vh}#far{left:20px;top:50px}#below{left:300px;top:1800px}</style>
+      <button id="near">near</button><button id="far">far</button><button id="below">below</button>
+      <script>
+        window.trace=[];window.clicks=[];
+        window.cursorPoint=()=>{const host=document.querySelector('[data-dsh-ai-cursor]');if(!host)return null;
+          const m=new DOMMatrix(host.style.transform);return {x:m.m41,y:m.m42}};
+        document.addEventListener('click',e=>clicks.push({id:e.target.id,x:e.clientX,y:e.clientY,cursor:cursorPoint()}));
+        function sample(){const p=cursorPoint();if(p)trace.push(p);requestAnimationFrame(sample)}requestAnimationFrame(sample);
+      </script>`)
+    return
+  }
   response.end(request.url === '/b' ? '<p>session B</p>' : `<button onclick="this.textContent='clicked'">click me</button>`)
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -117,6 +131,71 @@ try {
   await ok(b, 'close')
   assert.deepEqual(await activeTabs(), originalActive)
   console.log('PASS concurrent sessions, exclusive claims, detach on finish/cancel, preserved user tabs, reconnect and manual stop')
+
+  // Observe actual rendering on a visible tab in this isolated headless browser.
+  // The normal Host injects this same renderer; the MCP-only smoke injects it explicitly.
+  await ok(a, 'navigate', { url: `${url}/cursor` })
+  const page = context.pages().find(page => page.url() === `${url}/cursor`)
+  assert.ok(page)
+  await page.bringToFront()
+  assert.equal(await page.evaluate(() => document.hidden), false)
+  const cursorCommand = phase => cursorScript({ phase, owner: 'smoke', expiresAt: Date.now() + 2000 })
+  await page.evaluate(`(${cursorCommand('show')})()`)
+  async function clickWithTrace(target) {
+    const start = await page.evaluate(() => { window.trace = []; return window.cursorPoint() })
+    await ok(a, 'click', { target })
+    const { trace, click } = await page.evaluate(() => ({ trace: window.trace, click: window.clicks.at(-1) }))
+    assert.ok(Math.hypot(click.x - click.cursor.x, click.y - click.cursor.y) < 1, 'cursor must arrive at the actual click point before input')
+    return { start, trace, click }
+  }
+  const short = await clickWithTrace('#near')
+  assert.ok(short.trace.some(p => Math.hypot(p.x - short.start.x, p.y - short.start.y) > 2 && Math.hypot(p.x - short.click.x, p.y - short.click.y) > 2), 'short motion must render intermediate positions')
+  const long = await clickWithTrace('#far')
+  const dx = long.click.x - long.start.x
+  const dy = long.click.y - long.start.y
+  assert.ok(long.trace.some(p => Math.abs(dx * (p.y - long.start.y) - dy * (p.x - long.start.x)) / Math.hypot(dx, dy) > 5), 'long motion must follow an arc')
+  await clickWithTrace('#below')
+  assert.ok(await page.evaluate(() => scrollY > 0), 'offscreen action should scroll before the cursor moves to its click point')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const began = Date.now()
+  await page.evaluate(() => document.querySelector('[data-dsh-ai-cursor]').cursor.move(100, 100))
+  assert.ok(Date.now() - began < 300, 'reduced motion should not wait for animation')
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  // Headless Chrome reports these tabs as visible; simulate only the visibility signal.
+  await page.evaluate(() => Object.defineProperty(document, 'hidden', { configurable: true, value: true }))
+  assert.deepEqual(await page.evaluate(async () => {
+    const moving = document.querySelector('[data-dsh-ai-cursor]').cursor.move(200, 200)
+    const point = window.cursorPoint()
+    await moving
+    return point
+  }), { x: 200, y: 200 }, 'hidden pages should update immediately without waiting for frames')
+  await page.evaluate(() => { delete document.hidden })
+  const retargeted = await page.evaluate(async () => {
+    const cursor = document.querySelector('[data-dsh-ai-cursor]').cursor
+    const first = cursor.move(600, 300)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const before = window.cursorPoint()
+    const second = cursor.move(100, 400)
+    const after = window.cursorPoint()
+    await Promise.all([first, second])
+    return { before, after, end: window.cursorPoint() }
+  })
+  assert.deepEqual(retargeted.before, retargeted.after, 'retargeting should continue from the currently rendered position')
+  assert.deepEqual(retargeted.end, { x: 100, y: 400 })
+  // Disposing while moving settles the visual and leaves no orphan overlay.
+  await page.evaluate(() => {
+    const cursor = document.querySelector('[data-dsh-ai-cursor]').cursor
+    const moving = cursor.move(600, 300)
+    cursor.dispose()
+    return moving
+  })
+  assert.equal(await page.locator('[data-dsh-ai-cursor]').count(), 0)
+  await page.evaluate(`(${cursorCommand('show')})()`)
+  await new Promise(resolve => setTimeout(resolve, 16000))
+  assert.equal(await page.locator('[data-dsh-ai-cursor]').count(), 1, 'extension renews the cursor without Host tool calls')
+  await ok(a, 'close')
+  assert.equal(await page.locator('[data-dsh-ai-cursor]').count(), 0, 'release clears the cursor before detaching')
+  console.log('PASS cursor short/curved motion, exact click arrival after scrolling, simulated hidden/reduced motion, retargeting, renewal and release')
 } finally {
   await Promise.all(clients.map(client => client.close()))
   await context?.close()

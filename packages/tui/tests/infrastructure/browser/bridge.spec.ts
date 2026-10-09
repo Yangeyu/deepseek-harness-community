@@ -1,6 +1,12 @@
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 
 const { BrowserBridge } = await import(new URL('../../../../../extensions/browser/bridge.js', import.meta.url).href)
+
+const bridges: InstanceType<typeof BrowserBridge>[] = []
+afterEach(async () => {
+  vi.useRealTimers()
+  await Promise.all(bridges.splice(0).map(bridge => bridge.stop()))
+})
 
 function fixture() {
   const detached: number[] = []
@@ -10,7 +16,7 @@ function fixture() {
       onEvent: { addListener() {} }, onDetach: { addListener() {} },
       attach: vi.fn(async () => {}),
       detach: vi.fn(async ({ tabId }: { tabId: number }) => { detached.push(tabId) }),
-      sendCommand: vi.fn(async ({ tabId }: { tabId: number }) => ({ targetInfo: { targetId: `target-${tabId}`, type: 'page' } })),
+      sendCommand: vi.fn(async ({ tabId }: { tabId: number }, _method: string, _params: any): Promise<any> => ({ targetInfo: { targetId: `target-${tabId}`, type: 'page' } })),
     },
     tabs: {
       onCreated: { addListener() {} },
@@ -21,6 +27,7 @@ function fixture() {
     windows: { getAll: vi.fn(async () => [{ id: 1 }]), update: vi.fn(async () => {}) },
   }
   const bridge = new BrowserBridge(chrome, (message: any) => replies.push(message))
+  bridges.push(bridge)
   let id = 0
   const call = async (client: string, method: string, params = {}, sessionId?: string) => {
     const callId = ++id
@@ -65,4 +72,84 @@ it('cleans up a debugger attachment when target initialization fails', async () 
   expect((await f.call('a', 'dscode.claimTab', { tabId: 1 })).error.message).toBe('tab disappeared')
   expect(f.bridge.owners.size).toBe(0)
   expect(f.detached).toContain(1)
+})
+
+it('waits for cursor arrival before forwarding concurrent move, press and release at the actual coordinates', async () => {
+  const f = fixture()
+  await f.call('a', 'dscode.claimTab', { tabId: 1 })
+  const arrival = Promise.withResolvers<void>()
+  const input: any[] = []
+  f.chrome.debugger.sendCommand.mockImplementation(async (_target, method, params) => {
+    if (method === 'Runtime.evaluate') await arrival.promise
+    if (method === 'Input.dispatchMouseEvent') input.push(params)
+    return {}
+  })
+  const events = ['mouseMoved', 'mousePressed', 'mouseReleased'].map(type => ({ type, x: 120, y: 240 }))
+  const pending = events.map(params => f.call('a', 'Input.dispatchMouseEvent', params, 'dscode-tab-1'))
+  await vi.waitFor(() => expect(f.chrome.debugger.sendCommand).toHaveBeenCalledWith(
+    { tabId: 1 }, 'Runtime.evaluate', expect.objectContaining({ expression: expect.stringContaining('move(120,240,true)') }),
+  ))
+  expect(input).toEqual([])
+  arrival.resolve()
+  await Promise.all(pending)
+  expect(input).toEqual(events)
+
+  // A stop while the next visual is pending must not deliver the queued click.
+  const waiting = Promise.withResolvers<void>()
+  f.chrome.debugger.sendCommand.mockImplementationOnce(() => waiting.promise)
+  const cancelled = f.call('a', 'Input.dispatchMouseEvent', { type: 'mousePressed', x: 300, y: 200 }, 'dscode-tab-1')
+  await new Promise(resolve => setImmediate(resolve))
+  await f.bridge.close('a')
+  waiting.resolve()
+  expect((await cancelled).error.message).toBe('Browser task ended')
+  expect(input).toEqual(events)
+})
+
+it('keeps browser input usable when rendering fails or the page stops scheduling animation', async () => {
+  const f = fixture()
+  await f.call('a', 'dscode.claimTab', { tabId: 1 })
+  vi.useFakeTimers()
+  try {
+    const input: string[] = []
+    f.chrome.debugger.sendCommand.mockImplementation(async (_target, method, params) => {
+      if (method === 'Runtime.evaluate') await new Promise(() => {})
+      else input.push(params.type)
+      return {}
+    })
+    const pending = f.call('a', 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: 10, y: 20 }, 'dscode-tab-1')
+    await vi.advanceTimersByTimeAsync(800)
+    expect((await pending).error).toBeUndefined()
+    expect(input).toEqual(['mouseMoved'])
+
+    f.chrome.debugger.sendCommand.mockRejectedValueOnce(new Error('Execution context destroyed'))
+    expect((await f.call('a', 'Input.dispatchMouseEvent', { type: 'mousePressed', x: 10, y: 20 }, 'dscode-tab-1')).error).toBeUndefined()
+    expect(input).toEqual(['mouseMoved', 'mousePressed'])
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('clears the cursor before detaching even when a background renewal is still pending', async () => {
+  const f = fixture()
+  vi.useFakeTimers()
+  try {
+    await f.call('a', 'dscode.claimTab', { tabId: 1 })
+    const lifecycle: string[] = []
+    f.chrome.debugger.sendCommand.mockImplementation(async (_target, _method, params) => {
+      if (params.expression.includes('renew()')) {
+        lifecycle.push('renew')
+        await new Promise(() => {})
+      } else lifecycle.push('clear')
+      return {}
+    })
+    f.chrome.debugger.detach.mockImplementation(async () => { lifecycle.push('detach') })
+    await vi.advanceTimersByTimeAsync(5000)
+    await f.bridge.close('a')
+    expect(lifecycle).toEqual(['renew', 'clear', 'detach'])
+    expect(f.bridge.owners.size).toBe(0)
+    await vi.advanceTimersByTimeAsync(16000)
+    expect(lifecycle).toEqual(['renew', 'clear', 'detach'])
+  } finally {
+    vi.useRealTimers()
+  }
 })
