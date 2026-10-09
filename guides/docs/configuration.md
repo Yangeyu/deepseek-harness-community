@@ -117,41 +117,65 @@ npm run dev
 
 ## 6. Browser Use 与 Computer Use
 
-两个实验性能力随包安装，默认关闭。单次启动可用：
+两个实验性能力随包安装。Browser Use 默认启用，直接运行 `dscode` 或 `pnpm dev`
+即可向 agent 提供浏览器工具，无需额外环境变量。Chrome 需一次安装 dscode Browser 扩展。
+Computer Use 默认关闭，单次启用可用：
 
 ```sh
-DSH_BROWSER_USE=1 DSH_COMPUTER_USE=1 dscode
+DSH_COMPUTER_USE=1 dscode
 # 仓库开发使用相同变量启动 pnpm dev。
 ```
 
-持久启用时，在当前 profile 的 `cordis.patch.yml` 添加以下条目并重启：
+若要关闭 Browser Use，在当前 profile 的 `cordis.patch.yml` 添加以下条目并重启：
 
 ```yaml
 - id: community-browser
-  disabled: false
+  disabled: true
+```
+
+Computer Use 的持久启用配置为：
+
+```yaml
 - id: computer-use-native
   disabled: false
 ```
 
 ### 操作日常 Chrome
 
-`community-browser` 通过 Chrome DevTools MCP 的 `autoConnect` 连接当前用户的
-Chrome Stable，复用已有标签页和登录状态。需要 Chrome 144 或更新版本：在
-`chrome://inspect/#remote-debugging` 开启远程调试，并由用户允许 Chrome 显示的
-连接请求。关闭 dscode 只断开连接，不关闭日常 Chrome。
+先安装本地连接程序（目前支持 macOS、Linux 的 Google Chrome）：
 
-每个活动 Session 有独立的 MCP 连接和工具上下文，同一会话的后续操作复用连接。
-新建、恢复或 Rewind 分支建立自己的连接，不因旧会话仍存在而失去浏览器工具；
-多个 dscode 也各自连接。每次新连接可能弹出 Chrome 授权，同一连接内不逐次授权。
-取消操作或释放一个会话不关闭其他会话的连接。上游运行时负责会话内串行调用、
-取消、MCP 资源与退出清理。标签页和登录状态仍由日常 Chrome 共享，建议并行任务
-使用不同标签页，操作同一页面可能相互影响。Rewind 不回退网页操作，也不恢复旧
-连接的页面选择状态。配置不启动另一个浏览器，也不复制用户 profile。
+```sh
+dscode browser install
+# 仓库开发：pnpm build && node bin/dscode.js browser install
+```
 
-AI 点击或悬停顶层网页元素时，会显示黑色箭头、白色描边和蓝色柔光的光标；点击
-成功后轻微收缩并淡出。提示不阻挡网页点击，也不跟随你的鼠标，无需安装浏览器插件。
-它表示操作目标，暂不显示 iframe 内的光标、拖拽轨迹或浏览器工具栏操作。
-截图前会清除提示；连接异常中断时，残留提示最多五秒后自动消失。
+该命令在 `DSH_HOME/browser/extension` 准备扩展，并注册 Chrome Native Messaging
+宿主，不打开或重启 Chrome。在 `chrome://extensions` 开启开发者模式，选择“加载已解压的
+扩展程序”，加载命令打印的目录。更新安装后，在该页面重新加载 dscode Browser 扩展。
+发布版和开发版共用这一次安装；安装命令将宿主指向运行该命令的构建，切换安装位置后重新执行。
+不要在多个 Chrome profile 同时启用该扩展，连接程序会拒绝模糊的 profile 选择。
+
+无需开启 Chrome 远程调试，也无需 `PLAYWRIGHT_MCP_EXTENSION_TOKEN`。
+启动 `dscode` 或 `pnpm dev` 后可直接让 agent 操作浏览器；工具操作仍服从 dscode 权限策略。
+扩展只通过本机 Native Messaging 和权限受限的本地 socket 通信，不监听网络端口。
+安装授权后不会为每个任务打开连接确认页。点击扩展工具栏图标可停止当前浏览器任务。
+
+页面操作使用上游 Playwright MCP。每个活动 Session 有独立 MCP 子进程；扩展按任务独占
+目标标签页，多个 dscode 可操作不同标签。同一标签被其他任务使用时会明确报错。
+agent 可用 `browser_list_user_tabs` 查找已有登录页面，通过 `browser_claim_tab` 获取控制权，
+再用 `browser_tabs` 选择页面。该选择仅改变 agent 的操作目标，不切换你的前台窗口。
+只有你要求展示页面时，agent 才应调用 `browser_focus_tab`。
+
+任务完成、失败或取消后，清除 AI 光标并解除该任务的调试连接；保留页面、登录状态与其他
+任务的连接。下轮任务后台重连。关闭 dscode 同样释放其连接，不关闭 Chrome。
+Rewind 不撤销网页操作，也不继承旧任务的控制权。任务结束后如果 Chrome 仍显示控制横幅，
+需检查是否还有其他任务或调试工具连接。
+
+AI 光标在操作及思考期间保持显示，点击后停留，截图期间隐藏，任务结束清除。
+样式使用 23×24 CSS 像素黑色箭头、白色描边和蓝色柔光；不阻挡网页点击，也不跟随用户鼠标。
+当前未实现参考端的弹簧运动、iframe 内光标或拖拽轨迹；异常断开残留提示最多十五秒后移除。
+浏览器自身的系统对话框、网页主动弹出的新窗口并不受普通页面操作的后台聚焦策略保证。
+下载位置沿用 Chrome 设置，扩展不会通过浏览器全局命令改写下载策略。
 
 ### 操作桌面
 

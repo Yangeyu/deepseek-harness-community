@@ -219,31 +219,45 @@ provides no HTTP listener. The TUI continues to call the Controller in-process.
 
 ### Browser Use 与 Computer Use
 
-社区 bundle 提供两个独立启用的实验性入口：`community-browser` 与
-`computer-use-native`。开关只决定是否装配，不在运行失败后切换其他驱动。
-默认关闭，可通过 `DSH_BROWSER_USE=1` / `DSH_COMPUTER_USE=1` 单次启用，或在
-profile patch 设置相应条目的 `disabled: false` 并重启。
+社区 bundle 提供两个实验性入口：`community-browser` 默认启用，发布版 `dscode`
+和开发版 `pnpm dev` 使用同一 bundle 默认配置；profile patch 可通过 `disabled: true`
+显式关闭。`computer-use-native` 默认关闭，可通过 `DSH_COMPUTER_USE=1` 单次启用，
+或在 profile patch 设置 `disabled: false` 并重启。开关只决定是否装配，不在运行失败后
+切换其他驱动。
 
-- `src/browser.ts` 组合上游 BrowserUse registry 与公开 `mountSessionMcp`。
-  Chrome DevTools MCP 版本固定为当前官方 provider 使用的版本；补充其 DSH
-  配置尚未暴露的 `--autoConnect` 启动参数，连接用户日常 Chrome。禁用使用统计
-  和 CrUX 外部请求。每个活动 Agent/Session 拥有独立 MCP 子进程、连接和工具上下文，
-  不独占外部 Chrome。新建、恢复与 Rewind 分支统一通过 `agent/created` 初始化；
-  同一活动会话内复用，恢复和分支重新建立，不复制旧连接或页面选择状态。
-  工具目录、会话内串行执行、取消、MCP 资源及释放均归上游运行时，不另建连接管理器。
-  释放会话只关闭其连接，保留其他会话及外部 Chrome；普通回合取消不释放连接。
-  多个 dscode 进程各自使用这套生命周期。标签页、登录状态仍由 Chrome 共享，
-  同时操作同一页面可能相互影响；Rewind 不撤销网页操作。每次新连接可能需要 Chrome 授权。
-- `infrastructure/browser` 在 stdio MCP 边界为 `click` / `hover` 添加网页 AI 光标。
-  适配器在同一次运行时调用内，通过公开 `evaluate_script` 显示目标提示、执行原工具、
-  按结果结束提示；内部请求不进入模型工具结果。初始化、工具目录、资源、通知与原始
-  工具结果透传，取消同时终止准备中的提示，避免取消后才发出点击。
-  光标为不可交互、对无障碍树隐藏的 Shadow DOM 浮层，跟随目标可见区域中心；
-  外观采用黑色箭头、白色描边和蓝色柔光，无文字标签；点击成功后轻微收缩并淡出，
-  失败或取消时移除，截图前清除。页面导航自然销毁浮层，
-  连接异常中断时由页面内的五秒期限清理。提示失败不改变原工具的执行结果。
-  当前只覆盖顶层网页的元素点击与悬停；iframe、拖拽轨迹、浏览器工具栏不绘制提示。
-  光标表示操作目标，不承诺等同于浏览器实际输入落点，也不跟随用户自己的鼠标。
+- `src/browser.ts` 组合上游 BrowserUse registry 与公开 `mountSessionMcp`。每个活动
+  Agent/Session 有独立 MCP 子进程；上游负责工具注册、会话内串行执行、取消和进程释放。
+  `infrastructure/browser/mcp.ts` 通过公开 `createConnection` 及 SDK 的内存 transport
+  复用 Playwright MCP 工具，补充列出用户标签、申请标签和显式聚焦三个扩展专属工具。
+  通过 Playwright 公开 `connectOverCDP(transport)` 接入；不修改依赖或调用其私有 API。
+- `extensions/browser` 是 Chrome Native Messaging 扩展，拥有标签页与任务的唯一归属表。
+  Native host 只转发本地 socket 客户端消息，不持有页面状态。每个连接拥有独立 CDP 视图，
+  同一标签只能由一个任务持有；先预留归属再异步 attach，失败及取消均清理预留和调试连接。
+  普通建页使用 `active: false`，建窗使用 `focused: false`。CDP 的 bring-to-front 与 activate
+  在这个后台 transport 中不改变前台；`browser_focus_tab` 是独立的显式展示操作。
+  Chrome 弹窗、系统对话框不承诺后台呈现。下载沿用用户配置，不改写全局策略。
+- `dscode browser install` 准备稳定路径的扩展和 Native Messaging 宿主清单；用户首次在
+  Chrome 加载扩展，更新后重新加载。宿主仅允许该扩展 ID，socket 目录权限 0700、文件 0600；
+  不监听 TCP，不使用远程调试或连接 token。目前安装入口支持 macOS/Linux 的 Chrome。
+  多个 dscode 进程共享扩展通信入口，各自持有独立任务；多个浏览器 profile 同时连接时报错，
+  不猜测用户想操作的 profile。
+- `infrastructure/browser/task.ts` 只拥有任务反馈与结束清理。它在 Session 已准入的工具调用
+  范围内执行固定浮层脚本；不会递归调度模型工具。普通回合期间保持光标，截图时隐藏；
+  `turn/end`（完成、失败、取消）清除浮层并调用公开 `browser_close`。
+  MCP 适配层在 close 后释放扩展 attachment，而 Session 的 MCP 进程留给下轮后台重连。
+  下一轮等待上一轮清理完成，避免旧任务关闭新连接。用户停止控制后，本轮禁止自动重新接管。
+  进程退出或本地连接断开，扩展释放该客户端所有调试 attachment，保留用户页面。
+- `page-cursor.ts` 使用不可交互、无障碍隐藏的 Shadow DOM 浮层，采用参考桌面端箭头图形、
+  23×24 尺寸、旋转、偏移和双层蓝色光效。点击后停留；未复刻弹簧、弧线或思考摆动。
+  任务拥有独立标识，每五秒续期；页面十五秒失联期限仅清理异常残留，正常结束主动释放。
+  提示失败不改变工具结果；暂不绘制 iframe 内光标、浏览器工具栏操作或拖拽轨迹。
+- 隔离验收脚本 `scripts/browser-smoke.mjs` 在 macOS 启动无头 Chrome for Testing，加载实际
+  扩展、Native host 和打包后的 MCP；仅在临时 profile 注册测试宿主，退出后清理。
+  `pnpm build && pnpm exec playwright install chromium && node scripts/browser-smoke.mjs`
+  验证活动标签不变、点击读回、截图、跨会话标签归属、释放/重连、取消和用户停止；
+  不连接日常 Chrome。已安装扩展的日常 Chrome 另行完成本地测试页访问、点击读回、
+  光标显示及回合结束释放验证；清理测试页前后终端保持前台。完整操作过程的系统焦点
+  连续观测及网页登录业务验收仍未覆盖。
 - `src/computer.ts` 只组合上游 ComputerUse registry 与 Cua Driver Native。
   平台二进制、工具 schema、桌面权限、截图与关闭语义由官方 provider/SDK 负责。
   桌面由系统共享；多个 Session 不拥有隔离桌面。已送达的输入不随取消或 Rewind 撤销。

@@ -1,78 +1,70 @@
 export interface CursorCommand {
-  phase: 'show' | 'click' | 'finish' | 'hide'
-  token?: string
-  expiresAt?: number
+  phase: 'show' | 'pulse' | 'suspend' | 'resume' | 'release'
+  owner: string
+  expiresAt: number
 }
 
 /** Serialized into the page by evaluate_script; keep this function self-contained. */
 function pageCursor(command: CursorCommand, target?: Element): void {
   type CursorHost = HTMLElement & {
-    cursor: { token: string | undefined; dispose(): void; finish(click: boolean): void }
+    cursor: { owner: string; update(command: CursorCommand, target?: Element): void; dispose(): void }
   }
+  if (window !== window.top || Date.now() > command.expiresAt) return
   const previous = document.querySelector<CursorHost>('[data-dsh-ai-cursor]')
-  if (command.phase !== 'show') {
-    if (!previous || (command.token && previous.cursor.token !== command.token)) return
-    if (command.phase === 'hide') previous.cursor.dispose()
-    else previous.cursor.finish(command.phase === 'click')
-    return
-  }
-
-  // UID evaluation runs in the element's frame. Only draw where page-level cleanup
-  // and screenshots can reach the overlay without crossing an origin boundary.
-  if (window !== window.top || !target || Date.now() > command.expiresAt!) return
+  if (previous?.cursor.owner === command.owner) return previous.cursor.update(command, target)
+  // A renewal or cleanup from another Session must never replace its current owner.
+  if (command.phase !== 'show') return
   previous?.cursor.dispose()
+
   const host = document.createElement('div')
-  host.setAttribute('data-dsh-ai-cursor', '')
+  host.setAttribute('data-dsh-ai-cursor', command.owner)
   host.setAttribute('aria-hidden', 'true')
   host.inert = true
   host.style.cssText = 'all:initial!important;position:fixed!important;left:0!important;top:0!important;width:0!important;height:0!important;z-index:2147483647!important;pointer-events:none!important;'
   const shadow = host.attachShadow({ mode: 'closed' })
+  // Desktop browser-agent-cursor: 46x48 source at 23x24 CSS pixels; the two
+  // rotations preserve its resting direction while positioning its hotspot.
   shadow.innerHTML = `
     <style>
-      :host { pointer-events: none; }
-      .pointer { position:absolute;left:-2px;top:-2px;transform-origin:2px 2px;
-        filter:drop-shadow(0 0 6px #339cffe6) drop-shadow(0 0 15px #339cff7a); }
-      :host([data-phase]) .pointer { animation:fade 500ms forwards; }
-      :host([data-phase="click"]) .pointer { animation:press 180ms ease-out,fade 500ms forwards; }
-      @keyframes press { 0%,100% { transform:scale(1); } 40% { transform:scale(.86); } }
-      @keyframes fade { 0%,60% { opacity:1; } 100% { opacity:0; } }
-      @media (prefers-reduced-motion:reduce) {
-        :host([data-phase="click"]) .pointer { animation:fade 500ms forwards; }
-      }
+      :host { pointer-events:none; }
+      .cursor { position:absolute;left:-12px;top:-12px;width:24px;height:24px;
+        transform:rotate(-44deg);transform-origin:12px 12px; }
+      .offset { transform:translate3d(12px,-2.5px,0); }
+      .pointer { display:block;width:23px;height:24px;transform:rotate(44deg);transform-origin:0 0;
+        --glow:#0285ff;
+        filter:drop-shadow(0 0 6px color-mix(in srgb,var(--glow) 90%,transparent))
+          drop-shadow(0 0 15px color-mix(in srgb,var(--glow) 48%,transparent)); }
+      @media(prefers-color-scheme:dark) { .pointer { --glow:#339cff; } }
     </style>
-    <svg class="pointer" width="23" height="24" viewBox="0 0 23 24" xmlns="http://www.w3.org/2000/svg">
-      <path d="M3.1 2.2C2.1 1.8 1.5 2.5 1.9 3.5L8.3 21.1C8.7 22.2 9.6 22.2 10.1 21.1L13.3 14C13.4 13.7 13.7 13.4 14 13.3L21 10.1C22.2 9.6 22.1 8.7 21 8.3Z" fill="#0d0d0d" stroke="white" stroke-width="2" stroke-linejoin="round"/>
-    </svg>`
+    <div class="cursor"><div class="offset"><img class="pointer" alt="" draggable="false"
+      width="23" height="24" src="data:image/png;base64,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"/></div></div>`
 
-  let frame = 0
-  let timer = window.setTimeout(dispose, 5000)
+  let timer = 0
+  let x = Math.round(innerWidth * .58)
+  let y = Math.round(innerHeight * .55)
   function dispose(): void {
-    cancelAnimationFrame(frame)
     clearTimeout(timer)
     host.remove()
   }
-  function position(): void {
-    if (!target!.isConnected) return dispose()
-    const rect = target!.getBoundingClientRect()
-    const left = Math.max(0, rect.left)
-    const right = Math.min(innerWidth, rect.right)
-    const top = Math.max(0, rect.top)
-    const bottom = Math.min(innerHeight, rect.bottom)
-    host.style.setProperty('visibility', right > left && bottom > top ? 'visible' : 'hidden', 'important')
-    host.style.setProperty('transform', `translate(${(left + right) / 2}px, ${(top + bottom) / 2}px)`, 'important')
-    frame = requestAnimationFrame(position)
+  function update(next: CursorCommand, element?: Element): void {
+    if (next.phase === 'release') return dispose()
+    // Renewed while the task is active; bounds residue if the host process is killed.
+    clearTimeout(timer)
+    timer = window.setTimeout(dispose, 15000)
+    if (element?.isConnected) {
+      const rect = element.getBoundingClientRect()
+      x = Math.max(0, Math.min(innerWidth, rect.left + rect.width / 2))
+      y = Math.max(0, Math.min(innerHeight, rect.top + rect.height / 2))
+    }
+    host.style.setProperty('transform', `translate(${x}px, ${y}px)`, 'important')
+    if (next.phase === 'suspend' || next.phase === 'resume') {
+      host.style.setProperty('visibility', next.phase === 'suspend' ? 'hidden' : 'visible', 'important')
+    }
+
   }
-  Object.assign(host, { cursor: {
-    token: command.token,
-    dispose,
-    finish(click: boolean) {
-      host.dataset.phase = click ? 'click' : 'finish'
-      clearTimeout(timer)
-      timer = window.setTimeout(dispose, 520)
-    },
-  } })
+  Object.assign(host, { cursor: { owner: command.owner, update, dispose } })
   document.documentElement.append(host)
-  position()
+  update(command, target)
 }
 
 export function cursorScript(command: CursorCommand): string {

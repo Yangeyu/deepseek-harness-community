@@ -88,11 +88,12 @@
 #             max: { enableThinking: true, reasoningEffort: max }
 
 # ────────────────────────────────────────────────────────────────────────
-# Browser / Computer Use（实验性；启用后重启）
+# Browser / Computer Use（实验性；修改后重启）
 # ────────────────────────────────────────────────────────────────────────
-# 日常 Chrome：先在 chrome://inspect/#remote-debugging 开启调试并允许连接。
+# 日常 Chrome 默认启用；先运行 dscode browser install 并在 Chrome 加载打印目录的扩展。
+# 如需禁用：
 # - id: community-browser
-#   disabled: false
+#   disabled: true
 # 桌面：需宿主辅助功能/屏幕录制权限；截图需当前模型原生支持图片输入。
 # - id: computer-use-native
 #   disabled: false

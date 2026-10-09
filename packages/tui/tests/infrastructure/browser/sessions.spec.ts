@@ -47,6 +47,7 @@ it('keeps new, forked and resumed Sessions independent across cancellation and d
     new SessionProjectionRegistry(ctx)
     new SystemPrompt(ctx, { includeHarnessIdentity: false, includeRuntimeContext: false })
     new ToolRuntime(ctx)
+    ctx.provide('credentials', { resolve: async () => undefined } as never)
     ctx.provide('typert', { lookups: { configure() {} }, contexts: { configureHost() {} } } as never)
     new AgentLoop(ctx, { agents: [], maxParallelToolCalls: { get: () => 10 } })
     await ctx.plugin(Browser)
@@ -54,7 +55,7 @@ it('keeps new, forked and resumed Sessions independent across cancellation and d
     let callId = 0
     const call = (agent: Agent, args: Record<string, unknown> = {}, signal = AbortSignal.timeout(5000)) =>
       ctx.tools.execute({
-        agent, name: 'mcp__chrome-devtools-mcp__page', arguments: args, signal,
+        agent, name: 'mcp__playwright__page', arguments: args, signal,
         callId: `browser-${++callId}` as ToolExecutionInput['callId'],
       })
     const page = async (agent: Agent, args: Record<string, unknown> = {}) => {

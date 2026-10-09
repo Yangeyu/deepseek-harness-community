@@ -14,6 +14,7 @@ Commands:
   resume       Resume a session and optionally submit a prompt
   sessions     List persisted sessions and their status
   exec         Run one non-interactive task through the Harness headless profile
+  browser      Install the background Chrome extension host
   doctor       Inspect the local launcher without changing its profile
   completion   Generate shell completion
   config       Print the effective or default TUI profile composition
@@ -43,6 +44,7 @@ Examples:
 `
 
 const TOPIC_HELP: Record<CliHelpTopic, string> = {
+  browser: `Usage:\n  dscode browser install\n\nInstall the background browser extension files and Chrome native host.\n`,
   resume: `Usage:
   dscode resume <session-id> [options] [prompt...]
   dscode resume --last [options] [prompt...]
@@ -102,6 +104,7 @@ export function renderCliVersion(version: string): string {
 }
 
 const COMPLETION_WORDS = [
+  'browser',
   'resume',
   'sessions',
   'exec',

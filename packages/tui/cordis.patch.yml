@@ -33,7 +33,6 @@
 - insert:
     - id: community-browser
       name: './browser.js'
-      disabled: !!js process.env.DSH_BROWSER_USE !== '1'
 
     - id: computer-use-native
       name: './computer.js'

@@ -71,11 +71,13 @@
     "@deepseek-ai/schemastery": "~3.18.4",
     "@earendil-works/pi-ai": "0.87.1",
     "@earendil-works/pi-tui": "^0.84.2",
-    "chrome-devtools-mcp": "1.9.0",
+    "@playwright/mcp": "0.0.83",
     "cli-highlight": "^2.1.11",
     "diff": "^9.0.0",
     "yaml": "^2.4.2",
-    "zod": "^4.5.4"
+    "zod": "^4.5.4",
+    "playwright": "1.64.0-alpha-1790635538000",
+    "@modelcontextprotocol/sdk": "1.30.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",

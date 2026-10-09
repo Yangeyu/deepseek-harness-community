@@ -1,13 +1,14 @@
 import { parse } from 'yaml'
 import { defineConfig } from 'tsdown'
-import { copyFile, readFile, writeFile } from 'node:fs/promises'
+import { cp, copyFile, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export default defineConfig({
   entry: {
     index: 'src/index.ts', bailian: 'src/bailian.ts', memory: 'src/memory.ts',
+    'browser-mcp': 'src/infrastructure/browser/mcp-entry.ts',
+    'browser-native-host': 'src/infrastructure/browser/native-host.ts',
     vision: 'src/vision.ts', web: 'src/web.ts', browser: 'src/browser.ts', computer: 'src/computer.ts',
-    'browser-mcp': 'src/infrastructure/browser/browser-mcp.ts',
   },
   outDir: 'dist',
   format: ['esm'],
@@ -18,6 +19,7 @@ export default defineConfig({
   fixedExtension: false,
   hooks: {
     async 'build:done'({ options }) {
+      await cp(new URL('../../extensions/browser', import.meta.url), join(options.outDir, 'browser-extension'), { recursive: true })
       const source = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
       const root = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'))
       const workspace = parse(await readFile(new URL('../../pnpm-workspace.yaml', import.meta.url), 'utf8'))
@@ -41,7 +43,7 @@ export default defineConfig({
       '@deepseek-ai/dsh-browser-use',
       '@deepseek-ai/dsh-computer-use',
       '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native',
-      'chrome-devtools-mcp',
+      '@playwright/mcp', 'playwright', '@modelcontextprotocol/sdk',
       '@deepseek-ai/dsh-agent',
       '@deepseek-ai/dsh-api-session-controller',
       '@deepseek-ai/dsh-attachment',

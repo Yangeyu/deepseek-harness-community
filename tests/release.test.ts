@@ -104,6 +104,12 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
     await access(`packages/tui/dist/${typeof target === 'string' ? target : target.default}`)
   }
   assert.equal(await readFile('packages/tui/dist/cordis.patch.yml', 'utf8'), await readFile('packages/tui/cordis.patch.yml', 'utf8'))
+  assert.ok(root.files?.includes('packages/tui/dist/browser-extension/**'))
+  for (const filename of ['manifest.json', 'background.js', 'bridge.js']) {
+    assert.equal(await readFile(`packages/tui/dist/browser-extension/${filename}`, 'utf8'), await readFile(`extensions/browser/${filename}`, 'utf8'))
+  }
+  await access('packages/tui/dist/browser-mcp.js')
+  await access('packages/tui/dist/browser-native-host.js')
 })
 
 test('uses the official pi-tui package without dependency patches', async () => {

@@ -14,6 +14,7 @@ import {
   tuiAppArgs,
 } from '../packages/tui/src/application/cli.ts'
 import { diagnose, formatDoctorReport } from './doctor.ts'
+import { installBrowser } from './browser-setup.ts'
 
 const DEFAULT_PROFILE = 'tui'
 const HEADLESS_PROFILE = 'headless'
@@ -210,6 +211,10 @@ export async function main(args: readonly string[], options: LauncherOptions = {
     const profile = resolveTuiProfile(env)
     const home = resolveDshHome(env)
     const profileDirectory = join(home, 'profiles', profile)
+    if (invocation.kind === 'browser') {
+      stdout.write(await installBrowser(home, pluginDirectory))
+      return 0
+    }
     const childEnv = {
       ...env,
       PATH: `${join(repositoryRoot, 'node_modules', '.bin')}${delimiter}${env.PATH ?? ''}`,

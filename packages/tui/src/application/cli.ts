@@ -1,7 +1,7 @@
 import type { Config } from './config.ts'
 
 export type CompletionShell = 'bash' | 'fish' | 'powershell' | 'zsh'
-export type CliHelpTopic = 'completion' | 'config' | 'doctor' | 'exec' | 'plugin' | 'resume' | 'sessions'
+export type CliHelpTopic = 'browser' | 'completion' | 'config' | 'doctor' | 'exec' | 'plugin' | 'resume' | 'sessions'
 
 export type ResumeTarget =
   | { kind: 'last' }
@@ -38,13 +38,14 @@ export type CliInvocation =
   | { kind: 'help'; topic?: CliHelpTopic }
   | { kind: 'version' }
   | { kind: 'doctor'; json: boolean }
+  | { kind: 'browser' }
   | { kind: 'completion'; shell: CompletionShell }
   | { kind: 'config'; defaults: boolean; patches: readonly string[] }
   | { kind: 'plugin'; args: readonly string[] }
   | { kind: 'exec'; cwd?: string; prompt?: string; patches: readonly string[] }
 
-const COMMANDS = ['resume', 'sessions', 'exec', 'doctor', 'completion', 'config', 'plugin', 'help'] as const
-const HELP_TOPICS = ['resume', 'sessions', 'exec', 'doctor', 'completion', 'config', 'plugin'] as const
+const COMMANDS = ['resume', 'sessions', 'exec', 'doctor', 'browser', 'completion', 'config', 'plugin', 'help'] as const
+const HELP_TOPICS = ['resume', 'sessions', 'exec', 'doctor', 'browser', 'completion', 'config', 'plugin'] as const
 const COMPLETION_SHELLS = ['bash', 'zsh', 'fish', 'powershell'] as const
 const VERSION_FLAGS = ['-v', '-V', '--version'] as const
 const OPTIONS = [
@@ -449,6 +450,10 @@ export function parseCliArgs(args: readonly string[], base: Config = {}): CliInv
 
   const command = leadingCommand(args)
   switch (command?.name) {
+    case 'browser': {
+      if (args.length !== 2 || args[0] !== 'browser' || args[1] !== 'install') throw new CliUsageError('Usage: dscode browser install')
+      return { kind: 'browser' }
+    }
     case 'doctor': return parseDoctor(args, command.index)
     case 'completion': return parseCompletion(args, command.index)
     case 'config': return parseConfig(args, command.index)

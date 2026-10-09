@@ -31,7 +31,7 @@
 ## 核心速览
 
 - **插件条目 ID**（细节见配置文档）：`agent-default-model`（默认模型/provider/effort）、`llm-bailian`（首类 Bailian provider）、`llm-pi-ai`（聚合 provider）、`vision`（`mode` = auto|proxy|disabled）、`community-web`（`searchProvider` = auto|community-tavily|deepseek-official）、`permission`（defaultPreset）。
-- **环境变量**：凭证 `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` / `TAVILY_API_KEY`；隔离 `DSH_HOME`、`DSH_TUI_PROFILE`、`DSH_TOOLS_MODE`、`DSH_PERMISSION_MODE`；实验性能力 `DSH_BROWSER_USE=1`、`DSH_COMPUTER_USE=1`。
+- **环境变量**：凭证 `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` / `TAVILY_API_KEY`；隔离 `DSH_HOME`、`DSH_TUI_PROFILE`、`DSH_TOOLS_MODE`、`DSH_PERMISSION_MODE`；桌面能力 `DSH_COMPUTER_USE=1`。Browser Use 默认启用；首次运行 `dscode browser install` 并加载 dscode Browser 扩展，无需远程调试或 token。可在 profile patch 中禁用 `community-browser`。
 - **斜杠命令**：`/status` `/task` `/trajectory` `/config [section]` `/vision` `/web` `/skills` `/memories` `/rewind` `/model` `/help`。
 - **CLI**：`dscode doctor [--json]`、`dscode sessions`/`resume`、`dscode exec [-C <path>]`、`dscode config show|default`、`dscode plugin <pnpm 参数>`、`--patch <file>`。
 - **社区能力**：首类 Bailian（文本 `deepseek-v4-pro-0813` / 图像 `qwen3.7-plus`）；文本模型或强制代理模式通过 `inspect_image` 走 Vision 代理，原生图文模型直接使用官方图片链路；`web_search` 策略按 `community-web.searchProvider`（auto 语义：有 Tavily key 走 Tavily，否则 DeepSeek Official）；`web_extract` 走 `extractProvider`；Markdown 记忆自动注入 `<memory-context>`。
