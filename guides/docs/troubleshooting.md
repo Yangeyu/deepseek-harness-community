@@ -61,6 +61,6 @@ dscode（DeepSeek Harness Community 终端）环境与运行故障的诊断参�
 
 - 没有 `mcp__chrome-devtools-mcp__*` / `cua_driver_native__*` 工具：先核对当前 profile 的 `community-browser` / `computer-use-native` 是否启用。环境变量开关只影响本次启动；启用后重启并新建/恢复会话。
 - Chrome 无法连接：确认日常 Chrome 正在运行、版本不低于 144、`chrome://inspect/#remote-debugging` 已启用，并允许 Chrome 自己弹出的连接确认。旧的 `DevToolsActivePort` 文件并不能证明当前端口可用。
-- 一个会话能操作 Chrome，另一个没有工具：同一进程内日常浏览器连接由一个活动 Session 独占。释放该会话后，新建或恢复目标会话；现有被阻塞会话不会自动接管。
+- Rewind 后提示 `browser tool belongs to another Session`：更新后重启 dscode 并恢复目标会话。当前版本为每个活动会话建立独立 MCP 连接；仍报错时保留工具原始错误，检查实际运行的版本和 profile 是否已更新。
 - 桌面权限不足或截图失败：使用 `check_permissions` 的 `prompt: false` 读取当前宿主权限；macOS 权限属于启动 dscode 的终端/宿主。授予权限后重启宿主。原生包依赖可选平台二进制，不要使用 `--omit=optional` 安装。
 - 模型收到图片不可用诊断：当前路线没有声明原生图片输入。切换到可用的图文模型后重试；Vision 代理不会自动转换 Browser/Computer 工具结果里的截图。

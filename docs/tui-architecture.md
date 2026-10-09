@@ -227,8 +227,13 @@ profile patch 设置相应条目的 `disabled: false` 并重启。
 - `src/browser.ts` 组合上游 BrowserUse registry 与公开 `mountSessionMcp`。
   Chrome DevTools MCP 版本固定为当前官方 provider 使用的版本；补充其 DSH
   配置尚未暴露的 `--autoConnect` 启动参数，连接用户日常 Chrome。禁用使用统计
-  和 CrUX 外部请求。工具目录、串行执行、Session 独占、取消、MCP 资源及释放均
-  归上游运行时，不复制浏览器生命周期。关闭连接保留外部 Chrome。
+  和 CrUX 外部请求。每个活动 Agent/Session 拥有独立 MCP 子进程、连接和工具上下文，
+  不独占外部 Chrome。新建、恢复与 Rewind 分支统一通过 `agent/created` 初始化；
+  同一活动会话内复用，恢复和分支重新建立，不复制旧连接或页面选择状态。
+  工具目录、会话内串行执行、取消、MCP 资源及释放均归上游运行时，不另建连接管理器。
+  释放会话只关闭其连接，保留其他会话及外部 Chrome；普通回合取消不释放连接。
+  多个 dscode 进程各自使用这套生命周期。标签页、登录状态仍由 Chrome 共享，
+  同时操作同一页面可能相互影响；Rewind 不撤销网页操作。每次新连接可能需要 Chrome 授权。
 - `infrastructure/browser` 在 stdio MCP 边界为 `click` / `hover` 添加网页 AI 光标。
   适配器在同一次运行时调用内，通过公开 `evaluate_script` 显示目标提示、执行原工具、
   按结果结束提示；内部请求不进入模型工具结果。初始化、工具目录、资源、通知与原始

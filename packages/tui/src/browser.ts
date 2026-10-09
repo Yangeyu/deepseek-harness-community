@@ -6,7 +6,7 @@ import { mountSessionMcp } from '@deepseek-ai/dsh-experimental-browser-use-runti
 export const name = 'community-browser'
 export const inject = ['agents', 'tools', 'systemPrompt']
 
-/** Connect daily Chrome; the official runtime owns Session isolation and cleanup. */
+/** Each live Session owns its MCP client; the daily Chrome profile remains shared. */
 export function apply(ctx: Context): void {
   ctx.plugin(BrowserUse)
   ctx.plugin({ name: 'chrome-devtools', inject: ['browserUse'], apply: mountBrowser })
@@ -15,7 +15,7 @@ export function apply(ctx: Context): void {
 function mountBrowser(ctx: Context): void {
   mountSessionMcp(ctx, {
     name: 'chrome-devtools-mcp',
-    exclusive: true,
+    exclusive: false,
     command: process.execPath,
     args: [
       fileURLToPath(new URL('./browser-mcp.js', import.meta.url)),
