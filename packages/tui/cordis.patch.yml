@@ -51,6 +51,12 @@
     fetchProvider: http
 
 - insert:
+    # The base owns userQuestions; the terminal supplies its blocking answerer.
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+      config:
+        mode: legacy
+
     - id: community-browser
       name: './browser.js'
 

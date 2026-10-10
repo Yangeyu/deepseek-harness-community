@@ -1,10 +1,21 @@
+import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import { Context } from '@deepseek-ai/cordis'
+import { AgentRegistry, type InboxWireState } from '@deepseek-ai/dsh-agent'
+import { SessionId as HarnessSessionId, SessionStore } from '@deepseek-ai/dsh-session'
+import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
+import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+import { ToolRuntime } from '@deepseek-ai/dsh-tools'
+import { UserQuestionService } from '@deepseek-ai/dsh-user-questions'
+import { parse } from 'yaml'
 import {
   stripTerminalSequences,
   type Terminal,
 } from '@earendil-works/pi-tui'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { InboxWireState } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, LlmAdapter, LlmRuntime, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { HarnessInteractionSource } from '../../src/infrastructure/harness/interactions.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createApplication,
@@ -223,6 +234,93 @@ function application(
   })
 }
 
+// Use the installed base-owned loop, as in the harness integration fixtures.
+const require = createRequire(import.meta.url)
+const baseRequire = createRequire(require.resolve('@deepseek-ai/dsh-base/package.json'))
+const { AgentLoop } = await import(pathToFileURL(baseRequire.resolve('@deepseek-ai/dsh-agent-loop')).href) as {
+  AgentLoop: new (ctx: Context, config: { agents: []; maxParallelToolCalls: { get(): number } }) => unknown
+}
+
+async function questionApplication(questions: Record<string, unknown>[]) {
+  const ctx = new Context()
+  const requests: GenerateOptions[] = []
+  const errors: unknown[] = []
+  ctx.on('agent/error', ({ error }) => { errors.push(error) })
+  // Exercise real Agent ownership, tool execution and the question waterfall.
+  ctx.provide('typert', { lookups: { configure() {} }, contexts: { configureHost() {} } } as never)
+  new AgentRegistry(ctx)
+  new SessionStore(ctx)
+  new SessionProjectionRegistry(ctx)
+  new SystemPrompt(ctx, { includeHarnessIdentity: false, includeRuntimeContext: false })
+  new ToolRuntime(ctx)
+  new UserQuestionService(ctx)
+  new LlmRuntime(ctx)
+  class QuestionAdapter extends LlmAdapter {
+    async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {
+      requests.push(request)
+      if (requests.length === 1) {
+        const block = {
+          type: 'tool-call' as const, id: ToolCallId('ask-1'),
+          name: 'ask_user_question', arguments: JSON.stringify({ questions }),
+        }
+        yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+        yield { type: 'tool-call-delta', index: 0, id: block.id, name: block.name, argumentsDelta: block.arguments }
+        yield { type: 'block-end', index: 0, block }
+        yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      } else {
+        yield { type: 'block-start', index: 0, blockType: 'text' }
+        yield { type: 'block-end', index: 0, block: { type: 'text', text: 'Preferences received.' } }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    }
+  }
+  ctx.llm.registerAdapter(['fixture'], new QuestionAdapter())
+  new AgentLoop(ctx, { agents: [], maxParallelToolCalls: { get: () => 1 } })
+
+  const terminal = quietTerminal()
+  let input!: (data: string) => void
+  vi.mocked(terminal.start).mockImplementation(onInput => { input = onInput })
+  const host = { ...hostPorts(), interactions: new HarnessInteractionSource(ctx) }
+  const app = application(undefined, undefined, {
+    stdin: { isTTY: true } as NodeJS.ReadStream,
+    stdout: { isTTY: true, write: vi.fn() } as unknown as NodeJS.WriteStream,
+  }, undefined, { terminal }, host)
+  try {
+    // Read the actual bundle entry so a missing or disabled tool fails this test.
+    const patch = parse(await readFile(new URL('../../cordis.patch.yml', import.meta.url), 'utf8'), {
+      customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: (value: string) => value }],
+    }) as Array<{ insert?: Array<{ id: string; name: string; disabled?: boolean; config?: { mode?: 'legacy' | 'timed' } }> }>
+    const entry = patch.flatMap(operation => operation.insert ?? []).find(plugin => plugin.id === 'tool-ask-user')
+    expect(entry).toMatchObject({ name: '@deepseek-ai/dsh-tool-ask-user' })
+    expect(entry?.disabled).not.toBe(true)
+    const plugin = await import(entry!.name) as typeof import('@deepseek-ai/dsh-tool-ask-user')
+    plugin.apply(ctx, entry!.config)
+    const { agent } = await ctx.agents.create({
+      sessionId: HarnessSessionId('questions'), meta: { cwd: '/workspace' },
+      agentOptions: { provider: 'fixture', model: 'scripted' },
+    })
+    host.sessions.createSession = async () => ({ sessionId: agent.id })
+    host.sessions.modelCatalog = async () => ({ default: { provider: 'fixture', model: 'scripted' }, routableProviders: [], groups: [], failures: [] })
+    host.sessions.follow = async function*(_sessionId, _maxMessages, signal) {
+      yield { type: 'snapshot', cursor: -1, page: { events: [], hasMore: false } }
+      if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => { resolve() }, { once: true }))
+    }
+    host.sessions.prompt = async ({ content }) => {
+      agent.followup(createUserMessage({ source: { kind: 'user' }, content: content.map(part => {
+        if (part.type !== 'text') throw new Error('This question fixture accepts text prompts only')
+        return part
+      }) }))
+    }
+    host.sessions.cancel = async () => { agent.cancel({ kind: 'user' }); await agent.whenIdle() }
+    await app.start()
+    return { app, agent, requests, errors, input, dispose: async () => { await app.dispose(); await ctx.fiber.dispose() } }
+  } catch (error) {
+    await app.dispose()
+    await ctx.fiber.dispose()
+    throw error
+  }
+}
+
 function usageApplication(read: ProviderUsagePort['read']): TestApplication {
   const app = application(undefined, undefined, undefined, undefined, { usage: { read } })
   const state = { ...app.session.current, connection: { events: 'online', control: 'online' }, modelCatalog: {
@@ -256,6 +354,82 @@ afterEach(() => {
 })
 
 describe('createApplication integration', () => {
+  it('runs the bundled ask_user_question tool through a terminal answer batch and back into the Agent', async () => {
+    const fixture = await questionApplication([
+      { id: 'language', question: 'Which language?', options: [{ label: 'TypeScript' }, { label: 'Rust' }] },
+      { id: 'checks', question: 'Which checks?', multi_select: true, options: [{ label: 'Lint' }, { label: 'Tests' }] },
+      { id: 'hosting', question: 'Where to deploy?', options: [{ label: 'Cloud' }] },
+      { id: 'notes', question: 'Any constraints?' },
+    ])
+    const { app, agent, requests, errors, input } = fixture
+    const frame = () => app.layout.render(100).map(stripTerminalSequences).join('\n')
+    try {
+      await app.composer.submit('Help configure this project.')
+      await vi.waitFor(() => { expect(frame()).toContain('Which language?') })
+      expect(requests[0]?.tools).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'ask_user_question' })]))
+      const schema = requests[0]!.tools!.find(tool => tool.name === 'ask_user_question')!
+      expect(schema.parameters.properties).not.toHaveProperty('timeout')
+      input('\u001b[B')
+      input('\r')
+      expect(frame()).toContain('Which checks?')
+      input(' ')
+      input('\u001b[B')
+      input(' ')
+      input('\r')
+      expect(frame()).toContain('Where to deploy?')
+      input('\u001b[B')
+      input('\r')
+      expect(frame()).toContain('Other')
+      input('On premises')
+      input('\r')
+      expect(frame()).toContain('Any constraints?')
+      // Legacy mode remains blocked until the whole batch is submitted.
+      expect(requests).toHaveLength(1)
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'tool/result')).toEqual([])
+      input('No external network')
+      input('\r')
+      await agent.whenIdle()
+
+      expect(errors).toEqual([])
+      expect(requests).toHaveLength(2)
+      const result = requests[1]!.messages.find(message => message.role === 'tool')
+      expect(result).toMatchObject({ role: 'tool', toolCallId: 'ask-1', isError: false })
+      const text = result?.content.find(block => block.type === 'text')
+      expect(text?.type).toBe('text')
+      expect(JSON.parse(text!.text)).toEqual({ answers: [
+        { id: 'language', selected: ['Rust'] },
+        { id: 'checks', selected: ['Lint', 'Tests'] },
+        { id: 'hosting', selected: [], custom: 'On premises' },
+        { id: 'notes', selected: [], custom: 'No external network' },
+      ] })
+      expect(app.interactions.active).toBe(false)
+      expect(app.surfaces.active).toBe(false)
+      expect(app.tui.getFocusedComponent()).toBe(app.composer.editor)
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
+  it('interrupts an unanswered ask_user_question from the terminal without fabricating answers', async () => {
+    const fixture = await questionApplication([{ id: 'confirm', question: 'Continue?', options: [{ label: 'Yes' }] }])
+    const { app, agent, requests, input } = fixture
+    try {
+      await app.composer.submit('Ask before continuing.')
+      await vi.waitFor(() => { expect(app.interactions.active).toBe(true) })
+      input('\u001b')
+      await agent.whenIdle()
+      await vi.waitFor(() => { expect(app.interactions.active).toBe(false) })
+      expect(app.surfaces.active).toBe(false)
+      expect(app.tui.getFocusedComponent()).toBe(app.composer.editor)
+      expect(requests).toHaveLength(1)
+      const results = agent.session.snapshotEvents().filter(event => event.type === 'tool/result')
+      expect(results).toHaveLength(1)
+      expect(results[0]?.data.message).toMatchObject({ toolCallId: 'ask-1', isError: true })
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
   it('routes /copy from the composer to the configured clipboard', async () => {
     const clipboardText = vi.fn(async () => {})
     const app = application(undefined, undefined, undefined, undefined, { clipboardText })

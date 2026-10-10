@@ -59,6 +59,7 @@ catalogs:
     '@deepseek-ai/dsh-system-prompt': *dsh-runtime-version
     '@deepseek-ai/dsh-timeout': *dsh-runtime-version
     '@deepseek-ai/dsh-token-meter': *dsh-runtime-version
+    '@deepseek-ai/dsh-tool-ask-user': *dsh-runtime-version
     '@deepseek-ai/dsh-tool-todo': *dsh-runtime-version
     '@deepseek-ai/dsh-tools': *dsh-runtime-version
     '@deepseek-ai/dsh-user-approval': *dsh-runtime-version

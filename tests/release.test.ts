@@ -96,6 +96,9 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
   }
   const tui = JSON.parse(await readFile('packages/tui/package.json', 'utf8')) as PackageManifest
   assert.equal(tui.dsh?.bundle?.patch, './cordis.patch.yml')
+  // The linked bundle resolves its official question tool from the published launcher.
+  assert.ok(root.dependencies?.['@deepseek-ai/dsh-tool-ask-user'])
+  assert.equal(root.dependencies['@deepseek-ai/dsh-tool-ask-user'], tui.dependencies?.['@deepseek-ai/dsh-tool-ask-user'])
   const runtime = JSON.parse(await readFile('packages/tui/dist/package.json', 'utf8')) as PackageManifest
   assert.equal(runtime.name, tui.name)
   assert.equal(runtime.version, root.version)

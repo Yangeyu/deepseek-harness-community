@@ -5,7 +5,7 @@ import {
   type InteractionPort,
 } from '../../../src/modules/interaction/process.ts'
 import { createTheme } from '../../../src/presentation/primitives/theme.ts'
-import type { ApprovalPrompt, QuestionPrompt } from '../../../src/runtime/session/interactions.ts'
+import type { ApprovalPrompt } from '../../../src/runtime/session/interactions.ts'
 import { LifecycleScope } from '../../../src/runtime/lifecycle/scope.ts'
 import { isSurfaceInputTarget, type SurfaceInputAction } from '../../../src/presentation/primitives/surface-input.ts'
 
@@ -20,22 +20,6 @@ function approval(id: string): ApprovalPrompt {
     sessionId: 'session-1' as ApprovalPrompt['sessionId'],
     requestId: id,
     toolName: 'shell',
-  }
-}
-
-function questions(): QuestionPrompt {
-  return {
-    sessionId: 'session-1' as QuestionPrompt['sessionId'],
-    requestId: 'questions',
-    questions: [{
-      id: 'language',
-      question: 'Language?',
-      options: [{ label: 'TypeScript' }, { label: 'Rust' }],
-    }, {
-      id: 'database',
-      question: 'Database?',
-      options: [{ label: 'SQLite' }, { label: 'Postgres' }],
-    }],
   }
 }
 
@@ -98,22 +82,6 @@ describe('InteractionProcess', () => {
     await vi.waitFor(() => { expect(process.activeKey).toContain('second') })
     expect(port.answerApproval).toHaveBeenCalledWith(first, 'allowed-once')
     expect(opened).toHaveLength(2)
-  })
-
-  it('collects a question batch before sending one response', async () => {
-    const { process, port, current } = fixture()
-    const prompt = questions()
-
-    process.requestQuestions(prompt)
-    act(current(), 'surface.confirm')
-    act(current(), 'surface.next')
-    act(current(), 'surface.confirm')
-
-    await vi.waitFor(() => { expect(process.active).toBe(false) })
-    expect(port.answerQuestions).toHaveBeenCalledWith(prompt, [
-      { id: 'language', selected: ['TypeScript'] },
-      { id: 'database', selected: ['Postgres'] },
-    ])
   })
 
   it('returns a failed response to the open phase without losing the request', async () => {

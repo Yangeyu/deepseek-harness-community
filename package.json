@@ -133,6 +133,7 @@
     "@deepseek-ai/dsh-subagent-in-process-driver": "catalog:dsh",
     "@deepseek-ai/dsh-system-prompt": "catalog:dsh",
     "@deepseek-ai/dsh-timeout": "catalog:dsh",
+    "@deepseek-ai/dsh-tool-ask-user": "catalog:dsh",
     "@deepseek-ai/dsh-tools": "catalog:dsh",
     "@deepseek-ai/dsh-util-time": "catalog:dsh",
     "@deepseek-ai/dsh-util-values": "catalog:dsh",

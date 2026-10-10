@@ -289,6 +289,7 @@ provides no HTTP listener. The TUI continues to call the Controller in-process.
 |---|---|
 | Config Editor / Settings / 权限目录 | 配置热更新、profile 持久化与进程目录已接入 |
 | PTC / workflow | 直接使用 base 的 Node 执行器和 workflow 工具 |
+| 结构化提问 | TUI bundle 装配官方 `dsh-tool-ask-user`，以 `legacy` 阻塞模式公开 `ask_user_question`；base 提供 `userQuestions` 服务 |
 | MCP 资源、指令 | base 提供通用能力；Browser 连接由官方 runtime 限定 Session 归属 |
 | 图片卸载压缩、Session Query/投影缓存 | 由 base 装配；社区消费规范消息与投影，不另建存储 |
 | 插件管理 | 沿上游 CLI、Settings 与模型工具；不额外提供第二套包管理 |
@@ -779,6 +780,10 @@ scope 持有；组件安装完成后请求首帧，实际终端输入与输出�
   profile's `ctx.fileReferences`; `HarnessInteractionSource` maps scoped
   Approval and Question waterfalls directly. No Remote response channel,
   second interaction state source, or TUI-owned filesystem index exists.
+  `ask_user_question` 由运行时根 Agent 发起，通过当前 Session 的本地 waterfall
+  逐题展示单选、多选或文本输入，整批提交后把 `{ answers }` 返回原工具调用；
+  Esc / Ctrl+C 中断当前任务。存活子 Agent 将未决问题交回父级。
+  终端仅接入阻塞式问答，不启用 timed 等待、continued 问题恢复或迟到补答。
 - `SessionFeatureCoordinator` 通过稳定 shell Host 同步切换 Composer、Interaction、Skills、
   Task、Trajectory 与 Transcript 的完整集合，与 `SessionWorkspace` 共用
   prepare/activate/rollback 协议。安装在延后渲染前完成，不由 render 观察 Session ID

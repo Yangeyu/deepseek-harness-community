@@ -67,6 +67,7 @@
     "@deepseek-ai/dsh-plan-mode": "catalog:dsh",
     "@deepseek-ai/dsh-session-query": "catalog:dsh",
     "@deepseek-ai/dsh-session-stats": "catalog:dsh",
+    "@deepseek-ai/dsh-tool-ask-user": "catalog:dsh",
     "@deepseek-ai/dsh-workspace": "catalog:dsh",
     "@deepseek-ai/schemastery": "~3.18.4",
     "@earendil-works/pi-ai": "0.87.1",
