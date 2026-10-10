@@ -58,6 +58,14 @@ retained WebSocket sessions require provider-owned lifecycle cleanup. The upstre
 adapter owns subscription OAuth, credential refresh, serialization and stream translation. The
 Host credential store remains the single durable owner of grant records.
 
+Codex 可选模型清单由 `packages/tui/cordis.patch.yml` 中
+`llm-pi-ai.providers.openai-codex.models` 统一维护，构建时原样带入 bundle，
+开发版与发布版共用。该列表替换 provider 的默认目录；已有模型只声明 ID 并继承
+pi-ai 元数据，新模型显式声明必要能力参数。模型经上游适配器注册到 Host，
+`/model` 只读取 Host 目录，不另存一份模型清单或实时拉取远端目录。
+新增模型沿用现有协议时只更新配置并验证请求、工具调用和取消；需要新的协议或能力契约时再升级适配器。
+维护清单时按官方模型可用性移除已下线条目；模型出现在目录不代表账号已获得权限。
+
 `infrastructure/harness/authentication` declares the bundle's exposed subscription
 connections and resolves their keys and methods against the Host authorization
 catalog. The bundled connection is `openai-codex`; adding a provider to the

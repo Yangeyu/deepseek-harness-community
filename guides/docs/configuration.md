@@ -100,12 +100,18 @@ npm run dev
 
 `/connect openai-codex` 可以重新授权或更换账号。登录结果存入 Harness 的凭据库，
 后续请求由已有的 `dsh-llm-pi-ai` 负责读取、刷新和使用；模型路由是
-`openai-codex/<model-id>`。默认模型目录来自本次安装的 pi-ai 随包目录；打开 `/model`
-刷新 Host 目录不会实时拉取 Codex 远端模型列表。仓库开发与全局 dscode 各自使用
-自己的依赖版本。目录是否收录模型与账号能否调用是两件事，实际可用性以请求结果为准。
+`openai-codex/<model-id>`。默认可选模型清单由项目的
+`packages/tui/cordis.patch.yml` 中 `llm-pi-ai.providers.openai-codex.models` 维护，
+开发版与发布版使用同一份配置。已收录模型复用 pi-ai 的能力参数；新模型显式声明
+上下文、输出上限、输入类型和推理档位。清单随 dscode 版本更新，打开 `/model`
+刷新 Host 目录不会实时拉取 Codex 远端模型列表。开发版重新构建后生效，全局安装需升级 dscode 并重启。
+用户也可在当前 profile 的同名 `models` 字段自定义完整清单；该字段替换整个列表，
+不会追加到项目清单。`modelOverrides` 只能修改 pi-ai 已收录模型的参数，不能新增模型，
+也不能与显式 `models` 列表同时配置。
+目录是否收录模型与账号能否调用是两件事，实际可用性以请求结果为准。
 普通 OpenAI API Key 走独立的 `openai` 路由。
 `/usage` 查询当前 provider 的订阅额度，显示剩余百分比和本地时区的重置时间。
-目前支持 `openai-codex`，包含服务端返回的主额度和 Spark 等独立额度组；
+目前支持 `openai-codex`，包含服务端返回的主额度和模型独立额度组；
 5 小时、每周等窗口按实际返回展示，缺失的窗口不推算。这是账号额度，并非本会话 token 统计。
 查询按命令触发，不会后台轮询；未登录时提示使用 `/connect openai-codex`。
 `/connect` 目前只提供 Codex 订阅连接。凭据的解析、校验和刷新由 provider 在请求时处理。
