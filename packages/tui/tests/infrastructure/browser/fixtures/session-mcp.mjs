@@ -19,11 +19,12 @@ for await (const line of createInterface({ input: process.stdin })) {
     })
   } else if (request.method === 'tools/list') {
     reply(request.id, { tools: [{
-      name: 'page', description: 'Select or inspect this connection page',
+      name: 'browser_page', description: 'Select or inspect this connection page',
       inputSchema: { type: 'object', properties: { page: { type: 'string' }, started: { type: 'string' } } },
-    }] })
+    }, { name: 'browser_close', description: 'Release browser control', inputSchema: { type: 'object', properties: {} } }] })
   } else if (request.method === 'tools/call') {
     const args = request.params.arguments
+    if (request.params.name === 'browser_close') page = 'blank'
     if (args.page !== undefined) page = args.page
     const finish = () => {
       pending.delete(request.id)

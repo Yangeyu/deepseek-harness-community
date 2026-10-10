@@ -238,44 +238,44 @@ provides no HTTP listener. The TUI continues to call the Controller in-process.
   `infrastructure/browser/mcp.ts` 通过公开 `createConnection` 及 SDK 的内存 transport
   复用 Playwright MCP 工具，补充列出用户标签、申请标签和显式聚焦三个扩展专属工具。
   通过 Playwright 公开 `connectOverCDP(transport)` 接入；不修改依赖或调用其私有 API。
-- `extensions/browser` 是 Chrome Native Messaging 扩展，拥有标签页与任务的唯一归属表。
-  Native host 只转发本地 socket 客户端消息，不持有页面状态。每个连接拥有独立 CDP 视图，
-  同一标签只能由一个任务持有；先预留归属再异步 attach，失败及取消均清理预留和调试连接。
+- `extensions/browser` 是 Chrome Native Messaging 扩展，管理连接与标签页归属。
+  Native host 转发本地 socket 消息；每个连接拥有独立 CDP 视图并独占接管的标签页。
+  接管先预留归属再异步 attach，启用 CDP 焦点模拟以支持后台动画帧；detach 清除模拟，
+  不回滚 CDP 输入已产生的焦点变化。
+  失败及取消均清理预留和调试连接。模拟期间网页视为可见，可能继续前台活动。
   普通建页使用 `active: false`，建窗使用 `focused: false`。CDP 的 bring-to-front 与 activate
   在这个后台 transport 中不改变前台；`browser_focus_tab` 是独立的显式展示操作。
   Chrome 弹窗、系统对话框不承诺后台呈现。下载沿用用户配置，不改写全局策略。
 - `dscode browser install` 准备稳定路径的扩展和 Native Messaging 宿主清单；用户首次在
   Chrome 加载扩展，更新后重新加载。宿主仅允许该扩展 ID，socket 目录权限 0700、文件 0600；
   不监听 TCP，不使用远程调试或连接 token。目前安装入口支持 macOS/Linux 的 Chrome。
-  多个 dscode 进程共享扩展通信入口，各自持有独立任务；多个浏览器 profile 同时连接时报错，
+  多个 dscode 进程共享扩展通信入口，各自持有独立控制连接；多个浏览器 profile 同时连接时报错，
   不猜测用户想操作的 profile。
-- `infrastructure/browser/task.ts` 只拥有任务反馈与结束清理。它在 Session 已准入的工具调用
-  范围内执行固定浮层脚本；不会递归调度模型工具。普通回合期间保持光标，截图时隐藏；
-  `turn/end`（完成、失败、取消）调用公开 `browser_close`；扩展在 detach 前清除浮层。
-  MCP 适配层在 close 后释放扩展 attachment，而 Session 的 MCP 进程留给下轮后台重连。
-  下一轮等待上一轮清理完成，避免旧任务关闭新连接。用户停止控制后，本轮禁止自动重新接管。
-  进程退出或本地连接断开，扩展释放该客户端所有调试 attachment，保留用户页面。
-- `page-cursor.ts` 使用不可交互、无障碍隐藏的 Shadow DOM 浮层，采用参考桌面端箭头图形、
-  23×24 尺寸、旋转、偏移和双层蓝色光效。短距离按阻尼弹簧移动，长距离沿有界贝塞尔弧线
-  移动并转向，途中轻微压缩，到达后恢复静止姿态。新目标从当前绘制位置接续。
-  扩展在根页面 `Input.dispatchMouseEvent` 转发前驱动浮层，使用 Playwright 滚动及定位后
-  的实际视口坐标，不再另算元素中心。每个页面串行处理鼠标事件，等待视觉到达后发送真实
-  输入；等待期间失去任务归属则不再发送。页面动画最长 650ms，扩展等待上限 800ms；
-  提示失败不替代工具结果，隐藏标签页与减少动态效果设置直接定位，不等待动画帧。
-  任务拥有独立标识；扩展按实际持有的标签页每五秒直接续期，不经过 MCP 工具调用。
-  释放、断连和用户停止统一取消续期、清除浮层，再解除调试 attachment；续期中的请求不阻塞
-  清理，也不会取消 MCP 连接。页面十五秒失联期限仅清理异常残留，正常结束主动释放。
-  点击后停留；未复刻思考摆动。浮层仅绘制在顶层页面，iframe 场景尚未验收；不绘制浏览器
-  工具栏操作，拖拽期间随真实输入定位，不合成中间拖拽事件。
-- 隔离验收脚本 `scripts/browser-smoke.mjs` 在 macOS 启动无头 Chrome for Testing，加载实际
-  扩展、Native host 和打包后的 MCP；仅在临时 profile 注册测试宿主，退出后清理。
-  `pnpm build && pnpm exec playwright install chromium && node scripts/browser-smoke.mjs`
-  验证活动标签不变、点击读回、截图、跨会话标签归属、释放/重连、取消和用户停止；同时
-  注入当前光标源码验证连续移动、弧线、滚动后点击落点、后台跳过动画与动画中断清理。
-  不连接日常 Chrome。已安装扩展的日常 Chrome 另行完成本地测试页访问、点击读回、
-  光标显示及回合结束释放验证；清理测试页前后终端保持前台。完整操作过程的系统焦点
-  连续观测及网页登录业务验收仍未覆盖。光标续期与清理归入扩展后的修复已通过隔离验证，
-  日常 Chrome 中仍需重新加载扩展后复验。
+- 控制连接归属 Session，跨对话回合保留。`browser_close`、用户停止、浏览器工具取消或
+  Session 释放时解除接管，保留用户页面。手动停止后，用户明确要求恢复时先调用
+  `browser_close` 重置状态，再申请原页面。MCP 在 claim 后等待页面注册完成再返回；
+  普通工具要求已有接管页，新建通过显式 `browser_tabs new`。标签复用以 tabId 为准。
+  页面崩溃或最后页面关闭的竞态仍沿用上游恢复策略；接管期间若并发出现弹窗，
+  当前页面就绪事件尚未按目标身份关联。
+- `extensions/browser/bridge.js` 管理标签归属、最后输入坐标与页面队列；`page-cursor.js`
+  负责绘制和动画。指针在接管期间常驻，导航后恢复，截图时临时隐藏。输入、导航恢复与
+  截图共用页面队列；断开独立清理，排队动作执行前校验归属。
+- 指针使用 Codex 原始 PNG 素材与光效，按 23×24 CSS 像素绘制到 Canvas；顶层浮层、
+  Shadow DOM 与 constructable stylesheet 支持严格 CSP 和 Trusted Types。
+  箭头以尖端 `(4,3)` 为热点，使用最终 CDP 视口坐标，先到达再
+  发送输入。短距离弹簧移动，长距离弧线转向；拖拽和减少动态效果模式直接定位。
+  动画最长 650ms，等待上限 800ms；展示失败清理浮层并记录警告，操作结果仍由 Playwright
+  决定。扩展每五秒续期，页面十五秒租期用于异常失联清理，后台节流可能延迟清理。
+- `tab-indicator.js` 独立维护标签栏标记：读取 Chrome favicon 缓存，将原图标淡化至 30%，
+  叠加 Codex 鼠标箭头；截图不隐藏标签标记。导航及站点换图标后更新，释放时仅撤销自身修改。
+  `favicon` 权限只用于读取已接管页面的缓存；缓存暂不可用会重试，CSP 禁止 data 图片时保留原图标。
+  标签标记沿用五秒续期、十五秒异常失联租期，不阻塞输入队列。
+- `scripts/browser-smoke.mjs` 使用隔离的 macOS Chrome for Testing、实际扩展和 MCP，
+  验证接管、点击、截图、坐标一致性、导航恢复、Chrome 原生 favicon、CSP 回退与断开清理；不连接日常 Chrome。
+  运行：`pnpm build && pnpm exec playwright install chromium && node scripts/browser-smoke.mjs`。
+  日常 Chrome 已验证登录 GitHub 的只读交互、同源/跨源 iframe、原标签复用及跨回合常驻。
+  标签栏标记已通过隔离 Chrome 回归，未做日常 Chrome 人工验收。
+  站点业务写操作与截图进入模型请求仍需单独验收。
 - `src/computer.ts` 只组合上游 ComputerUse registry 与 Cua Driver Native。
   平台二进制、工具 schema、桌面权限、截图与关闭语义由官方 provider/SDK 负责。
   桌面由系统共享；多个 Session 不拥有隔离桌面。已送达的输入不随取消或 Rewind 撤销。

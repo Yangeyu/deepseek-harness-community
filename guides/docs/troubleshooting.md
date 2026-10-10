@@ -61,9 +61,10 @@ dscode（DeepSeek Harness Community 终端）环境与运行故障的诊断参�
 
 - 没有 `mcp__playwright__*` 工具：Browser Use 默认启用，检查当前 profile 是否显式禁用了 `community-browser`，以及插件启动是否报错；修改后重启并新建/恢复会话。没有 `cua_driver_native__*` 工具：Computer Use 默认关闭，需通过 `DSH_COMPUTER_USE=1` 或 profile patch 启用。
 - Chrome 无法连接：先运行 `dscode browser install`，在 `chrome://extensions` 加载或重新加载命令打印目录中的 dscode Browser。确认扩展仅在一个 Chrome profile 启用。此链路不使用远程调试、Playwright 扩展或 token；修改 DSH_HOME 后重新安装宿主。
-- 标签被占用：每个任务只拥有自己的标签，等待占用任务结束或选择另一个标签。无需关闭其他 dscode 会话。
-- 任务结束仍显示控制横幅：检查其他任务、扩展和调试工具；释放一个任务只解除它自己的调试 attachment。
-- 手动停止后本轮不能继续操作：这是停止控制的语义；新建一轮任务才重新申请控制。
+- 标签被占用：请持有该标签的会话释放控制，或选择另一个标签。
+- 回答结束仍显示光标、标签鼠标标记或控制横幅：连接跨回合保留；需要断开时让 agent 执行 `browser_close`，或点击扩展停止按钮。
+- 标签没有鼠标标记：更新后先运行 `dscode browser install` 并在 Chrome 重新加载扩展；确认已实际接管该页。图标缓存不可用或页面 CSP 禁止 data 图片时，保留网站原图标，不影响页面操作。
+- 手动停止后恢复操作：明确要求恢复控制；agent 先调用 `browser_close` 重置状态，再申请页面。
 
 - 桌面权限不足或截图失败：使用 `check_permissions` 的 `prompt: false` 读取当前宿主权限；macOS 权限属于启动 dscode 的终端/宿主。授予权限后重启宿主。原生包依赖可选平台二进制，不要使用 `--omit=optional` 安装。
 - 模型收到图片不可用诊断：当前路线没有声明原生图片输入。切换到可用的图文模型后重试；Vision 代理不会自动转换 Browser/Computer 工具结果里的截图。

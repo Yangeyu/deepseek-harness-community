@@ -55,7 +55,7 @@ it('keeps new, forked and resumed Sessions independent across cancellation and d
     let callId = 0
     const call = (agent: Agent, args: Record<string, unknown> = {}, signal = AbortSignal.timeout(5000)) =>
       ctx.tools.execute({
-        agent, name: 'mcp__playwright__page', arguments: args, signal,
+        agent, name: 'mcp__playwright__browser_page', arguments: args, signal,
         callId: `browser-${++callId}` as ToolExecutionInput['callId'],
       })
     const page = async (agent: Agent, args: Record<string, unknown> = {}) => {
@@ -69,6 +69,10 @@ it('keeps new, forked and resumed Sessions independent across cancellation and d
     const source = await ctx.agents.create({ sessionId: SessionId('browser-source'), meta: { cwd: root } })
     source.agent.session.append('model/selection', { provider: 'fixture', model: 'no-network' })
     const original = await page(source.agent, { page: 'source-page' })
+    source.agent.session.append('turn/start', { turn: 1 })
+    source.agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await new Promise(resolve => setImmediate(resolve))
+    expect(await page(source.agent)).toEqual(original)
     const seed = source.agent.session.snapshotEvents()
     const fork = await ctx.agents.create({
       sessionId: SessionId('browser-fork'), seed, inheritedEventCount: SessionLogOffset(seed.length),

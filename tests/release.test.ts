@@ -108,7 +108,7 @@ test('publishes one package with public TUI, Bailian, Memory, Vision, and Web en
   }
   assert.equal(await readFile('packages/tui/dist/cordis.patch.yml', 'utf8'), await readFile('packages/tui/cordis.patch.yml', 'utf8'))
   assert.ok(root.files?.includes('packages/tui/dist/browser-extension/**'))
-  for (const filename of ['manifest.json', 'background.js', 'bridge.js']) {
+  for (const filename of ['manifest.json', 'background.js', 'bridge.js', 'page-cursor.js', 'tab-indicator.js']) {
     assert.equal(await readFile(`packages/tui/dist/browser-extension/${filename}`, 'utf8'), await readFile(`extensions/browser/${filename}`, 'utf8'))
   }
   await access('packages/tui/dist/browser-mcp.js')

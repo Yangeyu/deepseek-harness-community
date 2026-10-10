@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "dscode Browser",
-  "version": "0.1.0",
-  "description": "Background browser control for dscode. Click the extension to stop browser tasks.",
+  "version": "0.1.1",
+  "description": "Background browser control for dscode. Click the extension to stop all browser control.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4DUA17Wv4rS4zt9iYh+8Jnu6OQZ7Pzz9HLxy3gxqhX/McS8HewEDEFiyF/WOwBxR8Qg+SXKfQq5EsJdM93MO+xYZzsRmeNuciG+1nkwhrXkvgcgVQ3pw//M0IHHx0NYrRqgVeF5V9gNAlOvl9Ps9oEkcP6ehG1I+w2JR34G7mCGxEEfCBvO1x9F11nY4PoJyhiLBQpDuK2ROilEBfTl056KYLj6XvrcsAGI+I4MrFH1VoNZ6YGF96JC0rSAfpN9MDSh7A7p8kxMgWG0BVUEtOmfSQsNFomDIDlg3wvOvKzyF8bi8n4+LsolE2FS4FlitX/ouxuARyqddmd3IlUW5VwIDAQAB",
   "permissions": [
     "debugger",
     "tabs",
+    "favicon",
     "nativeMessaging",
     "alarms"
   ],
@@ -15,6 +16,6 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Stop dscode browser tasks"
+    "default_title": "Stop all dscode browser control"
   }
 }
