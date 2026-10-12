@@ -14,7 +14,7 @@
 # - id: agent-default-model
 #   config:
 #     provider: bailian
-#     model: deepseek-v4-pro-0813
+#     model: deepseek-v4.1-flash
 #     reasoningEffort: high
 #
 # - id: permission
@@ -74,11 +74,11 @@
 #   config:
 #     baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
 #     models:
-#       deepseek-v4-pro-0813:
+#       deepseek-v4.1-flash:
 #         contextWindow: 1000000
 #         maxOutputTokens: 393216
 #         maxTokensField: max_tokens
-#         input: [text]
+#         input: [text, image]
 #         reasoning:
 #           defaultEffort: high
 #           efforts:

@@ -79,26 +79,19 @@
       config:
         baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
         models:
-          deepseek-v4-pro-0813:
+          deepseek-v4.1-flash:
+            name: DeepSeek V4.1 Flash
             contextWindow: 1000000
             maxOutputTokens: 393216
             maxTokensField: max_tokens
-            input:
-              - text
+            input: [text, image]
             reasoning:
               defaultEffort: high
               efforts:
-                off:
-                  enableThinking: false
-                low:
-                  enableThinking: true
-                  reasoningEffort: low
-                high:
-                  enableThinking: true
-                  reasoningEffort: high
-                max:
-                  enableThinking: true
-                  reasoningEffort: max
+                off: { enableThinking: false }
+                low: { enableThinking: true, reasoningEffort: low }
+                high: { enableThinking: true, reasoningEffort: high }
+                max: { enableThinking: true, reasoningEffort: max }
           qwen3.7-plus:
             name: Qwen3.7 Plus
             contextWindow: 1000000
