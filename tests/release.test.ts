@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
@@ -65,6 +66,33 @@ const workspacePackageFiles = [
   'packages/vision/package.json',
   'packages/web/package.json',
 ] as const
+
+test('development profile loads the built bundle through the installed DSH runtime', async () => {
+  const require = createRequire(import.meta.url)
+  const installAnchor = require.resolve('@deepseek-ai/dsh/package.json')
+  const appRequire = createRequire(installAnchor)
+  const { loadProfileDirectory } = await import(appRequire.resolve('@deepseek-ai/dsh-app-boot'))
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-dev-profile-'))
+  const bundleName = '@vascent/deepseek-harness-tui'
+  const bundleDirectory = await realpath('packages/tui/dist')
+  try {
+    await mkdir(join(directory, 'node_modules', '@vascent'), { recursive: true })
+    await symlink(bundleDirectory, join(directory, 'node_modules', bundleName), 'dir')
+    await writeFile(join(directory, 'package.json'), JSON.stringify({
+      private: true,
+      dependencies: { [bundleName]: `link:${bundleDirectory}` },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', bundleName] } },
+    }))
+    const profile = loadProfileDirectory('dscode', directory, installAnchor)
+    assert.deepEqual(profile.skippedBundles, [])
+    const bundle = profile.layers.find((layer: { packageName: string }) => layer.packageName === bundleName)
+    assert.ok(bundle)
+    assert.equal(await realpath(bundle.packageDir), bundleDirectory)
+    assert.ok(bundle.patches.length > 0)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('publishes one package with public TUI, Bailian, Memory, Vision, and Web entry points', async () => {
   const root = JSON.parse(await readFile('package.json', 'utf8')) as PackageManifest

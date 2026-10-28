@@ -1,3 +1,4 @@
+import { CommunityWebConfigSchema, type LiveConfig } from '../src/config.ts'
 import { Context } from '@deepseek-ai/cordis'
 import type { WebSearchProvider } from '@deepseek-ai/dsh-web'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
@@ -27,7 +28,7 @@ describe('CommunityWebService', () => {
     ctx.provide('tools', { register: registerTool } as unknown as Context['tools'])
     const section = vi.fn(() => () => {})
     ctx.provide('systemPrompt', { section } as unknown as Context['systemPrompt'])
-    let currentConfig: Record<string, unknown> = {}
+    let currentConfig: Record<string, unknown> = Object.fromEntries(Object.entries(CommunityWebConfigSchema({})).map(([key, value]) => [key, value.get()]))
     const update = vi.fn(async (_namespace: string, patch: object) => { currentConfig = { ...currentConfig, ...patch } })
     ctx.provide('settings', {
       update,
@@ -42,7 +43,7 @@ describe('CommunityWebService', () => {
       })),
     } as unknown as Context['credentials'])
 
-    const service = new CommunityWebService(ctx, { get: () => currentConfig })
+    const service = new CommunityWebService(ctx, Object.fromEntries(Object.entries(CommunityWebConfigSchema({})).map(([key, value]) => [key, { get: () => (currentConfig as Record<string, unknown>)[key] ?? value.get() }])) as LiveConfig)
     expect(registerSearchProvider.mock.calls[0]?.[0]).toMatchObject({ id: COMMUNITY_SEARCH_PROVIDER_ID })
     expect(registerTool.mock.calls[0]?.[0]).toMatchObject({ name: 'web_extract' })
     expect(section).toHaveBeenCalledWith(expect.objectContaining({ name: 'tool:web_extract' }))
@@ -136,7 +137,7 @@ describe('CommunityWebService', () => {
       })),
     } as unknown as Context['credentials'])
 
-    const status = await new CommunityWebService(ctx, { get: () => ({}) }).status()
+    const status = await new CommunityWebService(ctx, CommunityWebConfigSchema({})).status()
 
     expect(status.search).toMatchObject({
       selection: AUTOMATIC_SEARCH_PROVIDER_ID,
@@ -158,7 +159,7 @@ describe('CommunityWebService', () => {
       resolve: vi.fn(async () => undefined),
       describe: vi.fn(async () => ({ configured: false, writable: true })),
     } as unknown as Context['credentials'])
-    const service = new CommunityWebService(ctx, { get: () => currentConfig })
+    const service = new CommunityWebService(ctx, Object.fromEntries(Object.entries(CommunityWebConfigSchema({})).map(([key, value]) => [key, { get: () => (currentConfig as Record<string, unknown>)[key] ?? value.get() }])) as LiveConfig)
     const extract = vi.fn(async () => ({
       url: 'https://example.com/',
       content: '123456',

@@ -193,7 +193,7 @@ runtime closure.
 
 ## Upstream DSH alignment and community extension ownership
 
-当前统一使用 `@deepseek-ai/dsh@0.2.0-rc.2`。工作区 catalog 是唯一版本来源，
+当前统一使用 `@deepseek-ai/dsh@0.2.1-rc.2`。工作区 catalog 是唯一版本来源，
 直接 DSH 依赖共享同一精确版本，lockfile 解析对应的传递依赖与 peer 图。
 
 Session V4 keeps `system/message` on the model-visible surface and stores each
@@ -217,15 +217,18 @@ provides no HTTP listener. The TUI continues to call the Controller in-process.
 ### 当前上游契约
 
 - DeepSeek 搜索复用上游公开 `DeepSeekSearchProvider`，读取上游插件的有效配置；账户路线通过账户服务的目标地址校验取 token，其余路线使用 API key。上游 WebRuntime 尚未提供按 provider ID 调用接口，社区选择器保留这一职责明确的适配边界。
-- Config 是运行值的唯一所有者。百炼、Vision、Web 使用 Volatile Config；Settings Forms 仅投影可编辑字段，经 Config Editor 写当前 profile patch。百炼在 Loader 配置验收时检查跨字段约束，模型请求绑定一份完整配置快照。直接编辑 patch 的生效方式见用户配置指南。
+- Config 是运行值的唯一所有者。百炼、Vision、Web 使用字段级 Volatile Config；Vision/Web 按实际 Loader entry ID 写入配置；Settings Forms 仅投影可编辑字段，经 Config Editor 写当前 profile patch。百炼在 Loader 配置验收时检查跨字段约束，模型请求绑定一份完整配置快照。直接编辑 patch 的生效方式见用户配置指南。
 - V4 工具结果是独立 `role: tool` 消息，`toolCallId`、`isError` 在消息顶层，正文直接位于 `content`。请求序列化、Transcript、工具 presenter 和 Request 检查共用这一结构；developer 消息按 provider 能力编码。
 - 插件来源通过 `MessageSourceMap` 声明自己的 kind；Memory 与 Vision 分别使用 `community-memory`、`community-vision`。
 - 权限可选项与默认值来自进程级 `permissionPresets.catalog()`，会话投影只持有 `currentValue`；目录事件刷新已打开的配置视图。默认值写 `permission` 条目，运行时贡献不写成默认。
+- 创建会话使用 Controller.create；恢复指定会话使用 Controller.resolveAgent，避免 create 的非空会话分叉语义改变恢复目标。
 - Session Controller 的 inbox 投影是排队状态来源。会话列表沿用上游 SessionSummary 与其投影提示；PTC 执行由 base 的 `ptc-runtime` / `workflow-ptc` 装配，不再额外挂载执行器。
-- Prompt 的实时边界由 Host Projection Registry 折叠固定大小状态；Rewind 的异步历史列表通过 Session Query 读取同一事实并释放 observation。文件变更在工具执行前读取上游 `turnBoundary`，将回合与根调用身份绑定到本次执行。结果归入已准入回合的变更日志；仅在当前回合尚未归属活动回退链时，通过 Query 恢复检查点并接管归属，避免每次文件变更重新扫描历史。
+- Prompt 的实时边界和受 `rewindHistory` 限制的检查点由 Host Projection Registry 统一折叠；Rewind 读取当前 Agent 的投影，恢复会话时由 Host 重放。文件变更在工具执行前读取上游 `turnBoundary`，将回合与根调用身份绑定到本次执行。结果归入已准入回合的变更日志；仅在当前回合尚未归属活动回退链时，通过该有界投影恢复检查点并接管归属，避免每次文件变更重新扫描历史。
 - Memory 从 canonical messages 判断已注入内容；只收集当前回合的用户与 assistant 文本，回合结束即释放收集状态。学习的前台优先、取消和工具写入语义保持一致。
 
 ### Browser Use 与 Computer Use
+
+浏览器 MCP 挂载显式依赖 `workingDirectory`，子进程使用 Session 的有效工作目录。
 
 社区 bundle 提供两个实验性入口：`community-browser` 默认启用，发布版 `dscode`
 和开发版 `pnpm dev` 使用同一 bundle 默认配置；profile patch 可通过 `disabled: true`
@@ -413,7 +416,8 @@ Linux/macOS 的 `pnpm check`；只有双平台都成功，才进入候选验收�
 main/PR 的日常 CI 仍独立触发，但发布无需等待人读取其结果或再次手动启动。
 
 `release:candidate` 检查包内容，在隔离的全局 npm prefix 全新安装，验证
-`dscode --version` 并在真实 80×24 PTY 启动 TUI；随后写入包含源码 SHA、包和
+`dscode --version`，通过本地模型服务在真实 80×24 PTY 完成 persona/cwd 组装、
+写入与读取工具、模型回复、退出后 `resume --last` 保留历史继续对话；随后写入包含源码 SHA、包和
 runtime 身份、工具版本、产物 SHA-256 与大小的 receipt。候选验收不重复源码检查。
 
 已验收的 tarball 和 receipt 作为同一份不可变产物在发布 job 间传递。
@@ -986,8 +990,8 @@ scope 持有；组件安装完成后请求首帧，实际终端输入与输出�
   显式加载一页，Esc 停止该视图等待，已飞页仍归 Session 所有；不取消模型 turn，
   不自动补载全部历史。既有 epoch/ownership 检查继续阻止旧 Session 页污染新 Session。
 - `modules/rewind/contracts` is independent of Cordis, Memory, Node, and pi-tui.
-  The injected `RewindConversationHistory` rebuilds Prompt checkpoints from the
-  active Session log. `modules/rewind/domain` owns only the bounded
+  注入的 `RewindConversationHistory` 读取当前 Agent 的有界 Prompt 检查点投影，
+  不在每次访问时扫描完整 Session log。 `modules/rewind/domain` owns only the bounded
   reversible-effect lineage and pure reverse planning;
   `modules/rewind/application` joins those two
   sources and owns the active timeline Repository port, restore, and conversation
@@ -1210,7 +1214,7 @@ service/store 的 `write` 与 `forget` 返回表示文件是否改变的 `boolea
   store before atomic replacement. Missing files use deployment defaults;
   unreadable or malformed files fail explicitly. Restoring the same session id
   restores its selection. New ids, including forks, use deployment defaults.
-- 当前 Session append API 不能将下游事件标记为 `ignorable`，持久化也拒绝未知 required 事件，因此 Memory policy 由社区 Host 服务文件持有，不包含在单独的 Session-log 导出中。回退代码或会话不改写长期记忆和已保存的会话开关。
+- 上游 `appendPluginRecord` 是实验性的可丢弃记录，不能承担 durable policy；Memory policy 继续由社区 Host 服务文件持有，不包含在单独的 Session-log 导出中。回退代码或会话不改写长期记忆和已保存的会话开关。
 - `policy()` and `setPolicy()` are asynchronous. The TUI sends a partial change
   and displays the acknowledged result or pending state. After a failed change,
   it reads the current Host policy and displays it alongside the operation error.

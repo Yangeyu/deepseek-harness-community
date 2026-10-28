@@ -1,18 +1,16 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createRequire } from 'node:module'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
+import { verifyTuiRuntime } from './verify-tui.mjs'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const npmCommand = 'npm'
 const pnpmCommand = 'pnpm'
 const commandTimeoutMs = 600_000
-const startupTimeoutMs = 60_000
-const exitTimeoutMs = 10_000
 
 function run(command, args, options = {}) {
   return new Promise((resolveRun, reject) => {
@@ -109,84 +107,6 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
-function waitFor(promise, timeoutMs, message) {
-  let timeout
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
-    }),
-  ]).finally(() => { clearTimeout(timeout) })
-}
-
-async function verifyTuiStartup(executable, installDirectory, manifest, temporaryRoot) {
-  const packageDirectory = join(installDirectory, 'lib', 'node_modules', ...manifest.name.split('/'))
-  const requireInstalled = createRequire(join(packageDirectory, 'package.json'))
-  const pty = requireInstalled('node-pty')
-  if (typeof pty.spawn !== 'function') throw new Error('installed node-pty does not expose spawn()')
-
-  const smokeHome = join(temporaryRoot, 'smoke-home')
-  const smokeWorkspace = join(temporaryRoot, 'smoke-workspace')
-  await mkdir(smokeHome)
-  await mkdir(smokeWorkspace)
-
-  const terminal = pty.spawn(executable, [], {
-    cols: 80,
-    rows: 24,
-    cwd: smokeWorkspace,
-    env: {
-      PATH: process.env.PATH ?? '',
-      HOME: smokeHome,
-      USER: process.env.USER ?? 'dscode-release',
-      SHELL: process.env.SHELL ?? '/bin/sh',
-      LANG: process.env.LANG ?? 'C.UTF-8',
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      NO_COLOR: '1',
-      DSH_HOME: join(smokeHome, '.dsh'),
-      DSH_TUI_PROFILE: 'release-smoke',
-    },
-  })
-
-  let output = ''
-  let exited = false
-  let resolveReady
-  let rejectReady
-  const ready = new Promise((resolveReadyPromise, rejectReadyPromise) => {
-    resolveReady = resolveReadyPromise
-    rejectReady = rejectReadyPromise
-  })
-  const exitedResult = new Promise(resolveExit => {
-    terminal.onExit(result => {
-      exited = true
-      rejectReady(new Error(
-        `installed TUI exited before Ready with code ${result.exitCode}: ${output.slice(-2000)}`,
-      ))
-      resolveExit(result)
-    })
-  })
-  terminal.onData(data => {
-    output += data
-    if (output.includes('Ready')) resolveReady()
-  })
-
-  try {
-    await waitFor(ready, startupTimeoutMs, `installed TUI did not reach Ready within ${startupTimeoutMs}ms`)
-    terminal.write('\u0003')
-    const result = await waitFor(
-      exitedResult,
-      exitTimeoutMs,
-      `installed TUI did not exit after Ctrl+C within ${exitTimeoutMs}ms`,
-    )
-    if (result.exitCode !== 0) {
-      throw new Error(`installed TUI exited with code ${result.exitCode}: ${output.slice(-2000)}`)
-    }
-    console.log('Fresh installed TUI PTY smoke passed: Ready -> Ctrl+C -> exit 0')
-  } finally {
-    if (!exited) terminal.kill()
-  }
-}
-
 async function verifyInstalledArchive(archivePath, manifest, temporaryRoot) {
   const installDirectory = join(temporaryRoot, 'install')
   await mkdir(installDirectory)
@@ -195,6 +115,7 @@ async function verifyInstalledArchive(archivePath, manifest, temporaryRoot) {
     '--global',
     '--prefix',
     installDirectory,
+    '--strict-peer-deps',
     '--no-audit',
     '--no-fund',
     '--loglevel=warn',
@@ -211,7 +132,10 @@ async function verifyInstalledArchive(archivePath, manifest, temporaryRoot) {
     throw new Error(`expected ${JSON.stringify(expectedVersion)}, received ${JSON.stringify(stdout.trim())}`)
   }
   console.log(`Fresh global npm install passed: ${expectedVersion}`)
-  await verifyTuiStartup(executable, installDirectory, manifest, temporaryRoot)
+  await verifyTuiRuntime({
+    executable, temporaryRoot,
+    packageDirectory: join(installDirectory, 'lib', 'node_modules', ...manifest.name.split('/')),
+  })
 }
 
 async function main(args) {

@@ -1,5 +1,5 @@
 import { queueFromInbox } from '../../../src/runtime/session/inbox.ts'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,9 +10,10 @@ import { SessionController } from '@deepseek-ai/dsh-api-session-controller'
 import { createUserMessage, type GenerateOptions, type LlmCallConfig, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
-import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
+import type {} from '@deepseek-ai/dsh-session-persistence'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 import { HarnessSessionTransport } from '../../../src/infrastructure/harness/session-transport.ts'
 import { HostRewindFork } from '../../../src/modules/rewind/adapters/fork.ts'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
@@ -31,11 +32,11 @@ import { SessionRuntime } from '../../../src/runtime/session/runtime.ts'
 const require = createRequire(import.meta.url)
 const baseRequire = createRequire(require.resolve('@deepseek-ai/dsh-base/package.json'))
 const { AgentLoop } = await import(pathToFileURL(baseRequire.resolve('@deepseek-ai/dsh-agent-loop')).href) as {
-  AgentLoop: new (ctx: Context, config: { agents: []; maxParallelToolCalls: { get(): number } }) => unknown
+  AgentLoop: { new (ctx: Context, config: { agents: []; maxParallelToolCalls: { get(): number } }): unknown; Config(input: { agents: [] }): { agents: []; maxParallelToolCalls: { get(): number } } }
 }
 
-const { default: JsonlSessionPersistence } = await import(pathToFileURL(baseRequire.resolve('@deepseek-ai/dsh-session-persistence-jsonl')).href) as {
-  default: new (ctx: Context, config: { root: string }) => SessionPersistence
+const { apply: installPersistence } = await import(pathToFileURL(baseRequire.resolve('@deepseek-ai/dsh-session-persistence-jsonl')).href) as {
+  apply: (ctx: Context, config: { root: string }) => Promise<void>
 }
 const { default: LocalAttachmentStore } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-attachment-local')).href) as {
   default: new (ctx: Context, config: { dshHome: string }) => AttachmentStore
@@ -44,6 +45,11 @@ const agentRequire = createRequire(require.resolve('@deepseek-ai/dsh-agent'))
 const { scopeOf } = await import(pathToFileURL(agentRequire.resolve('@deepseek-ai/dsh-scope')).href) as {
   scopeOf: (ctx: Context) => Agent
 }
+
+const communityPatch = parse(await readFile(new URL('../../../cordis.patch.yml', import.meta.url), 'utf8'), {
+  customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: (value: string) => value }],
+}) as { id?: string; config?: { personaPrefix?: string } }[]
+const communityPromptConfig = communityPatch.find(entry => entry.id === 'system-prompt')!.config!
 
 function transportFor(ctx: Context, controller: SessionController) {
   return new HarnessSessionTransport({
@@ -60,24 +66,24 @@ function message(text: string) {
 
 async function fixture(root?: string) {
   const ctx = new Context()
-  if (root !== undefined) new JsonlSessionPersistence(ctx, { root })
+  if (root !== undefined) await installPersistence(ctx, { root })
   const requests: GenerateOptions[] = []
   const configs: LlmCallConfig[] = []
   const errors: unknown[] = []
   const proxyRequests: GenerateOptions[] = []
   type Gate = { entered: ReturnType<typeof Promise.withResolvers<void>>; release: ReturnType<typeof Promise.withResolvers<void>> }
   let streamGate: Gate | undefined
-  ctx.on('agent/error', ({ error }) => { errors.push(error) })
+  ctx.on('agent/error', ({ error }) => { errors.push(error instanceof Error ? error.stack : error) })
   new AgentRegistry(ctx)
   new SessionStore(ctx)
   new SessionProjectionRegistry(ctx)
-  new SystemPrompt(ctx, { includeHarnessIdentity: false, includeRuntimeContext: false })
+  new SystemPrompt(ctx, { ...communityPromptConfig, includeHarnessIdentity: false, includeRuntimeContext: false })
   // Only non-execution host capabilities are stubs. Forking, replay, queue mutation,
   // model request assembly and the pump all run their real upstream implementations.
   ctx.provide('tools', { get: () => undefined, register() {} } as never)
   ctx.provide('llm', {
     listProviders: () => [{ id: 'fixture' }],
-    listModels: async () => ['no-network', 'pending', 'later', 'current'].map(id => ({ id, provider: 'fixture' })),
+    listModels: async () => ['no-network', 'pending', 'later', 'current'].map(id => ({ id })),
     resolveModelInfo: async (provider: string, model: string) => ({ provider, id: model, inputModalities: ['text', 'image'] }),
     async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {
       proxyRequests.push(request)
@@ -108,7 +114,7 @@ async function fixture(root?: string) {
   ctx.provide('agentDefaultModel', {
     currentSelection: () => ({ provider: 'fixture', model: 'no-network' }), saveSelection: async () => {},
   } as never)
-  ctx.provide('typert', { lookups: { configure() {} }, contexts: { configureHost() {} } } as never)
+  ctx.provide('typert', { resources: { register() {} }, lookups: { configure() {} }, contexts: { configureHost() {} } } as never)
   ctx.provide('fileUploads', {
     registerAgentResolver: () => () => {}, retirePrompt() {},
     bindPrompt: () => ({ commit() {}, [Symbol.dispose]() {} }),
@@ -132,7 +138,7 @@ async function fixture(root?: string) {
       }
     },
   } as never)
-  new AgentLoop(ctx, { agents: [], maxParallelToolCalls: { get: () => 10 } })
+  new AgentLoop(ctx, AgentLoop.Config({ agents: [] }))
   const controller = new SessionController(ctx, { nativeOpen: false })
   const source = (await ctx.agents.create({
     sessionId: SessionId('source'), meta: { cwd: '/workspace' }, agentOptions: { provider: 'fixture', model: 'no-network' },
@@ -155,11 +161,11 @@ async function fixture(root?: string) {
 
 async function queue(controller: SessionController, id: SessionId) {
   const abort = new AbortController()
-  const iterator = controller.control(abort.signal)[Symbol.asyncIterator]()
+  const iterator = controller.follow({ address: { kind: 'session', sessionId: id } }, abort.signal)[Symbol.asyncIterator]()
   try {
     const frame = await iterator.next()
-    if (frame.done || frame.value.type !== 'baseline') throw new Error('expected control baseline')
-    return queueFromInbox(frame.value.value.projections[id]?.values.inbox)
+    if (frame.done || frame.value.type !== 'snapshot') throw new Error('expected control baseline')
+    return queueFromInbox(frame.value.projections.values.inbox)
   } finally {
     abort.abort()
     await iterator.return?.()
@@ -383,7 +389,8 @@ describe('complete image input', () => {
       const native = host.source.inbox.nextStep[1]!.content.find(block => block.type === 'image')!
 
       const config = { mode: 'proxy' as const, proxyProvider: 'fixture', proxyModel: 'vision', maxObservationChars: 12000, maxTokens: 2048 }
-      const vision = new VisionService(host.ctx, { get: () => config })
+      host.ctx.provide('settings', {} as never)
+      const vision = new VisionService(host.ctx, VisionService.Config(config))
       const proxyDrafts = new AttachmentDraftStore()
       for (const name of ['before.png', 'after.png']) {
         proxyDrafts.complete(proxyDrafts.reserve(), { mediaType: 'image/png', name, data: png, source: 'file' })
@@ -414,7 +421,8 @@ describe('complete image input', () => {
       expect(await queue(host.controller, host.source.id)).toEqual([])
       await host.ctx.fiber.dispose()
 
-      const storage = new JsonlSessionPersistence(reader, { root })
+      await installPersistence(reader, { root })
+      const storage = reader.sessionPersistence
       const attachments = new LocalAttachmentStore(reader, { dshHome: root })
       await using handle = await storage.open(host.source.id, 'read')
       const loaded = await handle.read()
@@ -465,12 +473,13 @@ describe('rewind fork inbox isolation', () => {
       await host.ctx.fiber.dispose()
 
       // A fresh backend and projection owner cannot reuse the live branch or a cached fold.
-      const storage = new JsonlSessionPersistence(reader, { root })
+      await installPersistence(reader, { root })
+      const storage = reader.sessionPersistence
       new AgentRegistry(reader)
       new SessionStore(reader)
       new SessionProjectionRegistry(reader)
       new SystemPrompt(reader, { includeHarnessIdentity: false, includeRuntimeContext: false })
-      new AgentLoop(reader, { agents: [], maxParallelToolCalls: { get: () => 10 } })
+      new AgentLoop(reader, AgentLoop.Config({ agents: [] }))
       await reader.agents.create({ sessionId: SessionId('projection-reader') })
       await using handle = await storage.open(child.sessionId, 'read')
       const loaded = await handle.read()
@@ -526,7 +535,7 @@ describe('rewind fork inbox isolation', () => {
     }
   })
 
-  it('starts a fork with the current default and applies later Controller selections once', async () => {
+  it('starts the branch with the source selection and applies later Controller changes', async () => {
     const host = await fixture()
     try {
       host.source.session.append('model/selection', { provider: 'fixture', model: 'pending' })
@@ -535,7 +544,7 @@ describe('rewind fork inbox isolation', () => {
       await host.transport.selectModel(child.sessionId, { provider: 'fixture', model: 'later' })
       await prompt(host, child.sessionId, 'SECOND')
       await prompt(host, child.sessionId, 'THIRD')
-      expect(host.configs.map(config => config.model)).toEqual(['no-network', 'later', 'later'])
+      expect(host.configs.map(config => config.model)).toEqual(['pending', 'later', 'later'])
       expect(host.errors).toEqual([])
     } finally {
       await host.ctx.fiber.dispose()
@@ -561,7 +570,8 @@ describe('rewind fork inbox isolation', () => {
       await host.ctx.fiber.dispose()
 
       reader = await fixture()
-      const storage = new JsonlSessionPersistence(reader.ctx, { root })
+      await installPersistence(reader.ctx, { root })
+      const storage = reader.ctx.sessionPersistence
       await using handle = await storage.open(child.sessionId, 'read')
       const loaded = await handle.read()
       const restored = Session.fromRestore(

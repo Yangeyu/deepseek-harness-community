@@ -1,3 +1,4 @@
+import { registerPromptHistory } from './runtime/execution/projection/host.ts'
 import type {} from '@deepseek-ai/dsh-permission-presets'
 /**
  * Third-party terminal profile bundle for DeepSeek Harness. The composition
@@ -152,6 +153,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
     return
   }
   const resolved = resolveConfig(invocation.config)
+  registerPromptHistory(ctx, resolved.rewindHistory)
   const rewindFork = new HostRewindFork(ctx)
   const sessionTransport = new HarnessSessionTransport({
     cwd: resolved.cwd,

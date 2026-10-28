@@ -1,4 +1,5 @@
 import z from '@deepseek-ai/schemastery'
+import type { Volatile } from '@deepseek-ai/cordis'
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import {
   resolveRetryPolicy,
@@ -79,7 +80,7 @@ const ReasoningSchema = z.object({
   efforts: ReasoningEffortsSchema,
 })
 
-const ModelConfigSchema = z.object({
+const ModelConfigSchema: z<BailianModelConfig> = z.object({
   name: z.string(),
   description: z.string(),
   contextWindow: z.number().step(1).min(1),
@@ -92,15 +93,15 @@ const ModelConfigSchema = z.object({
   reasoning: z.union([z.const(false), ReasoningSchema]),
 })
 
-export const Config: z<Config> = z.object({
-  apiKeyEnv: z.string().role('credential-ref').default(DEFAULT_BAILIAN_API_KEY_ENV),
-  baseURL: z.string().default(DEFAULT_BAILIAN_BASE_URL),
-  models: z.dict(ModelConfigSchema),
+export const Config: z<Config, LiveConfig> = z.object({
+  apiKeyEnv: z.string().role('credential-ref').default(DEFAULT_BAILIAN_API_KEY_ENV).volatile(),
+  baseURL: z.string().default(DEFAULT_BAILIAN_BASE_URL).volatile(),
+  models: z.dict(ModelConfigSchema).required().volatile(),
   streamIdleTimeoutMs: z.number()
     .min(Number.MIN_VALUE)
     .max(MAX_TIMER_DELAY_MS)
-    .default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
-  retryPolicy: RetryPolicySchema,
+    .default(DEFAULT_STREAM_IDLE_TIMEOUT_MS).volatile(),
+  retryPolicy: RetryPolicySchema.volatile(),
 })
 
 export interface ResolvedBailianReasoningLevel {
@@ -123,7 +124,7 @@ export interface ResolvedBailianModel {
   readonly defaultMaxTokens?: number
   readonly maxTokensField: BailianMaxTokensField
   readonly input: readonly BailianInputModality[]
-  readonly imageRequestPolicy?: Readonly<{ maxPixels: number; maxBytes: number }>
+  readonly imageRequestPolicy?: Readonly<ImageRequestPolicy>
   readonly reasoning: false | ResolvedBailianReasoningPolicy
 }
 
@@ -303,3 +304,13 @@ export function resolveBailianConfig(config: Config): ResolvedBailianConfig {
 export function assertBailianConfig(config: Config): void {
   resolveBailianConfig(config)
 }
+
+export interface LiveConfig {
+  apiKeyEnv: Volatile<string>
+  baseURL: Volatile<string>
+  models: Volatile<Record<string, BailianModelConfig>>
+  streamIdleTimeoutMs: Volatile<number>
+  retryPolicy: Volatile<RetryPolicyConfig | undefined>
+}
+
+export interface ImageRequestPolicy { readonly maxPixels: number; readonly maxBytes: number }

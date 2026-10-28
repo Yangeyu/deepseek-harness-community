@@ -1,21 +1,53 @@
-import { Context } from '@deepseek-ai/cordis'
-import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import { SessionId, SessionStore, type SessionHeader, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
-import { describe, expect, it, vi } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { visionEvidenceBlock } from '../../../../src/runtime/session/input.ts'
 import {
   installPromptProjection,
-  projectPromptNodes,
+  registerPromptHistory,
 } from '../../../../src/runtime/execution/projection/index.ts'
+
+const contexts: Context[] = []
+afterEach(async () => { await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose())) })
 
 function event(value: unknown): SessionEvent {
   return value as SessionEvent
 }
 
-const header = { id: SessionId('session-1'), cwd: '/workspace' } as SessionHeader
+function session(events: readonly SessionEvent[]): Session {
+  return Session.create(SessionId('session-1'), events, { version: 4, isSeeded: false, id: SessionId('session-1'), cwd: '/workspace', createdAt: 0 })
+}
+function projectPromptNode(value: Session, event: SessionEvent) {
+  const ctx = new Context()
+  contexts.push(ctx)
+  new SessionProjectionRegistry(ctx)
+  registerPromptHistory(ctx, 20)
+  const prompt = ctx.sessionProjections.stateOf(value, 'communityPrompts')?.latest
+  return prompt?.admittedSeq === event.seq ? prompt : undefined
+}
 
 describe('Prompt execution Host projection', () => {
+  it('retains only the configured turn entries across live folding and replay', () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    new SessionProjectionRegistry(ctx)
+    registerPromptHistory(ctx, 2)
+    const live = Session.create(SessionId('bounded'))
+    for (let turn = 1; turn <= 3; turn++) {
+      live.append('turn/start', { turn })
+      live.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: `turn ${turn}` }] }), { surfaceOp: 'append' })
+      ctx.sessionProjections.stateOf(live, 'communityPrompts')
+      live.append('turn/end', { turn, reason: { kind: 'completed' } })
+    }
+    const current = ctx.sessionProjections.stateOf(live, 'communityPrompts')!
+    expect(current.checkpoints.map(prompt => prompt.turn)).toEqual([2, 3])
+    const restored = Session.create(live.id, live.snapshotEvents(), live.header)
+    expect(ctx.sessionProjections.stateOf(restored, 'communityPrompts')).toEqual(current)
+  })
+
   it('projects an accepted user message as the stable prompt boundary', () => {
     const previous = event({
       type: 'turn/end',
@@ -37,7 +69,7 @@ describe('Prompt execution Host projection', () => {
       },
     })
 
-    expect(projectPromptNodes(header, [previous, start, prompt]).at(-1)).toEqual({
+    expect(projectPromptNode(session([previous, start, prompt]), prompt)).toEqual({
       promptId: 'prompt-2',
       sessionId: 'session-1',
       turn: 2,
@@ -75,7 +107,7 @@ describe('Prompt execution Host projection', () => {
       },
     })
 
-    expect(projectPromptNodes(header, [start, prompt]).at(-1)).toEqual(expect.objectContaining({
+    expect(projectPromptNode(session([start, prompt]), prompt)).toEqual(expect.objectContaining({
       promptId: 'native-prompt',
       input: {
         text: '[Image #1]',
@@ -107,15 +139,15 @@ describe('Prompt execution Host projection', () => {
         ],
       },
     })
+    const current = session([start, prompt])
     const upsertPrompt = vi.fn()
     const ctx = new Context()
-    new SessionStore(ctx)
+    contexts.push(ctx)
     new SessionProjectionRegistry(ctx)
+    registerPromptHistory(ctx, 20)
     installPromptProjection(ctx, { upsertPrompt })
-    const current = ctx.sessions.create(SessionId('session-1'), { seed: [start], meta: { cwd: '/workspace' } })
 
-    if (prompt.type !== 'user/message') throw new Error('Expected prompt')
-    const admitted = current.append('user/message', prompt.data, { surfaceOp: 'append' })
+    ctx.emit('session/event', current, prompt)
 
     expect(upsertPrompt).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       promptId: 'image-prompt', turn: 1,
@@ -123,7 +155,7 @@ describe('Prompt execution Host projection', () => {
         text: 'compare [Image #1] with [Image #2] now',
         attachments: [{ reference: '[Image #1]', attachment: native }, { reference: '[Image #2]', attachment: proxy }],
       },
-      position: 'turn-entry', admittedSeq: admitted.seq, admittedAt: admitted.time,
+      position: 'turn-entry', admittedSeq: 1, admittedAt: 180,
     }))
     await ctx.fiber.dispose()
   })
@@ -149,7 +181,7 @@ describe('Prompt execution Host projection', () => {
       },
     })
 
-    expect(projectPromptNodes(header, [start, end, late]).at(-1)).toBeUndefined()
+    expect(projectPromptNode(session([start, end, late]), late)).toBeUndefined()
   })
 
   it('retains an in-turn human message without treating it as a turn entry', () => {
@@ -179,7 +211,7 @@ describe('Prompt execution Host projection', () => {
       },
     })
 
-    expect(projectPromptNodes(header, [start, initial, steering]).at(-1)).toEqual(expect.objectContaining({
+    expect(projectPromptNode(session([start, initial, steering]), steering)).toEqual(expect.objectContaining({
       promptId: 'steering',
       position: 'in-turn',
     }))

@@ -1,4 +1,4 @@
-import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import {
   BlockAssembler,
@@ -6,9 +6,10 @@ import {
   type ContentBlock,
   type LlmFailure,
 } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-settings'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { VisionConfigSchema } from './config.ts'
+import { VisionConfigSchema, type LiveConfig } from './config.ts'
 import {
   VISION_SYSTEM_PROMPT,
   visionInferenceContent,
@@ -28,7 +29,7 @@ import type {
   VisionStatus,
 } from './types.ts'
 
-export const Config = VisionConfigSchema.volatile()
+export const Config = VisionConfigSchema
 export type {
   ResolvedImageRoute,
   ResolvedProxyImageRoute,
@@ -80,8 +81,11 @@ export class VisionService extends Service {
   static inject = ['attachments', 'fs', 'llm', 'settings', 'tools']
   static Config = Config
 
-  constructor(ctx: Context, private readonly options: Volatile<VisionConfig>) {
+  private readonly settingsNamespace: string
+
+  constructor(ctx: Context, private readonly liveConfig: LiveConfig) {
     super(ctx, 'vision')
+    this.settingsNamespace = ctx.fiber.entry?.options.id ?? VISION_NAMESPACE
     ctx.tools.register(createInspectImageTool({
       attachments: ctx.attachments,
       fs: ctx.fs,
@@ -92,7 +96,13 @@ export class VisionService extends Service {
   }
 
   get config(): VisionConfig {
-    return this.options.get()
+    return {
+      mode: this.liveConfig.mode.get(),
+      proxyProvider: this.liveConfig.proxyProvider.get(),
+      proxyModel: this.liveConfig.proxyModel.get(),
+      maxObservationChars: this.liveConfig.maxObservationChars.get(),
+      maxTokens: this.liveConfig.maxTokens.get(),
+    }
   }
 
   /** Resolve only the configured proxy; callers own native image submission. */
@@ -143,7 +153,7 @@ export class VisionService extends Service {
   }
 
   async setMode(mode: VisionConfig['mode']): Promise<void> {
-    await this.ctx.settings.update(VISION_NAMESPACE, { mode })
+    await this.ctx.settings.update(this.settingsNamespace, { mode })
   }
 
   async analyze(

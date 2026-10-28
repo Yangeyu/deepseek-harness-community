@@ -137,9 +137,11 @@ class FakeSessionTransport implements SessionTransport {
     return Promise.resolve(this.summaries)
   }
 
-  createSession(request: Parameters<SessionTransport['createSession']>[0]): Promise<{ readonly sessionId: SessionId }> {
-    return Promise.resolve({ sessionId: request.sessionId ?? sessionId(`session-${String(++this.created)}`) })
+  createSession(): Promise<{ readonly sessionId: SessionId }> {
+    return Promise.resolve({ sessionId: sessionId(`session-${String(++this.created)}`) })
   }
+
+  resumeSession(): Promise<void> { return Promise.resolve() }
 
   forkSession(): Promise<{ readonly sessionId: SessionId }> {
     const forked = sessionId('session-forked')
@@ -247,6 +249,24 @@ afterEach(async () => {
 })
 
 describe('SessionManager', () => {
+  it('resumes the selected conversation and submits against its existing identity', async () => {
+    const { manager, transport } = await startFixture()
+    const saved = sessionId('saved-conversation')
+    transport.summaries.push({ sessionId: saved, updatedAt: 1, agentAvailable: false, running: false, blank: false, cwd: '/saved-workspace' })
+    transport.histories.set(saved, { events: [turnStart(1)], hasMore: false })
+    const resume = vi.spyOn(transport, 'resumeSession')
+    const create = vi.spyOn(transport, 'createSession')
+
+    await manager.resume(saved)
+    await manager.prompt('continue', 'queue')
+
+    expect(resume).toHaveBeenCalledWith(saved)
+    expect(create).not.toHaveBeenCalled()
+    expect(manager.current.sessionId).toBe(saved)
+    expect(manager.current.events).toHaveLength(1)
+    expect(transport.promptRequests[0]?.sessionId).toBe(saved)
+  })
+
   it('hydrates one Session epoch from the follow snapshot and durable projections', async () => {
     const transport = new FakeSessionTransport()
     const selected = { provider: 'selected-provider', model: 'selected-model', reasoningEffort: 'high' }

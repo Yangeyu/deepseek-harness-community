@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-workspace'
@@ -28,7 +29,7 @@ export class HostRewindFork {
     if (presets === undefined && presetId !== undefined) throw new Error('The source Agent preset cannot be mounted in this Host.')
     const resolvedPreset = presets === undefined ? undefined : (await presets.resolve(presetId)).id
     const workspace = this.ctx.workspaceRegistry.list().find(item => item.sessionIds.includes(source.header.id))
-    const { provider, model } = this.ctx.agentDefaultModel.currentSelection()
+    const selection = source.projections.values.modelSelection?.next ?? this.ctx.agentDefaultModel.currentSelection()
     const sessionId = SessionId(`session-${randomUUID()}`)
     const handle = await this.ctx.agents.create({
       sessionId,
@@ -40,15 +41,17 @@ export class HostRewindFork {
         isSeeded: true,
         ...(resolvedPreset === undefined ? {} : { agentPreset: resolvedPreset }),
       },
-      agentOptions: { provider, model },
+      agentOptions: {
+        provider: selection.provider, model: selection.model,
+        ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) },
+      },
       setup: async (agentCtx, agent) => {
         // Public Inbox.clear appends cancellation events on the child's own suffix.
         // The factory persists setup before publication. Never edit/filter inherited events.
         agent.inbox.clear()
         // Fresh setup context belongs to the new branch and must survive the inherited clear.
         if (resolvedPreset !== undefined) await presets!.mount(agentCtx, resolvedPreset)
-        // Do not install another model-selection binding. Controller.prompt/selectModel
-        // binds its own selection before driving any adopted, factory-created live Agent.
+        // Seed the branch with the source selection; subsequent changes belong to Controller.selectModel.
       },
     })
     if (workspace !== undefined) {

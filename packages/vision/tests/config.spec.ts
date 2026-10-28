@@ -3,7 +3,8 @@ import { VisionConfigSchema } from '../src/config.ts'
 import type { VisionConfig } from '../src/types.ts'
 
 function resolve(input: unknown): VisionConfig {
-  return VisionConfigSchema(input as VisionConfig)
+  const config = VisionConfigSchema(input as VisionConfig)
+  return Object.fromEntries(Object.entries(config).map(([key, value]) => [key, value.get()])) as unknown as VisionConfig
 }
 
 describe('Vision config', () => {

@@ -4,7 +4,7 @@ import BrowserUse from '@deepseek-ai/dsh-browser-use'
 import { mountSessionMcp } from '@deepseek-ai/dsh-experimental-browser-use-runtime/mcp'
 
 export const name = 'community-browser'
-export const inject = ['agents', 'tools', 'systemPrompt']
+export const inject = ['agents', 'tools', 'systemPrompt', 'workingDirectory']
 
 /** Each Session owns its MCP client; the extension owns claimed tabs and their cursor. */
 export async function apply(ctx: Context): Promise<void> {

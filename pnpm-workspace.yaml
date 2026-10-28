@@ -6,7 +6,7 @@ packages:
 # `catalog:dsh`, and `pnpm pack` writes the concrete version into the artifact.
 catalogs:
   dsh:
-    '@deepseek-ai/dsh': &dsh-runtime-version 0.2.0-rc.2
+    '@deepseek-ai/dsh': &dsh-runtime-version 0.2.1-rc.2
     '@deepseek-ai/dsh-browser-use': *dsh-runtime-version
     '@deepseek-ai/dsh-computer-use': *dsh-runtime-version
     '@deepseek-ai/dsh-experimental-browser-use-runtime': *dsh-runtime-version
@@ -21,8 +21,6 @@ catalogs:
     '@deepseek-ai/dsh-authorization': *dsh-runtime-version
     '@deepseek-ai/dsh-base': *dsh-runtime-version
     '@deepseek-ai/dsh-bash-local': *dsh-runtime-version
-    '@deepseek-ai/dsh-ptc-runtime-node': *dsh-runtime-version
-    '@deepseek-ai/dsh-ptc-runtime': *dsh-runtime-version
     '@deepseek-ai/dsh-client-connection': *dsh-runtime-version
     '@deepseek-ai/dsh-client-file-upload': *dsh-runtime-version
     '@deepseek-ai/dsh-commands': *dsh-runtime-version
@@ -55,7 +53,6 @@ catalogs:
     '@deepseek-ai/dsh-settings': *dsh-runtime-version
     '@deepseek-ai/dsh-shell': *dsh-runtime-version
     '@deepseek-ai/dsh-spill': *dsh-runtime-version
-    '@deepseek-ai/dsh-subagent-in-process-driver': *dsh-runtime-version
     '@deepseek-ai/dsh-system-prompt': *dsh-runtime-version
     '@deepseek-ai/dsh-timeout': *dsh-runtime-version
     '@deepseek-ai/dsh-token-meter': *dsh-runtime-version

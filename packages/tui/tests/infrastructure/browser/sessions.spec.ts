@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { AgentRegistry, type Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId, SessionLogOffset, SessionStore } from '@deepseek-ai/dsh-session'
-import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
+import type {} from '@deepseek-ai/dsh-session-persistence'
 import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { ToolRuntime, type ToolExecutionInput } from '@deepseek-ai/dsh-tools'
@@ -31,25 +31,26 @@ vi.mock('@deepseek-ai/dsh-experimental-browser-use-runtime/mcp', async (original
 const require = createRequire(import.meta.url)
 const base = createRequire(require.resolve('@deepseek-ai/dsh-base/package.json'))
 const { AgentLoop } = await import(pathToFileURL(base.resolve('@deepseek-ai/dsh-agent-loop')).href) as {
-  AgentLoop: new (ctx: Context, config: { agents: []; maxParallelToolCalls: { get(): number } }) => unknown
+  AgentLoop: { new (ctx: Context, config: { agents: []; maxParallelToolCalls: { get(): number } }): unknown; Config(input: { agents: [] }): { agents: []; maxParallelToolCalls: { get(): number } } }
 }
-const { default: JsonlSessionPersistence } = await import(pathToFileURL(base.resolve('@deepseek-ai/dsh-session-persistence-jsonl')).href) as {
-  default: new (ctx: Context, config: { root: string }) => SessionPersistence
+const { apply: installPersistence } = await import(pathToFileURL(base.resolve('@deepseek-ai/dsh-session-persistence-jsonl')).href) as {
+  apply: (ctx: Context, config: { root: string }) => Promise<void>
 }
 
 it('keeps new, forked and resumed Sessions independent across cancellation and disposal', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-browser-sessions-'))
   const ctx = new Context()
   try {
-    new JsonlSessionPersistence(ctx, { root })
+    await installPersistence(ctx, { root })
     new AgentRegistry(ctx)
     new SessionStore(ctx)
     new SessionProjectionRegistry(ctx)
     new SystemPrompt(ctx, { includeHarnessIdentity: false, includeRuntimeContext: false })
     new ToolRuntime(ctx)
+    ctx.provide('workingDirectory', { ensure: async (agent: Agent) => agent.session.header.cwd ?? root } as never)
     ctx.provide('credentials', { resolve: async () => undefined } as never)
-    ctx.provide('typert', { lookups: { configure() {} }, contexts: { configureHost() {} } } as never)
-    new AgentLoop(ctx, { agents: [], maxParallelToolCalls: { get: () => 10 } })
+    ctx.provide('typert', { resources: { register() {} }, lookups: { configure() {} }, contexts: { configureHost() {} } } as never)
+    new AgentLoop(ctx, AgentLoop.Config({ agents: [] }))
     await ctx.plugin(Browser)
 
     let callId = 0

@@ -1,6 +1,6 @@
 {
   "name": "@vascent/dsh-tui",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "One-command DeepSeek Harness TUI launcher and community extension workspace",
   "keywords": [
     "deepseek",
@@ -84,8 +84,8 @@
     "start": "node bin/dscode.js"
   },
   "dependencies": {
-    "@deepseek-ai/cordis": "~4.0.4",
-    "@deepseek-ai/cordis-plugin-group": "~1.0.4",
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/cordis-plugin-group": "~1.0.5",
     "@deepseek-ai/dsh": "catalog:dsh",
     "@deepseek-ai/dsh-agent-default-model": "catalog:dsh",
     "@deepseek-ai/dsh-agent-preset-registry": "catalog:dsh",
@@ -116,8 +116,6 @@
     "@deepseek-ai/dsh-message-feedback": "catalog:dsh",
     "@deepseek-ai/dsh-output-retention": "catalog:dsh",
     "@deepseek-ai/dsh-permission-presets": "catalog:dsh",
-    "@deepseek-ai/dsh-ptc-runtime": "catalog:dsh",
-    "@deepseek-ai/dsh-ptc-runtime-node": "catalog:dsh",
     "@deepseek-ai/dsh-sandbox": "catalog:dsh",
     "@deepseek-ai/dsh-sdk-protocol": "catalog:dsh",
     "@deepseek-ai/dsh-session": "catalog:dsh",
@@ -130,7 +128,6 @@
     "@deepseek-ai/dsh-settings": "catalog:dsh",
     "@deepseek-ai/dsh-shell": "catalog:dsh",
     "@deepseek-ai/dsh-spill": "catalog:dsh",
-    "@deepseek-ai/dsh-subagent-in-process-driver": "catalog:dsh",
     "@deepseek-ai/dsh-system-prompt": "catalog:dsh",
     "@deepseek-ai/dsh-timeout": "catalog:dsh",
     "@deepseek-ai/dsh-tool-ask-user": "catalog:dsh",
@@ -142,14 +139,14 @@
     "@deepseek-ai/dsh-web-search-deepseek": "catalog:dsh",
     "@deepseek-ai/dsh-workflow": "catalog:dsh",
     "@deepseek-ai/dsh-workspace": "catalog:dsh",
-    "@deepseek-ai/schemastery": "~3.18.4",
-    "@earendil-works/pi-ai": "0.87.1",
+    "@deepseek-ai/schemastery": "~3.18.5",
+    "@earendil-works/pi-ai": "1.1.0",
     "@earendil-works/pi-tui": "^0.84.2",
     "cli-highlight": "^2.1.11",
     "diff": "^9.0.0",
     "pnpm": "11.7.0",
     "yaml": "^2.4.2",
-    "zod": "^4.5.4",
+    "zod": "4.4.3",
     "@playwright/mcp": "0.0.83",
     "playwright": "1.64.0-alpha-1790635538000",
     "@modelcontextprotocol/sdk": "1.30.0"

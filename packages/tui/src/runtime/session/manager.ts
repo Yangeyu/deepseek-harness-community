@@ -365,12 +365,15 @@ export class SessionManager {
         requestedRunning = summary.running
         cwd = summary.cwd ?? host.cwd
       }
-      const created = await this.transport.createSession({
-        cwd,
-        ...requested === undefined ? {} : { sessionId: requested },
-      })
+      let sessionId: SessionId
+      if (requested === undefined) {
+        sessionId = (await this.transport.createSession({ cwd })).sessionId
+      } else {
+        await this.transport.resumeSession(requested)
+        sessionId = requested
+      }
       const commit = this.workspace.commit(operation, {
-        sessionId: created.sessionId,
+        sessionId,
         cwd,
         connection: this.current.connection,
       })

@@ -1,7 +1,7 @@
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { contentHasImage, LlmError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, GenerateOptions, Message, ToolResultMessage } from '@deepseek-ai/dsh-llm'
-import type { ResolvedBailianModel } from './config.ts'
+import type { ResolvedBailianModel, ImageRequestPolicy } from './config.ts'
 import { resolveMaxTokens, resolveReasoningLevel } from './model.ts'
 import type { WireContentPart, WireMessage, WireRequest } from './types.ts'
 
@@ -12,7 +12,7 @@ function textOf(blocks: readonly ContentBlock[]): string {
 async function imagePart(
   attachment: Extract<ContentBlock, { type: 'image' }>['attachment'],
   attachments: AttachmentStore | undefined,
-  policy: ResolvedBailianModel['imageRequestPolicy'],
+  policy: ImageRequestPolicy | undefined,
   signal: AbortSignal | undefined,
 ): Promise<WireContentPart> {
   if (attachments === undefined) {
@@ -36,7 +36,7 @@ async function imagePart(
 async function imageParts(
   blocks: readonly ContentBlock[],
   attachments: AttachmentStore | undefined,
-  policy: ResolvedBailianModel['imageRequestPolicy'],
+  policy: ImageRequestPolicy | undefined,
   signal: AbortSignal | undefined,
 ): Promise<WireContentPart[]> {
   const images = blocks.filter(block => block.type === 'image')
@@ -47,7 +47,7 @@ async function imageParts(
 async function orderedContentParts(
   blocks: readonly ContentBlock[],
   attachments: AttachmentStore | undefined,
-  policy: ResolvedBailianModel['imageRequestPolicy'],
+  policy: ImageRequestPolicy | undefined,
   signal: AbortSignal | undefined,
 ): Promise<WireContentPart[]> {
   const parts = await Promise.all(blocks.map(async (block): Promise<WireContentPart | undefined> => {
@@ -63,7 +63,7 @@ async function orderedContentParts(
 async function userContent(
   blocks: readonly ContentBlock[],
   attachments: AttachmentStore | undefined,
-  policy: ResolvedBailianModel['imageRequestPolicy'],
+  policy: ImageRequestPolicy | undefined,
   signal: AbortSignal | undefined,
 ): Promise<string | WireContentPart[]> {
   if (!blocks.some(block => block.type === 'image')) return textOf(blocks)
@@ -96,7 +96,7 @@ function assistantMessage(message: Message): WireMessage {
 async function serializeMessages(
   options: GenerateOptions,
   attachments: AttachmentStore | undefined,
-  policy: ResolvedBailianModel['imageRequestPolicy'],
+  policy: ImageRequestPolicy | undefined,
   signal: AbortSignal | undefined,
 ): Promise<WireMessage[]> {
   const wire: WireMessage[] = []
@@ -120,11 +120,8 @@ async function serializeMessages(
       const resultText = textOf(message.content)
       const hasImages = contentHasImage(message.content)
       wire.push({
-        role: 'tool',
-        tool_call_id: message.toolCallId,
-        content: resultText.length > 0
-          ? resultText
-          : hasImages ? 'Image result attached in the following user message.' : '',
+        role: 'tool', tool_call_id: message.toolCallId,
+        content: resultText || (hasImages ? 'Image result attached in the following user message.' : ''),
       })
       if (hasImages) pendingImages.push(message)
       continue

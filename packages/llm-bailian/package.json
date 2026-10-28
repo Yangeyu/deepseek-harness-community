@@ -20,12 +20,12 @@
     "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
-    "@deepseek-ai/cordis-plugin-loader": "~1.0.5",
-    "@deepseek-ai/schemastery": "~3.18.4",
+    "@deepseek-ai/cordis-plugin-loader": "~1.0.6",
+    "@deepseek-ai/schemastery": "~3.18.5",
     "eventsource-parser": "^3.0.6"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/cordis": "~4.0.5",
     "@deepseek-ai/dsh-attachment": "catalog:dsh",
     "@deepseek-ai/dsh-credentials": "catalog:dsh",
     "@deepseek-ai/dsh-launch-environment": "catalog:dsh",
@@ -34,7 +34,7 @@
     "@deepseek-ai/dsh-util-values": "catalog:dsh"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/cordis": "~4.0.5",
     "@deepseek-ai/dsh-attachment": "catalog:dsh",
     "@deepseek-ai/dsh-credentials": "catalog:dsh",
     "@deepseek-ai/dsh-launch-environment": "catalog:dsh",

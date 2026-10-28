@@ -1,3 +1,4 @@
+import { VisionConfigSchema, type LiveConfig } from '../src/config.ts'
 import { Context } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { FinishReason, GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -65,7 +66,7 @@ function fixture(options: {
   ctx.provide('attachments', { saveImages, readImage } as unknown as Context['attachments'])
   ctx.provide('fs', {} as Context['fs'])
   ctx.provide('tools', { register } as unknown as Context['tools'])
-  const service = new VisionService(ctx, { get: () => currentConfig })
+  const service = new VisionService(ctx, Object.fromEntries(Object.keys(VisionConfigSchema(currentConfig)).map(key => [key, { get: () => currentConfig[key as keyof VisionConfig] }])) as LiveConfig)
   const tool = register.mock.calls[0]![0]
   return { service, tool, resolveModelInfo, stream, saveImages, readImage }
 }

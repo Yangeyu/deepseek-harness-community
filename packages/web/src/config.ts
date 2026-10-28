@@ -37,16 +37,16 @@ export interface ResolvedCommunityWebConfig {
   tavilyTimeoutSeconds: number
 }
 
-export const CommunityWebConfigSchema: z<CommunityWebConfig> = z.object({
-  searchProvider: z.string().default(AUTOMATIC_SEARCH_PROVIDER_ID),
-  extractProvider: z.string().default(TAVILY_PROVIDER_ID),
-  extractMaxOutputChars: z.number().step(1).min(1).default(DEFAULT_EXTRACT_MAX_OUTPUT_CHARS),
-  tavilyApiKeyEnv: z.string().role('credential-ref').default(DEFAULT_TAVILY_API_KEY_ENV),
-  tavilySearchEndpoint: z.string().default(DEFAULT_TAVILY_SEARCH_ENDPOINT),
-  tavilyExtractEndpoint: z.string().default(DEFAULT_TAVILY_EXTRACT_ENDPOINT),
-  tavilySearchDepth: z.union(['basic', 'advanced', 'fast', 'ultra-fast'] as const).default('basic'),
-  tavilyExtractDepth: z.union(['basic', 'advanced'] as const).default('basic'),
-  tavilyTimeoutSeconds: z.number().min(1).max(60).default(DEFAULT_TAVILY_TIMEOUT_SECONDS),
+export const CommunityWebConfigSchema = z.object({
+  searchProvider: z.string().default(AUTOMATIC_SEARCH_PROVIDER_ID).volatile(),
+  extractProvider: z.string().default(TAVILY_PROVIDER_ID).volatile(),
+  extractMaxOutputChars: z.number().step(1).min(1).default(DEFAULT_EXTRACT_MAX_OUTPUT_CHARS).volatile(),
+  tavilyApiKeyEnv: z.string().role('credential-ref').default(DEFAULT_TAVILY_API_KEY_ENV).volatile(),
+  tavilySearchEndpoint: z.string().default(DEFAULT_TAVILY_SEARCH_ENDPOINT).volatile(),
+  tavilyExtractEndpoint: z.string().default(DEFAULT_TAVILY_EXTRACT_ENDPOINT).volatile(),
+  tavilySearchDepth: z.union(['basic', 'advanced', 'fast', 'ultra-fast'] as const).default('basic').volatile(),
+  tavilyExtractDepth: z.union(['basic', 'advanced'] as const).default('basic').volatile(),
+  tavilyTimeoutSeconds: z.number().min(1).max(60).default(DEFAULT_TAVILY_TIMEOUT_SECONDS).volatile(),
 })
 
 export function resolveCommunityWebConfig(config: CommunityWebConfig): ResolvedCommunityWebConfig {
@@ -62,3 +62,5 @@ export function resolveCommunityWebConfig(config: CommunityWebConfig): ResolvedC
     tavilyTimeoutSeconds: config.tavilyTimeoutSeconds ?? DEFAULT_TAVILY_TIMEOUT_SECONDS,
   }
 }
+
+export type LiveConfig = ReturnType<typeof CommunityWebConfigSchema>

@@ -1,89 +1,90 @@
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { Context } from '@deepseek-ai/cordis'
-import { SessionLogOffset, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
-import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import { z } from 'zod'
 import { promptImagesFromContent } from '../../session/input.ts'
 import { promptTextFromContent } from '../prompt-text.ts'
 import type { PromptNode, PromptNodeSink } from './types.ts'
 
-type UserMessageEvent = Extract<SessionEvent, { type: 'user/message' }>
-type AcceptedPromptEvent = UserMessageEvent & {
-  readonly data: UserMessageEvent['data'] & {
-    readonly source: Extract<UserMessageEvent['data']['source'], { kind: 'user' }>
-  }
-}
+const attachmentSchema = z.object({
+  attachmentId: z.string().transform(AttachmentId),
+  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
+  bytes: z.number(), width: z.number(), height: z.number(), name: z.string().optional(),
+}).transform(({ name, ...attachment }) => ({ ...attachment, ...name === undefined ? {} : { name } }))
 
-export function isAcceptedPromptEvent(event: SessionEvent): event is AcceptedPromptEvent {
-  return event.type === 'user/message'
-    && event.surfaceOp === 'append'
-    && event.data.source.kind === 'user'
-}
+const promptSchema: z.ZodType<PromptNode> = z.object({
+  promptId: z.string(), sessionId: z.string(), turn: z.number(), workspaceRoot: z.string(),
+  input: z.object({
+    text: z.string(),
+    attachments: z.array(z.object({ reference: z.string(), attachment: attachmentSchema })),
+  }),
+  position: z.enum(['turn-entry', 'in-turn']), admittedSeq: z.number(), admittedAt: z.number(),
+  previousTurnEndSeq: z.number().optional(),
+}).transform(({ previousTurnEndSeq, ...prompt }) => ({
+  ...prompt, ...previousTurnEndSeq === undefined ? {} : { previousTurnEndSeq },
+}))
 
-const boundarySchema = z.object({
-  turn: z.number().int().nonnegative(),
-  open: z.boolean(),
-  firstPromptSeq: z.number().int().nonnegative().nullable(),
-  previousTurnEndSeq: z.number().int().nonnegative().nullable(),
+const stateSchema: z.ZodType<PromptHistoryState> = z.object({
+  sessionId: z.string(), cwd: z.string(), turn: z.number().nullable(),
+  previousTurnEndSeq: z.number().nullable(), hasPrompt: z.boolean(),
+  latest: promptSchema.nullable(), checkpoints: z.array(promptSchema),
 })
-type PromptBoundary = z.infer<typeof boundarySchema>
+
+export interface PromptHistoryState {
+  sessionId: string
+  cwd: string
+  turn: number | null
+  previousTurnEndSeq: number | null
+  hasPrompt: boolean
+  latest: PromptNode | null
+  checkpoints: readonly PromptNode[]
+}
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
-  interface SessionProjectionStateMap {
-    communityPromptBoundary: PromptBoundary
-  }
+  interface SessionProjectionStateMap { communityPrompts: PromptHistoryState }
 }
 
-const promptBoundary: ProjectionDefinition<'communityPromptBoundary'> = {
-  key: 'communityPromptBoundary',
-  stateVersion: 1,
-  stateSchema: boundarySchema,
-  init: () => ({ turn: 0, open: false, firstPromptSeq: null, previousTurnEndSeq: null }),
-  apply(state, event) {
-    if (event.type === 'turn/start') return { ...state, turn: event.data.turn, open: true, firstPromptSeq: null }
-    if (event.type === 'turn/end') return { ...state, open: false, previousTurnEndSeq: event.seq }
-    if (state.open && state.firstPromptSeq === null && isAcceptedPromptEvent(event)) {
-      return { ...state, firstPromptSeq: event.seq }
-    }
-    return state
-  },
+export function isAcceptedPromptEvent(event: SessionEvent): event is Extract<SessionEvent, { type: 'user/message' }> {
+  return event.type === 'user/message' && event.surfaceOp === 'append' && event.data.source.kind === 'user'
 }
 
-function promptNode(header: SessionHeader, event: SessionEvent, state: PromptBoundary): PromptNode | undefined {
-  if (!state.open || !isAcceptedPromptEvent(event)) return undefined
+/** Fold admission once; resumed sessions use the same registered Host projection. */
+export function foldPromptHistory(state: PromptHistoryState, event: SessionEvent, limit: number): PromptHistoryState {
+  if (event.type === 'turn/start') return { ...state, turn: event.data.turn, hasPrompt: false }
+  if (event.type === 'turn/end') return { ...state, turn: null, previousTurnEndSeq: event.seq }
+  if (!isAcceptedPromptEvent(event) || state.turn === null) return state
   const text = promptTextFromContent(event.data.content)
-  return {
-    promptId: String(event.data.id),
-    sessionId: String(header.id),
-    turn: state.turn,
-    workspaceRoot: header.cwd ?? process.cwd(),
+  const prompt: PromptNode = {
+    promptId: String(event.data.id), sessionId: state.sessionId, turn: state.turn,
+    workspaceRoot: state.cwd,
     input: { text: text.trim() === '' ? '[Message]' : text, attachments: promptImagesFromContent(event.data.content) },
-    position: state.firstPromptSeq === event.seq ? 'turn-entry' : 'in-turn',
-    admittedSeq: event.seq,
-    admittedAt: event.time,
+    position: state.hasPrompt ? 'in-turn' : 'turn-entry', admittedSeq: event.seq, admittedAt: event.time,
     ...state.previousTurnEndSeq === null ? {} : { previousTurnEndSeq: state.previousTurnEndSeq },
   }
-}
-
-/** Fold a Query observation with the same boundary rules as the live Host projection. */
-export function projectPromptNodes(header: SessionHeader, events: readonly SessionEvent[]): PromptNode[] {
-  let state = promptBoundary.init(header, SessionLogOffset(0))
-  const nodes: PromptNode[] = []
-  for (const event of events) {
-    state = promptBoundary.apply(state, event)
-    const node = promptNode(header, event, state)
-    if (node !== undefined) nodes.push(node)
+  return {
+    ...state, hasPrompt: true, latest: prompt,
+    checkpoints: state.hasPrompt ? state.checkpoints : [...state.checkpoints, prompt].slice(-limit),
   }
-  return nodes
 }
 
-/** Publish Prompt admission synchronously; the Host owns replay and the bounded boundary state. */
+export function registerPromptHistory(ctx: Context, limit: number): void {
+  ctx.sessionProjections.register({
+    key: 'communityPrompts', stateVersion: 1,
+    stateSchema: stateSchema.refine(state => state.checkpoints.length <= limit),
+    init: header => ({
+      sessionId: String(header.id), cwd: header.cwd ?? process.cwd(), turn: null,
+      previousTurnEndSeq: null, hasPrompt: false, latest: null, checkpoints: [],
+    }),
+    apply: (state, event) => foldPromptHistory(state, event, limit),
+  })
+}
+
+/** Publish only the prompt admitted by this event, after the projection has advanced. */
 export function installPromptProjection(ctx: Context, sink: PromptNodeSink): void {
-  ctx.sessionProjections.register(promptBoundary)
   ctx.on('session/event', (session, event) => {
     if (!isAcceptedPromptEvent(event)) return
-    const state = ctx.sessionProjections.stateOf(session, 'communityPromptBoundary')
-    if (state === undefined) throw new Error('Prompt boundary projection is unavailable')
-    const prompt = promptNode(session.header, event, state)
-    if (prompt !== undefined) sink.upsertPrompt(prompt)
+    const prompt = ctx.sessionProjections.stateOf(session, 'communityPrompts')?.latest
+    if (prompt?.admittedSeq === event.seq) sink.upsertPrompt(prompt)
   })
 }

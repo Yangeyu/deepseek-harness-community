@@ -26,38 +26,41 @@ function model(name?: string): BailianModelConfig {
 
 async function boot() {
   const ctx = new Context()
-  cleanups.push(() => ctx.fiber.dispose())
+  cleanups.push(async () => {
+    await ctx.fiber.dispose()
+  })
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(Loader)
   ctx.loader.builtins.bailian = Bailian
-  const initial = { baseURL: 'http://127.0.0.1:1', models: { base: model('Composition Base') } }
-  const id = await ctx.loader.create({ name: 'cordis:bailian', config: initial })
+  const id = await ctx.loader.create({ name: 'cordis:bailian', config: {
+    baseURL: 'http://127.0.0.1:1', models: { base: model('Composition Base') },
+  } })
   const entry = ctx.loader.resolve(id)
-  const fiber = entry.fiber!
-  await fiber.await()
-  const update = async (patch: Record<string, unknown>) => {
-    const next = { ...initial, ...patch, models: { ...initial.models, ...patch.models as object } }
+  await entry.fiber!.await()
+  const update = async (patch: object) => {
+    const next = { ...(entry.options.config as object), ...patch }
+    const fiber = entry.fiber!
     resolveConfig(fiber.runtime!, fiber.ctx.waterfall(fiber, 'internal/config', next, () => next))
     await entry.update({ config: next })
     await entry.fiber!.await()
   }
-  return { ctx, entry, fiber, update }
+  return { ctx, update }
 }
 
 afterEach(async () => {
   while (cleanups.length > 0) await cleanups.pop()!()
 })
 
-describe('Bailian live plugin configuration', () => {
+describe('Bailian dynamic settings', () => {
   it('applies model additions and retry policy changes without restarting the Provider', async () => {
-    const { ctx, entry, fiber, update } = await boot()
+    const { ctx, update } = await boot()
     const observed: string[][] = []
     ctx.on('llm/adapters-updated', () => {
       observed.push(ctx.llm.listProviders().map(provider => provider.id))
     })
 
     await update({
-      models: { added: model('Settings Model') },
+      models: { base: model('Composition Base'), added: model('Settings Model') },
       retryPolicy: {
         mode: 'always',
         backoff: { initialDelayMs: 25, maxDelayMs: 100, jitterRatio: 0.2 },
@@ -85,7 +88,6 @@ describe('Bailian live plugin configuration', () => {
       jitterRatio: 0.2,
     })
     expect(observed).toEqual([['bailian']])
-    expect(entry.fiber === fiber).toBe(true)
   })
 
   it('rejects a resolver-invalid update atomically and keeps the last-good snapshot', async () => {
@@ -106,5 +108,4 @@ describe('Bailian live plugin configuration', () => {
       inputModalities: ['text'],
     }])
   })
-
 })

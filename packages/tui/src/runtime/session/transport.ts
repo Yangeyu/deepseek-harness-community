@@ -44,7 +44,8 @@ export type SessionControlFrame =
 export interface SessionTransport {
   describeHost(): Promise<{ readonly cwd: string }>
   listSessions(signal?: AbortSignal): Promise<readonly SessionSummary[]>
-  createSession(request: { readonly cwd: string; readonly sessionId?: SessionId }): Promise<{ readonly sessionId: SessionId }>
+  createSession(request: { readonly cwd: string }): Promise<{ readonly sessionId: SessionId }>
+  resumeSession(sessionId: SessionId): Promise<void>
   /** Fork conversation for Rewind; retire reconstructed pending inbox work before exposing the new Session. */
   forkSession(request: { readonly sessionId: SessionId; readonly atSeq: number }): Promise<{ readonly sessionId: SessionId }>
   page(request: {

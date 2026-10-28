@@ -1,16 +1,16 @@
-import type { Context, Volatile } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
 import { BailianAdapter } from './adapter.ts'
 import {
+  assertBailianConfig,
   BAILIAN_DISPLAY_NAME,
   BAILIAN_PROVIDER_ID,
-  Config as ConfigSchema,
-  type Config as BailianConfig,
-  assertBailianConfig,
+  Config,
   resolveBailianConfig,
+  type LiveConfig,
   type ResolvedBailianConfig,
 } from './config.ts'
 
@@ -20,6 +20,7 @@ export {
   BAILIAN_DISPLAY_NAME,
   BAILIAN_PROVIDER_ID,
   BAILIAN_REASONING_EFFORT_IDS,
+  Config,
   DEFAULT_BAILIAN_API_KEY_ENV,
   DEFAULT_BAILIAN_BASE_URL,
   DEFAULT_REQUEST_IMAGE_MAX_BYTES,
@@ -39,18 +40,26 @@ export {
   type ResolvedBailianReasoningLevel,
   type ResolvedBailianReasoningPolicy,
 } from './config.ts'
-export const Config = ConfigSchema.volatile()
 export const name = 'llm-bailian'
 export const inject = ['llm']
 export const BAILIAN_SETTINGS_NAMESPACE = 'llm-bailian'
 
-export function apply(ctx: Context, config: Volatile<BailianConfig>): void {
-  let snapshot = resolveBailianConfig(structuredClone(config.get()) as BailianConfig)
-
+export function apply(ctx: Context, config: LiveConfig): void {
+  const current = (): Config => {
+    const retryPolicy = structuredClone(config.retryPolicy.get()) as Config['retryPolicy']
+    return {
+      apiKeyEnv: config.apiKeyEnv.get(),
+      baseURL: config.baseURL.get(),
+      models: structuredClone(config.models.get()) as Config['models'],
+      streamIdleTimeoutMs: config.streamIdleTimeoutMs.get(),
+      ...retryPolicy === undefined ? {} : { retryPolicy },
+    }
+  }
+  let snapshot = resolveBailianConfig(current())
   ctx.on('internal/config', function (this: import('@deepseek-ai/cordis').Fiber, _raw, next) {
-    const raw: unknown = next()
-    if (this === ctx.fiber) assertBailianConfig(ConfigSchema(raw as BailianConfig))
-    return raw
+    const candidate = next()
+    if (this === ctx.fiber) assertBailianConfig(candidate as Config)
+    return candidate
   })
 
   const resolveApiKey = async (snapshot: ResolvedBailianConfig): Promise<string> => {
@@ -83,7 +92,7 @@ export function apply(ctx: Context, config: Volatile<BailianConfig>): void {
   }])
   const registration = ctx.llm.registerAdapter([BAILIAN_PROVIDER_ID], adapter)
   ctx.on('loader/volatile-update', () => {
-    const next = resolveBailianConfig(structuredClone(config.get()) as BailianConfig)
+    const next = resolveBailianConfig(current())
     const policyChanged = !deepEqualJson(next.retryPolicy, snapshot.retryPolicy)
     snapshot = next
     if (policyChanged) registration.replace([BAILIAN_PROVIDER_ID])

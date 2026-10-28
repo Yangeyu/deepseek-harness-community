@@ -1,12 +1,13 @@
-import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import { credentialRef, type CredentialInfo } from '@deepseek-ai/dsh-credentials'
+import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-settings'
 import { WebError, type WebSearchProvider } from '@deepseek-ai/dsh-web'
 import {
   AUTOMATIC_SEARCH_PROVIDER_ID,
   CommunityWebConfigSchema,
   resolveCommunityWebConfig,
-  type CommunityWebConfig,
+  type LiveConfig,
   type ResolvedCommunityWebConfig,
   type WebSearchSelection,
 } from './config.ts'
@@ -53,7 +54,7 @@ export {
 export { DEEPSEEK_PROVIDER_ID } from '@deepseek-ai/dsh-web-search-deepseek'
 export { createWebExtractTool, WEB_EXTRACT_TIMEOUT_MS, WEB_EXTRACT_TOOL_NAME } from './tool.ts'
 
-export const Config = CommunityWebConfigSchema.volatile()
+export const Config = CommunityWebConfigSchema
 export const name = 'community-web'
 export const COMMUNITY_WEB_SETTINGS_NAMESPACE = 'community-web'
 
@@ -118,8 +119,11 @@ export class CommunityWebService extends Service {
   private readonly searchProviders: ProviderCatalog<WebSearchProvider>
   private readonly extractProviders: ProviderCatalog<WebExtractProvider>
 
-  constructor(ctx: Context, private readonly options: Volatile<CommunityWebConfig>) {
+  private readonly settingsNamespace: string
+
+  constructor(ctx: Context, private readonly liveConfig: LiveConfig) {
     super(ctx, 'communityWeb')
+    this.settingsNamespace = ctx.fiber.entry?.options.id ?? COMMUNITY_WEB_SETTINGS_NAMESPACE
     this.tavily = new TavilyClient(() => this.tavilyClientOptions())
     this.tavilySearch = new TavilySearchProvider(this.tavily, () => this.tavilySearchOptions())
     this.deepSeekSearch = createDeepSeekSearchProvider(ctx)
@@ -162,7 +166,17 @@ export class CommunityWebService extends Service {
   }
 
   get config(): ResolvedCommunityWebConfig {
-    return resolveCommunityWebConfig(this.options.get())
+    return resolveCommunityWebConfig({
+      searchProvider: this.liveConfig.searchProvider.get(),
+      extractProvider: this.liveConfig.extractProvider.get(),
+      extractMaxOutputChars: this.liveConfig.extractMaxOutputChars.get(),
+      tavilyApiKeyEnv: this.liveConfig.tavilyApiKeyEnv.get(),
+      tavilySearchEndpoint: this.liveConfig.tavilySearchEndpoint.get(),
+      tavilyExtractEndpoint: this.liveConfig.tavilyExtractEndpoint.get(),
+      tavilySearchDepth: this.liveConfig.tavilySearchDepth.get(),
+      tavilyExtractDepth: this.liveConfig.tavilyExtractDepth.get(),
+      tavilyTimeoutSeconds: this.liveConfig.tavilyTimeoutSeconds.get(),
+    })
   }
 
   async status(signal?: AbortSignal): Promise<CommunityWebStatus> {
@@ -191,7 +205,7 @@ export class CommunityWebService extends Service {
     if (searchProvider !== AUTOMATIC_SEARCH_PROVIDER_ID && !this.searchProviders.has(searchProvider)) {
       throw new WebError(`web search provider "${searchProvider}" is not registered`, 'WEB_PROVIDER_CONFIGURED_MISSING')
     }
-    await this.ctx.settings.update(COMMUNITY_WEB_SETTINGS_NAMESPACE, { searchProvider })
+    await this.ctx.settings.update(this.settingsNamespace, { searchProvider })
   }
 
   registerSearchProvider(registration: CommunityWebProviderRegistration<WebSearchProvider>): () => void {

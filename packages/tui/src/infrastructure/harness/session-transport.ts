@@ -29,6 +29,7 @@ type SessionControllerPort = Pick<SessionController,
   | 'openWorkspacePath'
   | 'page'
   | 'prompt'
+  | 'resolveAgent'
   | 'selectModel'
   | 'updateQueue'
 >
@@ -79,6 +80,11 @@ export class HarnessSessionTransport implements SessionTransport {
 
   createSession(request: Parameters<SessionTransport['createSession']>[0]) {
     return this.options.controller.create(request)
+  }
+
+  async resumeSession(sessionId: SessionId): Promise<void> {
+    const result = await this.options.controller.resolveAgent(sessionId)
+    if ('error' in result) throw result.error
   }
 
   forkSession(request: Parameters<SessionTransport['forkSession']>[0]) {

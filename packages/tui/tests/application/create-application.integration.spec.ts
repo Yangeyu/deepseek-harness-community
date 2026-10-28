@@ -49,6 +49,7 @@ function hostPorts(): TuiHostPorts {
       describeHost: async () => ({ cwd: '/workspace' }),
       listSessions: async () => [],
       createSession: unavailable,
+      resumeSession: async () => {},
       forkSession: unavailable,
       page: unavailable,
       modelCatalog: unavailable,

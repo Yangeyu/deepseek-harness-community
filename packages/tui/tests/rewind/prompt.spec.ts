@@ -1,7 +1,9 @@
-import { projectPromptNodes } from '../../src/runtime/execution/projection/index.ts'
-import type { SessionHeader, SessionEvent } from '@deepseek-ai/dsh-session'
+import { Context } from '@deepseek-ai/cordis'
+import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
+import { registerPromptHistory } from '../../src/runtime/execution/projection/host.ts'
+import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { describe, expect, it } from 'vitest'
-import { rewindPointFromPrompt } from '../../src/modules/rewind/index.ts'
+import { rewindPointFromPrompt, HostRewindConversationHistory } from '../../src/modules/rewind/index.ts'
 
 describe('Rewind Prompt adapter', () => {
   it('preserves lifecycle identity, time, and conversation boundary', () => {
@@ -41,7 +43,7 @@ describe('Rewind Prompt adapter', () => {
     })).toBeUndefined()
   })
 
-  it('rebuilds checkpoints for completed and active turns from one Session log', () => {
+  it('rebuilds checkpoints for completed and active turns from one Session log', async () => {
     const events = [
       { type: 'turn/start', seq: 0, time: 10, data: { turn: 1 } },
       {
@@ -71,11 +73,16 @@ describe('Rewind Prompt adapter', () => {
         },
       },
     ] as unknown as SessionEvent[]
-    const header = { id: 'session-1', cwd: '/workspace' } as SessionHeader
+    const session = Session.create(SessionId('session-1'), events, { version: 4, isSeeded: false, id: SessionId('session-1'), cwd: '/workspace', createdAt: 0 })
+    const ctx = new Context()
+    new SessionProjectionRegistry(ctx)
+    registerPromptHistory(ctx, 20)
+    ctx.provide('agents', { get: () => ({ session }) } as never)
 
-    expect(projectPromptNodes(header, events).flatMap(prompt => rewindPointFromPrompt(prompt) ?? [])).toEqual([
+    expect(await new HostRewindConversationHistory(ctx).list('session-1')).toEqual([
       expect.objectContaining({ pointId: 'prompt-1', turn: 1, input: { text: 'first', attachments: [] } }),
       expect.objectContaining({ pointId: 'prompt-2', turn: 2, previousTurnEndSeq: 2 }),
     ])
+    await ctx.fiber.dispose()
   })
 })
