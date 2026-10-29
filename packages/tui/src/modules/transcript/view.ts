@@ -24,7 +24,7 @@ import type {
   TranscriptToolItem,
 } from './model.ts'
 import { activityTitle } from './activity-presentation.ts'
-import { sanitizeTerminalText } from '../../presentation/primitives/text.ts'
+import { sanitizeTerminalLine, sanitizeTerminalText } from '../../presentation/primitives/text.ts'
 import type { TuiTheme } from '../../presentation/primitives/theme.ts'
 import { paintImageReferences } from '../composer/image-reference-presentation.ts'
 import {
@@ -64,6 +64,13 @@ interface PromptBlockCache {
   lines: string[]
 }
 
+interface PromptHit {
+  key: string
+  firstLine: number
+  lastLine: number
+  summary: string
+}
+
 interface DiffBlockCache {
   width: number
   title: string
@@ -101,6 +108,7 @@ export class TranscriptComponent implements Component {
   private readonly promptBlocks = new Map<string, PromptBlockCache>()
   private readonly diffBlocks = new Map<string, DiffBlockCache>()
   private blockHits: BlockHit[] = []
+  private promptHits: PromptHit[] = []
   private blockTitleHits = new Map<number, BlockHit>()
   private blockHitsByKey = new Map<string, BlockHit>()
   private activityExecutionKeys = new Map<string, readonly string[]>()
@@ -186,6 +194,19 @@ export class TranscriptComponent implements Component {
     return hit !== undefined && hit.lastLine === this.renderedLineCount - 1
   }
 
+  /** Presentation-only context for the first visible answer, never part of transcript rows. */
+  promptHeader(top: number, width: number): { key: string; line: string } | undefined {
+    if (width < 16) return undefined
+    const prompt = this.promptHits.findLast(hit => hit.firstLine - 1 <= top && hit.summary !== '')
+    if (prompt === undefined || top <= prompt.lastLine) return undefined
+    const text = truncateToWidth(` › ${prompt.summary}`, width - 1, '…')
+    return { key: prompt.key, line: this.theme.userBlock(this.theme.user(padToWidth(text, width))) }
+  }
+
+  promptRow(key: string): number | undefined {
+    return this.promptHits.find(hit => hit.key === key)?.firstLine
+  }
+
   render(width: number): string[] {
     const safeWidth = Math.max(1, width)
     if (this.renderedDocument?.width === safeWidth) return this.paintAnimation()
@@ -197,6 +218,7 @@ export class TranscriptComponent implements Component {
     const activeDiffBlocks = new Set<string>()
     this.renderedDiffCollapsed.clear()
     this.blockHits = []
+    this.promptHits = []
     this.blockTitleHits = new Map()
     this.blockHitsByKey = new Map()
     this.activityExecutionKeys = new Map()
@@ -222,7 +244,19 @@ export class TranscriptComponent implements Component {
       }
       if (item.kind === 'prompt') {
         activePromptBlocks.add(item.key)
+        const firstLine = lines.length
         lines.push(...this.renderPromptBlock(item, safeWidth))
+        // Bound work for large pasted prompts without splitting a Unicode code point.
+        let prefix = ''
+        let count = 0
+        for (const character of item.body) {
+          if (count++ === 512) break
+          prefix += character
+        }
+        this.promptHits.push({
+          key: item.key, firstLine, lastLine: lines.length - 1,
+          summary: sanitizeTerminalLine(stripTerminalSequences(prefix)),
+        })
         continue
       }
       activeTextBlocks.add(item.key)

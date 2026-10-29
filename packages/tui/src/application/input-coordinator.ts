@@ -63,6 +63,8 @@ export interface InputLayoutPort {
   scrollTranscript(direction: -1 | 1): boolean
   transcriptRowAt(screenRow: number, viewportTop: number): number
   preserveTranscriptViewport(): void
+  promptHeaderKeyAt(screenRow: number, viewportTop: number): string | undefined
+  jumpToPrompt(key: string): boolean
 }
 
 export interface InputTranscriptPort {
@@ -103,6 +105,7 @@ export interface InputCoordinatorOptions {
 
 /** Dispatches normalized terminal gestures to their owning feature ports. */
 export class InputCoordinator {
+  private pressedPromptKey: string | undefined
   private interruptingTarget: string | undefined
   private readonly actions = new ActionDispatcher<KeymapAction>()
   private readonly effects: ScopedEffectRunner
@@ -241,14 +244,16 @@ export class InputCoordinator {
     } else {
       changed = transcript.handlePointer(surfaceActive ? -1 : transcriptLine, 'move') || changed
       if (pointer.kind === 'press') {
+        this.pressedPromptKey = surfaceActive ? undefined : layout.promptHeaderKeyAt(pointer.y, renderState.previousViewportTop)
         changed = screen.beginTextSelection(pointer.x, pointer.y) || changed
       } else if (pointer.kind === 'drag') {
+        if (!surfaceActive) layout.preserveTranscriptViewport()
         changed = screen.updateTextSelection(pointer.x, pointer.y) || changed
       } else if (pointer.kind === 'release') {
         const result = screen.finishTextSelection(pointer.x, pointer.y)
         changed = result.changed || changed
         if (result.kind === 'selection') {
-          void this.options.clipboard(result.text).catch((error: unknown) => {
+          if (result.text !== '') void this.options.clipboard(result.text).catch((error: unknown) => {
             this.options.session.notice(`Could not copy selection: ${error instanceof Error ? error.message : String(error)}`)
           })
         } else if (result.kind === 'click') {
@@ -257,6 +262,9 @@ export class InputCoordinator {
               { kind: 'click', x: pointer.x, y: pointer.y },
               renderState.previousViewportTop,
             )
+          } else if (this.pressedPromptKey !== undefined
+            && layout.promptHeaderKeyAt(pointer.y, renderState.previousViewportTop) !== undefined) {
+            changed = layout.jumpToPrompt(this.pressedPromptKey) || changed
           } else {
             const disclosureChanged = transcript.handlePointer(transcriptLine, 'click')
             if (disclosureChanged && !transcript.isTrailingBlock(transcriptLine)) {
@@ -265,6 +273,7 @@ export class InputCoordinator {
             changed = disclosureChanged || changed
           }
         }
+        this.pressedPromptKey = undefined
       }
     }
     if (changed) this.options.invalidate()

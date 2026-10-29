@@ -65,6 +65,9 @@ describe('RenderedTextSelection', () => {
       changed: true,
       text: '',
     })
+    selection.begin({ row: 0, col: 0 })
+    selection.update({ row: 0, col: 2 })
+    expect(selection.finish({ row: 0, col: 0 }, ['text'])).toMatchObject({ kind: 'selection', text: '' })
   })
 
   it('reapplies selection highlighting after embedded SGR resets', () => {

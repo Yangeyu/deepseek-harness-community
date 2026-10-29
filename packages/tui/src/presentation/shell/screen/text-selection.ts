@@ -65,17 +65,22 @@ export class RenderedTextSelection {
   private anchor: TextPoint | undefined
   private focus: TextPoint | undefined
   private pressActive = false
+  private dragged = false
+
+  constructor(private readonly isSelectableRow: (row: number) => boolean = () => true) {}
 
   begin(point: TextPoint): boolean {
     this.anchor = point
     this.focus = point
     this.pressActive = true
+    this.dragged = false
     return true
   }
 
   update(point: TextPoint): boolean {
     if (!this.pressActive || this.focus === undefined || samePoint(this.focus, point)) return false
     this.focus = point
+    this.dragged = true
     return true
   }
 
@@ -87,6 +92,7 @@ export class RenderedTextSelection {
     if (range === undefined) {
       this.anchor = undefined
       this.focus = undefined
+      if (this.dragged) return { kind: 'selection', changed: true, text: '' }
       return { kind: 'click', changed }
     }
     return { kind: 'selection', changed, text: this.extract(lines, range) }
@@ -97,6 +103,7 @@ export class RenderedTextSelection {
     this.anchor = undefined
     this.focus = undefined
     this.pressActive = false
+    this.dragged = false
     return changed
   }
 
@@ -104,6 +111,7 @@ export class RenderedTextSelection {
     const range = this.range()
     if (range === undefined) return [...lines]
     return lines.map((line, row) => {
+      if (!this.isSelectableRow(row)) return line
       if (row < range.start.row || row > range.end.row) return line
       const columns = selectionColumns(line, row, range)
       if (columns.end <= columns.start) return line
@@ -127,6 +135,7 @@ export class RenderedTextSelection {
   private extract(lines: readonly string[], range: TextRange): string {
     const selected: string[] = []
     for (let row = range.start.row; row <= range.end.row; row += 1) {
+      if (!this.isSelectableRow(row)) continue
       const line = lines[row] ?? ''
       const columns = selectionColumns(line, row, range)
       selected.push(stripTerminalSequences(

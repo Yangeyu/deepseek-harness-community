@@ -17,7 +17,7 @@ import {
   type ExecutionSnapshot,
 } from '../../runtime/execution/projection/index.ts'
 import { promptTextFromContent } from '../../runtime/execution/prompt-text.ts'
-import { visionEvidenceFromContent } from '../../runtime/session/input.ts'
+import { promptImagesFromContent, visionEvidenceFromContent } from '../../runtime/session/input.ts'
 import { displayUnknown, sanitizeTerminalLine, sanitizeTerminalText } from '../../presentation/primitives/text.ts'
 
 export type TranscriptTone = 'accent' | 'dim' | 'error' | 'warning'
@@ -86,6 +86,11 @@ export interface TranscriptProjection {
   readonly pendingInputs: readonly PendingInputItem[]
   readonly activeActivityKey: string | undefined
   readonly showDetails: boolean
+}
+
+function promptBody(content: Parameters<typeof promptImagesFromContent>[0]): string {
+  const text = promptTextFromContent(content)
+  return text.trim() !== '' ? text : promptImagesFromContent(content).length > 0 ? '[attachments]' : ''
 }
 
 /** Session-owned, lazy content projection. Rendering caches belong to the view. */
@@ -330,7 +335,7 @@ function buildTranscriptHistory(
         if (!human && !showDetails) break
         if (human) {
           const execution = state.execution.get(promptExecutionKey(String(event.data.id)))
-          const text = promptTextFromContent(event.data.content)
+          const text = promptBody(event.data.content)
           if (text.trim() !== '') {
             items.push({
               kind: 'prompt',
@@ -546,7 +551,7 @@ function collectTranscriptSources(
     if (item.placement === 'context') continue
     const key = `prompt:${String(item.rpcId ?? item.message.id)}`
     if (visiblePromptKeys.has(key)) continue
-    const body = promptTextFromContent(item.message.content)
+    const body = promptBody(item.message.content)
     if (body.trim() === '') continue
     visiblePromptKeys.add(key)
     if (item.localEcho === true) {

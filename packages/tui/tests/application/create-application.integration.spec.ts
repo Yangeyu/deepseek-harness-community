@@ -805,6 +805,60 @@ describe('createApplication integration', () => {
     expect(view.snapshot.selectedKey).toBe(latest)
   })
 
+  it('clicks the pinned prompt through real mouse input and keeps it out of dragged copies', async () => {
+    const host = transcriptHostPorts()
+    host.sessions.follow = async function*(sessionId, _maxMessages, signal) {
+      const events = [
+        { event: { type: 'user/message', seq: 0, time: 1, surfaceOp: 'append', data: {
+          id: `prompt-${String(sessionId)}`, role: 'user', source: { kind: 'user' },
+          content: [{ type: 'text', text: `Question ${String(sessionId)}` }],
+        } } },
+        { event: { type: 'assistant/message', seq: 1, time: 2, surfaceOp: 'append', data: {
+          turn: 1, step: 1, stream: [], message: { content: [{ type: 'text',
+            text: Array.from({ length: 60 }, (_, i) => `Answer ${i + 1}`).join('\n\n'),
+          }] },
+        } } },
+      ] as unknown as HistoryEntry[]
+      yield { type: 'snapshot', cursor: 1, page: { events, hasMore: false } }
+      if (!signal.aborted) await new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => { resolve() }, { once: true })
+      })
+    }
+    const clipboardText = vi.fn(async (_text: string) => {})
+    const app = application(undefined, undefined, undefined, undefined, { clipboardText }, host)
+    try {
+      await app.session.start()
+      const render = () => app.tui.render(80).map(stripTerminalSequences)
+      const pinned = render()
+      expect(pinned[0]).toContain('› Question session-1')
+      sendInput(app, '\u001b[<0;2;1M')
+      expect(render()).toEqual(pinned)
+      sendInput(app, '\u001b[<0;2;1m')
+      const jumped = render()
+      expect(app.layout.promptHeaderKeyAt(0, 0)).toBeUndefined()
+      expect(jumped[1]).toContain('› Question session-1')
+      expect(app.layout.followsTranscriptTail).toBe(false)
+      expect(clipboardText).not.toHaveBeenCalled()
+
+      app.layout.followTranscript()
+      const beforeSelection = render()
+      sendInput(app, '\u001b[<0;80;5M')
+      sendInput(app, '\u001b[<32;1;1M')
+      expect(render()).toEqual(beforeSelection)
+      sendInput(app, '\u001b[<0;1;1m')
+      expect(clipboardText).toHaveBeenCalledOnce()
+      const copied = clipboardText.mock.calls[0]![0]
+      expect(copied).toContain('Answer')
+      expect(copied).not.toContain('Question')
+      expect(app.layout.promptHeaderKeyAt(0, 0)).toBeDefined()
+
+      await app.session.newSession()
+      expect(render()[0]).toContain('› Question session-2')
+    } finally {
+      await app.dispose()
+    }
+  })
+
   it('dispatches a title click only after a primary-button gesture ends without selection', () => {
     const app = application()
     const internals = app

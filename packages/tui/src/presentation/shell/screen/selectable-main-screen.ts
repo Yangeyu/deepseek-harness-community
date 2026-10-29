@@ -14,11 +14,12 @@ import {
 
 /** Main-screen renderer with lifecycle-bound redraws and text-selection gestures. */
 export class SelectableMainScreen extends TuiMainScreen {
-  private readonly textSelection = new RenderedTextSelection()
+  private readonly textSelection: RenderedTextSelection
   private renderedLines: string[] = []
 
-  constructor(terminal: Terminal, showHardwareCursor: boolean) {
+  constructor(terminal: Terminal, showHardwareCursor: boolean, isSelectableRow?: (row: number) => boolean) {
     super(terminal, showHardwareCursor)
+    this.textSelection = new RenderedTextSelection(isSelectableRow)
     // Terminal ownership begins at start(), not construction.
     this.stopped = true
   }

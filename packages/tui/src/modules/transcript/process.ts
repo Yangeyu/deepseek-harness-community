@@ -70,6 +70,12 @@ export class TranscriptProcess implements Component {
     return this.view.isTrailingBlock(line)
   }
 
+  promptHeader(top: number, width: number): { key: string; line: string } | undefined {
+    return this.view.promptHeader(top, width)
+  }
+
+  promptRow(key: string): number | undefined { return this.view.promptRow(key) }
+
   invalidate(): void {
     this.view.invalidate()
   }

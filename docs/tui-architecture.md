@@ -737,7 +737,21 @@ scope 持有；组件安装完成后请求首帧，实际终端输入与输出�
   解析历史参数与结果，来源条目被替换时重新读取。缓存不改变当前 execution 状态。
 - Failed Activity, child, and Diff nodes stay compact unless the user opens
   them. Interrupted Activity and child nodes follow the same rule.
-- Title rows are the only click targets. The pointer wheel scrolls an expanded
+- 用户消息吸顶栏以正文视口顶部所属的最近一条用户消息为上下文；该消息仍可见时隐藏，
+  向上阅读会切换到对应历史消息，不固定全局最后一条。Transcript view 在排版时记录
+  prompt key 与行范围并生成有界单行摘要，Layout 独占吸顶行预留、正文裁剪和点击几何。
+  摘要最多读取 512 个 Unicode 码点，移除终端控制序列、合并空白并按终端列宽省略，
+  使用原用户消息背景；纯图片消息显示 `[attachments]`。宽度不足 16 列或对话区域
+  不足 4 行时不显示，Surface 活跃时让出展示空间。
+  交互基准为 [Codex CLI prompt header](https://github.com/openai/codex/blob/2681f8cba2831ef72bca2c0672b2e49d5f690745/codex-rs/tui/src/transcript_view/prompt_header.rs)，实现沿用本项目的组件与释放时点击协议。
+- 吸顶行不是 Transcript 内容，不进入复制、搜索或导出。鼠标按下捕获消息 key，
+  无拖选的释放才定位原消息；定位以当前排版重新查找 key，重新换行和历史前插后仍可找到
+  同一消息。拖出后再回到按下位置也不视为点击。原消息显示后吸顶行自动让出，
+  后续流式输出保持手动阅读位置，显式追随操作才恢复尾部跟随。
+- 预留吸顶行若会让下一条用户消息成为视口顶部，则该帧让出吸顶行；保持同一阅读位置
+  时延续该决定，滚动或几何变化后重算，避免选中和复制时正文跳动。吸顶机制复用现有
+  Transcript 全量排版缓存，没有引入另一套历史或持久化状态；完整窗口化仍见长历史设计。
+- Disclosure title rows are the only block click targets. The pointer wheel scrolls an expanded
   bounded Thought first; every other target falls through to conversation
   scrolling one rendered row at a time. Mouse tracking reports presses, drags,
   releases, wheel input, and passive position. Passive movement invalidates the

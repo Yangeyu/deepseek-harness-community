@@ -29,6 +29,10 @@ function trimVisibleEnd(line: string): string {
 export class ComposerAnchoredLayout extends Container {
   private activeSurface: ActiveSurface | undefined
   private conversationTop: number | undefined
+  private pendingPromptKey: string | undefined
+  private renderedConversationTop = 0
+  private renderedPromptKey: string | undefined
+  private suppressedPromptHeader: { key: string; top: number; width: number; rows: number } | undefined
   private renderedTranscriptTop = 0
   private renderedTranscriptRows = 0
   private renderedTranscriptScreenRow = 0
@@ -48,6 +52,8 @@ export class ComposerAnchoredLayout extends Container {
     private readonly transcript: Component & {
       setVisibleRange?(top: number, rows: number): void
       renderPendingInputs?(width: number, rows: number): string[]
+      promptHeader?(top: number, width: number): { key: string; line: string } | undefined
+      promptRow?(key: string): number | undefined
     },
     private readonly status: Component,
     private readonly editor: Component,
@@ -72,12 +78,31 @@ export class ComposerAnchoredLayout extends Container {
 
   /** Preserve the last rendered viewport while user disclosure changes transcript height. */
   preserveTranscriptViewport(): void {
-    this.conversationTop ??= this.maxConversationTop
+    this.conversationTop ??= this.renderedConversationTop
+  }
+
+  /** Header hit geometry is separate from transcript content and selection. */
+  promptHeaderKeyAt(screenRow: number, viewportTop: number): string | undefined {
+    return screenRow + viewportTop === 0 ? this.renderedPromptKey : undefined
+  }
+
+  isSelectableRow(row: number): boolean {
+    return row !== 0 || this.renderedPromptKey === undefined
+  }
+
+  jumpToPrompt(key: string): boolean {
+    if (this.transcript.promptRow?.(key) === undefined) return false
+    this.pendingPromptKey = key
+    this.preserveTranscriptViewport()
+    this.suppressedPromptHeader = undefined
+    return true
   }
 
   override render(width: number): string[] {
     const viewportRows = Math.max(0, this.viewportRows())
     this.renderedSurfaceRows = 0
+    this.renderedPromptKey = undefined
+    this.renderedTranscriptRows = 0
     if (this.activeSurface?.kind === 'workspace') {
       this.transcript.setVisibleRange?.(0, 0)
       const lines = this.renderActiveSurface(width, this.activeSurface, viewportRows)
@@ -91,29 +116,59 @@ export class ComposerAnchoredLayout extends Container {
     const transcript = this.transcript.render(width)
     const composer = this.renderComposer(width, viewportRows)
     const transcriptStart = header.length + 1
+    if (this.pendingPromptKey !== undefined) {
+      const row = this.transcript.promptRow?.(this.pendingPromptKey)
+      if (row !== undefined) this.conversationTop = transcriptStart + row
+      this.pendingPromptKey = undefined
+    }
     const conversation = [...header, '', ...transcript]
     const composerGapRows = this.activeSurface === undefined && viewportRows > composer.length ? 1 : 0
     const availableRows = Math.max(0, viewportRows - composer.length - composerGapRows)
-    this.conversationPageRows = Math.max(1, availableRows)
-    this.maxConversationTop = Math.max(0, conversation.length - availableRows)
-
-    const requestedTop = this.conversationTop ?? this.maxConversationTop
-    const top = Math.max(0, Math.min(this.maxConversationTop, requestedTop))
+    let bodyRows = availableRows
+    const fullMaxTop = Math.max(0, conversation.length - availableRows)
+    let top = Math.max(0, Math.min(fullMaxTop + 1, this.conversationTop ?? fullMaxTop))
+    let prompt: { key: string; line: string } | undefined
+    const initialPrompt = availableRows >= 4 && this.activeSurface === undefined
+      ? this.transcript.promptHeader?.(top - transcriptStart, width) : undefined
+    const suppressed = this.suppressedPromptHeader
+    const holdSuppression = this.conversationTop !== undefined
+      && suppressed?.top === top && suppressed.width === width && suppressed.rows === availableRows
+      && suppressed.key === initialPrompt?.key
+    this.suppressedPromptHeader = undefined
+    if (holdSuppression) {
+      this.suppressedPromptHeader = suppressed
+    } else if (initialPrompt !== undefined) {
+      const candidateTop = this.conversationTop === undefined ? fullMaxTop + 1 : top
+      prompt = this.transcript.promptHeader?.(candidateTop - transcriptStart, width)
+      if (prompt !== undefined) {
+        bodyRows -= 1
+        top = candidateTop
+        this.renderedPromptKey = prompt.key
+      } else {
+        // Reserving a row can expose the next prompt. Keep the yielded row stable during selection.
+        this.suppressedPromptHeader = { key: initialPrompt.key, top, width, rows: availableRows }
+      }
+    }
+    if (prompt === undefined) top = Math.min(top, fullMaxTop)
+    this.conversationPageRows = Math.max(1, bodyRows)
+    this.maxConversationTop = Math.max(0, conversation.length - bodyRows)
+    this.renderedConversationTop = top
     // Geometry can clamp manual reading to the bottom without requesting tail follow.
     if (this.conversationTop !== undefined) this.conversationTop = top
-    const visible = conversation.slice(top, top + availableRows)
+    const visible = conversation.slice(top, top + bodyRows)
     const visibleTranscriptStart = Math.max(top, transcriptStart)
     const visibleTranscriptEnd = Math.min(top + visible.length, conversation.length)
     this.renderedTranscriptTop = Math.max(0, visibleTranscriptStart - transcriptStart)
     this.renderedTranscriptRows = Math.max(0, visibleTranscriptEnd - visibleTranscriptStart)
-    this.renderedTranscriptScreenRow = visibleTranscriptStart - top
+    this.renderedTranscriptScreenRow = visibleTranscriptStart - top + (prompt === undefined ? 0 : 1)
     this.transcript.setVisibleRange?.(this.renderedTranscriptTop, this.renderedTranscriptRows)
 
-    const gap = Math.max(0, availableRows - visible.length)
+    const gap = Math.max(0, bodyRows - visible.length)
     if (this.activeSurface !== undefined) {
       this.captureSurfaceGeometry(availableRows, composer.length, width, this.activeSurface)
     }
     return [
+      ...prompt === undefined ? [] : [prompt.line],
       ...visible,
       ...Array<string>(gap + composerGapRows).fill(''),
       ...composer,
@@ -127,11 +182,14 @@ export class ComposerAnchoredLayout extends Container {
     this.surfaceTop = 0
     this.surfaceMaxTop = 0
     this.renderedSurfaceRows = 0
+    this.suppressedPromptHeader = undefined
     if (surface !== undefined) this.addChild(surface.component)
   }
 
   /** Move the conversation viewport by rendered lines; positive values move toward newer output. */
   scrollTranscript(delta: number): boolean {
+    this.pendingPromptKey = undefined
+    this.suppressedPromptHeader = undefined
     const current = this.conversationTop ?? this.maxConversationTop
     const next = Math.max(0, Math.min(this.maxConversationTop, current + delta))
     const normalized = next === this.maxConversationTop ? undefined : next
@@ -147,6 +205,8 @@ export class ComposerAnchoredLayout extends Container {
 
   /** Resume automatic tail following after viewing older output. */
   followTranscript(): boolean {
+    this.pendingPromptKey = undefined
+    this.suppressedPromptHeader = undefined
     if (this.conversationTop === undefined) return false
     this.conversationTop = undefined
     return true

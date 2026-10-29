@@ -140,7 +140,7 @@ export function createApplication(
   const shellScope = lifecycle.scope.fork('shell-status')
 
   const theme = createTheme(config.color)
-  const tui = new SelectableMainScreen(terminal, config.showHardwareCursor)
+  const tui = new SelectableMainScreen(terminal, config.showHardwareCursor, row => layout.isSelectableRow(row))
   const renderScheduler = terminalScope.own(new RenderScheduler(() => { tui.requestRender() }))
   const invalidate = (): void => { renderScheduler.invalidate() }
   const session = new SessionManager(

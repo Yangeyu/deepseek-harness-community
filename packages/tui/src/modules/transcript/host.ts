@@ -52,6 +52,10 @@ export class TranscriptHost implements Component {
   }
 
   isTrailingBlock(line: number): boolean { return this.process?.isTrailingBlock(line) ?? false }
+  promptHeader(top: number, width: number): { key: string; line: string } | undefined {
+    return this.process?.promptHeader(top, width)
+  }
+  promptRow(key: string): number | undefined { return this.process?.promptRow(key) }
   setVisibleRange(top: number, rows: number): void { this.process?.setVisibleRange(top, rows) }
   invalidate(): void { this.component.invalidate() }
   render(width: number): string[] { return this.component.render(width) }

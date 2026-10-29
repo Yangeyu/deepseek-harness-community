@@ -46,6 +46,14 @@ Milestone names describe capability sequence and delivery state; they are not
 npm or Git release versions. The published package version in `package.json`
 and matching Git tags are the release identity.
 
+### 已实现 — 用户消息吸顶与回到原文
+
+- 阅读长回答时固定展示对应用户消息的单行摘要；跨轮滚动时切换上下文，原消息可见时隐藏。
+- 点击吸顶栏按消息身份回到原文，保持手动阅读；拖选不触发跳转，吸顶摘要不进入复制内容。
+- 窄屏省略、短屏让位和轮次交界的稳定布局沿用 Codex CLI 的交互规则。
+  已覆盖应用鼠标分发与 PTY 的新会话、恢复、跨轮阅读、点击定位和终端重排；
+  完整历史窗口化仍属于后续渲染工作，未随本功能扩展。
+
 ### Delivered — Configuration, Task, and User Extensions
 
 - Show the effective permission preset, plan state, goal lifecycle, and current

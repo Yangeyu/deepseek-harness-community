@@ -235,7 +235,7 @@ describe('TranscriptComponent', () => {
     expect(transcript.render(80).join('\n')).toContain('Do not hide this input')
   })
 
-  it('keeps native image markers on the admitted user prompt', () => {
+  it.each([true, false])('keeps admitted images visible with or without accompanying text (text: %s)', withText => {
     const model = new TranscriptModel(true, 8)
     const theme = createTheme(true)
     const image = (attachmentId: string) => ({
@@ -252,22 +252,26 @@ describe('TranscriptComponent', () => {
           id: 'message-user',
           role: 'user',
           source: { kind: 'user' },
-          content: [
+          content: withText ? [
             { type: 'text', text: 'Compare [Image #2]' },
             image('image-2'),
             { type: 'text', text: ' with [Image #1]' },
             image('image-1'),
             { type: 'text', text: ' please' },
-          ],
+          ] : [image('image-1')],
         },
       },
     })]), false), theme)
 
     const output = transcript.render(100).join('\n')
-    expect(stripTerminalSequences(output))
-      .toContain('Compare [Image #2] with [Image #1] please')
-    expect(output).toContain(theme.imageReference('[Image #2]'))
-    expect(output).toContain(theme.imageReference('[Image #1]'))
+    if (withText) {
+      expect(stripTerminalSequences(output)).toContain('Compare [Image #2] with [Image #1] please')
+      expect(output).toContain(theme.imageReference('[Image #2]'))
+      expect(output).toContain(theme.imageReference('[Image #1]'))
+    } else {
+      expect(stripTerminalSequences(output)).toContain('› [attachments]')
+      expect(stripTerminalSequences(transcript.promptHeader(99, 80)!.line)).toContain('› [attachments]')
+    }
   })
 
   it('renders the committed assistant message', () => {
