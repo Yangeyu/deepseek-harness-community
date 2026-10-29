@@ -731,9 +731,10 @@ scope 持有；组件安装完成后请求首帧，实际终端输入与输出�
 - 用户消息吸顶栏以正文视口顶部所属的最近一条用户消息为上下文；该消息仍可见时隐藏，
   向上阅读会切换到对应历史消息，不固定全局最后一条。Transcript view 在排版时记录
   prompt key 与行范围并生成有界单行摘要，Layout 独占吸顶行预留、正文裁剪和点击几何。
-  吸顶条复用主题的浅蓝灰高亮行背景，使用加粗文字；禁用颜色时保持纯文本。
+  吸顶条与输入框共用 `inputSurface` 背景，随终端明暗底色调整；文字加粗，
+  前景色沿用终端默认颜色。禁用颜色时保持纯文本。
   摘要最多读取 512 个 Unicode 码点，移除终端控制序列、合并空白并按终端列宽省略，
-  使用原用户消息背景；纯图片消息显示 `[attachments]`。宽度不足 16 列或对话区域
+  纯图片消息显示 `[attachments]`。宽度不足 16 列或对话区域
   不足 4 行时不显示，Surface 活跃时让出展示空间。
   交互基准为 [Codex CLI prompt header](https://github.com/openai/codex/blob/2681f8cba2831ef72bca2c0672b2e49d5f690745/codex-rs/tui/src/transcript_view/prompt_header.rs)，实现沿用本项目的组件与释放时点击协议。
 - 吸顶行不是 Transcript 内容，不进入复制、搜索或导出。鼠标按下捕获消息 key，

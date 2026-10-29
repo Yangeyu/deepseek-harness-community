@@ -7,28 +7,11 @@ import {
 } from '@earendil-works/pi-tui'
 import type { TuiTheme } from '../../../presentation/primitives/theme.ts'
 import type { ComposerEditorPort } from '../editor-port.ts'
-import type { ComposerSparkle, SparkleColors } from './sparkle.ts'
+import type { ComposerSparkle } from './sparkle.ts'
 
 const PLACEHOLDER = 'Ask anything'
 // oxlint-disable-next-line no-control-regex -- pi-tui renders its software cursor as one reverse-video grapheme.
 const EDITOR_CURSOR = /\u001b\[7m([\s\S]*?)\u001b\[0m/gu
-// oxlint-disable-next-line no-control-regex -- Reapply the card background after Editor-owned SGR resets.
-const SGR = /\u001b\[[0-?]*[ -/]*m/gu
-
-function composerColors(theme: TuiTheme): SparkleColors {
-  const base = theme.terminalBackground ?? { r: 0, g: 0, b: 0 }
-  const light = 0.299 * base.r + 0.587 * base.g + 0.114 * base.b > 128
-  const foreground = light ? 0 : 255
-  const alpha = light ? 0.04 : 0.12
-  return {
-    foreground: { r: foreground, g: foreground, b: foreground },
-    background: {
-      r: Math.floor(foreground * alpha + base.r * (1 - alpha)),
-      g: Math.floor(foreground * alpha + base.g * (1 - alpha)),
-      b: Math.floor(foreground * alpha + base.b * (1 - alpha)),
-    },
-  }
-}
 
 function padded(line: string, width: number): string {
   const clipped = truncateToWidth(line, width, '')
@@ -79,7 +62,7 @@ export class ComposerEditorFrame implements Component {
     const innerWidth = safeWidth - prefixWidth
     // Reserve two text cells for wide graphemes plus the Editor cursor gutter.
     const rendered = splitEditorRender(this.editor.render(Math.max(3, innerWidth)))
-    const colors = composerColors(this.theme)
+    const colors = this.theme.inputColors
     const text = rendered.frame.slice(1, -1).map(line => line.replace(EDITOR_CURSOR, '$1'))
     if (this.editor.getText() === '') {
       const marker = text[0]!.includes(CURSOR_MARKER) ? CURSOR_MARKER : ''
@@ -98,14 +81,9 @@ export class ComposerEditorFrame implements Component {
       scrollHint(rendered.frame.at(-1)!, safeWidth),
     ]
     const decorated = this.sparkle.render(card, colors)
-    const { r, g, b } = colors.background
-    const background = `\u001b[48;2;${r};${g};${b}m`
-    const painted = this.theme.colorEnabled
-      ? decorated.map(line => `${background}${line.replace(SGR, sequence => sequence + background)}\u001b[49m`)
-      : decorated
     return [
       ...rendered.autocomplete.map(line => padded(' '.repeat(prefixWidth) + line, safeWidth)),
-      ...painted,
+      ...decorated.map(line => this.theme.inputSurface(line)),
     ]
   }
 }

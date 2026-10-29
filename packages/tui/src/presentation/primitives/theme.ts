@@ -14,6 +14,8 @@ export interface TuiTheme {
   readonly colorEnabled: boolean
   readonly secondaryColor: RgbColor
   terminalBackground: RgbColor | undefined
+  readonly inputColors: { foreground: RgbColor; background: RgbColor }
+  inputSurface: Paint
   accent: Paint
   bold: Paint
   dim: Paint
@@ -91,6 +93,24 @@ export function createTheme(enabled: boolean): TuiTheme {
     colorEnabled: enabled,
     secondaryColor,
     terminalBackground: undefined,
+    get inputColors() {
+      const base = this.terminalBackground ?? { r: 0, g: 0, b: 0 }
+      const light = 0.299 * base.r + 0.587 * base.g + 0.114 * base.b > 128
+      const foreground = light ? 0 : 255
+      const alpha = light ? 0.04 : 0.12
+      return {
+        foreground: { r: foreground, g: foreground, b: foreground },
+        background: {
+          r: Math.floor(foreground * alpha + base.r * (1 - alpha)),
+          g: Math.floor(foreground * alpha + base.g * (1 - alpha)),
+          b: Math.floor(foreground * alpha + base.b * (1 - alpha)),
+        },
+      }
+    },
+    inputSurface(text) {
+      const { r, g, b } = this.inputColors.background
+      return ansiBackground(enabled, `48;2;${r};${g};${b}`)(text)
+    },
     accent,
     bold,
     dim,

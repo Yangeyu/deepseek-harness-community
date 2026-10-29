@@ -200,7 +200,7 @@ export class TranscriptComponent implements Component {
     const prompt = this.promptHits.findLast(hit => hit.firstLine - 1 <= top && hit.summary !== '')
     if (prompt === undefined || top <= prompt.lastLine) return undefined
     const text = truncateToWidth(` › ${prompt.summary}`, width - 1, '…')
-    return { key: prompt.key, line: this.theme.focusRow(this.theme.bold(this.theme.user(padToWidth(text, width)))) }
+    return { key: prompt.key, line: this.theme.inputSurface(this.theme.bold(padToWidth(text, width))) }
   }
 
   promptRow(key: string): number | undefined {
