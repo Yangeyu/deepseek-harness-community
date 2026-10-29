@@ -11,7 +11,7 @@ import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import { ProjectMemoryService } from '@vascent/deepseek-harness-memory'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const baseRequire = createRequire(require.resolve('@deepseek-ai/dsh-base/package.json'))
@@ -72,13 +72,14 @@ afterEach(async () => {
 })
 
 describe('Memory with the real Agent loop', () => {
-  it('lets new foreground work finish while canceled learning is still draining', async () => {
+  it('lets new foreground work finish while canceled learning is still draining', async ({ signal }) => {
     const release = Promise.withResolvers<void>()
-    let backgroundSignal: AbortSignal | undefined
+    signal.addEventListener('abort', () => release.resolve(), { once: true })
+    const entered = Promise.withResolvers<AbortSignal | undefined>()
     let foregroundRequests = 0
     const { memory, source } = await fixture(async function* (options) {
       if (String(options.sessionId).startsWith('memory-')) {
-        backgroundSignal = options.signal
+        entered.resolve(options.signal)
         await release.promise
         options.signal?.throwIfAborted()
       } else foregroundRequests += 1
@@ -86,13 +87,12 @@ describe('Memory with the real Agent loop', () => {
     })
     try {
       source.agent.followup(message('以后先给结论，再解释理由。'))
-      await vi.waitFor(() => expect(backgroundSignal).toBeDefined())
+      const backgroundSignal = await entered.promise
       source.agent.followup(message('继续下一个任务。'))
-      await vi.waitFor(() => {
-        expect(foregroundRequests).toBe(2)
-        expect(source.agent.session.snapshotEvents().filter(event => event.type === 'turn/end')).toHaveLength(2)
-        expect(backgroundSignal?.aborted).toBe(true)
-      })
+      await source.agent.whenIdle()
+      expect(foregroundRequests).toBe(2)
+      expect(source.agent.session.snapshotEvents().filter(event => event.type === 'turn/end')).toHaveLength(2)
+      expect(backgroundSignal?.aborted).toBe(true)
     } finally {
       const disabled = memory.setPolicy('source', { generateMemories: false })
       release.resolve()
