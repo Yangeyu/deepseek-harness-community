@@ -1,3 +1,4 @@
+import { parseCommand } from './commands/catalog.ts'
 import { ProcessTerminal, type Terminal } from '@earendil-works/pi-tui'
 import type { ResolvedConfig } from './config.ts'
 import type { TuiStartupOptions } from './cli.ts'
@@ -153,7 +154,15 @@ export function createApplication(
   const exit = new ApplicationExit(runtime, () => session.current, () => lifecycle.dispose())
   const copyText = clipboardText ?? createClipboardTextWriter(terminal)
 
-  const composer = new ComposerHost()
+  const composer = new ComposerHost({
+    prepare: text => {
+      if (session.current.sessionId !== undefined) return
+      const command = parseCommand(text)
+      if (command !== undefined && commands.has(command.name)) return
+      return session.ensureSession().then(() => undefined)
+    },
+    notice: message => { session.notice(message) },
+  })
   const transcript = new TranscriptHost()
   const interactions = new InteractionHost()
   const taskProcess = new TaskHost()
@@ -162,7 +171,7 @@ export function createApplication(
 
   // Create the command mechanisms before features that use Host commands.
   // Local members are bound once below, after their actual owners exist.
-  const commands = new TerminalCommandDirectory(undefined, commandSource)
+  const commands = new TerminalCommandDirectory(undefined, commandSource, [], () => session.ensureSession())
   const commandRouter = new CommandRouter({
     directory: commands,
     session,
@@ -342,6 +351,9 @@ export function createApplication(
     trajectory,
     transcript,
   }, bootstrapFeatures, (context, previous) => {
+    if (context.sessionId === undefined) {
+      return createSessionFeatureSet(sessionFeatureOptions, context.scope, session)
+    }
     const bound = new BoundSession(
       session,
       context.scope,

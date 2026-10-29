@@ -547,15 +547,16 @@ GitHub Release 的恢复继续要求既有产物摘要一致，不覆盖冲突�
     cannot outlive parents; disposal aborts first and releases registered
     resources in reverse order. Cleanup is idempotent and awaited at application
     shutdown.
-17. Session binding is one prepare/commit/rollback transaction shared by new,
-    clear, resume, and Rewind. Only the latest operation may commit. A successful
-    Host create/resume advances the Session epoch exactly once; late work from a
-    retired epoch cannot write into the visible Session.
-18. Composer, Interaction, Skills, Task, Trajectory, and Transcript are fresh
-    feature instances for every committed Session epoch. Stable shell Hosts swap
-    that complete feature set as a unit. A clear operation may temporarily
-    suspend the previous set for rollback, but no render-time Session-id check
-    performs lifecycle cleanup.
+17. 新启动以及 `/new`、`/clear` 进入无 Session ID 的本地草稿；仅启动、编辑输入、
+    粘贴附件、浏览本地配置或选择模型均不调用 Host create，因此退出不生成空会话记录。
+    首次提交或显式执行需要 Agent 的命令才创建 Session，恢复历史则直接 resume。
+    并发首次提交共用创建任务；new/clear 推进 epoch 并取消旧绑定操作，过期结果不得提交输入。
+18. Composer、Interaction、Skills、Task、Trajectory、Transcript 在草稿与 Session
+    切换时整体替换。ComposerHost 在图片处理开始前完成绑定，先恢复 Editor 清空后暂存的
+    附件，再转移草稿；创建失败保留输入供重试。草稿模型选择在 Host 创建后、首次提交前应用。
+    resume 与 Rewind 继续使用 prepare/commit/rollback，失败可恢复旧功能集合。
+    上游命令目录、Skills 和文件补全仍要求真实 Agent；草稿只发现本地命令，显式执行
+    Host 命令或打开 Skills/Task/Memory 时创建 Session，首次提交前的 Host 文件补全暂不可用。
 19. Rewind is application/workspace-scoped, not Session-scoped. Its transaction
     intentionally spans the source Session, durable fork, replacement Session,
     and compensation. Application disposal waits for an active Rewind transaction
@@ -634,33 +635,23 @@ ApplicationScope
 停止状态，只在启动状态下向 pi-tui 转发刷新请求；首次 start 请求首帧，构造或非 TTY
 启动拒绝不会触发终端绘制。
 
-`SessionManager` owns transport coordination. `SessionWorkspace` owns binding
-transactions and the visible/suspended runtimes. `SessionRuntime` owns the
-immutable-by-convention read model for one `(sessionId, epoch)`, including the
-accepted event window, projection cells, pending submissions, model catalog,
-and execution snapshot. Effective model selection is derived at read time from
-the `modelSelection` projection, falling back to the catalog default; it is not
-stored as another mutable runtime field. The control connection is
-application-scoped, while each follow loop belongs to its Session scope, so
-replacement retires the old event stream without restarting Host-wide control.
+`SessionManager` 协调 transport；`SessionWorkspace` 管理草稿、绑定事务和当前 runtime。
+`SessionRuntime` 拥有单个 `(sessionId, epoch)` 的事件窗口、投影、待提交输入、模型目录
+及执行快照。有效模型从 `modelSelection` 读取，未选择时使用目录默认值；草稿选择在创建
+Host Session 前保存在草稿投影中，创建失败不丢失选择。
+control 连接归应用，follow 归 Session scope；替换会话只退休旧 follow，不重启 control。
 
-Session replacement follows one protocol:
+首次提交、resume 与 Rewind 的绑定过程统一如下：
 
-1. `begin` records a latest-wins operation and either preserves the previous
-   presentation or publishes an immediate empty presentation for `/clear`.
-2. The transport performs the durable create/resume/fork operation.
-3. `commit` advances the epoch, installs a fresh `SessionRuntime`, constructs
-   one complete Session feature set, and retires previous scopes.
-4. A pre-commit failure rolls the suspended Session and feature set back. If
-   feature construction fails after the durable commit, the new Session remains
-   active with an explicit error and the partially created feature scope is
-   immediately disposed; stable Hosts atomically unbind the retired feature set,
-   and the client does not pretend the Host commit vanished.
+1. `begin` 记录只允许最新操作提交的事务，保持当前功能集合可见。
+2. transport 执行 create/resume；Rewind 在进入此路径前完成 fork。
+3. `commit` 推进 epoch，安装新 runtime 和完整功能集合，并释放旧 scope。
+4. 提交前失败恢复旧绑定；提交后功能初始化失败则保留已创建的 Session 并明确显示错误，
+   同时释放失败的功能 scope。首次 follow 期间取消或切换会话也会结束等待，不挂住提交。
 
-Before initial Session attachment, an unbound feature set accepts startup input.
-Its draft transfers into the first Session. Later Session replacements transfer
-plain draft text but strip image markers and attachments whose durable ownership
-belongs to the previous Session.
+`/new` 和 `/clear` 直接退休当前 scope、推进 epoch 并安装本地草稿，无异步 Host 创建或
+隐藏 Session 的回滚链路。草稿中的输入与附件转入首次创建的 Session；resume/Rewind
+跨 Session 替换仅转移普通草稿文本，移除旧图片标记及附件。
 
 渲染更新保持单向，状态归属与通知调度分开：
 
@@ -740,6 +731,7 @@ scope 持有；组件安装完成后请求首帧，实际终端输入与输出�
 - 用户消息吸顶栏以正文视口顶部所属的最近一条用户消息为上下文；该消息仍可见时隐藏，
   向上阅读会切换到对应历史消息，不固定全局最后一条。Transcript view 在排版时记录
   prompt key 与行范围并生成有界单行摘要，Layout 独占吸顶行预留、正文裁剪和点击几何。
+  吸顶条复用主题的浅蓝灰高亮行背景，使用加粗文字；禁用颜色时保持纯文本。
   摘要最多读取 512 个 Unicode 码点，移除终端控制序列、合并空白并按终端列宽省略，
   使用原用户消息背景；纯图片消息显示 `[attachments]`。宽度不足 16 列或对话区域
   不足 4 行时不显示，Surface 活跃时让出展示空间。

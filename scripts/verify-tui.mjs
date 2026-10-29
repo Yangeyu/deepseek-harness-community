@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { stripVTControlCharacters } from 'node:util'
@@ -67,11 +67,15 @@ export async function verifyTuiRuntime({ executable, args = [], packageDirectory
     }
     try {
       await until(() => output.includes('Ready'), 'Ready')
-      terminal.write('Run the local acceptance check.\r')
-      await until(() => output.includes(marker), marker)
+      if (marker === undefined) await delay(500)
+      else {
+        terminal.write('Run the local acceptance check.\r')
+        await until(() => output.includes(marker), marker)
+      }
       terminal.write('\u0003')
       await until(() => exit !== undefined, 'clean exit', 10_000)
       assert.equal(exit.exitCode, 0)
+      if (marker === undefined) assert.ok(!output.includes('Resume this session with:'))
     } catch (error) {
       throw new Error(`${error}\n${output.slice(-4000)}`, { cause: error })
     } finally {
@@ -89,6 +93,10 @@ export async function verifyTuiRuntime({ executable, args = [], packageDirectory
       } },
       { id: 'session-title-llm', disabled: true },
     ]))
+    await runSession(['--model', 'bailian/smoke'], undefined, 'tui-empty.txt')
+    assert.equal(requests.length, 0)
+    const beforePrompt = await readdir(env.DSH_HOME, { recursive: true })
+    assert.ok(!beforePrompt.some(path => /session\.v4\.jsonl/u.test(path)), 'Untouched startup must not persist a Session')
     await runSession([], 'TUI_TURN_OK', 'tui-turn.txt')
     assert.equal(await readFile(target, 'utf8'), 'TUI_TOOL_OK')
     assert.equal(requests.length, 3)
@@ -101,7 +109,7 @@ export async function verifyTuiRuntime({ executable, args = [], packageDirectory
     assert.equal(requests.length, 4)
     assert.ok(requests[3].messages.some(message => message.role === 'assistant' && JSON.stringify(message.content).includes('TUI_TURN_OK')))
     assert.ok(requests[3].messages.some(message => message.role === 'tool' && message.tool_call_id === 'smoke_read'))
-    console.log('TUI PTY acceptance passed: prompt -> write/read tools -> response -> restart/resume -> response -> clean exit')
+    console.log('TUI PTY acceptance passed: empty startup/exit without history -> prompt -> write/read tools -> response -> restart/resume -> response -> clean exit')
   } finally {
     await writeFile(join(temporaryRoot, 'tui-requests.json'), JSON.stringify(requests, null, 2))
     server.closeAllConnections()

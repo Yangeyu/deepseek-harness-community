@@ -12,6 +12,8 @@ export interface TerminalCommandDescriptor {
 /** TUI-owned command with aliases and a local interaction handler. */
 export interface TerminalCommandDefinition extends TerminalCommandDescriptor {
   aliases?: readonly string[]
+  /** Host-backed operations activate the draft before opening their interaction. */
+  requiresSession?: boolean
   /** Opt into status-bar activity while the handler is pending; interaction surfaces omit this. */
   activityLabel?: string
   handler(argument: string): void | Promise<void>

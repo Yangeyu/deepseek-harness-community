@@ -78,6 +78,7 @@ export interface ComposerProcessOptions {
   readonly openRewind: () => void
   readonly requestRender: () => void
   readonly scope: LifecycleScope
+  readonly submit?: (text: string) => Promise<void>
 }
 
 /** Session-bound Composer state, views, attachments, and submission workflow. */
@@ -121,7 +122,7 @@ export class ComposerProcess {
       const decoded = this.editor.decodeReferences(text)
       this.resetInput(false)
       this.editor.addToHistory(decoded)
-      void this.submit(decoded)
+      void (this.options.submit?.(decoded) ?? this.submit(decoded))
     }
     this.store = new AtomicSnapshotStore(this.createSnapshot())
   }
@@ -244,9 +245,15 @@ export class ComposerProcess {
     await this.submit(text, mode)
   }
 
-  async submit(value: string, forcedMode?: 'queue' | 'steer'): Promise<void> {
+  /** Recover inline attachments after the editor clears itself, before Session admission. */
+  prepareInput(value: string): string {
     const text = this.editor.decodeReferences(value).trim()
     this.drafts.reconcileText(text)
+    return text
+  }
+
+  async submit(value: string, forcedMode?: 'queue' | 'steer'): Promise<void> {
+    const text = this.prepareInput(value)
     if (text === '' && this.drafts.snapshot.length === 0) return
     try {
       if (text.startsWith('/')) {

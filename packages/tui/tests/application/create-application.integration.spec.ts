@@ -328,7 +328,7 @@ function usageApplication(read: ProviderUsagePort['read']): TestApplication {
     default: { provider: 'openai-codex', model: 'gpt-test' }, routableProviders: ['openai-codex'], groups: [], failures: [],
   } } satisfies RuntimeSessionSnapshot
   vi.spyOn(app.session, 'current', 'get').mockReturnValue(state)
-  vi.spyOn(app.session, 'captureSession').mockReturnValue({ sessionId: 'session-usage' as SessionId, epoch: 1, active: true, commitModelCatalog: () => true })
+  vi.spyOn(app.session, 'captureSession').mockReturnValue({ sessionId: 'session-usage' as SessionId, epoch: 1, active: true, commitModelSelection: () => true, commitModelCatalog: () => true })
   app.render(state)
   return app
 }
@@ -355,6 +355,41 @@ afterEach(() => {
 })
 
 describe('createApplication integration', () => {
+  it('preserves the first image draft through failed admission and submits it after retry', async () => {
+    const host = transcriptHostPorts()
+    const create = vi.spyOn(host.sessions, 'createSession').mockRejectedValueOnce(new Error('Creation failed'))
+    const prompt = vi.fn(async () => {})
+    host.sessions.prompt = prompt
+    const app = application(undefined, undefined, undefined, undefined, {
+      images: { resolveImageRoute: async () => ({ strategy: 'native', provider: 'test', model: 'test' }), analyze: vi.fn() },
+      clipboardImage: async () => clipboardPng(),
+    }, host)
+    try {
+      await app.session.start()
+      await app.composer.submit('/config')
+      expect(app.configuration.activeConfigView).toBeDefined()
+      sendInput(app, '\u001b')
+      await app.composer.pasteImage()
+      expect(create).not.toHaveBeenCalled()
+      app.composer.editor.handleInput('\r')
+      await vi.waitFor(() => { expect(app.session.current.notice).toBe('Creation failed') })
+      expect(app.composer.current.attachments).toHaveLength(1)
+      expect(app.composer.editor.getExpandedText()).toContain('[Image #1]')
+
+      app.composer.editor.handleInput('\r')
+      await vi.waitFor(() => { expect(prompt).toHaveBeenCalledOnce() })
+      expect(prompt).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'session-1',
+        content: expect.arrayContaining([expect.objectContaining({ type: 'image', mediaType: 'image/png' })]),
+      }), expect.any(AbortSignal))
+      expect(app.composer.current.attachments).toEqual([])
+      expect(app.composer.current.imageSubmissionBusy).toBe(false)
+      expect(app.composer.editor.getExpandedText()).toBe('')
+    } finally {
+      await app.dispose()
+    }
+  })
+
   it('runs the bundled ask_user_question tool through a terminal answer batch and back into the Agent', async () => {
     const fixture = await questionApplication([
       { id: 'language', question: 'Which language?', options: [{ label: 'TypeScript' }, { label: 'Rust' }] },
@@ -828,6 +863,7 @@ describe('createApplication integration', () => {
     const app = application(undefined, undefined, undefined, undefined, { clipboardText }, host)
     try {
       await app.session.start()
+      await app.session.ensureSession()
       const render = () => app.tui.render(80).map(stripTerminalSequences)
       const pinned = render()
       expect(pinned[0]).toContain('› Question session-1')
@@ -853,6 +889,8 @@ describe('createApplication integration', () => {
       expect(app.layout.promptHeaderKeyAt(0, 0)).toBeDefined()
 
       await app.session.newSession()
+      expect(app.session.current.sessionId).toBeUndefined()
+      await app.session.ensureSession()
       expect(render()[0]).toContain('› Question session-2')
     } finally {
       await app.dispose()
@@ -900,6 +938,7 @@ describe('createApplication integration', () => {
   it('clears manually expanded tool details when Ctrl+O is toggled twice before the next frame', async () => {
     const app = application(undefined, undefined, undefined, undefined, {}, transcriptHostPorts())
     await app.session.newSession()
+    await app.session.ensureSession()
     const clickTitle = (title: string): void => {
       const lines = app.tui.render(80).map(stripTerminalSequences)
       const row = lines.findIndex(line => line.includes(title))
@@ -949,6 +988,7 @@ describe('createApplication integration', () => {
     const app = application(undefined, undefined, undefined, undefined, {}, host)
     try {
       await app.session.start()
+      await app.session.ensureSession()
       setRunning?.(app.session.current.sessionId!, true)
       app.render()
       const frame = app.layout.render(80).map(stripTerminalSequences)
@@ -966,6 +1006,8 @@ describe('createApplication integration', () => {
         frames.push(app.layout.render(80).map(stripTerminalSequences).join('\n'))
       })
       await app.session.newSession()
+      expect(app.session.current.sessionId).toBeUndefined()
+      await app.session.ensureSession()
       const switchedFrames = frames.filter(output => output.includes('session-2'))
       expect(switchedFrames.length).toBeGreaterThan(0)
       for (const output of switchedFrames) {
@@ -986,6 +1028,7 @@ describe('createApplication integration', () => {
     host.sessions.prompt = async () => {}
     const app = application(undefined, undefined, undefined, undefined, {}, host)
     await app.session.start()
+    await app.session.ensureSession()
     setRunning?.(app.session.current.sessionId!, running)
     app.configuration.setDetails(true)
     const release = Promise.withResolvers<void>()
@@ -1049,6 +1092,7 @@ describe('createApplication integration', () => {
     let submitted: Promise<void> | undefined
     try {
       await app.session.start()
+      await app.session.ensureSession()
       setRunning?.(app.session.current.sessionId!, true)
       await app.composer.pasteImage()
       submitted = app.composer.submitEditor('steer')
@@ -1078,10 +1122,12 @@ describe('createApplication integration', () => {
   it('keeps global details expanded when switching to another Session', async () => {
     const app = application(undefined, undefined, undefined, undefined, {}, transcriptHostPorts())
     await app.session.newSession()
+    await app.session.ensureSession()
     app.configuration.setDetails(true)
     expect(app.transcript.render(80).join('\n')).toContain('Matches from session-1')
 
     await app.session.newSession()
+    await app.session.ensureSession()
 
     expect(app.configuration.details).toBe(true)
     const output = stripTerminalSequences(app.transcript.render(80).join('\n'))
@@ -1374,11 +1420,12 @@ describe('createApplication integration', () => {
     expect(disposed).toBe(true)
   })
 
-  it('queues with Tab while working and leaves Alt+Enter for multiline input', () => {
+  it('queues with Tab while working and leaves Alt+Enter for multiline input', async () => {
     const app = application()
     const internals = app
     const submit = vi.fn(async () => {})
     internals.session.prompt = submit
+    vi.spyOn(internals.session, 'ensureSession').mockResolvedValue('input-test' as SessionId)
     const idleState = internals.session.current
     vi.spyOn(internals.session, 'current', 'get').mockReturnValue({
       ...idleState,
@@ -1388,7 +1435,7 @@ describe('createApplication integration', () => {
 
     expect(sendInput(internals, '\u001b\r')).toBeUndefined()
     expect(sendInput(internals, '\t')).toEqual({ consume: true })
-    expect(submit).toHaveBeenCalledWith('next task', 'queue')
+    await vi.waitFor(() => { expect(submit).toHaveBeenCalledWith('next task', 'queue') })
   })
 
   it('keeps model and workspace identity on the first footer row and metrics on the second', () => {
@@ -1442,15 +1489,16 @@ describe('createApplication integration', () => {
     expect(footer.join('\n')).not.toMatch(/queue|newline|image|details|\/help/u)
   })
 
-  it('adds ordinary Enter submissions to up/down editor history', () => {
+  it('adds ordinary Enter submissions to up/down editor history', async () => {
     const app = application()
     const internals = app
     const submit = vi.fn(async () => {})
     internals.session.prompt = submit
+    vi.spyOn(internals.session, 'ensureSession').mockResolvedValue('input-test' as SessionId)
 
     internals.composer.editor.setText('first prompt')
     internals.composer.editor.handleInput('\r')
-    expect(submit).toHaveBeenCalledWith('first prompt', 'queue')
+    await vi.waitFor(() => { expect(submit).toHaveBeenCalledWith('first prompt', 'queue') })
 
     internals.composer.editor.handleInput('\u001b[A')
     expect(internals.composer.editor.getExpandedText()).toBe('first prompt')
@@ -1866,7 +1914,7 @@ describe('createApplication integration', () => {
   })
 
   it('opens Config, Task, and Skill discovery as separate composer-anchored surfaces', async () => {
-    const app = application()
+    const app = application(undefined, undefined, undefined, undefined, {}, transcriptHostPorts())
     const internals = app
 
     await internals.composer.submit('/config')
@@ -2108,6 +2156,7 @@ describe('createApplication integration', () => {
     const app = application()
     const internals = app
     const prompt = vi.spyOn(internals.session, 'prompt').mockResolvedValue()
+    vi.spyOn(internals.session, 'ensureSession').mockResolvedValue('input-test' as SessionId)
     const text = '/Users/yinfinity/Workplace/project/README.md 在这个文件随便写一句话'
 
     await internals.composer.submit(text)

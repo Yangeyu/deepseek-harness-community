@@ -81,6 +81,7 @@ export class SessionManager {
   private readonly pendingInteractions = new Map<string, PendingHostInteraction>()
   private readonly historyPages = new WeakMap<SessionRuntime, Promise<boolean>>()
   private started = false
+  private opening: Promise<SessionId> | undefined
 
   constructor(
     private readonly scope: LifecycleScope,
@@ -114,21 +115,32 @@ export class SessionManager {
   }
 
   captureSession(): SessionEffectScope {
-    const runtime = this.requireRuntime()
+    const runtime = this.workspace.active
+    const epoch = this.current.execution.epoch
     const workspace = this.workspace
+    const scope = this.scope
+    const active = (): boolean => scope.active && (runtime === undefined
+      ? workspace.active === undefined && workspace.current.execution.epoch === epoch
+      : workspace.owns(runtime))
     return {
-      sessionId: runtime.sessionId,
-      epoch: runtime.epoch,
-      get active() { return workspace.owns(runtime) },
+      sessionId: runtime?.sessionId,
+      epoch,
+      get active() { return active() },
       commitModelCatalog(catalog) {
-        if (!workspace.owns(runtime)) return false
-        runtime.setModelCatalog(catalog)
+        if (!active()) return false
+        if (runtime === undefined) workspace.setDraftModelCatalog(catalog)
+        else runtime.setModelCatalog(catalog)
+        return true
+      },
+      commitModelSelection(selection) {
+        if (!active() || runtime !== undefined) return false
+        workspace.setDraftModelSelection(selection)
         return true
       },
     }
   }
 
-  /** Bind Host signals, create or resume the initial Session, then attach control state. */
+  /** Connect the draft shell; only an explicit resume opens a Session at startup. */
   async start(resumeSessionId?: string): Promise<void> {
     if (this.started) throw new Error('SessionManager has already started')
     this.started = true
@@ -142,7 +154,13 @@ export class SessionManager {
       approval: prompt => this.requestApproval(prompt),
       questions: prompt => this.requestQuestions(prompt),
     }))
-    await this.openSession(resumeSessionId)
+    if (resumeSessionId !== undefined) await this.openSession(resumeSessionId)
+    else {
+      const captured = this.captureSession()
+      const catalog = await this.transport.modelCatalog()
+      captured.commitModelCatalog(catalog)
+      this.workspace.setConnection('events', 'online')
+    }
     void this.runControlLoop()
   }
 
@@ -189,18 +207,34 @@ export class SessionManager {
     return runtime.prependHistory(page)
   }
 
-  /** Switch the terminal to a fresh session in the current working directory. */
+  /** Retire the active Session and start a local draft in the same working directory. */
   async newSession(): Promise<void> {
-    await this.openSession()
+    this.opening = undefined
+    this.retireInteractions(new Error('the active Session changed'))
+    await this.workspace.reset()
   }
 
-  /** Clear the visible conversation immediately, then attach a fresh session. */
+  /** Admit the first meaningful operation once, sharing concurrent creation work. */
+  async ensureSession(): Promise<SessionId> {
+    if (this.opening !== undefined) return this.opening
+    if (this.workspace.active !== undefined) return this.workspace.active.sessionId
+    const opening = this.openSession()
+    this.opening = opening
+    try {
+      return await opening
+    } finally {
+      if (this.opening === opening) this.opening = undefined
+    }
+  }
+
+  /** Clear the visible conversation without creating a persisted Session. */
   async clearSession(): Promise<void> {
-    await this.openSession(undefined, true)
+    await this.newSession()
   }
 
   /** Switch the terminal to an existing persisted or live session. */
   async resume(sessionId: string): Promise<void> {
+    this.opening = undefined
     await this.openSession(sessionId)
   }
 
@@ -247,6 +281,7 @@ export class SessionManager {
     mode: 'queue' | 'steer',
     contentOrPreparation: PromptContentPart[] | ((context: PromptPreparationContext) => Promise<PreparedPrompt>),
   ): Promise<void> {
+    if (this.workspace.active === undefined || this.opening !== undefined) await this.ensureSession()
     const runtime = this.requireRuntime()
     const pending = runtime.startSubmission(text, mode)
     if (pending === undefined) throw new Error('the active session is no longer available')
@@ -348,10 +383,10 @@ export class SessionManager {
     return runtime
   }
 
-  private async openSession(resumeSessionId?: string, clearImmediately = false): Promise<void> {
+  private async openSession(resumeSessionId?: string): Promise<SessionId> {
     const previous = this.current
-    const operation = this.workspace.begin(clearImmediately ? 'empty' : 'previous')
-    let committed = false
+    const operation = this.workspace.begin()
+    let committed: SessionRuntime | undefined
     try {
       const host = await this.transport.describeHost()
       let cwd = previous.cwd || host.cwd
@@ -368,6 +403,8 @@ export class SessionManager {
       let sessionId: SessionId
       if (requested === undefined) {
         sessionId = (await this.transport.createSession({ cwd })).sessionId
+        const selection = previous.projections.modelSelection?.next
+        if (selection != null) await this.transport.selectModel(sessionId, selection)
       } else {
         await this.transport.resumeSession(requested)
         sessionId = requested
@@ -377,8 +414,8 @@ export class SessionManager {
         cwd,
         connection: this.current.connection,
       })
-      if (commit === undefined) return
-      committed = true
+      if (commit === undefined) throw new Error('Session creation was superseded.')
+      committed = commit.runtime
       this.retireInteractions(new Error('the active Session changed'))
       await commit.retirement
       if (commit.activationError !== undefined) throw commit.activationError
@@ -389,10 +426,12 @@ export class SessionManager {
           commit.runtime.setError(`model catalog unavailable: ${error instanceof Error ? error.message : String(error)}`)
         }
       })
+      if (!this.workspace.owns(commit.runtime)) throw new Error('Session creation was superseded.')
+      return sessionId
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
-      if (committed) this.workspace.setError(message)
-      else this.workspace.fail(operation, message)
+      if (committed === undefined) this.workspace.fail(operation, message)
+      else if (this.workspace.owns(committed)) committed.setError(message)
       throw error
     }
   }
@@ -405,8 +444,11 @@ export class SessionManager {
 
   private startFollow(runtime: SessionRuntime): Promise<void> {
     const opening = Promise.withResolvers<void>()
-    void this.runFollowLoop(runtime, opening)
-    return opening.promise
+    const aborted = (): void => { opening.reject(new Error('Session creation was superseded.')) }
+    runtime.signal.addEventListener('abort', aborted, { once: true })
+    if (runtime.signal.aborted) aborted()
+    else void this.runFollowLoop(runtime, opening)
+    return opening.promise.finally(() => { runtime.signal.removeEventListener('abort', aborted) })
   }
 
   private async runFollowLoop(

@@ -4,8 +4,8 @@ import { SessionMachine } from '../../../src/runtime/lifecycle/session-machine.t
 describe('SessionMachine', () => {
   it('allows only the latest replacement operation to commit', () => {
     const machine = new SessionMachine<string>()
-    const first = machine.begin(undefined, 'previous')
-    const second = machine.begin(undefined, 'previous')
+    const first = machine.begin(undefined)
+    const second = machine.begin(undefined)
 
     expect(machine.commit(first, 'session-stale')).toBeUndefined()
     expect(machine.commit(second, 'session-next')).toBe(1)
@@ -13,22 +13,11 @@ describe('SessionMachine', () => {
     expect(machine.binding).toEqual({ phase: 'active', sessionId: 'session-next', epoch: 1 })
   })
 
-  it('keeps a cleared Session as a temporary submission owner until rollback', () => {
-    const machine = new SessionMachine<string>()
-    const initial = machine.begin(undefined, 'previous')
-    machine.commit(initial, 'session-old')
-    const clearing = machine.begin('session-old', 'empty')
-
-    expect(machine.owns(1, 'session-old')).toBe(true)
-    expect(machine.rollback(clearing)).toBe(true)
-    expect(machine.owns(1, 'session-old')).toBe(true)
-  })
-
   it('invalidates the previous epoch at the durable replacement commit', () => {
     const machine = new SessionMachine<string>()
-    const initial = machine.begin(undefined, 'previous')
+    const initial = machine.begin(undefined)
     machine.commit(initial, 'session-old')
-    const replacement = machine.begin('session-old', 'previous')
+    const replacement = machine.begin('session-old')
 
     expect(machine.commit(replacement, 'session-new')).toBe(2)
     expect(machine.owns(1, 'session-old')).toBe(false)
@@ -37,7 +26,7 @@ describe('SessionMachine', () => {
 
   it('cannot commit or roll back the same operation twice', () => {
     const machine = new SessionMachine<string>()
-    const operation = machine.begin(undefined, 'previous')
+    const operation = machine.begin(undefined)
 
     expect(machine.commit(operation, 'session-one')).toBe(1)
     expect(machine.commit(operation, 'session-two')).toBeUndefined()
@@ -47,7 +36,7 @@ describe('SessionMachine', () => {
 
   it('records an initial binding failure without fabricating a Session identity', () => {
     const machine = new SessionMachine<string>()
-    const operation = machine.begin(undefined, 'previous')
+    const operation = machine.begin(undefined)
 
     expect(machine.fail(operation, 'Host unavailable')).toBe(true)
     expect(machine.binding).toEqual({ phase: 'failed', message: 'Host unavailable', epoch: 0 })

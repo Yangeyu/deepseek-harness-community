@@ -43,10 +43,9 @@ describe('configuration model', () => {
       },
       permissions: {
         currentValue: 'workspace-write',
-        options: [{ value: 'workspace-write', name: 'Workspace write' }],
       },
       plan: { active: false, pending: true },
-    } as Partial<SessionProjectionMap>, true)
+    }, true, undefined, undefined, { defaultPreset: 'workspace-write', defaultOptions: [{ value: 'workspace-write', name: 'Workspace write' }], options: [{ value: 'workspace-write', name: 'Workspace write' }] })
 
     expect(configurationRows(snapshot)).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'model', value: 'deepseek/v4', scope: 'Session' }),
@@ -99,7 +98,6 @@ describe('configuration model', () => {
     const projections = {
       permissions: {
         currentValue: 'workspace-write',
-        options: [{ value: 'workspace-write', name: 'Workspace write' }],
       },
       plan: { active: true, pending: false },
     } as Partial<SessionProjectionMap>

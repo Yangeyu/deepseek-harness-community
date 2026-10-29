@@ -19,6 +19,10 @@ export class HarnessModelPort implements ModelPort {
 
   async select(selection: ModelSelection): Promise<void> {
     const scope = this.sessions.captureSession()
+    if (scope.sessionId === undefined) {
+      if (!scope.commitModelSelection(selection)) throw new Error('Session changed; model selection cancelled.')
+      return
+    }
     await this.transport.selectModel(scope.sessionId, selection)
   }
 }

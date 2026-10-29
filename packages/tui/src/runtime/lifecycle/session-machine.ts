@@ -1,10 +1,7 @@
-export type SessionPresentation = 'previous' | 'empty'
-
 export interface SessionOperation<SessionId extends string> {
   readonly id: number
   readonly epoch: number
   readonly sessionId: SessionId | undefined
-  readonly presentation: SessionPresentation
 }
 
 export type SessionBindingState<SessionId extends string> =
@@ -12,7 +9,6 @@ export type SessionBindingState<SessionId extends string> =
   | {
     readonly phase: 'preparing'
     readonly operation: number
-    readonly presentation: SessionPresentation
     readonly previousSessionId: SessionId | undefined
     readonly epoch: number
   }
@@ -35,21 +31,23 @@ export class SessionMachine<SessionId extends string> {
     return this.currentBinding
   }
 
-  begin(
-    sessionId: SessionId | undefined,
-    presentation: SessionPresentation,
-  ): SessionOperation<SessionId> {
+  reset(): void {
+    this.pending = undefined
+    this.activeSessionId = undefined
+    this.currentEpoch += 1
+    this.currentBinding = { phase: 'unbound' }
+  }
+
+  begin(sessionId: SessionId | undefined): SessionOperation<SessionId> {
     const operation: SessionOperation<SessionId> = {
       id: ++this.operationId,
       epoch: this.currentEpoch,
       sessionId,
-      presentation,
     }
     this.pending = operation
     this.currentBinding = {
       phase: 'preparing',
       operation: operation.id,
-      presentation,
       previousSessionId: sessionId,
       epoch: operation.epoch,
     }
@@ -90,10 +88,6 @@ export class SessionMachine<SessionId extends string> {
   }
 
   owns(epoch: number, sessionId: SessionId): boolean {
-    if (epoch !== this.currentEpoch) return false
-    if (sessionId === this.activeSessionId) return true
-    return this.pending?.presentation === 'empty'
-      && this.pending.epoch === epoch
-      && this.pending.sessionId === sessionId
+    return epoch === this.currentEpoch && sessionId === this.activeSessionId
   }
 }

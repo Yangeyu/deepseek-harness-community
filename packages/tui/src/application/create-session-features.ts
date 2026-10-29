@@ -93,6 +93,7 @@ export function createSessionFeatureSet(
     openRewind: options.openRewind,
     requestRender: options.invalidate,
     scope: composerScope,
+    submit: text => options.composer.submit(text),
   })
   const transcript = new TranscriptProcess({
     session,

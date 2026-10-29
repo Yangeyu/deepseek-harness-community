@@ -69,6 +69,11 @@ export class ComposerHost {
   private process: ComposerProcess | undefined
   private detachProcess: (() => void) | undefined
 
+  constructor(private readonly admission?: {
+    prepare(text: string): Promise<void> | void
+    notice(message: string): void
+  }) {}
+
   get current(): Readonly<ComposerSnapshot> { return this.store.current }
   get draft(): ComposerDraft<AttachmentDraft> {
     return this.process?.draft ?? { text: '', attachments: [] }
@@ -106,9 +111,26 @@ export class ComposerHost {
   loadImagePaths(paths: readonly string[], cwd?: string): Promise<void> {
     return this.require().loadImagePaths(paths, cwd)
   }
-  submitEditor(mode: 'queue' | 'steer'): Promise<void> { return this.require().submitEditor(mode) }
+  submitEditor(mode: 'queue' | 'steer'): Promise<void> {
+    return this.admit(this.editor.getExpandedText(), () => this.require().submitEditor(mode))
+  }
   submit(value: string, forcedMode?: 'queue' | 'steer'): Promise<void> {
-    return this.require().submit(value, forcedMode)
+    value = this.require().prepareInput(value)
+    const previous = this.process
+    return this.admit(value, () => {
+      if (previous !== this.process) this.editor.addToHistory(value)
+      return this.require().submit(value, forcedMode)
+    })
+  }
+
+  private admit(text: string, submit: () => Promise<void>): Promise<void> {
+    if (text.trim() === '' && this.current.attachments.length === 0) return Promise.resolve()
+    const pending = this.admission?.prepare(text)
+    if (pending === undefined) return submit()
+    return pending.then(submit, (error: unknown) => {
+      if (this.editor.getExpandedText() === '') this.editor.setText(text)
+      this.admission?.notice(error instanceof Error ? error.message : String(error))
+    })
   }
   navigateDraft(direction: 'up' | 'down'): boolean {
     return this.process?.navigateDraft(direction) ?? false

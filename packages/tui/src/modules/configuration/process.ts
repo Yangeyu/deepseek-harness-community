@@ -173,8 +173,7 @@ export class ConfigurationProcess {
     this.configView = view
     surface = this.options.surfaces.open({ placement: 'readable', component: view })
     if ((initialStage === 'root' || initialStage === 'reasoning')
-      && state.modelCatalog === undefined
-      && state.sessionId !== undefined) {
+      && state.modelCatalog === undefined) {
       void this.run(async () => { await this.options.models.refresh() })
     }
     if (initialStage === 'root' && this.options.web !== undefined && this.webStatus === undefined) {

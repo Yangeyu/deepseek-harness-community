@@ -34,6 +34,7 @@ export class TerminalCommandDirectory {
     local: readonly TerminalCommandDefinition[] | undefined,
     private readonly source?: HostCommandSource,
     decorations: readonly TerminalCommandDecoration[] = [],
+    private readonly ensureSession?: () => Promise<SessionId>,
   ) {
     for (const decoration of decorations) this.decorations.set(decoration.name.toLowerCase(), decoration)
     if (local !== undefined) this.initialize(local)
@@ -110,6 +111,7 @@ export class TerminalCommandDirectory {
     if (parsed === undefined) return false
     const command = this.localByName.get(parsed.name)
     if (command !== undefined) {
+      if (command.requiresSession && this.sessionId === undefined) await this.ensureSession?.()
       await command.handler(parsed.argument)
       return true
     }
@@ -128,10 +130,10 @@ export class TerminalCommandDirectory {
   async dispatchHost(text: string): Promise<void> {
     const parsed = parseCommand(text)
     if (parsed === undefined) throw new Error('Host command must be one complete slash-command line')
+    const sessionId = this.sessionId ?? await this.ensureSession?.()
     if (!this.host.some(candidate => candidate.name === parsed.name)) {
       throw new Error(`Host command "/${parsed.name}" is unavailable in this session`)
     }
-    const sessionId = this.sessionId
     if (sessionId === undefined || this.source === undefined) {
       throw new Error(`Host command "/${parsed.name}" cannot execute without an active session`)
     }

@@ -6,20 +6,10 @@ import {
   type SessionFeatureSet,
 } from '../../src/application/session-features.ts'
 import { LifecycleScope } from '../../src/runtime/lifecycle/scope.ts'
-import type { SessionOperation } from '../../src/runtime/lifecycle/session-machine.ts'
 import type { SessionManager } from '../../src/runtime/session/manager.ts'
 import { emptyRuntimeSessionSnapshot } from '../../src/runtime/session/runtime.ts'
 import type { RuntimeSessionSnapshot, SessionId } from '../../src/runtime/session/snapshot.ts'
 import { buildExecutionSnapshot } from '../../src/runtime/execution/projection/index.ts'
-
-function operation(id: number, presentation: 'previous' | 'empty'): SessionOperation<SessionId> {
-  return {
-    id,
-    epoch: 0,
-    sessionId: 'session-old' as SessionId,
-    presentation,
-  }
-}
 
 function featureSet(scope: LifecycleScope, sessionId?: string, epoch = 0): SessionFeatureSet {
   return {
@@ -53,26 +43,6 @@ function hostFixture() {
 }
 
 describe('SessionFeatureCoordinator', () => {
-  it('hides one complete feature set for clear rollback and restores the same instances', () => {
-    const test = hostFixture()
-    const bootstrap = featureSet(new LifecycleScope('bootstrap'))
-    const create = vi.fn()
-    const coordinator = new SessionFeatureCoordinator(test.hosts, bootstrap, create)
-    test.bind.mockClear()
-
-    const clearing = operation(1, 'empty')
-    coordinator.prepare(clearing)
-    expect(test.bind).toHaveBeenCalledTimes(6)
-    expect(test.bind.mock.calls.every(call => call[0] === undefined)).toBe(true)
-
-    test.bind.mockClear()
-    coordinator.rollback(clearing)
-    expect(test.bind).toHaveBeenCalledTimes(6)
-    expect(test.bind.mock.calls.some(call => call[0] === bootstrap.composer)).toBe(true)
-    expect(bootstrap.scope.active).toBe(true)
-    expect(create).not.toHaveBeenCalled()
-  })
-
   it('constructs a fresh set for the committed epoch and retires the previous scope', () => {
     const test = hostFixture()
     const bootstrap = featureSet(new LifecycleScope('bootstrap'))

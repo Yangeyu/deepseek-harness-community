@@ -1,6 +1,5 @@
 import type { PromptContentPart } from '../runtime/session/contracts.ts'
 import type { LifecycleScope } from '../runtime/lifecycle/scope.ts'
-import type { SessionOperation } from '../runtime/lifecycle/session-machine.ts'
 import type {
   SessionFeatureContext,
   SessionFeatureParticipant,
@@ -133,7 +132,6 @@ export class BoundSession {
 /** Swaps the whole statically composed Session feature set at one lifecycle boundary. */
 export class SessionFeatureCoordinator implements SessionFeatureParticipant {
   private visible: SessionFeatureSet | undefined
-  private suspended: SessionFeatureSet | undefined
 
   constructor(
     private readonly hosts: SessionFeatureHosts,
@@ -144,40 +142,20 @@ export class SessionFeatureCoordinator implements SessionFeatureParticipant {
     this.install(bootstrap)
   }
 
-  prepare(operation: SessionOperation<SessionId>): void {
-    if (operation.presentation !== 'empty' || this.suspended !== undefined) return
-    this.suspended = this.visible
-    this.visible = undefined
-    this.install(undefined)
-  }
-
   activate(context: SessionFeatureContext): void {
-    const previous = this.visible ?? this.suspended
+    const previous = this.visible
     let next: SessionFeatureSet
     try {
       next = this.create(context, previous)
     } catch (error: unknown) {
       this.visible = undefined
-      this.suspended = undefined
       this.install(undefined)
       if (previous !== undefined) void previous.scope.dispose()
       throw error
     }
     this.visible = next
-    this.suspended = undefined
     this.install(next)
     if (previous !== undefined && previous !== next) void previous.scope.dispose()
-  }
-
-  rollback(operation: SessionOperation<SessionId>): void {
-    if (operation.presentation !== 'empty') return
-    this.visible = this.suspended
-    this.suspended = undefined
-    this.install(this.visible)
-  }
-
-  fail(operation: SessionOperation<SessionId>): void {
-    this.rollback(operation)
   }
 
   private install(features: SessionFeatureSet | undefined): void {

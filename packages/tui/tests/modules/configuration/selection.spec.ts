@@ -21,7 +21,7 @@ function setup() {
       subscribe: () => () => {}, notice: vi.fn(),
       captureSession: () => {
         const captured = sessionScope
-        return { sessionId: 'session' as SessionId, epoch, get active() { return captured.active }, commitModelCatalog: () => captured.active }
+        return { sessionId: 'session' as SessionId, epoch, get active() { return captured.active }, commitModelSelection: () => captured.active, commitModelCatalog: () => captured.active }
       },
     },
     models: { select, refresh },

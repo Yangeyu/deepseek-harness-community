@@ -233,12 +233,13 @@ class FakeSessionTransport implements SessionTransport {
 
 const managers = new Set<SessionManager>()
 
-async function startFixture(transport = new FakeSessionTransport()) {
+async function startFixture(transport = new FakeSessionTransport(), activate = true) {
   const scope = new LifecycleScope('manager-test')
   const interactions = new FakeInteractionSource()
   const manager = new SessionManager(scope, transport, interactions, '/workspace', 200)
   managers.add(manager)
   await manager.start()
+  if (activate) await manager.ensureSession()
   await vi.waitFor(() => { expect(manager.current.connection.control).toBe('online') })
   return { manager, transport, interactions }
 }
@@ -249,6 +250,52 @@ afterEach(async () => {
 })
 
 describe('SessionManager', () => {
+  it('keeps startup and model choices in a draft, admitting concurrent first prompts into one Session', async () => {
+    const transport = new FakeSessionTransport()
+    const create = vi.spyOn(transport, 'createSession')
+    const { manager } = await startFixture(transport, false)
+    const captured = manager.captureSession()
+    const models = new HarnessModelPort(transport, manager)
+    const selection = { provider: 'selected-provider', model: 'selected-model' }
+    await models.refresh()
+    await models.select(selection)
+    expect(manager.current.sessionId).toBeUndefined()
+    expect(selectedModel(manager.current.modelCatalog, manager.current.projections)).toEqual(selection)
+    expect(create).not.toHaveBeenCalled()
+    expect(transport.selectionRequests).toEqual([])
+
+    create.mockRejectedValueOnce(new Error('Create unavailable'))
+    await expect(manager.prompt('retry', 'queue')).rejects.toThrow('Create unavailable')
+    expect(selectedModel(manager.current.modelCatalog, manager.current.projections)).toEqual(selection)
+    await Promise.all([manager.prompt('first', 'queue'), manager.prompt('second', 'queue')])
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(transport.promptRequests.map(request => request.sessionId)).toEqual(['session-1', 'session-1'])
+    expect(transport.selectionRequests).toEqual([{ sessionId: 'session-1', selection }])
+    expect(captured.active).toBe(false)
+
+    await manager.clearSession()
+    expect(manager.current.sessionId).toBeUndefined()
+    expect(manager.current.events).toEqual([])
+    expect(manager.current.pendingSubmissions).toEqual([])
+    await manager.newSession()
+    expect(create).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a superseded first admission without submitting into the replacement draft', async () => {
+    const transport = new FakeSessionTransport()
+    const created = Promise.withResolvers<{ sessionId: SessionId }>()
+    const create = vi.spyOn(transport, 'createSession').mockReturnValueOnce(created.promise)
+    const { manager } = await startFixture(transport, false)
+    const pending = manager.prompt('old draft', 'queue')
+    const rejected = expect(pending).rejects.toThrow('superseded')
+    await vi.waitFor(() => { expect(create).toHaveBeenCalledOnce() })
+    await manager.newSession()
+    created.resolve({ sessionId: sessionId('retired') })
+    await rejected
+    expect(manager.current.sessionId).toBeUndefined()
+    expect(transport.promptRequests).toEqual([])
+  })
+
   it('resumes the selected conversation and submits against its existing identity', async () => {
     const { manager, transport } = await startFixture()
     const saved = sessionId('saved-conversation')

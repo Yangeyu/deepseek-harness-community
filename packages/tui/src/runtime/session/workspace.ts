@@ -2,7 +2,6 @@ import { AtomicSnapshotStore, type SnapshotListener } from '../dispatch/snapshot
 import {
   SessionMachine,
   type SessionOperation,
-  type SessionPresentation,
 } from '../lifecycle/session-machine.ts'
 import type { LifecycleScope } from '../lifecycle/scope.ts'
 import { emptyRuntimeSessionSnapshot, SessionRuntime } from './runtime.ts'
@@ -13,6 +12,7 @@ import type {
   SessionId,
 } from './snapshot.ts'
 import type { SessionFeatureParticipant } from './features.ts'
+import type { ModelCatalog, ModelSelection } from './contracts.ts'
 
 export interface SessionCandidate {
   readonly sessionId: SessionId
@@ -26,12 +26,11 @@ export interface SessionCommit {
   readonly activationError?: unknown
 }
 
-/** Owns the visible, suspended, and newly committed Session scopes as one replacement boundary. */
+/** Owns the draft and committed Session scopes as one replacement boundary. */
 export class SessionWorkspace {
   private readonly machine = new SessionMachine<SessionId>()
   private readonly store: AtomicSnapshotStore<RuntimeSessionSnapshot>
   private activeRuntime: SessionRuntime | undefined
-  private suspendedRuntime: SessionRuntime | undefined
   private detachActive: (() => void) | undefined
   private featureParticipant: SessionFeatureParticipant | undefined
 
@@ -53,6 +52,35 @@ export class SessionWorkspace {
     return this.activeRuntime
   }
 
+  setDraftModelCatalog(catalog: ModelCatalog): void {
+    this.store.update(snapshot => ({ ...snapshot, modelCatalog: catalog }))
+  }
+
+  setDraftModelSelection(selection: ModelSelection): void {
+    this.store.update(snapshot => ({
+      ...snapshot,
+      projections: { ...snapshot.projections, modelSelection: { lastUsed: null, next: selection } },
+    }))
+  }
+
+  async reset(): Promise<void> {
+    const previous = this.current
+    const retired = this.activeRuntime
+    this.machine.reset()
+    this.detachActive?.()
+    this.detachActive = undefined
+    this.activeRuntime = undefined
+    this.publishEmpty(previous.cwd, { ...previous.connection, events: 'online' })
+    if (previous.modelCatalog !== undefined) this.setDraftModelCatalog(previous.modelCatalog)
+    this.featureParticipant?.activate({
+      scope: this.scope.fork(`draft:${String(this.machine.epoch)}`),
+      sessionId: undefined,
+      epoch: this.machine.epoch,
+      runtime: this.current,
+    })
+    await retired?.dispose()
+  }
+
   subscribe(listener: SnapshotListener<RuntimeSessionSnapshot>): () => void {
     return this.store.subscribe(listener)
   }
@@ -67,27 +95,10 @@ export class SessionWorkspace {
     }
   }
 
-  begin(requestedPresentation: SessionPresentation): SessionOperation<SessionId> {
-    const inheritEmptyPresentation = this.activeRuntime === undefined && this.suspendedRuntime !== undefined
-    const presentation = requestedPresentation === 'empty' || inheritEmptyPresentation
-      ? 'empty'
-      : 'previous'
-    if (presentation === 'empty' && this.activeRuntime !== undefined) {
-      this.detachActive?.()
-      this.detachActive = undefined
-      this.suspendedRuntime = this.activeRuntime
-      this.activeRuntime = undefined
-    }
-    const previous = this.activeRuntime ?? this.suspendedRuntime
-    const operation = this.machine.begin(previous?.sessionId, presentation)
-    this.featureParticipant?.prepare(operation)
-    if (presentation === 'empty') {
-      this.publishEmpty(this.current.cwd, this.current.connection, this.machine.binding)
-    } else if (this.activeRuntime !== undefined) {
-      this.activeRuntime.setBinding(this.machine.binding)
-    } else {
-      this.store.update(snapshot => ({ ...snapshot, binding: this.machine.binding }))
-    }
+  begin(): SessionOperation<SessionId> {
+    const operation = this.machine.begin(this.activeRuntime?.sessionId)
+    if (this.activeRuntime !== undefined) this.activeRuntime.setBinding(this.machine.binding)
+    else this.store.update(snapshot => ({ ...snapshot, binding: this.machine.binding }))
     return operation
   }
 
@@ -95,13 +106,10 @@ export class SessionWorkspace {
     const epoch = this.machine.commit(operation, candidate.sessionId)
     if (epoch === undefined) return undefined
 
-    const retired = new Set([this.activeRuntime, this.suspendedRuntime].filter(
-      (runtime): runtime is SessionRuntime => runtime !== undefined,
-    ))
+    const retired = this.activeRuntime
     this.detachActive?.()
     this.detachActive = undefined
     this.activeRuntime = undefined
-    this.suspendedRuntime = undefined
 
     const runtime = new SessionRuntime(
       this.scope.fork(`session:${String(candidate.sessionId)}:${String(epoch)}`),
@@ -114,7 +122,7 @@ export class SessionWorkspace {
     this.attach(runtime)
     this.store.replace(runtime.current as RuntimeSessionSnapshot)
 
-    const retirement = Promise.all([...retired].map(previous => previous.dispose())).then(() => undefined)
+    const retirement = retired?.dispose() ?? Promise.resolve()
     let activationError: unknown
     if (this.featureParticipant !== undefined) {
       const featureScope = runtime.forkScope('features')
@@ -141,43 +149,25 @@ export class SessionWorkspace {
 
   rollback(operation: SessionOperation<SessionId>): boolean {
     if (!this.machine.rollback(operation)) return false
-    if (operation.presentation !== 'empty') {
-      if (this.activeRuntime !== undefined) this.activeRuntime.setBinding(this.machine.binding)
-      else this.store.update(snapshot => ({ ...snapshot, binding: this.machine.binding }))
-      this.featureParticipant?.rollback(operation)
-      return true
-    }
-    const restored = this.suspendedRuntime
-    this.suspendedRuntime = undefined
-    this.activeRuntime = restored
-    if (restored === undefined) {
-      this.publishEmpty(this.current.cwd, this.current.connection, this.machine.binding)
-      this.featureParticipant?.rollback(operation)
-      return true
-    }
-    restored.setBinding(this.machine.binding)
-    this.attach(restored)
-    this.store.replace(restored.current as RuntimeSessionSnapshot)
-    this.featureParticipant?.rollback(operation)
+    if (this.activeRuntime !== undefined) this.activeRuntime.setBinding(this.machine.binding)
+    else this.store.update(snapshot => ({ ...snapshot, binding: this.machine.binding }))
     return true
   }
 
   fail(operation: SessionOperation<SessionId>, message: string): boolean {
     if (operation.sessionId !== undefined) return this.rollback(operation)
     if (!this.machine.fail(operation, message)) return false
-    this.publishEmpty(this.current.cwd, this.current.connection, this.machine.binding, message)
-    this.featureParticipant?.fail(operation)
+    this.store.update(snapshot => ({ ...snapshot, binding: this.machine.binding, error: message }))
     return true
   }
 
   runtimeFor(sessionId: SessionId): SessionRuntime | undefined {
     if (this.activeRuntime?.sessionId === sessionId) return this.activeRuntime
-    if (this.suspendedRuntime?.sessionId === sessionId) return this.suspendedRuntime
     return undefined
   }
 
   owns(runtime: SessionRuntime): boolean {
-    return (runtime === this.activeRuntime || runtime === this.suspendedRuntime)
+    return runtime === this.activeRuntime
       && this.machine.owns(runtime.epoch, runtime.sessionId)
       && runtime.active
   }
@@ -196,7 +186,6 @@ export class SessionWorkspace {
 
   setConnection(channel: keyof SessionConnectionState, phase: ConnectionPhase, error?: string): void {
     this.activeRuntime?.setConnection(channel, phase, error)
-    this.suspendedRuntime?.setConnection(channel, phase, error)
     if (this.activeRuntime === undefined) {
       this.store.update(snapshot => ({
         ...snapshot,
@@ -211,7 +200,6 @@ export class SessionWorkspace {
       this.activeRuntime.setError(message)
       return
     }
-    this.suspendedRuntime?.setError(message)
     this.store.update(snapshot => ({ ...snapshot, error: message }))
   }
 
@@ -230,9 +218,8 @@ export class SessionWorkspace {
     cwd: string,
     connection: SessionConnectionState,
     binding = this.machine.binding,
-    error?: string,
   ): void {
     const empty = emptyRuntimeSessionSnapshot(cwd, connection, this.machine.epoch, binding)
-    this.store.replace(error === undefined ? empty : { ...empty, error })
+    this.store.replace(empty)
   }
 }
