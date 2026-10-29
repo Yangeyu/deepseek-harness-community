@@ -64,13 +64,38 @@ describe('keymap', () => {
     expect(keymap('\u001b[103;5:3u', working)).toEqual({ kind: 'suppressed' })
   })
 
-  it('uses Ctrl+V only and suppresses its Kitty repeat and release events', () => {
-    expect(keymap('\u001b[118;5u')).toEqual({
-      kind: 'action',
-      action: 'vision.paste',
-    })
-    expect(keymap('\u001b[118;5:2u')).toEqual({ kind: 'suppressed' })
-    expect(keymap('\u001b[118;5:3u')).toEqual({ kind: 'suppressed' })
+  it('repeats navigation while holding a key, but never moves on release', () => {
+    const model = { ...idle, surfaceActive: true, surfaceInput: 'model-menu' as const }
+    const trace = { ...model, surfaceInput: 'trajectory' as const }
+    for (const [sequence, suffix, context, action] of [
+      ['1;1', 'A', model, 'surface.previous'],
+      ['1;1', 'B', model, 'surface.next'],
+      ['5;1', '~', model, 'surface.page-previous'],
+      ['6;1', '~', model, 'surface.page-next'],
+      ['106;1', 'u', { ...model, surfaceInput: 'menu' as const }, 'surface.next'],
+      ['100;5', 'u', trace, 'surface.half-page-next'],
+      ['1;1', 'A', idle, 'draft.previous'],
+      ['5;1', '~', idle, 'history.page-up'],
+      ['1;1', 'C', { ...idle, attachmentRailFocused: true }, 'attachments.next'],
+    ] as const) {
+      expect(input(`\u001b[${sequence}:2${suffix}`, context).route).toEqual({ kind: 'action', action })
+      expect(input(`\u001b[${sequence}:3${suffix}`, context).route).toEqual({ kind: 'suppressed' })
+    }
+  })
+
+  it('keeps paste, confirmation, deletion, and cancellation single-press only', () => {
+    const menu = { ...idle, surfaceActive: true, surfaceInput: 'model-menu' as const }
+    for (const [sequence, context, action] of [
+      ['118;5', idle, 'vision.paste'],
+      ['13;1', menu, 'surface.confirm'],
+      ['127;1', { ...idle, attachmentRailFocused: true }, 'attachments.remove-selected'],
+      ['27;1', menu, 'surface.back'],
+      ['99;5', working, 'app.cancel-or-exit'],
+    ] as const) {
+      expect(keymap(`\u001b[${sequence}u`, context)).toEqual({ kind: 'action', action })
+      expect(input(`\u001b[${sequence}:2u`, context).route).toEqual({ kind: 'suppressed' })
+      expect(input(`\u001b[${sequence}:3u`, context).route).toEqual({ kind: 'suppressed' })
+    }
   })
 
   it('normalizes pointer, selection, rewind, and Escape routing before behavior', () => {

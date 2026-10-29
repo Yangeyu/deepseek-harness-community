@@ -55,6 +55,30 @@ const BASE_PRIORITY = 100
 const SURFACE_PRIORITY = 200
 const MODAL_PRIORITY = 300
 
+/** Repeat follows the semantic action, never the physical key (e.g. Space confirms). */
+const REPEATABLE_ACTIONS: ReadonlySet<KeymapAction> = new Set([
+  'surface.previous',
+  'surface.next',
+  'surface.page-previous',
+  'surface.page-next',
+  'surface.half-page-previous',
+  'surface.half-page-next',
+  'surface.detail-previous',
+  'surface.detail-next',
+  'surface.section-previous',
+  'surface.section-next',
+  'surface.tab-previous',
+  'surface.tab-next',
+  'surface.search-previous',
+  'surface.search-next',
+  'draft.previous',
+  'draft.next',
+  'history.page-up',
+  'history.page-down',
+  'attachments.previous',
+  'attachments.next',
+])
+
 const IN_BASE_SURFACE = (context: KeymapContext): boolean => (
   !context.interactionActive && !context.surfaceActive && !context.attachmentRailFocused
 )
@@ -298,6 +322,8 @@ export function resolveKeymapInput(
   if (winners.length !== 1) {
     throw new Error(`Conflicting terminal bindings for ${gesture.key} at priority ${String(priority)}.`)
   }
-  if (gesture.phase !== 'press') return { kind: 'suppressed' }
-  return { kind: 'action', action: winners[0]!.action }
+  const action = winners[0]!.action
+  if (gesture.phase === 'release'
+    || (gesture.phase === 'repeat' && !REPEATABLE_ACTIONS.has(action))) return { kind: 'suppressed' }
+  return { kind: 'action', action }
 }

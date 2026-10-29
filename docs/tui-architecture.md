@@ -506,10 +506,11 @@ GitHub Release 的恢复继续要求既有产物摘要一致，不覆盖冲突�
    behavior runs. One fixed binding table owns those gestures and context owns
    their availability: idle editor input is never consumed by a running-turn
    binding, and raw mouse button bits never reach interaction policy.
-10. Kitty repeat and release events are consumed without emitting another
-    semantic action. Asynchronous clipboard intake is single-flight, so one
-    physical paste cannot create duplicate drafts even when a terminal emits
-    more than one matching sequence.
+10. Kitty `repeat` 仅对公共按键层明确允许的导航动作继续分派：Surface 的逐项、翻页、
+    半页、详情、分区、标签与搜索结果导航，以及草稿历史、对话翻页和附件栏移动。
+    已绑定动作的 `release` 一律消费且不触发动作；确认、删除、粘贴、取消等非导航动作
+    仍只响应 `press`。未匹配的编辑输入继续交给 Editor，不另设长按计时器。
+    异步剪贴板准入仍保持 single-flight，避免终端发出多个匹配序列时重复创建草稿。
 11. Transcript Activity groups are a replayable presentation projection, not a
    session event. Only adjacent reasoning and non-diff tool nodes group
    together. Prompts, assistant text, Commands, errors, notices, and file diffs
